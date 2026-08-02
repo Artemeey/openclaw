@@ -8,6 +8,7 @@ import {
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Message } from "../internal/discord.js";
+import { initializeDiscordProviderEndpointForTest } from "../provider-endpoint.test-support.js";
 
 const readRemoteMediaBuffer = vi.fn();
 const saveMediaBuffer = vi.fn();
@@ -304,6 +305,36 @@ describe("resolveForwardedMediaList", () => {
 });
 
 describe("resolveMediaList", () => {
+  it("allows inbound attachments only at the configured provider REST origin", async () => {
+    await initializeDiscordProviderEndpointForTest({
+      restApiBaseUrl: "http://127.0.0.1:43123/custom/rest/v10",
+      gatewayBotUrl: "http://127.0.0.1:43123/custom/gateway-metadata",
+      gatewayOrigin: "ws://127.0.0.1:43124",
+    });
+    const attachmentUrl = "http://127.0.0.1:43123/custom/media/image.png";
+    const attachment = attachmentFixture("att-provider", "image.png", { url: attachmentUrl });
+    const proxyFetch = vi.fn(() => {
+      throw new Error("provider media must bypass the Discord REST proxy");
+    }) as unknown as typeof fetch;
+    mockDownload("/tmp/provider-image.png");
+
+    const result = await resolveMediaList(asMessage({ attachments: [attachment] }), 512, {
+      fetchImpl: proxyFetch,
+    });
+
+    expect(result).toEqual([{ path: "/tmp/provider-image.png", contentType: "image/png" }]);
+    const call = fetchParams();
+    expect(call.url).toBe(attachmentUrl);
+    expect(call.fetchImpl).toBeUndefined();
+    expect(proxyFetch).not.toHaveBeenCalled();
+    expect(call.maxRedirects).toBe(0);
+    const policy = requireRecord(call.ssrfPolicy, "provider media ssrf policy");
+    expect(requireArray(policy.allowedOrigins, "allowed origins")).toContain(
+      "http://127.0.0.1:43123",
+    );
+    expect(requireArray(policy.hostnameAllowlist, "hostname allowlist")).toContain("127.0.0.1");
+  });
+
   it("downloads stickers", async () => {
     const sticker = stickerFixture("sticker-2", "hello");
     mockDownload("/tmp/sticker-2.png", { buffer: "sticker" });
