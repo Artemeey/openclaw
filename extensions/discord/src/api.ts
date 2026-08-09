@@ -12,10 +12,8 @@ import {
 } from "openclaw/plugin-sdk/retry-runtime";
 import { sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
 import { isDiscordHtmlResponseBody, summarizeDiscordResponseBody } from "./error-body.js";
-import {
-  DISCORD_DEFAULT_REST_API_BASE_URL,
-  getDiscordProviderEndpointRuntime,
-} from "./provider-endpoint.js";
+import { DISCORD_DEFAULT_REST_API_BASE_URL } from "./provider-endpoint.constants.js";
+import { getDiscordProviderEndpointRuntime } from "./provider-endpoint.js";
 import { parseDiscordRetryAfterBodySeconds } from "./retry-after.js";
 
 const DISCORD_API_RETRY_DEFAULTS = {

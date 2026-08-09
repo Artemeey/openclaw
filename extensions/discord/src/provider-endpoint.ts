@@ -6,27 +6,14 @@ import {
   isLoopbackHost,
   type SsrFPolicy,
 } from "openclaw/plugin-sdk/ssrf-runtime";
-import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
-
-export const DISCORD_DEFAULT_REST_API_BASE_URL = "https://discord.com/api/v10";
-const DISCORD_PROVIDER_ENDPOINT_ENV = "DISCORD_PROVIDER_ENDPOINT";
+import {
+  DISCORD_PROVIDER_ENDPOINT_ENV_KEYS,
+  type DiscordProviderEndpointDescriptor,
+} from "./provider-endpoint.constants.js";
 
 const DISCORD_PROVIDER_ENDPOINT_ENV_MAX_BYTES = 8 * 1024;
 const DISCORD_PROVIDER_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
-const DISCORD_PROVIDER_ENDPOINT_DESCRIPTOR_KEYS = [
-  "restApiBaseUrl",
-  "gatewayBotUrl",
-  "gatewayOrigin",
-] as const;
-
-type DiscordProviderEndpointDescriptor = Readonly<{
-  /** Complete versioned base URL for Discord REST routes. */
-  restApiBaseUrl: string;
-  /** Exact authenticated Gateway metadata URL. */
-  gatewayBotUrl: string;
-  /** Allowed WebSocket origin for initial and resumed Gateway connections. */
-  gatewayOrigin: string;
-}>;
+const DISCORD_PROVIDER_ENDPOINT_REQUIRED_ENV = Object.values(DISCORD_PROVIDER_ENDPOINT_ENV_KEYS);
 
 type DiscordProviderEndpointRuntime = Readonly<{
   descriptor: DiscordProviderEndpointDescriptor;
@@ -108,48 +95,38 @@ function normalizeDescriptor(
   });
 }
 
-function parseProviderEndpointDescriptor(rawValue: string): DiscordProviderEndpointDescriptor {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(rawValue);
-  } catch {
-    throw new Error(`${DISCORD_PROVIDER_ENDPOINT_ENV} must contain valid JSON`);
-  }
-  const keys = isRecord(parsed) ? Object.keys(parsed).toSorted() : [];
-  const expectedKeys = DISCORD_PROVIDER_ENDPOINT_DESCRIPTOR_KEYS.toSorted();
-  if (
-    !isRecord(parsed) ||
-    keys.length !== expectedKeys.length ||
-    keys.some((key, index) => key !== expectedKeys[index])
-  ) {
+function parseProviderEndpointEnv(
+  env: NodeJS.ProcessEnv,
+): DiscordProviderEndpointDescriptor | undefined {
+  const rawDescriptor = {
+    restApiBaseUrl: env[DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.restApiBaseUrl],
+    gatewayBotUrl: env[DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayBotUrl],
+    gatewayOrigin: env[DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayOrigin],
+  };
+  const rawBytes = Object.values(rawDescriptor).reduce(
+    (total, value) => total + Buffer.byteLength(value ?? "", "utf8"),
+    0,
+  );
+  if (rawBytes > DISCORD_PROVIDER_ENDPOINT_ENV_MAX_BYTES) {
     throw new Error(
-      `${DISCORD_PROVIDER_ENDPOINT_ENV} must contain exactly restApiBaseUrl, gatewayBotUrl, and gatewayOrigin`,
+      `Discord provider endpoint environment exceeds ${DISCORD_PROVIDER_ENDPOINT_ENV_MAX_BYTES} aggregate bytes`,
     );
   }
-  for (const key of DISCORD_PROVIDER_ENDPOINT_DESCRIPTOR_KEYS) {
-    if (typeof parsed[key] !== "string" || parsed[key].trim() === "") {
-      throw new Error(`${DISCORD_PROVIDER_ENDPOINT_ENV}.${key} must be a non-empty string`);
-    }
-  }
-  return normalizeDescriptor({
-    restApiBaseUrl: (parsed.restApiBaseUrl as string).trim(),
-    gatewayBotUrl: (parsed.gatewayBotUrl as string).trim(),
-    gatewayOrigin: (parsed.gatewayOrigin as string).trim(),
-  });
-}
-
-function parseProviderEndpointEnv(
-  rawValue: string | undefined,
-): DiscordProviderEndpointDescriptor | undefined {
-  if (rawValue === undefined) {
+  const descriptor = {
+    restApiBaseUrl: rawDescriptor.restApiBaseUrl?.trim() ?? "",
+    gatewayBotUrl: rawDescriptor.gatewayBotUrl?.trim() ?? "",
+    gatewayOrigin: rawDescriptor.gatewayOrigin?.trim() ?? "",
+  };
+  const configuredValues = Object.values(descriptor).filter(Boolean).length;
+  if (configuredValues === 0) {
     return undefined;
   }
-  if (Buffer.byteLength(rawValue, "utf8") > DISCORD_PROVIDER_ENDPOINT_ENV_MAX_BYTES) {
+  if (configuredValues !== DISCORD_PROVIDER_ENDPOINT_REQUIRED_ENV.length) {
     throw new Error(
-      `${DISCORD_PROVIDER_ENDPOINT_ENV} exceeds ${DISCORD_PROVIDER_ENDPOINT_ENV_MAX_BYTES} bytes`,
+      `Discord provider endpoint requires ${DISCORD_PROVIDER_ENDPOINT_REQUIRED_ENV.join(", ")} to be set together`,
     );
   }
-  return rawValue.trim() ? parseProviderEndpointDescriptor(rawValue) : undefined;
+  return normalizeDescriptor(descriptor);
 }
 
 function isWithinRestApiBase(target: URL, restApiBaseUrl: URL): boolean {
@@ -244,8 +221,7 @@ export function initializeDiscordProviderEndpointFromEnv(
   }
 
   try {
-    const rawValue = env[DISCORD_PROVIDER_ENDPOINT_ENV];
-    const descriptor = parseProviderEndpointEnv(rawValue);
+    const descriptor = parseProviderEndpointEnv(env);
     const runtime = descriptor
       ? Object.freeze({ descriptor, fetch: createProviderFetch(descriptor) })
       : undefined;

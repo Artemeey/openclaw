@@ -9,9 +9,10 @@ import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
 import { Type } from "typebox";
 import { Check, Errors } from "typebox/value";
 import { isDiscordRateLimitResponseBody, summarizeDiscordResponseBody } from "../error-body.js";
+import { DISCORD_DEFAULT_REST_API_BASE_URL } from "../provider-endpoint.constants.js";
 import { withAbortTimeout } from "./timeouts.js";
 
-const DISCORD_GATEWAY_BOT_URL = "https://discord.com/api/v10/gateway/bot";
+const DISCORD_GATEWAY_BOT_URL = `${DISCORD_DEFAULT_REST_API_BASE_URL}/gateway/bot`;
 const DISCORD_API_HOST = "discord.com";
 const DEFAULT_DISCORD_GATEWAY_URL = "wss://gateway.discord.gg/";
 const DEFAULT_DISCORD_GATEWAY_INFO_TIMEOUT_MS = 30_000;

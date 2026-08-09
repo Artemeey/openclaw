@@ -18,10 +18,8 @@ import {
   readRetryAfter,
 } from "./internal/rest-errors.js";
 import { rewriteDiscordKnownMentions } from "./mentions.js";
-import {
-  DISCORD_DEFAULT_REST_API_BASE_URL,
-  getDiscordProviderEndpointRuntime,
-} from "./provider-endpoint.js";
+import { DISCORD_DEFAULT_REST_API_BASE_URL } from "./provider-endpoint.constants.js";
+import { getDiscordProviderEndpointRuntime } from "./provider-endpoint.js";
 import { DISCORD_REST_TIMEOUT_MS } from "./proxy-request-client.js";
 import { createDiscordRetryRunner } from "./retry.js";
 import {
@@ -55,7 +53,7 @@ function resolveWebhookExecutionUrl(params: {
   wait?: boolean;
 }) {
   const baseUrl = new URL(
-    `${params.restApiBaseUrl ?? "https://discord.com/api/v10"}/webhooks/${encodeURIComponent(params.webhookId)}/${encodeURIComponent(params.webhookToken)}`,
+    `${params.restApiBaseUrl ?? DISCORD_DEFAULT_REST_API_BASE_URL}/webhooks/${encodeURIComponent(params.webhookId)}/${encodeURIComponent(params.webhookToken)}`,
   );
   baseUrl.searchParams.set("wait", params.wait === false ? "false" : "true");
   if (params.threadId !== undefined && params.threadId !== null && params.threadId !== "") {

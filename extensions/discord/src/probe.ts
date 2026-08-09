@@ -5,10 +5,8 @@ import { resolveFetch } from "openclaw/plugin-sdk/fetch-runtime";
 import { readResponseWithLimit } from "openclaw/plugin-sdk/response-limit-runtime";
 import { fetchWithTimeout, runChannelProbe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { DiscordApiError, fetchDiscord } from "./api.js";
-import {
-  DISCORD_DEFAULT_REST_API_BASE_URL,
-  getDiscordProviderEndpointRuntime,
-} from "./provider-endpoint.js";
+import { DISCORD_DEFAULT_REST_API_BASE_URL } from "./provider-endpoint.constants.js";
+import { getDiscordProviderEndpointRuntime } from "./provider-endpoint.js";
 import { normalizeDiscordToken } from "./token.js";
 
 const DISCORD_PROBE_GET_ME_LABEL = "discord.probe.getMe";

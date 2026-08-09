@@ -1,10 +1,11 @@
 import { Routes } from "discord-api-types/v10";
 import { readProviderJsonResponse } from "openclaw/plugin-sdk/provider-http";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/ssrf-runtime";
+import { DISCORD_DEFAULT_REST_API_BASE_URL } from "../provider-endpoint.constants.js";
 import { getDiscordProviderEndpointRuntime } from "../provider-endpoint.js";
 
 export const DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token";
-export const DISCORD_USER_URL = "https://discord.com/api/v10/users/@me";
+export const DISCORD_USER_URL = `${DISCORD_DEFAULT_REST_API_BASE_URL}/users/@me`;
 const DISCORD_HOST = "discord.com";
 const DISCORD_ACTIVITY_API_TIMEOUT_MS = 15_000;
 const JSON_MAX_BYTES = 64 * 1024;
@@ -101,7 +102,7 @@ export async function resolveActivityInstanceChannel(params: {
       result = await fetchDiscordJson({
         fetchGuard: params.fetchGuard,
         fetchImpl: params.proxyFetch,
-        url: `https://discord.com/api/v10${route}`,
+        url: `${DISCORD_DEFAULT_REST_API_BASE_URL}${route}`,
         init,
         auditContext: "discord.activities.instance",
       });

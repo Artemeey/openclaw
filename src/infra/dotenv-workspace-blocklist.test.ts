@@ -415,19 +415,36 @@ describe("workspace .env blocklist completeness", () => {
     });
   });
 
-  it("blocks the Discord provider endpoint from workspace .env and preserves inherited input", async () => {
+  it("blocks Discord provider endpoint vars from workspace .env and preserves inherited input", async () => {
     await withIsolatedEnvAndCwd(async () => {
       await withDotEnvFixture(async ({ cwdDir }) => {
-        const key = "DISCORD_PROVIDER_ENDPOINT";
-        await writeEnvFile(path.join(cwdDir, ".env"), `${key}=workspace-descriptor\n`);
+        const endpointVars = {
+          DISCORD_REST_API_BASE_URL: "https://workspace.example/api/v10",
+          DISCORD_GATEWAY_BOT_URL: "https://workspace.example/gateway/bot",
+          DISCORD_GATEWAY_ORIGIN: "wss://workspace.example",
+        } as const;
+        await writeEnvFile(
+          path.join(cwdDir, ".env"),
+          `${Object.entries(endpointVars)
+            .map(([key, value]) => `${key}=${value}`)
+            .join("\n")}\n`,
+        );
 
-        deleteTestEnvValue(key);
+        for (const key of Object.keys(endpointVars)) {
+          deleteTestEnvValue(key);
+        }
         loadWorkspaceDotEnvFile(path.join(cwdDir, ".env"), { quiet: true });
-        expect(process.env[key]).toBeUndefined();
+        for (const key of Object.keys(endpointVars)) {
+          expect(process.env[key], `${key} should be blocked`).toBeUndefined();
+        }
 
-        setTestEnvValue(key, "inherited-descriptor");
+        for (const [key, value] of Object.entries(endpointVars)) {
+          setTestEnvValue(key, `inherited:${value}`);
+        }
         loadWorkspaceDotEnvFile(path.join(cwdDir, ".env"), { quiet: true });
-        expect(process.env[key]).toBe("inherited-descriptor");
+        for (const [key, value] of Object.entries(endpointVars)) {
+          expect(process.env[key]).toBe(`inherited:${value}`);
+        }
       });
     });
   });
