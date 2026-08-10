@@ -12,6 +12,7 @@ import { initializeDiscordProviderEndpointForTest } from "../provider-endpoint.t
 
 let fetchDiscordJson: typeof import("./discord-api.js").fetchDiscordJson;
 let resolveActivityInstanceChannel: typeof import("./discord-api.js").resolveActivityInstanceChannel;
+let userRoute: typeof import("./discord-api.js").DISCORD_ACTIVITY_USER_ROUTE;
 
 const TEST_DESCRIPTOR = {
   restApiBaseUrl: "http://127.0.0.1:43123/custom/rest/v10",
@@ -23,7 +24,11 @@ describe("Discord Activity API", () => {
   beforeEach(async () => {
     vi.resetModules();
     providerFetchGuardMock.mockReset();
-    ({ fetchDiscordJson, resolveActivityInstanceChannel } = await import("./discord-api.js"));
+    ({
+      DISCORD_ACTIVITY_USER_ROUTE: userRoute,
+      fetchDiscordJson,
+      resolveActivityInstanceChannel,
+    } = await import("./discord-api.js"));
   });
 
   afterEach(() => {
@@ -53,9 +58,8 @@ describe("Discord Activity API", () => {
     await expect(
       fetchDiscordJson({
         fetchGuard,
-        url: "https://discord.com/api/v10/users/@me",
+        route: userRoute,
         init: { headers: { Authorization: "Bearer test-token" } },
-        auditContext: "discord.activities.oauth.user",
       }),
     ).resolves.toEqual({ ok: false, status: 401 });
     expect(lifecycle).toEqual(["cancel", "release"]);
@@ -79,9 +83,8 @@ describe("Discord Activity API", () => {
     await expect(
       fetchDiscordJson({
         fetchGuard,
-        url: "https://discord.com/api/v10/users/@me",
+        route: userRoute,
         init: { headers: { Authorization: "Bearer test-token" } },
-        auditContext: "discord.activities.oauth.user",
       }),
     ).resolves.toEqual({ ok: false, status: 429 });
     expect(release).toHaveBeenCalledOnce();
