@@ -3193,6 +3193,13 @@ export const en: TranslationMap = {
       applicabilityHeading: "When the agent should use it",
     },
   },
+  // Chat swarm summaries render before the lazy Activity catalog loads.
+  // Keep their shared label in startup English; Activity replaces the full namespace on entry.
+  activity: {
+    status: {
+      done: "Done",
+    },
+  },
   gatewayLogs: {
     title: "Logs",
     subtitle: "Gateway file logs (JSONL).",
