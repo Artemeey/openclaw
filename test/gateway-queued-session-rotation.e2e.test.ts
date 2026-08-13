@@ -221,7 +221,9 @@ describe("Gateway queued session rotation", () => {
             skills: [],
             skipBootstrap: true,
           },
-          list: [{ id: "main", default: true, model: { primary: modelRef }, skills: [] }],
+          entries: {
+            main: { model: { primary: modelRef }, skills: [] },
+          },
         },
         tools: { profile: "minimal" },
         models: {

@@ -70,7 +70,10 @@ describe("ClawRouter managed gateway contract", () => {
             },
           },
           logging: { file: logFile },
-          agents: { defaults: { model: { primary: MODEL_REF } } },
+          agents: {
+            defaults: { model: { primary: MODEL_REF } },
+            entries: { main: {} },
+          },
         },
         null,
         2,

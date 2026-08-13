@@ -299,8 +299,8 @@ describe("attachGatewayWsConnectionHandler startup readiness", () => {
         },
       });
 
-    socket.emit("message", connectFrame("connect-1"));
-    socket.emit("message", connectFrame("connect-2"));
+    socket.emit("message", Buffer.from(connectFrame("connect-1")));
+    socket.emit("message", Buffer.from(connectFrame("connect-2")));
     await vi.dynamicImportSettled();
 
     await vi.waitFor(() => {
@@ -361,24 +361,26 @@ describe("attachGatewayWsConnectionHandler startup readiness", () => {
       });
       socket.emit(
         "message",
-        JSON.stringify({
-          type: "req",
-          id: "connect-1",
-          method: "connect",
-          params: {
-            minProtocol: PROTOCOL_VERSION,
-            maxProtocol: PROTOCOL_VERSION,
-            client: {
-              id: GATEWAY_CLIENT_NAMES.CLI,
-              version: "dev",
-              platform: "test",
-              mode: GATEWAY_CLIENT_MODES.CLI,
+        Buffer.from(
+          JSON.stringify({
+            type: "req",
+            id: "connect-1",
+            method: "connect",
+            params: {
+              minProtocol: PROTOCOL_VERSION,
+              maxProtocol: PROTOCOL_VERSION,
+              client: {
+                id: GATEWAY_CLIENT_NAMES.CLI,
+                version: "dev",
+                platform: "test",
+                mode: GATEWAY_CLIENT_MODES.CLI,
+              },
+              role: "operator",
+              scopes: ["operator.read"],
+              caps: [],
             },
-            role: "operator",
-            scopes: ["operator.read"],
-            caps: [],
-          },
-        }),
+          }),
+        ),
       );
 
       // The handler is lazy-loaded; wait for its actual frame instead of a one-second poll.
