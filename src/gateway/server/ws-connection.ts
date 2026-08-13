@@ -26,6 +26,7 @@ import {
   MAX_PAYLOAD_BYTES,
   MAX_PREAUTH_PAYLOAD_BYTES,
   WEBSOCKET_OPEN_READY_STATE,
+  MAX_QUEUED_GATEWAY_PREAUTH_FRAMES,
 } from "../server-constants.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "../server-methods/types.js";
 import { formatError } from "../server-utils.js";
@@ -56,7 +57,6 @@ import {
   GatewayNodeLifecycleDispatchTracker,
   NODE_LIFECYCLE_DISPATCH_DRAIN_TIMEOUT_MS,
 } from "./ws-connection/node-lifecycle-dispatch.js";
-import { MAX_QUEUED_GATEWAY_PREAUTH_FRAMES } from "./ws-connection/preauth-ingress.js";
 import {
   attachWorkerWsMessageHandler,
   type WorkerConnectionService,

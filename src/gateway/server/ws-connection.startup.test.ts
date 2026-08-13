@@ -51,6 +51,7 @@ import {
 import * as gatewayAuth from "../auth.js";
 import { buildDeviceAuthPayload } from "../device-auth.js";
 import { createWorkerEnvironmentStore } from "../worker-environments/store.js";
+import { MAX_QUEUED_GATEWAY_PREAUTH_FRAMES } from "../server-constants.js";
 import { attachGatewayWsConnectionHandler } from "./ws-connection.js";
 import {
   attachGatewayWsForTest,
@@ -58,7 +59,6 @@ import {
   createGatewayWsTestRequestContext,
   createGatewayWsTestSocket,
 } from "./ws-connection.test-helpers.js";
-import { MAX_QUEUED_GATEWAY_PREAUTH_FRAMES } from "./ws-connection/preauth-ingress.js";
 
 type StartupConnectResponse = {
   type?: unknown;

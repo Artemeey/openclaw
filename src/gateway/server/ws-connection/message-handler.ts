@@ -39,7 +39,10 @@ import {
 import { isWebchatClient } from "../../../utils/message-channel.js";
 import { isLocalishHost, isLoopbackAddress } from "../../net.js";
 import { resolveNodePairingClientIpSource } from "../../node-pairing-auto-approve.js";
-import { MAX_PREAUTH_PAYLOAD_BYTES } from "../../server-constants.js";
+import {
+  MAX_PREAUTH_PAYLOAD_BYTES,
+  MAX_QUEUED_GATEWAY_PREAUTH_FRAMES,
+} from "../../server-constants.js";
 import { formatForLog, logWs } from "../../ws-log.js";
 import { truncateCloseReason } from "../close-reason.js";
 import { createGatewayAuthenticatedRequestDispatcher } from "./authenticated-request-dispatch.js";
@@ -56,7 +59,6 @@ export type {
   GatewayWsMessageHandlerParams,
   WsOriginCheckMetrics,
 } from "./message-handler-types.js";
-import { MAX_QUEUED_GATEWAY_PREAUTH_FRAMES } from "./preauth-ingress.js";
 
 const GATEWAY_WORK_ADMISSION_RETRY_AFTER_MS = 1_000;
 const GATEWAY_WORK_ADMISSION_CLOSE_CODE = 1013;
@@ -474,10 +476,6 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
   };
 
   const handleIncomingMessage = async (data: RawData) => {
-    if (getClient()) {
-      await handleMessage(data);
-      return;
-    }
     const admission = tryBeginGatewayRootWorkAdmission();
     if (!admission) {
       if (
@@ -523,14 +521,13 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
     }
   };
 
-  let handshakeInProgress = false;
-  const queuedHandshakeFrames: RawData[] = [];
+  let queuedHandshakeFrames: RawData[] | undefined;
 
   const onMessage = (data: RawData): void => {
     if (isClosed()) {
       return;
     }
-    if (handshakeInProgress) {
+    if (queuedHandshakeFrames) {
       // Keep the preauth cap authoritative for pipelined frames until this
       // connection actually owns an admitted client.
       if (!getClient() && rejectOversizedPreauthFrame(data)) {
@@ -551,19 +548,17 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
     }
 
     if (getClient()) {
-      void runWithDiagnosticTraceContext(createDiagnosticTraceContext(), () =>
-        handleIncomingMessage(data),
-      );
+      void runWithDiagnosticTraceContext(createDiagnosticTraceContext(), () => handleMessage(data));
       return;
     }
 
     // Reserve the first handshake only; flush later frames after hello so normal RPCs stay parallel.
-    handshakeInProgress = true;
+    queuedHandshakeFrames = [];
     void runWithDiagnosticTraceContext(createDiagnosticTraceContext(), () =>
       handleIncomingMessage(data),
     ).finally(() => {
-      handshakeInProgress = false;
-      const frames = queuedHandshakeFrames.splice(0);
+      const frames = queuedHandshakeFrames?.splice(0) ?? [];
+      queuedHandshakeFrames = undefined;
       if (isClosed()) {
         return;
       }

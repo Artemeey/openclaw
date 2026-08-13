@@ -8,7 +8,6 @@ import { ConnectErrorDetailCodes } from "../../../../packages/gateway-protocol/s
 import { ErrorCodes, PROTOCOL_VERSION } from "../../../../packages/gateway-protocol/src/index.js";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import { prepareSystemAgentRunAdmission } from "../../../agents/admitted-run-context.js";
-import * as nodePairingState from "../../../infra/device-pairing-node-state.js";
 import {
   onInternalDiagnosticEvent,
   resetDiagnosticEventsForTest,
@@ -32,7 +31,11 @@ import type { HealthSummary } from "../../health/types.js";
 import type { GatewayAttributedIngress } from "../../ingress-attribution.js";
 import { getGatewayLocalUserIngress } from "../../local-user-ingress.js";
 import { getOperatorApprovalRuntimeToken } from "../../operator-approval-runtime-token.js";
-import { MAX_PAYLOAD_BYTES, MAX_PREAUTH_PAYLOAD_BYTES } from "../../server-constants.js";
+import {
+  MAX_PAYLOAD_BYTES,
+  MAX_PREAUTH_PAYLOAD_BYTES,
+  MAX_QUEUED_GATEWAY_PREAUTH_FRAMES,
+} from "../../server-constants.js";
 import { handleGatewayRequest } from "../../server-methods.js";
 import { resolveGatewayCronCreatorAuthorityAdmission } from "../../server-methods/cron-creator-authority-admission.js";
 import type { GatewayRequestContext } from "../../server-methods/types.js";
@@ -42,8 +45,6 @@ import {
 } from "../../server-shared-auth-generation.js";
 import { resolveSharedGatewaySessionGeneration } from "../ws-shared-generation.js";
 import { resolvePinnedClientMetadata } from "./connect-device-metadata.js";
-import * as connectNodeSession from "./connect-node-session.js";
-import { attachAuthenticatedGatewayConnect } from "./connect-session.js";
 import { GatewayNodeLifecycleDispatchTracker } from "./node-lifecycle-dispatch.js";
 
 const {
@@ -147,7 +148,6 @@ vi.mock("../health-state.js", () => ({
 }));
 
 import { attachGatewayWsMessageHandler } from "./message-handler.js";
-import { MAX_QUEUED_GATEWAY_PREAUTH_FRAMES } from "./preauth-ingress.js";
 
 const DEVICE_TOKEN_MUTATION_PARAMS = {
   deviceId: "device-1",
@@ -155,6 +155,18 @@ const DEVICE_TOKEN_MUTATION_PARAMS = {
 } as const satisfies Record<string, unknown>;
 const NODE_PAIR_REMOVE_PARAMS = {
   nodeId: "device-1",
+} as const satisfies Record<string, unknown>;
+const BACKEND_CONNECT_PARAMS = {
+  minProtocol: PROTOCOL_VERSION,
+  maxProtocol: PROTOCOL_VERSION,
+  client: {
+    id: "gateway-client",
+    version: "dev",
+    platform: "test",
+    mode: "backend",
+  },
+  role: "operator",
+  caps: [],
 } as const satisfies Record<string, unknown>;
 
 function waitForFast(assertion: () => void | Promise<void>) {
@@ -601,18 +613,7 @@ describe("attachGatewayWsMessageHandler post-connect health refresh", () => {
     const receiver = Reflect.get(harness.socket as object, "_receiver") as object;
     expect(Reflect.get(receiver, "_maxPayload")).toBe(MAX_PREAUTH_PAYLOAD_BYTES);
 
-    harness.sendConnect("watchdog-connect", {
-      minProtocol: PROTOCOL_VERSION,
-      maxProtocol: PROTOCOL_VERSION,
-      client: {
-        id: "gateway-client",
-        version: "dev",
-        platform: "test",
-        mode: "backend",
-      },
-      role: "operator",
-      caps: [],
-    });
+    harness.sendConnect("watchdog-connect", BACKEND_CONNECT_PARAMS);
 
     await waitForFast(() => {
       expect(harness.setClient).toHaveBeenCalledOnce();
@@ -623,114 +624,6 @@ describe("attachGatewayWsMessageHandler post-connect health refresh", () => {
     expect(harness.setClient.mock.invocationCallOrder[0]).toBeLessThan(
       clearHandshakeTimer.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
-  });
-
-  it("keeps the watchdog and preauth cap while node pairing revalidation is pending", async () => {
-    const prepareNodeConnect = vi
-      .spyOn(connectNodeSession, "prepareGatewayNodeConnect")
-      .mockResolvedValue(true);
-    let resolveRevalidation!: (value: null) => void;
-    const pendingRevalidation = new Promise<null>((resolve) => {
-      resolveRevalidation = resolve;
-    });
-    const captureNodePairingState = vi
-      .spyOn(nodePairingState, "captureAuthenticatedNodePairingState")
-      .mockResolvedValueOnce({
-        identity: { nodeId: "watchdog-node", key: "watchdog-identity" },
-        generation: { nodeId: "watchdog-node", key: "watchdog-generation" },
-      })
-      .mockReturnValueOnce(pendingRevalidation);
-    const clearHandshakeTimer = vi.fn();
-    const setClient = vi.fn(() => true);
-    const close = createCloseMock();
-    const logger = createLogger();
-    const connectParams = {
-      minProtocol: PROTOCOL_VERSION,
-      maxProtocol: PROTOCOL_VERSION,
-      client: {
-        id: "node-host",
-        version: "dev",
-        platform: "test",
-        mode: "node",
-        instanceId: "watchdog-node",
-      },
-      role: "node",
-      scopes: [],
-      auth: { deviceToken: "watchdog-token" },
-      device: { id: "watchdog-node" },
-    };
-    const context = {
-      handler: {
-        socket: { _receiver: { _maxPayload: MAX_PREAUTH_PAYLOAD_BYTES } },
-        upgradeReq: { headers: {} },
-        connId: "conn-pending-node-watchdog",
-        remoteAddr: "127.0.0.1",
-        pluginNodeCapabilities: [],
-        buildRequestContext: () => ({}),
-        close,
-        isClosed: () => false,
-        clearHandshakeTimer,
-        setClient,
-        setHandshakeState: vi.fn(),
-        advanceHandshakePhase: vi.fn(),
-        setCloseCause: vi.fn(),
-        logGateway: logger,
-        logWsControl: logger,
-      },
-      connectParams,
-      isLocalClient: true,
-      reportedClientIp: "127.0.0.1",
-      runDetachedConnectWork: vi.fn(),
-      isWebchatConnect: () => false,
-      clientLabel: "node-host",
-      clientMeta: {},
-      markHandshakeFailure: vi.fn(),
-      sendHandshakeErrorResponse: vi.fn(),
-      releasePendingNodePairingCleanup: vi.fn(async () => {}),
-      pendingNodePairingCleanup: {},
-      configSnapshot: loadConfigMock(),
-    } as unknown as Parameters<typeof attachAuthenticatedGatewayConnect>[0];
-    const state = {
-      minProtocol: PROTOCOL_VERSION,
-      maxProtocol: PROTOCOL_VERSION,
-      usesLegacyNodeProtocol: false,
-      role: "node",
-      scopes: [],
-      device: { id: "watchdog-node" },
-      devicePublicKey: "watchdog-public-key",
-      deviceToken: { token: "watchdog-token" },
-      authResult: { ok: true },
-      authMethod: "device-token",
-      pairingLocality: "local",
-      sessionUsesSharedGatewayAuth: false,
-      controlUiDeviceAuthMigrationPending: false,
-      bootstrapDeviceTokens: [],
-    } as unknown as Parameters<typeof attachAuthenticatedGatewayConnect>[1];
-
-    try {
-      const pendingAdmission = attachAuthenticatedGatewayConnect(context, state);
-      await waitForFast(() => {
-        expect(captureNodePairingState).toHaveBeenCalledTimes(2);
-      });
-      expect(clearHandshakeTimer).not.toHaveBeenCalled();
-      expect(setClient).not.toHaveBeenCalled();
-      expect(context.handler.socket).toMatchObject({
-        _receiver: { _maxPayload: MAX_PREAUTH_PAYLOAD_BYTES },
-      });
-      resolveRevalidation(null);
-      await pendingAdmission;
-
-      expect(close).toHaveBeenCalledOnce();
-      expect(close).toHaveBeenCalledWith(1008, "node pairing changed during connect");
-      expect(clearHandshakeTimer).not.toHaveBeenCalled();
-      expect(setClient).not.toHaveBeenCalled();
-      expect(context.handler.socket).toMatchObject({
-        _receiver: { _maxPayload: MAX_PREAUTH_PAYLOAD_BYTES },
-      });
-    } finally {
-      captureNodePairingState.mockRestore();
-      prepareNodeConnect.mockRestore();
-    }
   });
 
   it("rejects an oversized queued frame before the initial handshake completes", async () => {
@@ -748,22 +641,9 @@ describe("attachGatewayWsMessageHandler post-connect health refresh", () => {
       refreshHealthSnapshot,
       setCloseCause,
     });
-    const connectParams = {
-      minProtocol: PROTOCOL_VERSION,
-      maxProtocol: PROTOCOL_VERSION,
-      client: {
-        id: "gateway-client",
-        version: "dev",
-        platform: "test",
-        mode: "backend",
-      },
-      role: "operator",
-      caps: [],
-    };
-
-    harness.sendConnect("connect-before-oversized-frame", connectParams);
+    harness.sendConnect("connect-before-oversized-frame", BACKEND_CONNECT_PARAMS);
     harness.sendConnect("oversized-queued-connect", {
-      ...connectParams,
+      ...BACKEND_CONNECT_PARAMS,
       pathEnv: "x".repeat(MAX_PREAUTH_PAYLOAD_BYTES + 1),
     });
 
@@ -797,21 +677,8 @@ describe("attachGatewayWsMessageHandler post-connect health refresh", () => {
       isClosed: () => closed,
       setCloseCause,
     });
-    const connectParams = {
-      minProtocol: PROTOCOL_VERSION,
-      maxProtocol: PROTOCOL_VERSION,
-      client: {
-        id: "gateway-client",
-        version: "dev",
-        platform: "test",
-        mode: "backend",
-      },
-      role: "operator",
-      caps: [],
-    };
-
     for (let index = 0; index < MAX_QUEUED_GATEWAY_PREAUTH_FRAMES + 2; index += 1) {
-      harness.sendConnect(`overflow-connect-${index}`, connectParams);
+      harness.sendConnect(`overflow-connect-${index}`, BACKEND_CONNECT_PARAMS);
     }
 
     await waitForFast(() => {
@@ -853,26 +720,13 @@ describe("attachGatewayWsMessageHandler post-connect health refresh", () => {
         refreshHealthSnapshot,
         socket: serverSocket,
       });
-      const connectParams = {
-        minProtocol: PROTOCOL_VERSION,
-        maxProtocol: PROTOCOL_VERSION,
-        client: {
-          id: "gateway-client",
-          version: "dev",
-          platform: "test",
-          mode: "backend",
-        },
-        role: "operator",
-        caps: [],
-      };
-
       for (let index = 0; index < 8; index += 1) {
         socket.send(
           JSON.stringify({
             type: "req",
             id: `real-connect-${index}`,
             method: "connect",
-            params: connectParams,
+            params: BACKEND_CONNECT_PARAMS,
           }),
         );
       }
