@@ -58,6 +58,7 @@ import {
   createGatewayWsTestRequestContext,
   createGatewayWsTestSocket,
 } from "./ws-connection.test-helpers.js";
+import { MAX_QUEUED_GATEWAY_PREAUTH_FRAMES } from "./ws-connection/preauth-ingress.js";
 
 type StartupConnectResponse = {
   type?: unknown;
@@ -260,6 +261,27 @@ function seedProvisioningNodeSetup() {
 }
 
 describe("attachGatewayWsConnectionHandler startup readiness", () => {
+  it("applies the shared preauth queue limit while the message handler loads", async () => {
+    const socket = createGatewayWsTestSocket();
+
+    attachGatewayWsForTest({
+      attach: attachGatewayWsConnectionHandler,
+      socket,
+      options: {
+        getResolvedAuth: () => ({ mode: "none", allowTailscale: false }),
+        buildRequestContext: () => createGatewayWsTestRequestContext() as never,
+      },
+    });
+
+    for (let index = 0; index <= MAX_QUEUED_GATEWAY_PREAUTH_FRAMES; index += 1) {
+      socket.emit("message", Buffer.from(`queued-${index}`));
+    }
+
+    expect(socket.close).toHaveBeenCalledWith(1008, "gateway message handler loading");
+    socket.emit("close", 1008, Buffer.from("gateway message handler loading"));
+    await vi.dynamicImportSettled();
+  });
+
   it("admits only one of two connect frames that race during lazy handler loading", async () => {
     const sent: unknown[] = [];
     const clients = new Set<unknown>();

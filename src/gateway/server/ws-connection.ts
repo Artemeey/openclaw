@@ -56,6 +56,7 @@ import {
   GatewayNodeLifecycleDispatchTracker,
   NODE_LIFECYCLE_DISPATCH_DRAIN_TIMEOUT_MS,
 } from "./ws-connection/node-lifecycle-dispatch.js";
+import { MAX_QUEUED_GATEWAY_PREAUTH_FRAMES } from "./ws-connection/preauth-ingress.js";
 import {
   attachWorkerWsMessageHandler,
   type WorkerConnectionService,
@@ -118,7 +119,7 @@ function attachGatewayWsMessageHandlerOnDemand(
 ): void {
   const queued: RawData[] = [];
   const queueMessage = (data: RawData) => {
-    if (queued.length >= 16) {
+    if (queued.length >= MAX_QUEUED_GATEWAY_PREAUTH_FRAMES) {
       params.setCloseCause("message-handler-loading-overflow", {
         queuedFrames: queued.length,
       });

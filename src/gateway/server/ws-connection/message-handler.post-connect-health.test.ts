@@ -147,6 +147,7 @@ vi.mock("../health-state.js", () => ({
 }));
 
 import { attachGatewayWsMessageHandler } from "./message-handler.js";
+import { MAX_QUEUED_GATEWAY_PREAUTH_FRAMES } from "./preauth-ingress.js";
 
 const DEVICE_TOKEN_MUTATION_PARAMS = {
   deviceId: "device-1",
@@ -809,7 +810,7 @@ describe("attachGatewayWsMessageHandler post-connect health refresh", () => {
       caps: [],
     };
 
-    for (let index = 0; index < 18; index += 1) {
+    for (let index = 0; index < MAX_QUEUED_GATEWAY_PREAUTH_FRAMES + 2; index += 1) {
       harness.sendConnect(`overflow-connect-${index}`, connectParams);
     }
 
@@ -817,7 +818,7 @@ describe("attachGatewayWsMessageHandler post-connect health refresh", () => {
       expect(close).toHaveBeenCalledWith(1008, "too many pending handshake frames");
     });
     expect(setCloseCause).toHaveBeenCalledWith("handshake-message-overflow", {
-      queuedFrames: 16,
+      queuedFrames: MAX_QUEUED_GATEWAY_PREAUTH_FRAMES,
     });
     expect(harness.client).toBeNull();
     expect(harness.setClient).not.toHaveBeenCalled();

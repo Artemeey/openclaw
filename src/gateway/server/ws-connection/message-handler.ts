@@ -56,10 +56,10 @@ export type {
   GatewayWsMessageHandlerParams,
   WsOriginCheckMetrics,
 } from "./message-handler-types.js";
+import { MAX_QUEUED_GATEWAY_PREAUTH_FRAMES } from "./preauth-ingress.js";
 
 const GATEWAY_WORK_ADMISSION_RETRY_AFTER_MS = 1_000;
 const GATEWAY_WORK_ADMISSION_CLOSE_CODE = 1013;
-const MAX_QUEUED_GATEWAY_HANDSHAKE_FRAMES = 16;
 function claimsWorkerConnectionIdentity(value: unknown): boolean {
   if (!value || typeof value !== "object") {
     return false;
@@ -537,7 +537,7 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
         queuedHandshakeFrames.length = 0;
         return;
       }
-      if (queuedHandshakeFrames.length >= MAX_QUEUED_GATEWAY_HANDSHAKE_FRAMES) {
+      if (queuedHandshakeFrames.length >= MAX_QUEUED_GATEWAY_PREAUTH_FRAMES) {
         setHandshakeState("failed");
         setCloseCause("handshake-message-overflow", {
           queuedFrames: queuedHandshakeFrames.length,
