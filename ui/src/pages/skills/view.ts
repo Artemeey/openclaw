@@ -433,7 +433,7 @@ function renderClawHubResults(props: SkillsProps) {
   }
   return html`
     ${results.map((r) => {
-      const iconUrl = r.icon ? props.clawhubIconUrls[r.icon] : undefined;
+      const iconUrl = props.clawhubIconUrls[r.icon ?? ""];
       // Same slug can appear once per publisher, so the reference is the only thing that tells
       // otherwise identical rows apart — and it is what install sends back.
       const ref = clawHubSkillRef(r);
@@ -491,8 +491,7 @@ function renderClawHubResults(props: SkillsProps) {
 
 function renderClawHubDetailDialog(props: SkillsProps) {
   const detail = props.clawhubDetail;
-  const detailIcon = detail?.skill?.icon;
-  const detailImageUrl = detailIcon ? props.clawhubIconUrls[detailIcon] : undefined;
+  const detailImageUrl = props.clawhubIconUrls[detail?.skill?.icon ?? ""];
 
   return html`
     <openclaw-modal-dialog
