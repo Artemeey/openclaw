@@ -372,7 +372,13 @@ function createDiscordGatewayMetadataFetch(
 ): DiscordGatewayFetch {
   const providerEndpoint = getDiscordProviderEndpointRuntime();
   if (providerEndpoint) {
-    return (input, init) => providerEndpoint.fetch(input, init as RequestInit | undefined);
+    return (input, init) => {
+      const signal = init?.signal instanceof AbortSignal ? init.signal : undefined;
+      return providerEndpoint.fetch(input, {
+        ...(init?.headers ? { headers: init.headers } : {}),
+        ...(signal ? { signal } : {}),
+      });
+    };
   }
   return (input, init) =>
     fetchDiscordGatewayMetadataGuarded(input, init, {

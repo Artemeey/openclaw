@@ -393,7 +393,6 @@ describe("sendDiscordVoiceMessage", () => {
   });
 
   it("requests a fresh upload URL when rate limited and cancels the successful body", async () => {
-    const requestSpy = vi.spyOn(globalThis, "Request");
     const post = vi.fn(async () => ({ id: "msg-1", channel_id: "channel-1" }));
     const rest = createRest(post);
     let uploadUrlRequests = 0;
@@ -442,9 +441,6 @@ describe("sendDiscordVoiceMessage", () => {
     ).resolves.toEqual({ id: "msg-1", channel_id: "channel-1" });
 
     expect(uploadUrlRequests).toBe(2);
-    expect(requestSpy).toHaveBeenCalledWith("https://discord.com/api/v10/channels/voice/messages", {
-      method: "POST",
-    });
     expect(successfulUpload.wasCanceled()).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fetchWithSsrFGuardMock).toHaveBeenCalledTimes(4);

@@ -1,6 +1,5 @@
 // Discord plugin module owns private alternate-provider endpoint routing.
 import { readResponseWithLimit } from "openclaw/plugin-sdk/response-limit-runtime";
-import { createPluginRuntimeStore } from "openclaw/plugin-sdk/runtime-store";
 import {
   fetchWithSsrFGuard,
   isBlockedHostnameOrIp,
@@ -8,35 +7,27 @@ import {
   type SsrFPolicy,
 } from "openclaw/plugin-sdk/ssrf-runtime";
 import {
-  DISCORD_PROVIDER_ENDPOINT_BOOTSTRAP_STORE_KEY,
+  DISCORD_PROVIDER_ENDPOINT_ENV_KEYS,
   type DiscordProviderEndpointDescriptor,
 } from "./provider-endpoint.constants.js";
 
-const DISCORD_PROVIDER_ENDPOINT_DESCRIPTOR_MAX_BYTES = 8 * 1024;
+const DISCORD_PROVIDER_ENDPOINT_ENV_MAX_BYTES = 8 * 1024;
 const DISCORD_PROVIDER_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
+const DISCORD_PROVIDER_ENDPOINT_REQUIRED_ENV = Object.values(DISCORD_PROVIDER_ENDPOINT_ENV_KEYS);
 
 type DiscordProviderEndpointRuntime = Readonly<{
   descriptor: DiscordProviderEndpointDescriptor;
   fetch: typeof fetch;
 }>;
 
-type DiscordProviderEndpointBootstrap =
-  | Readonly<{ status: "open" }>
-  | Readonly<{ status: "configured"; runtime: DiscordProviderEndpointRuntime }>
-  | Readonly<{ status: "sealed"; runtime: DiscordProviderEndpointRuntime | undefined }>
+type DiscordProviderEndpointInitialization =
+  | Readonly<{ status: "uninitialized" }>
+  | Readonly<{ status: "initialized"; runtime: DiscordProviderEndpointRuntime | undefined }>
   | Readonly<{ status: "failed"; error: Error }>;
 
-const {
-  setRuntime: setProviderEndpointBootstrap,
-  tryGetRuntime: getOptionalProviderEndpointBootstrap,
-} = createPluginRuntimeStore<DiscordProviderEndpointBootstrap>({
-  key: DISCORD_PROVIDER_ENDPOINT_BOOTSTRAP_STORE_KEY,
-  errorMessage: "Discord provider endpoint bootstrap not initialized",
-});
-
-function getProviderEndpointBootstrap(): DiscordProviderEndpointBootstrap {
-  return getOptionalProviderEndpointBootstrap() ?? { status: "open" };
-}
+let providerEndpointInitialization: DiscordProviderEndpointInitialization = {
+  status: "uninitialized",
+};
 
 function parseHttpAnchor(value: string, label: string): URL {
   let url: URL;
@@ -92,15 +83,6 @@ function normalizeGatewayOrigin(value: string): string {
 function normalizeDescriptor(
   descriptor: DiscordProviderEndpointDescriptor,
 ): DiscordProviderEndpointDescriptor {
-  const rawBytes = Object.values(descriptor).reduce(
-    (total, value) => total + Buffer.byteLength(value, "utf8"),
-    0,
-  );
-  if (rawBytes > DISCORD_PROVIDER_ENDPOINT_DESCRIPTOR_MAX_BYTES) {
-    throw new Error(
-      `Discord provider endpoint descriptor exceeds ${DISCORD_PROVIDER_ENDPOINT_DESCRIPTOR_MAX_BYTES} aggregate bytes`,
-    );
-  }
   const restApiBaseUrl = normalizeRestApiBaseUrl(descriptor.restApiBaseUrl);
   const gatewayBotUrl = parseHttpAnchor(
     descriptor.gatewayBotUrl,
@@ -111,6 +93,40 @@ function normalizeDescriptor(
     gatewayBotUrl: gatewayBotUrl.toString(),
     gatewayOrigin: normalizeGatewayOrigin(descriptor.gatewayOrigin),
   });
+}
+
+function parseProviderEndpointEnv(
+  env: NodeJS.ProcessEnv,
+): DiscordProviderEndpointDescriptor | undefined {
+  const rawDescriptor = {
+    restApiBaseUrl: env[DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.restApiBaseUrl],
+    gatewayBotUrl: env[DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayBotUrl],
+    gatewayOrigin: env[DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayOrigin],
+  };
+  const rawBytes = Object.values(rawDescriptor).reduce(
+    (total, value) => total + Buffer.byteLength(value ?? "", "utf8"),
+    0,
+  );
+  if (rawBytes > DISCORD_PROVIDER_ENDPOINT_ENV_MAX_BYTES) {
+    throw new Error(
+      `Discord provider endpoint environment exceeds ${DISCORD_PROVIDER_ENDPOINT_ENV_MAX_BYTES} aggregate bytes`,
+    );
+  }
+  const descriptor = {
+    restApiBaseUrl: rawDescriptor.restApiBaseUrl?.trim() ?? "",
+    gatewayBotUrl: rawDescriptor.gatewayBotUrl?.trim() ?? "",
+    gatewayOrigin: rawDescriptor.gatewayOrigin?.trim() ?? "",
+  };
+  const configuredValues = Object.values(descriptor).filter(Boolean).length;
+  if (configuredValues === 0) {
+    return undefined;
+  }
+  if (configuredValues !== DISCORD_PROVIDER_ENDPOINT_REQUIRED_ENV.length) {
+    throw new Error(
+      `Discord provider endpoint requires ${DISCORD_PROVIDER_ENDPOINT_REQUIRED_ENV.join(", ")} to be set together`,
+    );
+  }
+  return normalizeDescriptor(descriptor);
 }
 
 function isWithinRestApiBase(target: URL, restApiBaseUrl: URL): boolean {
@@ -138,13 +154,14 @@ function assertProviderHttpTarget(
 }
 
 function requestInitFromRequest(request: Request): RequestInit {
-  const duplex = (request as Request & { duplex?: "half" }).duplex;
+  const rawDuplex: unknown = Reflect.get(request, "duplex");
+  const duplex = rawDuplex === "half" ? rawDuplex : undefined;
   return {
     method: request.method,
     headers: request.headers,
     ...(request.body
       ? {
-          body: request.body as BodyInit,
+          body: request.body,
           ...(duplex ? { duplex } : {}),
         }
       : {}),
@@ -182,7 +199,7 @@ function createProviderFetch(descriptor: DiscordProviderEndpointDescriptor): typ
             ),
         },
       );
-      return new Response(body.byteLength > 0 ? (body as unknown as BodyInit) : null, {
+      return new Response(body.byteLength > 0 ? new Uint8Array(body) : null, {
         status: guarded.response.status,
         statusText: guarded.response.statusText,
         headers: guarded.response.headers,
@@ -193,49 +210,35 @@ function createProviderFetch(descriptor: DiscordProviderEndpointDescriptor): typ
   };
 }
 
-/** Configure the private endpoint exactly once, before Discord runtime startup seals the seam. */
-export function setDiscordProviderEndpointDescriptor(
-  descriptor: DiscordProviderEndpointDescriptor,
-): void {
-  const bootstrap = getProviderEndpointBootstrap();
-  if (bootstrap.status === "failed") {
-    throw bootstrap.error;
+/** Snapshot the private endpoint once, before any Discord account can start. */
+export function initializeDiscordProviderEndpointFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): DiscordProviderEndpointRuntime | undefined {
+  if (providerEndpointInitialization.status === "initialized") {
+    return providerEndpointInitialization.runtime;
   }
-  if (bootstrap.status !== "open") {
-    throw new Error("Discord provider endpoint must be configured exactly once before startup");
+  if (providerEndpointInitialization.status === "failed") {
+    throw providerEndpointInitialization.error;
   }
+
   try {
-    const normalized = normalizeDescriptor(descriptor);
-    setProviderEndpointBootstrap({
-      status: "configured",
-      runtime: Object.freeze({ descriptor: normalized, fetch: createProviderFetch(normalized) }),
-    });
+    const descriptor = parseProviderEndpointEnv(env);
+    const runtime = descriptor
+      ? Object.freeze({ descriptor, fetch: createProviderFetch(descriptor) })
+      : undefined;
+    providerEndpointInitialization = { status: "initialized", runtime };
+    return runtime;
   } catch (error) {
     const resolvedError = error instanceof Error ? error : new Error(String(error));
-    // Invalid bootstrap input must not fall through to live Discord routing if its caller catches.
-    setProviderEndpointBootstrap({ status: "failed", error: resolvedError });
+    // Cache invalid input too: late environment mutation must not change routing after startup.
+    providerEndpointInitialization = { status: "failed", error: resolvedError };
     throw resolvedError;
   }
 }
 
-/** Seal the startup-only bootstrap before the Discord runtime becomes visible. */
-export function sealDiscordProviderEndpoint(): DiscordProviderEndpointRuntime | undefined {
-  const bootstrap = getProviderEndpointBootstrap();
-  if (bootstrap.status === "failed") {
-    throw bootstrap.error;
-  }
-  if (bootstrap.status === "sealed") {
-    return bootstrap.runtime;
-  }
-  const runtime = bootstrap.status === "configured" ? bootstrap.runtime : undefined;
-  setProviderEndpointBootstrap({ status: "sealed", runtime });
-  return runtime;
-}
-
 export function getDiscordProviderEndpointRuntime(): DiscordProviderEndpointRuntime | undefined {
-  const bootstrap = getProviderEndpointBootstrap();
-  return bootstrap.status === "configured" || bootstrap.status === "sealed"
-    ? bootstrap.runtime
+  return providerEndpointInitialization.status === "initialized"
+    ? providerEndpointInitialization.runtime
     : undefined;
 }
 

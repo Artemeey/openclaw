@@ -2,9 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DISCORD_DEFAULT_REST_API_BASE_URL,
+  DISCORD_PROVIDER_ENDPOINT_ENV_KEYS,
   type DiscordProviderEndpointDescriptor,
 } from "./provider-endpoint.constants.js";
-import { resetDiscordProviderEndpointForTest } from "./provider-endpoint.test-support.js";
 
 const { fetchWithSsrFGuardMock, releaseMock } = vi.hoisted(() => ({
   fetchWithSsrFGuardMock: vi.fn(),
@@ -29,8 +29,25 @@ const TEST_DESCRIPTOR: DiscordProviderEndpointDescriptor = {
 function initializeProviderEndpoint(
   descriptor: DiscordProviderEndpointDescriptor = TEST_DESCRIPTOR,
 ) {
-  providerEndpoint.setDiscordProviderEndpointDescriptor(descriptor);
-  return providerEndpoint.getDiscordProviderEndpointRuntime();
+  return providerEndpoint.initializeDiscordProviderEndpointFromEnv(providerEndpointEnv(descriptor));
+}
+
+function providerEndpointEnv(
+  descriptor: DiscordProviderEndpointDescriptor = TEST_DESCRIPTOR,
+): NodeJS.ProcessEnv {
+  return {
+    [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.restApiBaseUrl]: descriptor.restApiBaseUrl,
+    [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayBotUrl]: descriptor.gatewayBotUrl,
+    [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayOrigin]: descriptor.gatewayOrigin,
+  };
+}
+
+function stubProviderEndpointEnv(
+  descriptor: DiscordProviderEndpointDescriptor = TEST_DESCRIPTOR,
+): void {
+  for (const [key, value] of Object.entries(providerEndpointEnv(descriptor))) {
+    vi.stubEnv(key, value);
+  }
 }
 
 function captureError(run: () => unknown): Error {
@@ -46,8 +63,15 @@ function captureError(run: () => unknown): Error {
 }
 
 describe("Discord provider endpoint runtime", () => {
+  it("defines the exact private environment contract", () => {
+    expect(DISCORD_PROVIDER_ENDPOINT_ENV_KEYS).toEqual({
+      restApiBaseUrl: "DISCORD_REST_API_BASE_URL",
+      gatewayBotUrl: "DISCORD_GATEWAY_BOT_URL",
+      gatewayOrigin: "DISCORD_GATEWAY_ORIGIN",
+    });
+  });
+
   beforeEach(async () => {
-    resetDiscordProviderEndpointForTest();
     vi.resetModules();
     fetchWithSsrFGuardMock.mockReset().mockResolvedValue({
       response: new Response(JSON.stringify({ ok: true }), {
@@ -66,11 +90,22 @@ describe("Discord provider endpoint runtime", () => {
   });
 
   it("is absent for missing input and preserves the live REST base", () => {
+    expect(providerEndpoint.initializeDiscordProviderEndpointFromEnv({})).toBeUndefined();
     expect(providerEndpoint.getDiscordProviderEndpointRuntime()).toBeUndefined();
     expect(DISCORD_DEFAULT_REST_API_BASE_URL).toBe("https://discord.com/api/v10");
   });
 
-  it("stores three independent normalized anchors from the private bootstrap", () => {
+  it("is absent for whitespace-only input", () => {
+    expect(
+      providerEndpoint.initializeDiscordProviderEndpointFromEnv({
+        [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.restApiBaseUrl]: "  ",
+        [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayBotUrl]: "\t",
+        [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayOrigin]: "\n",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("stores three independent normalized anchors from the private environment", () => {
     initializeProviderEndpoint();
 
     expect(providerEndpoint.getDiscordProviderEndpointRuntime()?.descriptor).toEqual({
@@ -80,68 +115,115 @@ describe("Discord provider endpoint runtime", () => {
     });
   });
 
-  it("does not read ambient endpoint variables while installing the Discord runtime", () => {
-    vi.stubEnv("DISCORD_REST_API_BASE_URL", TEST_DESCRIPTOR.restApiBaseUrl);
-    vi.stubEnv("DISCORD_GATEWAY_BOT_URL", TEST_DESCRIPTOR.gatewayBotUrl);
-    vi.stubEnv("DISCORD_GATEWAY_ORIGIN", TEST_DESCRIPTOR.gatewayOrigin);
+  it("reads the private endpoint while installing the Discord runtime", () => {
+    stubProviderEndpointEnv();
 
     setDiscordRuntime({} as Parameters<typeof setDiscordRuntime>[0]);
 
-    expect(providerEndpoint.getDiscordProviderEndpointRuntime()).toBeUndefined();
+    expect(providerEndpoint.getDiscordProviderEndpointRuntime()?.descriptor.restApiBaseUrl).toBe(
+      "http://127.0.0.1:43123/custom/rest/v10",
+    );
   });
 
-  it("keeps Discord runtime installation closed after caching invalid bootstrap input", () => {
-    const cachedError = captureError(() =>
-      initializeProviderEndpoint({
-        ...TEST_DESCRIPTOR,
-        restApiBaseUrl: "http://provider.example/custom/rest/v10",
-      }),
-    );
+  it("keeps Discord runtime installation closed after caching partial endpoint input", () => {
+    vi.stubEnv(DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.restApiBaseUrl, TEST_DESCRIPTOR.restApiBaseUrl);
     const runtime = {} as Parameters<typeof setDiscordRuntime>[0];
 
-    expect(() => setDiscordRuntime(runtime)).toThrow(cachedError);
+    expect(() => setDiscordRuntime(runtime)).toThrow(/DISCORD_GATEWAY_BOT_URL/);
+    stubProviderEndpointEnv();
+    expect(() => setDiscordRuntime(runtime)).toThrow(/DISCORD_GATEWAY_BOT_URL/);
     expect(providerEndpoint.getDiscordProviderEndpointRuntime()).toBeUndefined();
   });
 
-  it("accepts exactly one bootstrap descriptor", () => {
+  it("snapshots the first endpoint and ignores later environment mutation", () => {
     const first = initializeProviderEndpoint();
     const replacementDescriptor = {
       ...TEST_DESCRIPTOR,
       restApiBaseUrl: "http://127.0.0.1:43125/replacement/rest/v10",
     };
-
-    expect(() => initializeProviderEndpoint(replacementDescriptor)).toThrow(
-      /configured exactly once before startup/,
+    const second = providerEndpoint.initializeDiscordProviderEndpointFromEnv(
+      providerEndpointEnv(replacementDescriptor),
     );
-    expect(providerEndpoint.getDiscordProviderEndpointRuntime()).toBe(first);
+
+    expect(second).toBe(first);
+    expect(second?.descriptor.restApiBaseUrl).toBe("http://127.0.0.1:43123/custom/rest/v10");
   });
 
-  it("keeps an absent startup endpoint absent after the runtime seals the bootstrap", () => {
-    setDiscordRuntime({} as Parameters<typeof setDiscordRuntime>[0]);
+  it("keeps an absent startup endpoint absent after late configuration", () => {
+    expect(providerEndpoint.initializeDiscordProviderEndpointFromEnv({})).toBeUndefined();
 
-    expect(() => initializeProviderEndpoint()).toThrow(/configured exactly once before startup/);
+    expect(
+      providerEndpoint.initializeDiscordProviderEndpointFromEnv(providerEndpointEnv()),
+    ).toBeUndefined();
     expect(providerEndpoint.getDiscordProviderEndpointRuntime()).toBeUndefined();
   });
 
-  it("rejects aggregate bootstrap input larger than 8 KiB", () => {
+  it.each([
+    {
+      [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.restApiBaseUrl]: TEST_DESCRIPTOR.restApiBaseUrl,
+    },
+    {
+      [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayBotUrl]: TEST_DESCRIPTOR.gatewayBotUrl,
+    },
+    {
+      [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayOrigin]: TEST_DESCRIPTOR.gatewayOrigin,
+    },
+    {
+      ...providerEndpointEnv(),
+      [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayBotUrl]: " ",
+    },
+  ])("fails closed on partial endpoint input %#", (env) => {
+    expect(() => providerEndpoint.initializeDiscordProviderEndpointFromEnv(env)).toThrow(
+      "Discord provider endpoint requires DISCORD_REST_API_BASE_URL, DISCORD_GATEWAY_BOT_URL, DISCORD_GATEWAY_ORIGIN to be set together",
+    );
+    expect(providerEndpoint.getDiscordProviderEndpointRuntime()).toBeUndefined();
+  });
+
+  it("rejects aggregate endpoint environment larger than 8 KiB", () => {
     expect(() =>
-      initializeProviderEndpoint({
-        ...TEST_DESCRIPTOR,
-        restApiBaseUrl: `https://provider.example/${"x".repeat(8 * 1024)}`,
+      providerEndpoint.initializeDiscordProviderEndpointFromEnv({
+        ...providerEndpointEnv(),
+        [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.restApiBaseUrl]: `https://provider.example/${"x".repeat(8 * 1024)}`,
       }),
     ).toThrow(/exceeds 8192 aggregate bytes/);
   });
 
-  it("caches invalid bootstrap input instead of accepting a late replacement", () => {
+  it("counts surrounding whitespace toward the aggregate environment limit", () => {
+    const env = providerEndpointEnv();
+    const rawBytes = Object.values(env).reduce(
+      (total, value) => total + Buffer.byteLength(value ?? "", "utf8"),
+      0,
+    );
+    const padding = " ".repeat(8 * 1024 - rawBytes + 1);
+
+    expect(() =>
+      providerEndpoint.initializeDiscordProviderEndpointFromEnv({
+        ...env,
+        [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.restApiBaseUrl]: `${padding}${TEST_DESCRIPTOR.restApiBaseUrl}`,
+      }),
+    ).toThrow(/exceeds 8192 aggregate bytes/);
+  });
+
+  it("rejects aggregate oversized whitespace-only input before treating it as absent", () => {
+    expect(() =>
+      providerEndpoint.initializeDiscordProviderEndpointFromEnv({
+        [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.restApiBaseUrl]: " ".repeat(3_000),
+        [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayBotUrl]: " ".repeat(3_000),
+        [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayOrigin]: " ".repeat(2_193),
+      }),
+    ).toThrow(/exceeds 8192 aggregate bytes/);
+    expect(providerEndpoint.getDiscordProviderEndpointRuntime()).toBeUndefined();
+  });
+
+  it("caches partial startup input instead of accepting a late replacement", () => {
     const firstError = captureError(() =>
-      initializeProviderEndpoint({
-        ...TEST_DESCRIPTOR,
-        gatewayOrigin: "ws://provider.example",
+      providerEndpoint.initializeDiscordProviderEndpointFromEnv({
+        [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.restApiBaseUrl]: TEST_DESCRIPTOR.restApiBaseUrl,
       }),
     );
     const secondError = captureError(() => initializeProviderEndpoint());
 
-    expect(firstError.message).toContain("WSS or loopback WS");
+    expect(firstError.message).toContain("DISCORD_GATEWAY_BOT_URL");
     expect(secondError).toBe(firstError);
     expect(providerEndpoint.getDiscordProviderEndpointRuntime()).toBeUndefined();
   });

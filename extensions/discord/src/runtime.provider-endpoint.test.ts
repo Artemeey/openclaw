@@ -1,13 +1,13 @@
 // Discord tests prove endpoint initialization happens before the runtime becomes visible.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { sealEndpointMock, setRuntimeStoreMock } = vi.hoisted(() => ({
-  sealEndpointMock: vi.fn(),
+const { initializeEndpointMock, setRuntimeStoreMock } = vi.hoisted(() => ({
+  initializeEndpointMock: vi.fn(),
   setRuntimeStoreMock: vi.fn(),
 }));
 
 vi.mock("./provider-endpoint.js", () => ({
-  sealDiscordProviderEndpoint: sealEndpointMock,
+  initializeDiscordProviderEndpointFromEnv: initializeEndpointMock,
 }));
 
 vi.mock("openclaw/plugin-sdk/runtime-store", () => ({
@@ -22,32 +22,32 @@ import { setDiscordRuntime } from "./runtime.js";
 
 describe("Discord provider endpoint runtime ordering", () => {
   beforeEach(() => {
-    sealEndpointMock.mockReset();
+    initializeEndpointMock.mockReset();
     setRuntimeStoreMock.mockReset();
   });
 
-  it("seals the endpoint before exposing the Discord runtime", () => {
+  it("initializes the endpoint before exposing the Discord runtime", () => {
     const runtime = {} as Parameters<typeof setDiscordRuntime>[0];
 
     setDiscordRuntime(runtime);
 
-    expect(sealEndpointMock).toHaveBeenCalledOnce();
+    expect(initializeEndpointMock).toHaveBeenCalledOnce();
     expect(setRuntimeStoreMock).toHaveBeenCalledWith(runtime);
-    expect(sealEndpointMock.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(initializeEndpointMock.mock.invocationCallOrder[0]).toBeLessThan(
       setRuntimeStoreMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
   });
 
   it("does not expose the Discord runtime when endpoint input is invalid", () => {
     const cachedError = new Error("invalid private endpoint input");
-    sealEndpointMock.mockImplementation(() => {
+    initializeEndpointMock.mockImplementation(() => {
       throw cachedError;
     });
 
     const runtime = {} as Parameters<typeof setDiscordRuntime>[0];
     expect(() => setDiscordRuntime(runtime)).toThrow(cachedError);
     expect(() => setDiscordRuntime(runtime)).toThrow(cachedError);
-    expect(sealEndpointMock).toHaveBeenCalledTimes(2);
+    expect(initializeEndpointMock).toHaveBeenCalledTimes(2);
     expect(setRuntimeStoreMock).not.toHaveBeenCalled();
   });
 });

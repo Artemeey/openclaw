@@ -2,14 +2,11 @@
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { resolveAgentIdFromSessionKey } from "openclaw/plugin-sdk/session-key-runtime";
 import {
+  isRecord,
   normalizeOptionalString,
   normalizeOptionalStringifiedId,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
-import type {
-  PersistedThreadBindingRecord,
-  ThreadBindingRecord,
-  ThreadBindingTargetKind,
-} from "./thread-bindings.types.js";
+import type { ThreadBindingRecord, ThreadBindingTargetKind } from "./thread-bindings.types.js";
 
 export const THREAD_BINDINGS_NAMESPACE = "thread-bindings";
 export const THREAD_BINDINGS_MAX_ENTRIES = 10_000;
@@ -36,17 +33,17 @@ export function normalizePersistedBinding(
   threadIdKey: string,
   raw: unknown,
 ): ThreadBindingRecord | null {
-  if (!raw || typeof raw !== "object") {
+  if (!isRecord(raw)) {
     return null;
   }
-  const value = raw as Partial<PersistedThreadBindingRecord>;
+  const value = raw;
   const threadId = normalizeThreadId(value.threadId ?? threadIdKey);
   const channelId = normalizeOptionalString(value.channelId) ?? "";
   const targetSessionKey = normalizeOptionalString(value.targetSessionKey) ?? "";
   if (!threadId || !channelId || !targetSessionKey) {
     return null;
   }
-  const accountId = normalizeAccountId(value.accountId);
+  const accountId = normalizeAccountId(normalizeOptionalString(value.accountId));
   const targetKind = normalizeTargetKind(value.targetKind, targetSessionKey);
   const agentIdRaw = normalizeOptionalString(value.agentId) ?? "";
   const agentId = agentIdRaw || resolveAgentIdFromSessionKey(targetSessionKey);
@@ -70,8 +67,7 @@ export function normalizePersistedBinding(
     typeof value.maxAgeMs === "number" && Number.isFinite(value.maxAgeMs)
       ? Math.max(0, Math.floor(value.maxAgeMs))
       : undefined;
-  const metadata =
-    value.metadata && typeof value.metadata === "object" ? { ...value.metadata } : undefined;
+  const metadata = isRecord(value.metadata) ? { ...value.metadata } : undefined;
 
   const record: ThreadBindingRecord = {
     accountId,
