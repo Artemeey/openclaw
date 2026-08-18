@@ -133,8 +133,8 @@ export function readCommandDeliveryTarget(params: HandleCommandsParams): string 
 /**
  * Resolves where an exec approval prompt for a command should be delivered:
  * the private owner-DM target when one was resolved, else the originating
- * command surface. Keeps the fallback ternaries in one place so private and
- * origin routing cannot drift between command handlers.
+ * command surface. The originating reviewer device stays separate from a
+ * private delivery target so command handlers cannot drop approval custody.
  */
 export function resolveCommandExecApprovalRoute(params: {
   commandParams: HandleCommandsParams;
@@ -144,6 +144,7 @@ export function resolveCommandExecApprovalRoute(params: {
   currentChannelId: string | undefined;
   currentThreadTs: string | undefined;
   accountId: string | undefined;
+  approvalReviewerDeviceId: string | undefined;
 } {
   const target = params.privateApprovalTarget;
   return {
@@ -157,6 +158,9 @@ export function resolveCommandExecApprovalRoute(params: {
     accountId: target
       ? (target.accountId ?? undefined)
       : (params.commandParams.ctx.AccountId ?? undefined),
+    approvalReviewerDeviceId: normalizeOptionalString(
+      params.commandParams.ctx.ApprovalReviewerDeviceId,
+    ),
   };
 }
 
