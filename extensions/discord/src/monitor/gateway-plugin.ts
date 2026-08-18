@@ -375,10 +375,11 @@ function createDiscordGatewayMetadataFetch(
     proxyUrl?: string;
   },
 ): DiscordGatewayFetch {
-  if (transport?.provider) {
+  const provider = transport?.provider;
+  if (provider) {
     return (input, init) => {
       const signal = init?.signal instanceof AbortSignal ? init.signal : undefined;
-      return transport.provider.fetch(input, {
+      return provider.fetch(input, {
         ...(init?.headers ? { headers: init.headers } : {}),
         ...(signal ? { signal } : {}),
       });
