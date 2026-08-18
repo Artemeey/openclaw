@@ -5,6 +5,7 @@ import {
   DISCORD_PROVIDER_ENDPOINT_ENV_KEYS,
   type DiscordProviderEndpointDescriptor,
 } from "./provider-endpoint.constants.js";
+import { createDiscordProviderEndpointEnvForTest as providerEndpointEnv } from "./provider-endpoint.test-support.js";
 
 const { fetchWithSsrFGuardMock, releaseMock } = vi.hoisted(() => ({
   fetchWithSsrFGuardMock: vi.fn(),
@@ -30,16 +31,6 @@ function initializeProviderEndpoint(
   descriptor: DiscordProviderEndpointDescriptor = TEST_DESCRIPTOR,
 ) {
   return providerEndpoint.initializeDiscordProviderEndpointFromEnv(providerEndpointEnv(descriptor));
-}
-
-function providerEndpointEnv(
-  descriptor: DiscordProviderEndpointDescriptor = TEST_DESCRIPTOR,
-): NodeJS.ProcessEnv {
-  return {
-    [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.restApiBaseUrl]: descriptor.restApiBaseUrl,
-    [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayBotUrl]: descriptor.gatewayBotUrl,
-    [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayOrigin]: descriptor.gatewayOrigin,
-  };
 }
 
 function stubProviderEndpointEnv(
@@ -153,7 +144,9 @@ describe("Discord provider endpoint runtime", () => {
     expect(providerEndpoint.initializeDiscordProviderEndpointFromEnv({})).toBeUndefined();
 
     expect(
-      providerEndpoint.initializeDiscordProviderEndpointFromEnv(providerEndpointEnv()),
+      providerEndpoint.initializeDiscordProviderEndpointFromEnv(
+        providerEndpointEnv(TEST_DESCRIPTOR),
+      ),
     ).toBeUndefined();
     expect(providerEndpoint.getDiscordProviderEndpointRuntime()).toBeUndefined();
   });
@@ -169,7 +162,7 @@ describe("Discord provider endpoint runtime", () => {
       [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayOrigin]: TEST_DESCRIPTOR.gatewayOrigin,
     },
     {
-      ...providerEndpointEnv(),
+      ...providerEndpointEnv(TEST_DESCRIPTOR),
       [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.gatewayBotUrl]: " ",
     },
   ])("fails closed on partial endpoint input %#", (env) => {
@@ -182,14 +175,14 @@ describe("Discord provider endpoint runtime", () => {
   it("rejects aggregate endpoint environment larger than 8 KiB", () => {
     expect(() =>
       providerEndpoint.initializeDiscordProviderEndpointFromEnv({
-        ...providerEndpointEnv(),
+        ...providerEndpointEnv(TEST_DESCRIPTOR),
         [DISCORD_PROVIDER_ENDPOINT_ENV_KEYS.restApiBaseUrl]: `https://provider.example/${"x".repeat(8 * 1024)}`,
       }),
     ).toThrow(/exceeds 8192 aggregate bytes/);
   });
 
   it("counts surrounding whitespace toward the aggregate environment limit", () => {
-    const env = providerEndpointEnv();
+    const env = providerEndpointEnv(TEST_DESCRIPTOR);
     const rawBytes = Object.values(env).reduce(
       (total, value) => total + Buffer.byteLength(value ?? "", "utf8"),
       0,

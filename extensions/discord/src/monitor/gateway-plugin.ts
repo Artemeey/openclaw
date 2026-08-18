@@ -40,6 +40,11 @@ const discordDnsLookup = createDiscordDnsLookup();
 
 type DiscordGatewayWebSocketCtor = typeof ws.WebSocket;
 type DiscordGatewayWebSocketAgent = InstanceType<typeof HttpsAgent> | HttpAgent;
+type DiscordGatewayProviderMode = Readonly<{
+  gatewayBotUrl: string;
+  gatewayOrigin: string;
+  fetch: typeof fetch;
+}>;
 const registrationPromises = new WeakMap<discordGateway.GatewayPlugin, Promise<void>>();
 type DiscordGatewayClient = Parameters<discordGateway.GatewayPlugin["registerClient"]>[0];
 type GatewayPluginTestingOptions = {
@@ -202,12 +207,10 @@ function createGatewayPlugin(params: {
     autoInteractions: boolean;
   };
   gatewayInfoTimeoutMs: number;
-  gatewayBotUrl?: string;
-  gatewayOrigin?: string;
+  provider?: DiscordGatewayProviderMode;
   fetchImpl: DiscordGatewayFetch;
   fetchInit?: DiscordGatewayFetchInit;
   wsAgent?: DiscordGatewayWebSocketAgent;
-  providerEndpointActive?: boolean;
   runtime?: RuntimeEnv;
   testing?: GatewayPluginTestingOptions;
 }): discordGateway.GatewayPlugin {
@@ -235,7 +238,7 @@ function createGatewayPlugin(params: {
       if (!this.gatewayInfo || this.gatewayInfoUsedFallback) {
         const resolved = await fetchDiscordGatewayInfoWithTimeout({
           token: client.options.token,
-          gatewayBotUrl: params.gatewayBotUrl,
+          gatewayBotUrl: params.provider?.gatewayBotUrl,
           fetchImpl: params.fetchImpl,
           fetchInit: params.fetchInit,
           timeoutMs: params.gatewayInfoTimeoutMs,
@@ -245,7 +248,7 @@ function createGatewayPlugin(params: {
             usedFallback: false,
           }))
           .catch((error: unknown) => {
-            if (params.providerEndpointActive) {
+            if (params.provider) {
               throw error;
             }
             return resolveGatewayInfoWithFallback({ runtime: params.runtime, error });
@@ -269,7 +272,7 @@ function createGatewayPlugin(params: {
       if (!url) {
         throw new Error("Gateway URL is required");
       }
-      assertDiscordProviderGatewayUrl(url, params.gatewayOrigin);
+      assertDiscordProviderGatewayUrl(url, params.provider?.gatewayOrigin);
       const wsFlowId = randomUUID();
       // Avoid Node's undici-backed global WebSocket here. We have seen late
       // close-path crashes during Discord gateway teardown; the ws transport is
@@ -367,13 +370,15 @@ function createGatewayPlugin(params: {
 
 function createDiscordGatewayMetadataFetch(
   debugCaptureEnabled: boolean,
-  proxyUrl?: string,
+  transport?: {
+    provider?: DiscordGatewayProviderMode;
+    proxyUrl?: string;
+  },
 ): DiscordGatewayFetch {
-  const providerEndpoint = getDiscordProviderEndpointRuntime();
-  if (providerEndpoint) {
+  if (transport?.provider) {
     return (input, init) => {
       const signal = init?.signal instanceof AbortSignal ? init.signal : undefined;
-      return providerEndpoint.fetch(input, {
+      return transport.provider.fetch(input, {
         ...(init?.headers ? { headers: init.headers } : {}),
         ...(signal ? { signal } : {}),
       });
@@ -389,7 +394,7 @@ function createDiscordGatewayMetadataFetch(
               meta: { subsystem: "discord-gateway-metadata" },
             },
           }),
-      ...(proxyUrl ? { proxyUrl } : {}),
+      ...(transport?.proxyUrl ? { proxyUrl: transport.proxyUrl } : {}),
     });
 }
 
@@ -417,10 +422,15 @@ export function createDiscordGatewayPlugin(params: {
     env: process.env,
   });
   const providerEndpoint = getDiscordProviderEndpointRuntime();
-  const providerGatewayUrl = providerEndpoint
-    ? new URL(providerEndpoint.descriptor.gatewayOrigin)
+  const provider = providerEndpoint
+    ? {
+        gatewayBotUrl: providerEndpoint.descriptor.gatewayBotUrl,
+        gatewayOrigin: providerEndpoint.descriptor.gatewayOrigin,
+        fetch: providerEndpoint.fetch,
+      }
     : undefined;
-  let fetchImpl = createDiscordGatewayMetadataFetch(debugProxySettings.enabled);
+  const providerGatewayUrl = provider ? new URL(provider.gatewayOrigin) : undefined;
+  let fetchImpl = createDiscordGatewayMetadataFetch(debugProxySettings.enabled, { provider });
   let wsAgent: DiscordGatewayWebSocketAgent | undefined =
     providerGatewayUrl?.protocol === "ws:"
       ? undefined
@@ -436,7 +446,9 @@ export function createDiscordGatewayPlugin(params: {
       wsAgent =
         params.testing?.createProxyAgent?.(proxy) ??
         createNodeProxyAgent({ mode: "explicit", proxyUrl: proxy, protocol: "https" });
-      fetchImpl = createDiscordGatewayMetadataFetch(debugProxySettings.enabled, proxy);
+      fetchImpl = createDiscordGatewayMetadataFetch(debugProxySettings.enabled, {
+        proxyUrl: proxy,
+      });
       params.runtime.log?.("discord: gateway proxy enabled");
     } catch (err) {
       params.runtime.error?.(danger(`discord: invalid gateway proxy: ${String(err)}`));
@@ -453,10 +465,8 @@ export function createDiscordGatewayPlugin(params: {
       autoInteractions: false,
     },
     gatewayInfoTimeoutMs,
-    gatewayBotUrl: providerEndpoint?.descriptor.gatewayBotUrl,
-    gatewayOrigin: providerEndpoint?.descriptor.gatewayOrigin,
+    provider,
     fetchImpl,
-    providerEndpointActive: providerEndpoint !== undefined,
     runtime: params.runtime,
     testing: params.testing,
     ...(wsAgent ? { wsAgent } : {}),
