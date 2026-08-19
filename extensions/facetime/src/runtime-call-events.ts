@@ -1,3 +1,4 @@
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
 import {
   isActiveCall,
@@ -13,7 +14,6 @@ import {
 } from "./call-events.js";
 import type { FaceTimeCallRegistry } from "./call-lifecycle.js";
 import type { FaceTimeConfig } from "./config.js";
-import { formatErrorMessage } from "./errors.js";
 import {
   projectFaceTimeNativeAction,
   type FaceTimeHelperPeer,
@@ -51,8 +51,33 @@ export function createFaceTimeCallEventHandler(params: {
   clearPendingDial: () => void;
   persistPendingDial: () => void;
   outboundCarrierPeers: ReadonlyMap<number, FaceTimeHelperPeer>;
-  resolveOutboundOwner: (pending: PendingFaceTimeDial) => AuthenticatedFaceTimeOwner;
+  cancelPendingDial: (pending: PendingFaceTimeDial) => Promise<void>;
 }) {
+  const authorizePendingDial = async (
+    event: FaceTimeCallStatusEvent,
+    pending: PendingFaceTimeDial,
+  ): Promise<AuthenticatedFaceTimeOwner | undefined> => {
+    retainFaceTimeDialCallUUID(pending, readCallUUID(event));
+    params.persistPendingDial();
+    const owner = resolveAuthorizedFaceTimeOwner({
+      event,
+      ownerHandles: params.config.ownerHandles,
+    });
+    if (owner) {
+      return owner;
+    }
+    params.logger.warn(
+      "[facetime] cancelling correlated outbound call because its handle is no longer authorized; add it to ownerHandles before dialing again",
+    );
+    try {
+      await params.cancelPendingDial(pending);
+    } catch (error) {
+      params.logger.warn(
+        `[facetime] outbound authorization cancellation remains pending: ${formatErrorMessage(error)}`,
+      );
+    }
+    return undefined;
+  };
   const retainAliases = (call: ActiveFaceTimeCall, event: FaceTimeCallStatusEvent) => {
     for (const alias of [
       event.data.call_uuid,
@@ -209,14 +234,16 @@ export function createFaceTimeCallEventHandler(params: {
     const pending = params.getPendingDial();
     if (isOutgoingRingingCall(event)) {
       if (verifiedTransport && pending && doesFaceTimeCallMatchPendingDial({ event, pending })) {
-        retainFaceTimeDialCallUUID(pending, callUUID);
-        params.persistPendingDial();
+        const owner = await authorizePendingDial(event, pending);
+        if (!owner) {
+          return;
+        }
         let ringingCall = params.calls.get(callUUID);
         if (!ringingCall && params.calls.size === 0) {
           ringingCall = createManagedCall({
             callUUID,
             phase: "ringing",
-            owner: params.resolveOutboundOwner(pending),
+            owner,
             handle: normalizeFaceTimeHandle(event.data.handle),
             peer,
           });
@@ -263,13 +290,16 @@ export function createFaceTimeCallEventHandler(params: {
           ? pending
           : undefined;
       const owner = authorizedPending
-        ? params.resolveOutboundOwner(authorizedPending)
+        ? await authorizePendingDial(event, authorizedPending)
         : event.data.is_outgoing === true
           ? undefined
           : resolveAuthorizedFaceTimeOwner({
               event,
               ownerHandles: params.config.ownerHandles,
             });
+      if (authorizedPending && !owner) {
+        return;
+      }
       if (authorizedPending && params.calls.active) {
         params.calls.retainAlias(params.calls.active, callUUID);
         params.calls.active.carrierCallUUIDs.add(callUUID);

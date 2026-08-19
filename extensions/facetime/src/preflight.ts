@@ -1,10 +1,10 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { PluginRuntime, RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
-import { resolveConfiguredSecretInputString } from "openclaw/plugin-sdk/secret-input-runtime";
-import { asRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { asRecord, normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { FACETIME_FEED_DEVICE_NAME, FACETIME_MIC_DEVICE_NAME } from "./audio-pump.js";
 import type { FaceTimeConfig } from "./config.js";
-import { formatErrorMessage } from "./errors.js";
+import { agentIdFromSessionKey, resolveFaceTimeRealtimeProvider } from "./talk-driver-config.js";
 
 type RunCommandWithTimeout = PluginRuntime["system"]["runCommandWithTimeout"];
 
@@ -67,7 +67,7 @@ function pushCheck(
   checks.push({ required: true, ...check });
 }
 
-export function parseCoreAudioDeviceNames(systemProfilerOutput: string): string[] {
+function parseCoreAudioDeviceNames(systemProfilerOutput: string): string[] {
   const names: string[] = [];
   for (const line of systemProfilerOutput.split(/\r?\n/u)) {
     const match = line.match(/^\s{8}(.+):\s*$/u);
@@ -78,7 +78,7 @@ export function parseCoreAudioDeviceNames(systemProfilerOutput: string): string[
   return [...new Set(names)];
 }
 
-export function findPhysicalOutputProblem(defaults: DefaultAudioDevices): string | undefined {
+function findPhysicalOutputProblem(defaults: DefaultAudioDevices): string | undefined {
   if (defaults.output.isAggregate) {
     return `system output is aggregate device ${defaults.output.name}`;
   }
@@ -112,34 +112,6 @@ async function checkCallApp(params: {
     ok: false,
     message: "open FaceTime for video calls or Phone for FaceTime audio calls",
   });
-}
-
-async function hasProviderCredential(params: {
-  config: FaceTimeConfig;
-  fullConfig: OpenClawConfig;
-}): Promise<boolean> {
-  const providerId = params.config.realtime.provider;
-  const providerConfig = params.config.realtime.providers[providerId];
-  if (providerConfig && Object.hasOwn(providerConfig, "apiKey")) {
-    const resolved = await resolveConfiguredSecretInputString({
-      config: params.fullConfig,
-      env: process.env,
-      value: providerConfig.apiKey,
-      path: `plugins.entries.facetime.config.realtime.providers.${providerId}.apiKey`,
-    });
-    return Boolean(resolved.value);
-  }
-  const modelProvider = params.fullConfig.models?.providers?.[providerId];
-  if (modelProvider && Object.hasOwn(modelProvider, "apiKey")) {
-    const resolved = await resolveConfiguredSecretInputString({
-      config: params.fullConfig,
-      env: process.env,
-      value: modelProvider.apiKey,
-      path: `models.providers.${providerId}.apiKey`,
-    });
-    return Boolean(resolved.value);
-  }
-  return Boolean(process.env.OPENAI_API_KEY?.trim());
 }
 
 export async function runFaceTimePreflight(params: {
@@ -253,15 +225,24 @@ export async function runFaceTimePreflight(params: {
     });
   }
 
-  const providerCredentialReady = await hasProviderCredential({
-    config: params.config,
-    fullConfig: params.fullConfig,
-  });
+  let providerReady = false;
+  let providerMessage: string;
+  try {
+    const resolved = await resolveFaceTimeRealtimeProvider({
+      config: params.config,
+      fullConfig: params.fullConfig,
+      agentId: agentIdFromSessionKey(params.config.realtime.sessionKey, params.fullConfig),
+    });
+    providerReady = true;
+    providerMessage = `${resolved.provider.id}:${normalizeOptionalString(resolved.providerConfig.model) ?? "provider default"}`;
+  } catch (error) {
+    providerMessage = formatErrorMessage(error);
+  }
   pushCheck(checks, {
     id: "realtime-provider",
-    label: "Realtime provider credentials",
-    ok: providerCredentialReady,
-    message: `${params.config.realtime.provider}:${params.config.realtime.model}`,
+    label: "Realtime provider readiness",
+    ok: providerReady,
+    message: providerMessage,
   });
 
   return {

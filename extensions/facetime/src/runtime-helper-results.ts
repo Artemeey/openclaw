@@ -1,18 +1,14 @@
-import type { FaceTimeHelperPeer, HelperActionResult } from "./helper-rpc.js";
+import {
+  readHelperResults,
+  type FaceTimeHelperPeer,
+  type HelperActionResult,
+} from "./helper-rpc.js";
 import type { ActiveFaceTimeCall } from "./runtime-state.js";
 
 export const OUTBOUND_DIAL_HELPER_BUNDLES = new Set([
   "com.apple.FaceTime",
   "com.apple.FaceTime.FTConversationService",
 ]);
-
-export function readHelperResults(result: HelperActionResult): HelperActionResult[] {
-  return Array.isArray(result.helperResults)
-    ? result.helperResults.filter((entry): entry is HelperActionResult =>
-        Boolean(entry && typeof entry === "object"),
-      )
-    : [result];
-}
 
 export function readHelperPeers(result: HelperActionResult): FaceTimeHelperPeer[] {
   const peers: FaceTimeHelperPeer[] = [];

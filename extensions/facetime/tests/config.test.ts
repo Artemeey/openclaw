@@ -7,6 +7,11 @@ describe("facetime config", () => {
 
     expect(config.ownerHandles).toEqual(["mailto:omar@example.com"]);
     expect(config.realtime.toolPolicy).toBe("owner");
+    expect(config.realtime).toMatchObject({
+      provider: undefined,
+      model: undefined,
+      voice: undefined,
+    });
     expect("helperHost" in config).toBe(false);
     expect("helperPort" in config).toBe(false);
   });

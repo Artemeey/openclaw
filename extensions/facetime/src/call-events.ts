@@ -199,7 +199,7 @@ export function normalizeFaceTimeHandle(value: unknown): string | undefined {
   return normalizeFaceTimeHandleCandidates(value)[0];
 }
 
-export function canonicalizeFaceTimeHandle(value: string): string {
+function canonicalizeFaceTimeHandle(value: string): string {
   const stripped = value
     .trim()
     .toLowerCase()
@@ -269,24 +269,6 @@ export function normalizeFaceTimeCallEvent(value: unknown): FaceTimeCallStatusEv
   };
 }
 
-export function isAuthorizedFaceTimeCall(params: {
-  event: FaceTimeCallStatusEvent;
-  ownerHandles: readonly string[];
-}): boolean {
-  if (!isVerifiedFaceTimeTransport(params.event)) {
-    return false;
-  }
-  const handles = normalizeFaceTimeHandleCandidates(params.event.data.handle);
-  if (handles.length === 0) {
-    return false;
-  }
-  const canonicalHandles = new Set(handles.map(canonicalizeFaceTimeHandle));
-  return params.ownerHandles.some((entry) => {
-    const canonicalEntry = canonicalizeFaceTimeHandle(entry);
-    return canonicalHandles.has(canonicalEntry);
-  });
-}
-
 export function resolveAuthorizedFaceTimeOwner(params: {
   event: FaceTimeCallStatusEvent;
   ownerHandles: readonly string[];
@@ -311,19 +293,6 @@ export function isVerifiedFaceTimeTransport(event: FaceTimeCallStatusEvent): boo
 
 export function isVerifiedFaceTimeTransportEvidence(value: unknown): boolean {
   return normalizeCallTransport(value).kind === "facetime";
-}
-
-export function doesFaceTimeCallMatchHandle(params: {
-  event: FaceTimeCallStatusEvent;
-  handle: string;
-}): boolean {
-  const expected = canonicalizeFaceTimeHandle(params.handle);
-  return (
-    expected.length > 0 &&
-    normalizeFaceTimeHandleCandidates(params.event.data.handle).some(
-      (candidate) => canonicalizeFaceTimeHandle(candidate) === expected,
-    )
-  );
 }
 
 export function isAuthorizedFaceTimeHandle(params: {

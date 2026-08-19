@@ -1,19 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("openclaw/plugin-sdk/secret-input-runtime", () => ({
-  resolveConfiguredSecretInputString: vi.fn(async ({ value }: { value: unknown }) =>
-    typeof value === "string" && value.trim()
-      ? { value: value.trim() }
-      : { value: undefined, unresolvedRefReason: "configured SecretRef is unresolved" },
+vi.mock("openclaw/plugin-sdk/realtime-voice", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("openclaw/plugin-sdk/realtime-voice")>()),
+  resolveConfiguredRealtimeVoiceProvider: vi.fn(
+    ({ providerConfigs }: { providerConfigs?: Record<string, Record<string, unknown>> }) => {
+      const selected = Object.entries(providerConfigs ?? {}).find(
+        ([, config]) => typeof config.apiKey === "string" && config.apiKey.length > 0,
+      );
+      if (!selected) {
+        throw new Error("No configured realtime voice provider registered");
+      }
+      return { provider: { id: selected[0] }, providerConfig: selected[1] };
+    },
   ),
 }));
 
 import { resolveFaceTimeConfig } from "../src/config.js";
-import {
-  findPhysicalOutputProblem,
-  parseCoreAudioDeviceNames,
-  runFaceTimePreflight,
-} from "../src/preflight.js";
+import { runFaceTimePreflight } from "../src/preflight.js";
 
 function runtimeWithCommands(runCommandWithTimeout: ReturnType<typeof vi.fn>) {
   return { system: { runCommandWithTimeout } } as any;
@@ -161,23 +164,45 @@ describe("FaceTime preflight", () => {
     ]);
   });
 
-  it("parses paired device names and rejects virtual or aggregate output", () => {
-    expect(
-      parseCoreAudioDeviceNames(
-        "        OpenClaw-Mic:\n          Manufacturer: OpenClaw\n        OpenClaw-Feed:\n",
-      ),
-    ).toEqual(["OpenClaw-Mic", "OpenClaw-Feed"]);
-    expect(
-      findPhysicalOutputProblem({
-        ...defaults,
-        output: { isAggregate: true, name: "Aggregate Device", uid: "aggregate" },
+  it.each([
+    {
+      name: "aggregate output",
+      output: { isAggregate: true, name: "Aggregate Device", uid: "aggregate" },
+      message: "aggregate",
+    },
+    {
+      name: "virtual output",
+      output: { isAggregate: false, name: "OpenClaw-Feed", uid: "feed" },
+      message: "virtual",
+    },
+  ])("rejects $name at the preflight boundary", async ({ output, message }) => {
+    const runCommandWithTimeout = vi.fn(async (argv: string[]) => {
+      if (argv[0] === "/usr/sbin/system_profiler") {
+        return {
+          code: 0,
+          stdout: "        OpenClaw-Mic:\n        OpenClaw-Feed:\n",
+          stderr: "",
+        };
+      }
+      if (argv.at(-1) === "--default-devices") {
+        return { code: 0, stdout: JSON.stringify({ ...defaults, output }), stderr: "" };
+      }
+      return { code: 0, stdout: "123\n", stderr: "" };
+    });
+    const result = await runFaceTimePreflight({
+      config: resolveFaceTimeConfig({
+        ownerHandles: ["omar@example.com"],
+        realtime: { providers: { openai: { apiKey: "test-api-key" } } },
       }),
-    ).toContain("aggregate");
-    expect(
-      findPhysicalOutputProblem({
-        ...defaults,
-        output: { isAggregate: false, name: "OpenClaw-Feed", uid: "feed" },
-      }),
-    ).toContain("virtual");
+      fullConfig: {} as any,
+      runtime: runtimeWithCommands(runCommandWithTimeout),
+      helperConnected: true,
+      captureBinary: "/capture",
+    });
+
+    expect(result.checks.find((check) => check.id === "physical-output")).toMatchObject({
+      ok: false,
+      message: expect.stringContaining(message),
+    });
   });
 });

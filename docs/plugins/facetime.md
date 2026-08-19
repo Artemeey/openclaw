@@ -54,6 +54,7 @@ Every accepted handle receives owner authority. There is no guest tier.
         config: {
           ownerHandles: ["owner@example.com", "+12065550123"],
           realtime: {
+            // Optional OpenAI-specific overrides for this FaceTime session.
             provider: "openai",
             model: "gpt-realtime-2.1",
             voice: "marin",
@@ -66,6 +67,13 @@ Every accepted handle receives owner authority. There is no guest tier.
   },
 }
 ```
+
+`realtime.provider`, `realtime.model`, and `realtime.voice` are optional
+overrides. When omitted, the registered realtime voice providers own provider
+auto-selection, authentication, model defaults, and voice defaults. The OpenAI
+values above are one explicit example, not FaceTime plugin defaults. Put a
+plugin-local provider key under `realtime.providers.<provider>.apiKey` only when
+you need to override that provider's normal authentication.
 
 `realtime.toolPolicy` accepts `safe-read-only`, `owner`, or `none`. An invalid
 explicit value fails configuration; it is never upgraded to `owner`.
@@ -165,4 +173,4 @@ openclaw gateway call facetime.uninstall --json
 - FaceTime video and Phone-owned FaceTime Audio require separate live proof
 - private numeric call statuses use one versioned mapping; unknown states fail closed
 - internal playback drain proves native `OpenClaw-Feed` consumption, not remote delivery
-- no automatic realtime-model fallback
+- no FaceTime-specific realtime-model fallback; the selected provider owns its defaults

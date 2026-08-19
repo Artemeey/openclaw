@@ -1,25 +1,24 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import type { PluginRuntime, RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
 import { resolveRealtimeBootstrapContextInstructions } from "openclaw/plugin-sdk/realtime-bootstrap-context";
 import {
   createRealtimeVoiceBridgeSession,
   createTalkSessionController,
   REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
+  recordRealtimeVoiceTranscript,
   recordTalkObservabilityEvent,
-  resolveConfiguredRealtimeVoiceProvider,
   resolveRealtimeVoiceAgentConsultTools,
   type RealtimeVoiceBridgeSession,
   type RealtimeVoiceResponseOutcome,
+  type RealtimeVoiceTranscriptEntry,
   type TalkEvent,
   type TalkEventInput,
 } from "openclaw/plugin-sdk/realtime-voice";
 import { startFaceTimeAudioPump } from "./audio-pump.js";
 import type { FaceTimeConfig } from "./config.js";
-import { formatErrorMessage } from "./errors.js";
-import {
-  createFaceTimeConsultController,
-  type FaceTimeTranscriptEntry,
-} from "./talk-consult-controller.js";
+import { createFaceTimeConsultController } from "./talk-consult-controller.js";
 import {
   agentIdFromSessionKey,
   assertAuthenticatedSenderConsultSupport,
@@ -28,9 +27,8 @@ import {
   INPUT_AUDIO_STATUS_INTERVAL_MS,
   MAX_TRANSCRIPT_CHARS,
   MAX_TRANSCRIPT_ENTRY_CHARS,
-  pushRecent,
   REALTIME_READY_TIMEOUT_MS,
-  resolveRealtimeProviderConfigs,
+  resolveFaceTimeRealtimeProvider,
 } from "./talk-driver-config.js";
 
 export type FaceTimeTalkDriver = {
@@ -80,16 +78,20 @@ export async function startFaceTimeTalkDriver(params: {
       transport: "gateway-relay",
       brain: "agent-consult",
       provider: params.config.realtime.provider,
+      maxRecentEvents: 40,
       turnIdPrefix: `facetime:${params.callUUID}:turn`,
     },
     { onEvent: recordTalkObservabilityEvent },
   );
-  const recentTalkEvents: TalkEvent[] = [];
-  const transcript: FaceTimeTranscriptEntry[] = [];
-  const appendTranscript = (entry: FaceTimeTranscriptEntry) => {
-    transcript.push({ ...entry, text: entry.text.slice(0, MAX_TRANSCRIPT_ENTRY_CHARS) });
+  const transcript: RealtimeVoiceTranscriptEntry[] = [];
+  const appendTranscript = (entry: Pick<RealtimeVoiceTranscriptEntry, "role" | "text">) => {
+    recordRealtimeVoiceTranscript(
+      transcript,
+      entry.role,
+      entry.text.slice(0, MAX_TRANSCRIPT_ENTRY_CHARS),
+      40,
+    );
     while (
-      transcript.length > 40 ||
       transcript.reduce((total, current) => total + current.text.length, 0) > MAX_TRANSCRIPT_CHARS
     ) {
       transcript.shift();
@@ -117,27 +119,20 @@ export async function startFaceTimeTalkDriver(params: {
   let failurePromise: Promise<boolean> | undefined;
   let activated = false;
   let providerReady = false;
-  let resolveProviderReady = () => {};
-  const providerReadyPromise = new Promise<void>((resolve) => {
-    resolveProviderReady = resolve;
-  });
+  const providerReadyDeferred = createDeferred<void>();
   let providerConnectPromise: Promise<void> | undefined;
   let audioReadyPromise: Promise<void> | undefined;
   let interruptProviderConnect: (() => void) | undefined;
   let mediaSuspensionError: Error | undefined;
-  let rejectMediaSuspended: ((error: Error) => void) | undefined;
-  const mediaSuspendedPromise = new Promise<never>((_resolve, reject) => {
-    rejectMediaSuspended = reject;
-  });
+  const mediaSuspendedDeferred = createDeferred<never>();
+  const mediaSuspendedPromise = mediaSuspendedDeferred.promise;
   void mediaSuspendedPromise.catch(() => {});
   let suspendMediaPromise: Promise<void> | undefined;
   let closePromise: Promise<void> | undefined;
   let startupSettled = false;
   let startupFailure: Error | undefined;
-  let rejectStartupFailure: ((error: Error) => void) | undefined;
-  const startupFailurePromise = new Promise<never>((_resolve, reject) => {
-    rejectStartupFailure = reject;
-  });
+  const startupFailureDeferred = createDeferred<never>();
+  const startupFailurePromise = startupFailureDeferred.promise;
   // A provider or audio callback can fail while connect() is still pending.
   // Keep that failure observable until startup either rejects or returns a live driver.
   void startupFailurePromise.catch(() => {});
@@ -147,7 +142,7 @@ export async function startFaceTimeTalkDriver(params: {
       return;
     }
     startupFailure = error;
-    rejectStartupFailure?.(error);
+    startupFailureDeferred.reject(error);
   };
 
   const reportFailure = (error: Error): Promise<boolean> => {
@@ -170,7 +165,7 @@ export async function startFaceTimeTalkDriver(params: {
     activated = false;
     providerReady = false;
     mediaSuspensionError ??= new Error(`FaceTime model media suspended: ${reason}`);
-    rejectMediaSuspended?.(mediaSuspensionError);
+    mediaSuspendedDeferred.reject(mediaSuspensionError);
     interruptProviderConnect?.();
     consultRef.current?.abortForClose();
     suspendMediaPromise = (async () => {
@@ -216,20 +211,17 @@ export async function startFaceTimeTalkDriver(params: {
     return await closePromise;
   };
 
-  const remember = (input: TalkEventInput) => pushRecent(recentTalkEvents, talk.emit(input));
+  const remember = (input: TalkEventInput) => talk.emit(input);
   const ensureTurn = () => {
     const turn = talk.ensureTurn({ payload: { callUUID: params.callUUID } });
-    pushRecent(recentTalkEvents, turn.event);
     return turn.turnId;
   };
   const finishOutputAudio = (reason: string) => {
-    pushRecent(recentTalkEvents, talk.finishOutputAudio({ payload: { reason } }));
+    talk.finishOutputAudio({ payload: { reason } });
   };
   const endTurn = (reason: string) => {
     const ended = talk.endTurn({ payload: { reason } });
-    if (ended.ok) {
-      pushRecent(recentTalkEvents, ended.event);
-    }
+    return ended.ok;
   };
   const playedCurrentResponseMs = () =>
     response === undefined
@@ -430,40 +422,27 @@ export async function startFaceTimeTalkDriver(params: {
         readinessTimer.unref?.();
       });
       const prepareAndConnect = async () => {
-        const providerConfigs = await resolveRealtimeProviderConfigs({
+        const providerResolution = resolveFaceTimeRealtimeProvider({
           config: params.config,
           fullConfig: params.fullConfig,
+          agentId: consultAgentId,
         });
-        if (params.signal?.aborted || stopped || mediaSuspended) {
-          throw new Error("FaceTime talk startup aborted");
-        }
-        const resolved = resolveConfiguredRealtimeVoiceProvider({
-          configuredProviderId: params.config.realtime.provider,
-          providerConfigs: {
-            ...providerConfigs,
-            [params.config.realtime.provider]: {
-              ...providerConfigs[params.config.realtime.provider],
-              voice: params.config.realtime.voice,
-            },
-          },
-          cfg: params.fullConfig,
-          defaultModel: params.config.realtime.model,
-          noRegisteredProviderMessage: "No realtime voice provider registered",
-        });
-        let bootstrapContext: string | undefined;
-        try {
-          bootstrapContext = await resolveRealtimeBootstrapContextInstructions({
-            config: params.fullConfig,
-            agentId: consultAgentId,
-            sessionKey: requesterSessionKey,
-            warn: (message) =>
-              params.logger.warn?.(`[facetime] realtime bootstrap context: ${message}`),
-          });
-        } catch (error) {
+        const bootstrapContextResolution = resolveRealtimeBootstrapContextInstructions({
+          config: params.fullConfig,
+          agentId: consultAgentId,
+          sessionKey: requesterSessionKey,
+          warn: (message) =>
+            params.logger.warn?.(`[facetime] realtime bootstrap context: ${message}`),
+        }).catch((error: unknown) => {
           params.logger.warn?.(
             `[facetime] realtime bootstrap context unavailable: ${formatErrorMessage(error)}`,
           );
-        }
+          return undefined;
+        });
+        const [resolved, bootstrapContext] = await Promise.all([
+          providerResolution,
+          bootstrapContextResolution,
+        ]);
         if (params.signal?.aborted || stopped || mediaSuspended) {
           throw new Error("FaceTime talk startup aborted");
         }
@@ -495,10 +474,7 @@ export async function startFaceTimeTalkDriver(params: {
               if (!response) {
                 startResponse();
               }
-              pushRecent(
-                recentTalkEvents,
-                talk.startOutputAudio({ turnId, payload: { callUUID: params.callUUID } }).event,
-              );
+              talk.startOutputAudio({ turnId, payload: { callUUID: params.callUUID } });
               remember({
                 type: "output.audio.delta",
                 turnId,
@@ -606,7 +582,7 @@ export async function startFaceTimeTalkDriver(params: {
           onReady() {
             if (!stopped && !mediaSuspended) {
               remember({ type: "session.ready", payload: { callUUID: params.callUUID } });
-              resolveProviderReady();
+              providerReadyDeferred.resolve();
             }
           },
           onError(error) {
@@ -646,7 +622,7 @@ export async function startFaceTimeTalkDriver(params: {
         // Provider connect() may return before the server's setup-complete
         // event. onReady is the contract that the session can accept audio.
         await Promise.race([
-          Promise.all([prepareAndConnect(), providerReadyPromise]),
+          Promise.all([prepareAndConnect(), providerReadyDeferred.promise]),
           startupFailurePromise,
           interrupted,
           readinessTimedOut,
@@ -683,7 +659,7 @@ export async function startFaceTimeTalkDriver(params: {
   return {
     callUUID: params.callUUID,
     get recentTalkEvents() {
-      return recentTalkEvents;
+      return talk.recentEvents;
     },
     async readyForAudio() {
       audioReadyPromise ??= connectProvider().then(async () => {

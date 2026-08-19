@@ -2,11 +2,13 @@ import { resolveDefaultAgentId } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import {
   buildRealtimeVoiceAgentConsultPolicyInstructions,
+  getRealtimeVoiceProvider,
   REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
   REALTIME_VOICE_AGENT_CONSULT_SENDER_AUTH_VERSION,
+  resolveConfiguredRealtimeVoiceProvider,
   type RealtimeVoiceTool,
-  type TalkEvent,
 } from "openclaw/plugin-sdk/realtime-voice";
+import { resolveAgentIdFromSessionKey } from "openclaw/plugin-sdk/routing";
 import { resolveConfiguredSecretInputString } from "openclaw/plugin-sdk/secret-input-runtime";
 import type { FaceTimeConfig } from "./config.js";
 
@@ -22,7 +24,7 @@ export const INPUT_AUDIO_STATUS_INTERVAL_MS = 1_000;
 export const REALTIME_READY_TIMEOUT_MS = 15_000;
 export const MAX_TRANSCRIPT_ENTRY_CHARS = 2_000;
 export const MAX_TRANSCRIPT_CHARS = 12_000;
-export const AGENT_CONSULT_MESSAGE_PROVIDER = "webchat";
+export const AGENT_CONSULT_MESSAGE_PROVIDER = "voice";
 export const FACETIME_END_CALL_TOOL_NAME = "facetime_end_call";
 export const FACETIME_END_CALL_TOOL: RealtimeVoiceTool = {
   type: "function",
@@ -35,16 +37,6 @@ export const FACETIME_END_CALL_TOOL: RealtimeVoiceTool = {
   },
 };
 
-export function pushRecent(events: TalkEvent[], event: TalkEvent | undefined): void {
-  if (!event) {
-    return;
-  }
-  events.push(event);
-  if (events.length > 40) {
-    events.splice(0, events.length - 40);
-  }
-}
-
 export function assertAuthenticatedSenderConsultSupport(): void {
   if (REALTIME_VOICE_AGENT_CONSULT_SENDER_AUTH_VERSION !== 1) {
     throw new Error(
@@ -54,11 +46,7 @@ export function assertAuthenticatedSenderConsultSupport(): void {
 }
 
 export function agentIdFromSessionKey(sessionKey: string, config: OpenClawConfig): string {
-  const normalized = sessionKey.trim();
-  if (normalized.startsWith("agent:")) {
-    return normalized.split(":")[1] || resolveDefaultAgentId(config);
-  }
-  return resolveDefaultAgentId(config);
+  return resolveAgentIdFromSessionKey(sessionKey, resolveDefaultAgentId(config));
 }
 
 export function buildRealtimeInstructions(params: {
@@ -100,25 +88,55 @@ export function buildRealtimeInstructions(params: {
     .join("\n\n");
 }
 
-export async function resolveRealtimeProviderConfigs(params: {
+export async function resolveFaceTimeRealtimeProvider(params: {
   config: FaceTimeConfig;
   fullConfig: OpenClawConfig;
-}): Promise<Record<string, Record<string, unknown>>> {
-  const providers: Record<string, Record<string, unknown>> = {};
-  for (const [providerId, providerConfig] of Object.entries(params.config.realtime.providers)) {
-    const next = { ...providerConfig };
-    if ("apiKey" in next) {
-      const resolved = await resolveConfiguredSecretInputString({
-        config: params.fullConfig,
-        env: process.env,
-        value: next.apiKey,
-        path: `plugins.entries.facetime.config.realtime.providers.${providerId}.apiKey`,
-      });
-      if (resolved.value) {
-        next.apiKey = resolved.value;
-      }
-    }
-    providers[providerId] = next;
-  }
-  return providers;
+  agentId: string;
+}) {
+  const configuredProviderId = params.config.realtime.provider;
+  const sourceProviders = params.config.realtime.providers;
+  const selectedProviderIds = configuredProviderId
+    ? new Set([
+        configuredProviderId,
+        getRealtimeVoiceProvider(configuredProviderId, params.fullConfig)?.id,
+      ])
+    : undefined;
+  const selectedEntries = configuredProviderId
+    ? Object.entries(sourceProviders).filter(([providerId]) => selectedProviderIds?.has(providerId))
+    : Object.entries(sourceProviders);
+  const providers = Object.fromEntries(
+    await Promise.all(
+      selectedEntries.map(async ([providerId, providerConfig]) => {
+        const resolved = await resolveConfiguredSecretInputString({
+          config: params.fullConfig,
+          env: process.env,
+          value: providerConfig.apiKey,
+          path: `plugins.entries.facetime.config.realtime.providers.${providerId}.apiKey`,
+        });
+        if (resolved.value) {
+          return [providerId, { ...providerConfig, apiKey: resolved.value }] as const;
+        }
+        if (resolved.unresolvedRefReason) {
+          if (configuredProviderId) {
+            throw new Error(resolved.unresolvedRefReason);
+          }
+          const { apiKey: _unresolvedApiKey, ...remainingConfig } = providerConfig;
+          return [providerId, remainingConfig] as const;
+        }
+        return [providerId, { ...providerConfig }] as const;
+      }),
+    ),
+  );
+  return resolveConfiguredRealtimeVoiceProvider({
+    configuredProviderId,
+    providerConfigs: providers,
+    providerConfigOverrides: params.config.realtime.voice
+      ? { voice: params.config.realtime.voice }
+      : undefined,
+    cfg: params.fullConfig,
+    agentId: params.agentId,
+    defaultModel: params.config.realtime.model,
+    surface: "bridge",
+    noRegisteredProviderMessage: "No realtime voice provider registered",
+  });
 }

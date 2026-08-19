@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { PluginRuntime, RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
-import { formatErrorMessage } from "./errors.js";
+import { sleepWithAbort } from "openclaw/plugin-sdk/runtime-env";
 
 type FaceTimeHelperTarget = "FaceTime" | "Phone";
 
@@ -296,10 +297,7 @@ export class FaceTimeHelperSupervisor {
       if (!state || state.connected || state.stale) {
         return;
       }
-      await new Promise<void>((finish) => {
-        const timer = setTimeout(finish, 250);
-        timer.unref?.();
-      });
+      await sleepWithAbort(250, this.#abortController.signal).catch(() => undefined);
     }
     this.#refreshConnections();
   }

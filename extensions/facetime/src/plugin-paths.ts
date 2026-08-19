@@ -1,16 +1,10 @@
 import { constants } from "node:fs";
 import { access, readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
 
-export function resolvePluginRoot(entryUrl: string): string {
-  const entryDirectory = dirname(fileURLToPath(entryUrl));
-  return entryDirectory.endsWith("/dist") ? resolve(entryDirectory, "..") : entryDirectory;
-}
-
-export function resolveCaptureBinary(pluginRoot: string): string {
+function resolveCaptureBinary(pluginRoot: string): string {
   return resolve(pluginRoot, "native", ".build", "release", "facetime-audio-capture");
 }
 

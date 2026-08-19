@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  doesFaceTimeCallMatchHandle,
   isActiveCall,
   isEndedCall,
   isIncomingRingingCall,
   isOutgoingRingingCall,
   isUnknownCallStatus,
-  isAuthorizedFaceTimeCall,
   normalizeFaceTimeCallEvent,
   normalizeFaceTimeHandle,
   resolveAuthorizedFaceTimeOwner,
@@ -86,12 +84,6 @@ describe("FaceTime call events", () => {
 
     expect(normalizeFaceTimeHandle(event?.data.handle)).toBe("MAILTO:Omar@Example.com");
     expect(
-      isAuthorizedFaceTimeCall({
-        event: event!,
-        ownerHandles: ["omar@example.com"],
-      }),
-    ).toBe(true);
-    expect(
       resolveAuthorizedFaceTimeOwner({
         event: event!,
         ownerHandles: ["omar@example.com"],
@@ -163,11 +155,8 @@ describe("FaceTime call events", () => {
 
     expect(normalizeFaceTimeHandle(event?.data.handle)).toBe("mailto:omar@example.com");
     expect(
-      isAuthorizedFaceTimeCall({
-        event: event!,
-        ownerHandles: ["omar@example.com"],
-      }),
-    ).toBe(true);
+      resolveAuthorizedFaceTimeOwner({ event: event!, ownerHandles: ["omar@example.com"] }),
+    ).toEqual({ senderId: "omar@example.com", senderIsOwner: true });
   });
 
   it("requires explicit native ended evidence and fails unknown numeric states closed", () => {
@@ -212,7 +201,6 @@ describe("FaceTime call events", () => {
     expect(
       resolveAuthorizedFaceTimeOwner({ event: event!, ownerHandles: ["+12065550123"] }),
     ).toBeUndefined();
-    expect(isAuthorizedFaceTimeCall({ event: event!, ownerHandles: ["+12065550123"] })).toBe(false);
   });
 
   it.each([
@@ -252,8 +240,6 @@ describe("FaceTime call events", () => {
 
     expect(isOutgoingRingingCall(event!)).toBe(true);
     expect(isEndedCall(event!)).toBe(false);
-    expect(doesFaceTimeCallMatchHandle({ event: event!, handle: "owner@example.com" })).toBe(true);
-    expect(doesFaceTimeCallMatchHandle({ event: event!, handle: "other@example.com" })).toBe(false);
   });
 
   it("keeps a newly accepted status-0 outbound call pending", () => {

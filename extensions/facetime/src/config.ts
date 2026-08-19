@@ -1,18 +1,18 @@
+import {
+  isRealtimeVoiceAgentConsultToolPolicy,
+  REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES,
+  type RealtimeVoiceAgentConsultToolPolicy,
+} from "openclaw/plugin-sdk/realtime-voice";
 import { asRecord, normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
-
-const REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES = ["safe-read-only", "owner", "none"] as const;
-type RealtimeVoiceAgentConsultToolPolicy =
-  (typeof REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES)[number];
 
 export type FaceTimeConfig = {
   enabled: boolean;
   ownerHandles: string[];
   realtime: {
-    provider: string;
-    model: string;
-    voice: string;
+    provider?: string;
+    model?: string;
+    voice?: string;
     sessionKey: string;
-    brain: "agent-consult";
     toolPolicy: RealtimeVoiceAgentConsultToolPolicy;
     instructions?: string;
     providers: Record<string, Record<string, unknown>>;
@@ -44,15 +44,12 @@ function resolveRealtimeVoiceAgentConsultToolPolicy(
     return "owner";
   }
   const normalized = normalizeOptionalString(value)?.toLowerCase();
-  const matched = REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES.find(
-    (policy) => policy === normalized,
-  );
-  if (!matched) {
+  if (!isRealtimeVoiceAgentConsultToolPolicy(normalized)) {
     throw new Error(
       `realtime.toolPolicy must be one of ${REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES.join(", ")}`,
     );
   }
-  return matched;
+  return normalized;
 }
 
 function resolveProviders(value: unknown): Record<string, Record<string, unknown>> {
@@ -77,11 +74,10 @@ export function resolveFaceTimeConfig(input: unknown): FaceTimeConfig {
     enabled: resolveBoolean(raw.enabled, true),
     ownerHandles: resolveStringArray(raw.ownerHandles),
     realtime: {
-      provider: normalizeOptionalString(realtime.provider) ?? "openai",
-      model: normalizeOptionalString(realtime.model) ?? "gpt-realtime-2.1",
-      voice: normalizeOptionalString(realtime.voice) ?? "marin",
+      provider: normalizeOptionalString(realtime.provider),
+      model: normalizeOptionalString(realtime.model),
+      voice: normalizeOptionalString(realtime.voice),
       sessionKey: normalizeOptionalString(realtime.sessionKey) ?? "main",
-      brain: "agent-consult",
       toolPolicy: resolveRealtimeVoiceAgentConsultToolPolicy(realtime.toolPolicy),
       instructions: normalizeOptionalString(realtime.instructions) ?? DEFAULT_INSTRUCTIONS,
       providers: resolveProviders(realtime.providers),

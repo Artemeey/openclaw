@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { PluginRuntime, RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
 import {
   buildRealtimeVoiceAgentCancelProviderResult,
@@ -7,18 +8,16 @@ import {
   REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
   resolveRealtimeVoiceAgentConsultToolsAllow,
   type RealtimeVoiceBridgeSession,
+  type RealtimeVoiceTranscriptEntry,
   type RealtimeVoiceToolCallEvent,
   type TalkEventInput,
 } from "openclaw/plugin-sdk/realtime-voice";
 import type { FaceTimeConfig } from "./config.js";
-import { formatErrorMessage } from "./errors.js";
 import {
   AGENT_CONSULT_MESSAGE_PROVIDER,
   CONSULT_SYSTEM_PROMPT,
   FACETIME_END_CALL_TOOL_NAME,
 } from "./talk-driver-config.js";
-
-export type FaceTimeTranscriptEntry = { role: "user" | "assistant"; text: string };
 
 type PendingAgentConsult = {
   callId: string;
@@ -42,7 +41,7 @@ export function createFaceTimeConsultController(params: {
   normalizedCallUUID: string;
   senderId: string;
   senderIsOwner: true;
-  transcript: FaceTimeTranscriptEntry[];
+  transcript: RealtimeVoiceTranscriptEntry[];
   getBridge: () => RealtimeVoiceBridgeSession | undefined;
   getGeneration: () => number;
   isUnavailable: () => boolean;

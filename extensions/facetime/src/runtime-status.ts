@@ -8,7 +8,6 @@ export function buildFaceTimeRuntimeStatus(params: {
   calls: FaceTimeCallRegistry<ActiveFaceTimeCall>;
   helperConnected: boolean;
   helperTargets: FaceTimeHelperSupervisorStatus;
-  driverInstallPending: boolean;
   driverInstall: FaceTimeRuntimeStatus["driverInstall"];
   pendingDial?: PendingFaceTimeDial;
 }): FaceTimeRuntimeStatus {
@@ -24,7 +23,7 @@ export function buildFaceTimeRuntimeStatus(params: {
       transportClassifier: "tu-provider-v1",
     },
     helperTargets: params.helperTargets,
-    driverInstallPending: params.driverInstallPending,
+    driverInstallPending: params.driverInstall.phase === "installing",
     driverInstall: params.driverInstall,
     processOutputSuppressed: calls.some((call) => call.talk?.processOutputSuppressed() === true),
     outboundCallPending: params.pendingDial

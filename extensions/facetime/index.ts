@@ -1,3 +1,4 @@
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import {
   ErrorCodes,
   errorShape,
@@ -8,15 +9,12 @@ import {
   type OpenClawPluginApi,
   type OpenClawPluginDefinition,
 } from "openclaw/plugin-sdk/plugin-entry";
-import { createFaceTimeRuntime, type FaceTimeRuntime } from "./runtime-entry.js";
 import {
   resolveFaceTimeConfig,
   validateFaceTimeConfig,
   type FaceTimeConfig,
 } from "./src/config.js";
 import { inspectFaceTimeDriver, uninstallFaceTimeDriver } from "./src/driver-setup.js";
-import { formatErrorMessage } from "./src/errors.js";
-import { resolvePluginRoot } from "./src/plugin-paths.js";
 import { stopRetainedRuntime } from "./src/runtime-lifecycle.js";
 import { runFaceTimeSetup } from "./src/setup.js";
 import { inspectFaceTimeStaticStatus } from "./src/static-status.js";
@@ -25,16 +23,6 @@ import { createFaceTimeCallTool, resolveFaceTimeToolApproval } from "./src/tool.
 const faceTimeConfigSchema = {
   parse(value: unknown): FaceTimeConfig {
     return resolveFaceTimeConfig(value);
-  },
-  uiHints: {
-    enabled: { label: "Enable FaceTime Voice" },
-    ownerHandles: { label: "Owner FaceTime Handles" },
-    "realtime.provider": { label: "Realtime Provider", advanced: true },
-    "realtime.model": { label: "Realtime Model", advanced: true },
-    "realtime.voice": { label: "Realtime Voice", advanced: true },
-    "realtime.sessionKey": { label: "Agent Session Key", advanced: true },
-    "realtime.brain": { label: "Brain Mode", advanced: true },
-    "realtime.toolPolicy": { label: "Tool Policy", advanced: true },
   },
 };
 
@@ -46,8 +34,8 @@ const faceTimePlugin: OpenClawPluginDefinition = definePluginEntry({
   register(api: OpenClawPluginApi) {
     const config = resolveFaceTimeConfig(api.pluginConfig);
     const validation = validateFaceTimeConfig(config);
-    const pluginRoot = resolvePluginRoot(import.meta.url);
-    let runtimePromise: Promise<FaceTimeRuntime> | undefined;
+    const pluginRoot = api.rootDir ?? api.resolvePath(".");
+    let runtimePromise: Promise<import("./runtime-api.js").FaceTimeRuntime> | undefined;
 
     const ensureRuntime = async () => {
       if (!config.enabled) {
@@ -56,16 +44,20 @@ const faceTimePlugin: OpenClawPluginDefinition = definePluginEntry({
       if (!validation.valid) {
         throw new Error(validation.errors.join("; "));
       }
-      runtimePromise ??= createFaceTimeRuntime({
-        config,
-        fullConfig: api.config,
-        runtime: api.runtime,
-        logger: api.logger,
-        pluginRoot,
-      }).catch((error: unknown) => {
-        runtimePromise = undefined;
-        throw error;
-      });
+      runtimePromise ??= import("./runtime-api.js")
+        .then(({ createFaceTimeRuntime }) =>
+          createFaceTimeRuntime({
+            config,
+            fullConfig: api.config,
+            runtime: api.runtime,
+            logger: api.logger,
+            pluginRoot,
+          }),
+        )
+        .catch((error: unknown) => {
+          runtimePromise = undefined;
+          throw error;
+        });
       return await runtimePromise;
     };
 
@@ -117,161 +109,90 @@ const faceTimePlugin: OpenClawPluginDefinition = definePluginEntry({
       },
     });
 
-    api.registerGatewayMethod(
-      "facetime.status",
-      async ({ respond }: GatewayRequestHandlerOptions) => {
-        try {
-          respond(true, await getStatus());
-        } catch (error) {
-          respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
-        }
-      },
-      { scope: "operator.read" },
-    );
-
-    api.registerGatewayMethod(
-      "facetime.setup",
-      async ({ respond }: GatewayRequestHandlerOptions) => {
-        try {
-          let rt: FaceTimeRuntime;
+    const registerGateway = (
+      name: string,
+      scope: "operator.read" | "operator.write" | "operator.admin",
+      handler: (options: GatewayRequestHandlerOptions) => Promise<unknown>,
+    ) => {
+      api.registerGatewayMethod(
+        name,
+        async (options: GatewayRequestHandlerOptions) => {
           try {
-            rt = await ensureRuntime();
-          } catch (runtimeError) {
-            respond(
-              true,
-              await runFaceTimeSetup({
-                config,
-                pluginRoot,
-                runCommandWithTimeout: api.runtime.system.runCommandWithTimeout,
-                runtimeError: formatErrorMessage(runtimeError),
-              }),
+            options.respond(true, await handler(options));
+          } catch (error) {
+            options.respond(
+              false,
+              undefined,
+              errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)),
             );
-            return;
           }
-          respond(true, await rt.setup());
-        } catch (error) {
-          respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
-        }
-      },
-      { scope: "operator.admin" },
-    );
+        },
+        { scope },
+      );
+    };
 
-    api.registerGatewayMethod(
-      "facetime.driverStatus",
-      async ({ respond }: GatewayRequestHandlerOptions) => {
-        try {
-          const status = await inspectFaceTimeDriver({
-            pluginRoot,
-            runCommandWithTimeout: api.runtime.system.runCommandWithTimeout,
-          });
-          respond(true, { status });
-        } catch (error) {
-          respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
-        }
-      },
-      { scope: "operator.read" },
-    );
-
-    api.registerGatewayMethod(
-      "facetime.installDriver",
-      async ({ respond }: GatewayRequestHandlerOptions) => {
-        try {
-          const current = await ensureRuntime();
-          const result = await current.installDriver();
-          respond(true, { ok: true, ...result });
-        } catch (error) {
-          respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
-        }
-      },
-      { scope: "operator.admin" },
-    );
-
-    api.registerGatewayMethod(
-      "facetime.updateDriver",
-      async ({ respond }: GatewayRequestHandlerOptions) => {
-        try {
-          const current = await ensureRuntime();
-          const result = await current.installDriver();
-          respond(true, { ok: true, ...result });
-        } catch (error) {
-          respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
-        }
-      },
-      { scope: "operator.admin" },
-    );
-
-    api.registerGatewayMethod(
-      "facetime.uninstall",
-      async ({ respond }: GatewayRequestHandlerOptions) => {
-        try {
-          const current = runtimePromise;
-          if (current) {
-            await stopRetainedRuntime(current, (stopped) => {
-              if (runtimePromise === stopped) {
-                runtimePromise = undefined;
-              }
-            });
+    registerGateway("facetime.status", "operator.read", getStatus);
+    registerGateway("facetime.setup", "operator.admin", async () => {
+      let runtime: import("./runtime-api.js").FaceTimeRuntime;
+      try {
+        runtime = await ensureRuntime();
+      } catch (runtimeError) {
+        return await runFaceTimeSetup({
+          config,
+          pluginRoot,
+          runCommandWithTimeout: api.runtime.system.runCommandWithTimeout,
+          runtimeError: formatErrorMessage(runtimeError),
+        });
+      }
+      return await runtime.setup();
+    });
+    registerGateway("facetime.driverStatus", "operator.read", async () => ({
+      status: await inspectFaceTimeDriver({
+        pluginRoot,
+        runCommandWithTimeout: api.runtime.system.runCommandWithTimeout,
+      }),
+    }));
+    const installDriver = async () => ({
+      ok: true,
+      ...(await (await ensureRuntime()).installDriver()),
+    });
+    for (const name of ["facetime.installDriver", "facetime.updateDriver"]) {
+      registerGateway(name, "operator.admin", installDriver);
+    }
+    registerGateway("facetime.uninstall", "operator.admin", async () => {
+      const current = runtimePromise;
+      if (current) {
+        await stopRetainedRuntime(current, (stopped) => {
+          if (runtimePromise === stopped) {
+            runtimePromise = undefined;
           }
-          await uninstallFaceTimeDriver({
-            pluginRoot,
-            runCommandWithTimeout: api.runtime.system.runCommandWithTimeout,
-          });
-          respond(true, {
-            ok: true,
-            guidance: "Quit and reopen FaceTime and Phone before re-enabling this plugin.",
-          });
-        } catch (error) {
-          respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
-        }
-      },
-      { scope: "operator.admin" },
-    );
-
-    api.registerGatewayMethod(
+        });
+      }
+      await uninstallFaceTimeDriver({
+        pluginRoot,
+        runCommandWithTimeout: api.runtime.system.runCommandWithTimeout,
+      });
+      return {
+        ok: true,
+        guidance: "Quit and reopen FaceTime and Phone before re-enabling this plugin.",
+      };
+    });
+    registerGateway(
       "facetime.preflight",
-      async ({ respond }: GatewayRequestHandlerOptions) => {
-        try {
-          const rt = await ensureRuntime();
-          respond(true, await rt.preflight());
-        } catch (error) {
-          respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
-        }
-      },
-      { scope: "operator.admin" },
+      "operator.admin",
+      async () => await (await ensureRuntime()).preflight(),
     );
-
-    api.registerGatewayMethod(
-      "facetime.dial",
-      async ({ params, respond }: GatewayRequestHandlerOptions) => {
-        try {
-          const rt = await ensureRuntime();
-          const record = params && typeof params === "object" ? params : {};
-          const handle = "handle" in record ? record.handle : undefined;
-          const mode = "mode" in record ? record.mode : undefined;
-          respond(true, { ok: true, ...(await rt.dial({ handle, mode })) });
-        } catch (error) {
-          respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
-        }
-      },
-      { scope: "operator.write" },
-    );
-
-    api.registerGatewayMethod(
-      "facetime.hangup",
-      async ({ params, respond }: GatewayRequestHandlerOptions) => {
-        try {
-          const rt = await ensureRuntime();
-          const callUUID =
-            params && typeof params === "object" && "callUUID" in params
-              ? params.callUUID
-              : undefined;
-          respond(true, { ok: true, ...(await rt.hangup({ callUUID })) });
-        } catch (error) {
-          respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(error)));
-        }
-      },
-      { scope: "operator.write" },
-    );
+    registerGateway("facetime.dial", "operator.write", async ({ params }) => {
+      const record = params && typeof params === "object" ? params : {};
+      const handle = "handle" in record ? record.handle : undefined;
+      const mode = "mode" in record ? record.mode : undefined;
+      return { ok: true, ...(await (await ensureRuntime()).dial({ handle, mode })) };
+    });
+    registerGateway("facetime.hangup", "operator.write", async ({ params }) => {
+      const callUUID =
+        params && typeof params === "object" && "callUUID" in params ? params.callUUID : undefined;
+      return { ok: true, ...(await (await ensureRuntime()).hangup({ callUUID })) };
+    });
   },
 });
 

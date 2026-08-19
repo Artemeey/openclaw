@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("./runtime-entry.js", () => ({ createFaceTimeRuntime: mocks.activateRuntime }));
+vi.mock("./runtime-api.js", () => ({ createFaceTimeRuntime: mocks.activateRuntime }));
 vi.mock("./src/static-status.js", () => ({ inspectFaceTimeStaticStatus: mocks.staticStatus }));
 
 import plugin from "./index.js";
@@ -37,6 +37,7 @@ describe("FaceTime control-plane registration", () => {
         id: "facetime",
         name: "FaceTime",
         source: "test",
+        rootDir: "/plugin",
         config: {},
         pluginConfig: { ownerHandles: ["owner@example.com"] },
         runtime: {

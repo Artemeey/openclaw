@@ -453,29 +453,11 @@ FACETIMEHELPER *plugin;
 }
 
 -(void) pollCallStatuses {
-    TUCallCenter *callCenter = [TUCallCenter sharedInstance];
     NSMutableDictionary *callsByUUID = [NSMutableDictionary dictionary];
-    NSArray *callLists = @[
-        [callCenter currentCalls] ?: @[],
-        [callCenter currentAudioAndVideoCalls] ?: @[],
-        [callCenter displayedCalls] ?: @[],
-        [callCenter displayedAudioAndVideoCalls] ?: @[],
-        [callCenter incomingCalls] ?: @[],
-    ];
-    for (NSArray *callList in callLists) {
-        for (id call in callList) {
-            if ([call respondsToSelector:@selector(callUUID)] && [call callUUID] != nil) {
-                callsByUUID[[call callUUID]] = call;
-            }
+    for (id call in AllKnownCalls()) {
+        if ([call respondsToSelector:@selector(callUUID)] && [call callUUID] != nil) {
+            callsByUUID[[call callUUID]] = call;
         }
-    }
-    id incomingCall = [callCenter incomingCall];
-    if (incomingCall != nil && [incomingCall respondsToSelector:@selector(callUUID)] && [incomingCall callUUID] != nil) {
-        callsByUUID[[incomingCall callUUID]] = incomingCall;
-    }
-    id incomingVideoCall = [callCenter incomingVideoCall];
-    if (incomingVideoCall != nil && [incomingVideoCall respondsToSelector:@selector(callUUID)] && [incomingVideoCall callUUID] != nil) {
-        callsByUUID[[incomingVideoCall callUUID]] = incomingVideoCall;
     }
     for (id callUUID in callsByUUID) {
         [self emitCallStatus:callsByUUID[callUUID]];

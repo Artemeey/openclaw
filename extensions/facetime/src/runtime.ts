@@ -1,21 +1,18 @@
 import { randomUUID } from "node:crypto";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { PluginRuntime, RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
-import {
-  canonicalizeFaceTimeHandle,
-  normalizeFaceTimeCallEvent,
-  type AuthenticatedFaceTimeOwner,
-} from "./call-events.js";
+import { normalizeFaceTimeCallEvent } from "./call-events.js";
 import { FaceTimeCallRegistry } from "./call-lifecycle.js";
 import { resolveFaceTimeConfig, validateFaceTimeConfig, type FaceTimeConfig } from "./config.js";
 import { installFaceTimeDriver } from "./driver-setup.js";
-import { formatErrorMessage } from "./errors.js";
 import { resolveFaceTimeHelperEndpoint } from "./helper-endpoint.js";
 import {
   FaceTimeHelperActionError,
   FaceTimeHelperAmbiguousError,
   FaceTimeHelperSocketServer,
   FaceTimeHelperUnavailableError,
+  readHelperResults,
   type FaceTimeHelperPeer,
   type HelperActionResult,
 } from "./helper-rpc.js";
@@ -41,7 +38,6 @@ import {
   hasDialHelperConfirmation,
   OUTBOUND_DIAL_HELPER_BUNDLES,
   readHelperPeers,
-  readHelperResults,
   readOutboundCallUUID,
   readOutboundProxyIdentifier,
   retainHelperResultPeers,
@@ -59,11 +55,6 @@ export type { FaceTimeRuntime, FaceTimeRuntimeStatus } from "./runtime-state.js"
 const OUTBOUND_RECONCILE_ATTEMPTS = 12;
 const OUTBOUND_RECONCILE_INTERVAL_MS = 250;
 const OUTBOUND_RECONCILE_DELAY_MS = 1_000;
-function resolveAuthorizedOutboundOwner(pending: PendingFaceTimeDial): AuthenticatedFaceTimeOwner {
-  // Pending dials are created only by resolveFaceTimeDialRequest, which rejects
-  // handles outside ownerHandles before native dialing starts.
-  return { senderId: canonicalizeFaceTimeHandle(pending.handle), senderIsOwner: true };
-}
 
 export async function createFaceTimeRuntime(params: {
   config: FaceTimeConfig;
@@ -97,10 +88,10 @@ export async function createFaceTimeRuntime(params: {
     pendingDialStore.save(outboundCallPending);
   }
   let outboundReconcileTimer: NodeJS.Timeout | undefined;
-  let driverInstallPending = false;
   let driverInstall: FaceTimeRuntimeStatus["driverInstall"] = { phase: "idle" };
   let driverInstallAbortController: AbortController | undefined;
   let driverInstallTask: Promise<void> | undefined;
+  const isDriverInstallPending = () => driverInstall.phase === "installing";
   const captureBinary = await ensureCaptureBinary({
     pluginRoot: params.pluginRoot,
     runCommandWithTimeout: params.runtime.system.runCommandWithTimeout,
@@ -385,12 +376,16 @@ export async function createFaceTimeRuntime(params: {
     logger: params.logger,
     callControl,
     isStopping: () => stopping,
-    isDriverInstallPending: () => driverInstallPending,
+    isDriverInstallPending,
     getPendingDial: () => outboundCallPending,
     clearPendingDial: () => clearOutboundCallPending(),
     persistPendingDial: persistOutboundCallPending,
     outboundCarrierPeers,
-    resolveOutboundOwner: resolveAuthorizedOutboundOwner,
+    cancelPendingDial: async (pending) => {
+      if (outboundCallPending === pending) {
+        await cancelPendingOutboundCall();
+      }
+    },
   });
 
   await helper.start();
@@ -403,7 +398,6 @@ export async function createFaceTimeRuntime(params: {
       calls,
       helperConnected: helper.connectedSockets > 0,
       helperTargets: helperSupervisor.status(),
-      driverInstallPending,
       driverInstall,
       pendingDial: outboundCallPending,
     });
@@ -426,7 +420,7 @@ export async function createFaceTimeRuntime(params: {
       if (stopping) {
         throw new Error("cannot start an outbound FaceTime call while the plugin is stopping");
       }
-      if (driverInstallPending) {
+      if (isDriverInstallPending()) {
         throw new Error(
           "cannot start an outbound FaceTime call while audio driver installation is pending",
         );
@@ -592,7 +586,7 @@ export async function createFaceTimeRuntime(params: {
       if (stopping) {
         throw new Error("cannot install the FaceTime audio driver while the plugin is stopping");
       }
-      if (driverInstallPending) {
+      if (isDriverInstallPending()) {
         throw new Error("FaceTime audio driver installation is already pending");
       }
       if (calls.size > 0 || outboundCallPending || outboundDialInFlight) {
@@ -603,7 +597,6 @@ export async function createFaceTimeRuntime(params: {
       // Hold this gate across the build and administrator prompt. Dial and
       // auto-answer consult it before claiming a call, so Core Audio cannot be
       // restarted underneath a newly managed call.
-      driverInstallPending = true;
       driverInstall = {
         phase: "installing",
         startedAt: new Date().toISOString(),
@@ -641,7 +634,6 @@ export async function createFaceTimeRuntime(params: {
           if (driverInstallAbortController === installAbortController) {
             driverInstallAbortController = undefined;
             driverInstallTask = undefined;
-            driverInstallPending = false;
           }
         });
       return { started: true };

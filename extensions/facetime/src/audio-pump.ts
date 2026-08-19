@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import type { Writable } from "node:stream";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
 import { asRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { formatErrorMessage } from "./errors.js";
 
 type PumpProcess = {
   pid?: number;
@@ -71,7 +71,7 @@ type FaceTimeAudioPump = {
   stop(): Promise<void>;
 };
 
-export function sanitizedAudioChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+function sanitizedAudioChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return Object.fromEntries(
     Object.entries(env).filter(
       ([key]) => !/(?:API_?KEY|AUTH|CREDENTIAL|PASSWORD|SECRET|TOKEN)/iu.test(key),

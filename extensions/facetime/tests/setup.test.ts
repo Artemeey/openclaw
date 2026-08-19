@@ -24,7 +24,7 @@ const readyPreflight: FaceTimePreflightResult = {
     },
     {
       id: "realtime-provider",
-      label: "Realtime provider credentials",
+      label: "Realtime provider readiness",
       ok: true,
       required: true,
       message: "openai:gpt-realtime-2.1",

@@ -24,13 +24,17 @@ describe("source-only plugin manifest", () => {
     expect(packageManifest.os).toEqual(["darwin"]);
     expect(packageManifest.cpu).toEqual(["arm64"]);
     expect(packageManifest.files).toEqual(
-      expect.arrayContaining(["index.ts", "runtime-api.ts", "runtime-entry.ts", "src/"]),
+      expect.arrayContaining(["index.ts", "runtime-api.ts", "src/runtime.ts"]),
     );
+    expect(packageManifest.files).not.toContain("runtime-entry.ts");
+    expect(packageManifest.files).not.toContain("helper/tests/");
+    expect(packageManifest.files).not.toContain("native/Checks/");
+    expect(packageManifest.files).not.toContain("scripts/");
     expect(packageManifest.files).not.toContain("dist/");
     expect(packageManifest.files).not.toContain("doctor-contract-api.ts");
     expect(packageManifest.files).toContain("LICENSE");
     expect(packageManifest.files).toContain("THIRD_PARTY_NOTICES.md");
-    expect(packageManifest.files).toContain("skills/");
+    expect(packageManifest.files).toContain("skills/facetime/SKILL.md");
     expect(packageManifest.devDependencies.openclaw).toBe("workspace:*");
     expect(packageManifest.private).toBe(true);
     expect(packageManifest.peerDependencies.openclaw).toBe(">=2026.8.1");

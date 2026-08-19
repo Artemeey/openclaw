@@ -37,6 +37,9 @@ released.
 `ownerHandles` is the only caller list. Every accepted identity receives owner
 authority. `realtime.toolPolicy` is one of `safe-read-only`, `owner`, or `none`;
 invalid explicit values fail validation.
+`realtime.provider`, `realtime.model`, and `realtime.voice` are optional
+session overrides. Registered realtime providers own auto-selection,
+authentication, and their model and voice defaults.
 
 The helper endpoint is not configurable. Node and the native helper consume
 `helper-endpoint.json`, bind loopback only, and derive the port from the user ID.

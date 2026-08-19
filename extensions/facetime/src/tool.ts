@@ -1,8 +1,8 @@
 import { stringEnum } from "openclaw/plugin-sdk/channel-actions";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { asRecord, normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { jsonResult as json } from "openclaw/plugin-sdk/tool-results";
 import { Type } from "typebox";
-import { formatErrorMessage } from "./errors.js";
 import type { FaceTimeRuntime, FaceTimeRuntimeStatus } from "./runtime.js";
 import type { FaceTimeStaticStatus } from "./static-status.js";
 

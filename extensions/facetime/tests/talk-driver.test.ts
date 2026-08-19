@@ -1,3 +1,4 @@
+import { withEnvAsync } from "openclaw/plugin-sdk/test-env";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   createSession: vi.fn(),
   consult: vi.fn(),
   resolveBootstrapContext: vi.fn(),
+  resolveProvider: vi.fn(() => ({ provider: { id: "openai" }, providerConfig: {} })),
   hangupRequested: vi.fn(async () => {}),
   senderAuthVersion: 1 as number | undefined,
   pump: {
@@ -73,6 +75,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("openclaw/plugin-sdk/realtime-voice", () => ({
+  REALTIME_VOICE_AGENT_CONSULT_TOOL_POLICIES: ["safe-read-only", "owner", "none"],
+  isRealtimeVoiceAgentConsultToolPolicy: (value: unknown) =>
+    value === "safe-read-only" || value === "owner" || value === "none",
   get REALTIME_VOICE_AGENT_CONSULT_SENDER_AUTH_VERSION() {
     return mocks.senderAuthVersion;
   },
@@ -81,21 +86,33 @@ vi.mock("openclaw/plugin-sdk/realtime-voice", () => ({
   buildRealtimeVoiceAgentConsultWorkingResponse: vi.fn(),
   consultRealtimeVoiceAgent: mocks.consult,
   createRealtimeVoiceBridgeSession: mocks.createSession,
-  createTalkSessionController: vi.fn(() => ({
-    outputAudioActive: false,
-    emit: vi.fn((event) => event),
-    ensureTurn: vi.fn(() => ({ turnId: "turn-1" })),
-    startOutputAudio: vi.fn(() => ({ event: undefined })),
-    finishOutputAudio: vi.fn(),
-    endTurn: vi.fn(() => ({ ok: false })),
-  })),
+  getRealtimeVoiceProvider: vi.fn((providerId: string) => ({ id: providerId })),
+  createTalkSessionController: vi.fn(() => {
+    const recentEvents: unknown[] = [];
+    const remember = (event: unknown) => {
+      recentEvents.push(event);
+      return event;
+    };
+    return {
+      outputAudioActive: false,
+      recentEvents,
+      emit: vi.fn(remember),
+      ensureTurn: vi.fn(() => ({ turnId: "turn-1" })),
+      startOutputAudio: vi.fn(() => ({ event: undefined })),
+      finishOutputAudio: vi.fn(),
+      endTurn: vi.fn(() => ({ ok: false })),
+    };
+  }),
   REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME: "openclaw_agent_consult",
   REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ: "pcm16-24khz",
   recordTalkObservabilityEvent: vi.fn(),
-  resolveConfiguredRealtimeVoiceProvider: vi.fn(() => ({
-    provider: { id: "openai" },
-    providerConfig: {},
-  })),
+  recordRealtimeVoiceTranscript: vi.fn((transcript, role, text, maxEntries = 40) => {
+    const entry = { at: new Date().toISOString(), role, text };
+    transcript.push(entry);
+    transcript.splice(0, Math.max(0, transcript.length - maxEntries));
+    return entry;
+  }),
+  resolveConfiguredRealtimeVoiceProvider: mocks.resolveProvider,
   resolveRealtimeVoiceAgentConsultTools: vi.fn(
     (policy: string, customTools: Array<{ name: string }> = []) => [
       ...(policy === "none" ? [] : [{ name: "openclaw_agent_consult" }]),
@@ -118,10 +135,6 @@ vi.mock("openclaw/plugin-sdk/agent-runtime", () => ({
   ),
 }));
 
-vi.mock("openclaw/plugin-sdk/secret-input-runtime", () => ({
-  resolveConfiguredSecretInputString: vi.fn(async () => ({ value: undefined })),
-}));
-
 vi.mock("../src/audio-pump.js", () => ({
   startFaceTimeAudioPump: vi.fn((params) => {
     mocks.pumpParams = params;
@@ -130,6 +143,7 @@ vi.mock("../src/audio-pump.js", () => ({
 }));
 
 import { resolveFaceTimeConfig } from "../src/config.js";
+import { resolveFaceTimeRealtimeProvider } from "../src/talk-driver-config.js";
 import { startFaceTimeTalkDriver } from "../src/talk-driver.js";
 
 function startParams(overrides: Record<string, unknown> = {}) {
@@ -182,6 +196,37 @@ describe("FaceTime talk driver lifecycle", () => {
     mocks.createSession.mockImplementation((params) => {
       mocks.sessionParams = params;
       return mocks.bridge;
+    });
+  });
+
+  it("resolves only the explicitly selected plugin-local provider secret", async () => {
+    await withEnvAsync({ SELECTED_REALTIME_KEY: "selected-key" }, async () => {
+      await resolveFaceTimeRealtimeProvider({
+        config: resolveFaceTimeConfig({
+          ownerHandles: ["caller@example.com"],
+          realtime: {
+            provider: "selected",
+            providers: {
+              ignored: {
+                apiKey: { source: "env", provider: "default", id: "MISSING_IGNORED_KEY" },
+              },
+              selected: {
+                apiKey: { source: "env", provider: "default", id: "SELECTED_REALTIME_KEY" },
+              },
+            },
+          },
+        }),
+        fullConfig: {} as never,
+        agentId: "main",
+      });
+
+      expect(mocks.resolveProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          configuredProviderId: "selected",
+          providerConfigs: { selected: { apiKey: "selected-key" } },
+          surface: "bridge",
+        }),
+      );
     });
   });
 
@@ -880,7 +925,7 @@ describe("FaceTime talk driver lifecycle", () => {
           contextMode: "fork",
           senderId: "caller@example.com",
           senderIsOwner: true,
-          messageProvider: "webchat",
+          messageProvider: "voice",
           lane: "facetime:call-1",
           extraSystemPrompt: expect.stringContaining(
             "configured owner/user described by this agent's workspace context",

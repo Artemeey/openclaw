@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
 import { Writable } from "node:stream";
+import { withEnvAsync } from "openclaw/plugin-sdk/test-env";
 import { describe, expect, it, vi } from "vitest";
-import { sanitizedAudioChildEnv, startFaceTimeAudioPump } from "../src/audio-pump.js";
+import { startFaceTimeAudioPump } from "../src/audio-pump.js";
 
 class FakePipe extends Writable {
   writes: Buffer[] = [];
@@ -147,9 +148,20 @@ describe("FaceTime native audio bridge", () => {
     await failClosed;
   });
 
-  it("strips credential-shaped environment variables from native children", () => {
-    expect(
-      sanitizedAudioChildEnv({ PATH: "/bin", OPENAI_API_KEY: "secret", SAFE_VALUE: "yes" }),
-    ).toEqual({ PATH: "/bin", SAFE_VALUE: "yes" });
+  it("strips credential-shaped environment variables from native children", async () => {
+    await withEnvAsync({ OPENAI_API_KEY: "secret", SAFE_VALUE: "yes" }, async () => {
+      const processes: FakeProcess[] = [];
+      const spawn = captureProcesses(processes);
+      const pump = startFaceTimeAudioPump({
+        captureBinary: "/capture",
+        logger: console,
+        onInputAudio() {},
+        spawn,
+      });
+
+      expect(spawn.mock.calls[0]?.[2]?.env).not.toHaveProperty("OPENAI_API_KEY");
+      expect(spawn.mock.calls[0]?.[2]?.env).toHaveProperty("SAFE_VALUE", "yes");
+      await pump.stop();
+    });
   });
 });

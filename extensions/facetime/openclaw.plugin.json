@@ -24,11 +24,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "provider": { "type": "string", "default": "openai" },
-          "model": { "type": "string", "default": "gpt-realtime-2.1" },
-          "voice": { "type": "string", "default": "marin" },
+          "provider": { "type": "string" },
+          "model": { "type": "string" },
+          "voice": { "type": "string" },
           "sessionKey": { "type": "string", "default": "main" },
-          "brain": { "type": "string", "enum": ["agent-consult"], "default": "agent-consult" },
           "toolPolicy": {
             "type": "string",
             "enum": ["safe-read-only", "owner", "none"],
@@ -46,9 +45,6 @@
       }
     }
   },
-  "channelEnvVars": {
-    "facetime": ["OPENAI_API_KEY"]
-  },
   "uiHints": {
     "enabled": { "label": "Enable FaceTime Voice" },
     "ownerHandles": {
@@ -59,7 +55,11 @@
     "realtime.model": { "label": "Realtime Model", "advanced": true },
     "realtime.voice": { "label": "Realtime Voice", "advanced": true },
     "realtime.sessionKey": { "label": "Agent Session Key", "advanced": true },
-    "realtime.brain": { "label": "Brain Mode", "advanced": true },
     "realtime.toolPolicy": { "label": "Tool Policy", "advanced": true }
+  },
+  "configContracts": {
+    "secretInputs": {
+      "paths": [{ "path": "realtime.providers.*.apiKey", "expected": "string" }]
+    }
   }
 }

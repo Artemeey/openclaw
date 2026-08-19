@@ -1,11 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
 import { asRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { FaceTimeConfig } from "./config.js";
 import { inspectFaceTimeDriver, type FaceTimeDriverStatus } from "./driver-setup.js";
-import { formatErrorMessage } from "./errors.js";
 import type { FaceTimePreflightCheck, FaceTimePreflightResult } from "./preflight.js";
 import type { FaceTimeRuntimeStatus } from "./runtime.js";
 
@@ -95,7 +95,7 @@ const PRECHECK_ACTIONS: Record<
   "realtime-provider": {
     id: "configure-realtime-provider",
     kind: "command",
-    label: "Configure an OpenAI Platform API key with Realtime API access",
+    label: "Configure authentication for a registered realtime voice provider",
     command: "openclaw configure",
   },
 };

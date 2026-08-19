@@ -1,11 +1,11 @@
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { PluginRuntime, RuntimeLogger } from "openclaw/plugin-sdk/plugin-runtime";
 import { FACETIME_FEED_DEVICE_NAME, FACETIME_MIC_DEVICE_NAME } from "./audio-pump.js";
 import { FaceTimeCallRegistry } from "./call-lifecycle.js";
 import type { FaceTimeConfig } from "./config.js";
-import { formatErrorMessage } from "./errors.js";
 import {
   projectCompleteFaceTimeAbsence,
   projectFaceTimeNativeAction,
