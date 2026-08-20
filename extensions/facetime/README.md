@@ -1,13 +1,17 @@
 # OpenClaw FaceTime
 
-Experimental source-only FaceTime carrier plugin for a dedicated Apple Silicon
+Experimental FaceTime carrier plugin for a dedicated Apple Silicon
 Mac. The public setup, security, operation, and removal guides are:
 
 - <https://docs.openclaw.ai/plugins/facetime>
 - <https://docs.openclaw.ai/plugins/facetime-recovery>
 
-The source has not been published to npm or ClawHub. Link this directory from a
-trusted OpenClaw source checkout for development.
+The plugin is bundled with OpenClaw. Its signed and notarized native helpers are
+released separately from `openclaw/openclaw-facetime` and installed with:
+
+```bash
+brew install openclaw/tap/openclaw-facetime
+```
 
 ## Ownership boundaries
 
@@ -21,9 +25,8 @@ trusted OpenClaw source checkout for development.
 - `src/helper-supervisor.ts` owns generation-bound LLDB injection and joins
   in-flight work on stop.
 - `src/audio-pump.ts` owns the bounded framed parent/native media protocol.
-- `native/Sources/FaceTimeAudioCapture/FaceTimeAudioCapture.swift` owns the
-  process tap, bounded capture producer, exact carrier watchdog, and actual
-  `AVAudioPlayerNode.dataPlayedBack` output consumption.
+- `openclaw/openclaw-facetime` owns the native process tap and injected helper.
+  This plugin validates native protocol version 1 before activation.
 - `src/talk-driver.ts` owns provider response/tool generations and exact agent
   consult cancellation.
 
@@ -51,16 +54,9 @@ strictly sequenced within that epoch.
 
 ```bash
 node scripts/run-vitest.mjs extensions/facetime
-pnpm --dir extensions/facetime build:capture
-pnpm --dir extensions/facetime check:helper:macabi
-pnpm --dir extensions/facetime test:native
 sh -n extensions/facetime/scripts/*.sh
 (cd extensions/facetime && npm pack --dry-run)
 ```
-
-`check:helper:macabi` uses an ephemeral build key and does not stage a helper,
-inject, open apps, or change operator state. `test:native` does not install the
-driver or restart Core Audio.
 
 Do not run live calls, install/uninstall the driver, change SIP, enable developer
 tools, or modify TCC during automated validation.
@@ -75,6 +71,6 @@ Apple-signed, root-owned, and not group/world writable, then performs a
 transactional swap. Generated BlackHole/driver artifacts are GPL-3.0 and are
 excluded from the package. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-The Objective-C helper contains adapted Apache-2.0 BlueBubbles source. Unused
-link/member admission handlers, ZKSwizzle, CTBlockDescription, and the old
-Xcode project were removed from the production surface.
+The separately released Objective-C and Swift native sources, their adapted
+third-party notices, and their signing pipeline live in
+`openclaw/openclaw-facetime`.

@@ -4,9 +4,12 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
 
-function resolveCaptureBinary(pluginRoot: string): string {
-  return resolve(pluginRoot, "native", ".build", "release", "facetime-audio-capture");
-}
+const NATIVE_PROTOCOL = "NATIVE_PROTOCOL_VERSION=1";
+const NATIVE_DIRS = [
+  "/opt/homebrew/opt/openclaw-facetime/libexec",
+  "/usr/local/opt/openclaw-facetime/libexec",
+] as const;
+const INSTALL_COMMAND = "brew install openclaw/tap/openclaw-facetime";
 
 function resolveHelperDylib(): string {
   return resolve(
@@ -42,17 +45,49 @@ function resolveHelperBuildStamp(): string {
   );
 }
 
-export async function inspectFaceTimeArtifacts(params: {
-  pluginRoot: string;
+async function resolveNativeInstall(params: {
   access?: typeof access;
+  readFile?: typeof readFile;
+}): Promise<{ buildId: string; capture: string; directory: string; helper: string }> {
+  const checkAccess = params.access ?? access;
+  const loadFile = params.readFile ?? readFile;
+  for (const directory of NATIVE_DIRS) {
+    const capture = resolve(directory, "facetime-audio-capture");
+    const helper = resolve(directory, "FaceTimeHelper.dylib");
+    const buildIdFile = resolve(directory, "FaceTimeHelper.build-id");
+    const protocolFile = resolve(directory, "native-protocol.env");
+    try {
+      await Promise.all([
+        checkAccess(capture, constants.X_OK),
+        checkAccess(helper, constants.R_OK),
+        checkAccess(buildIdFile, constants.R_OK),
+        checkAccess(protocolFile, constants.R_OK),
+      ]);
+      const [buildId, protocol] = await Promise.all([
+        loadFile(buildIdFile, "utf8").then((value) => value.trim()),
+        loadFile(protocolFile, "utf8").then((value) => value.trim()),
+      ]);
+      if (!/^[\da-f]{64}$/u.test(buildId) || protocol !== NATIVE_PROTOCOL) {
+        continue;
+      }
+      return { buildId, capture, directory, helper };
+    } catch {
+      // Try the other supported Homebrew prefix.
+    }
+  }
+  throw new Error(`Compatible FaceTime native helpers are not installed. Run: ${INSTALL_COMMAND}`);
+}
+
+export async function inspectFaceTimeArtifacts(params: {
+  access?: typeof access;
+  readFile?: typeof readFile;
 }): Promise<{
-  captureBinary: boolean;
-  helperDylib: boolean;
+  nativeInstall: boolean;
+  stagedHelper: boolean;
   helperKey: boolean;
-  helperBuild: boolean;
+  helperBuildStamp: boolean;
   stagedHelperDylibs: number;
   cachedDriver: boolean;
-  helperBuildCache: boolean;
 }> {
   const checkAccess = params.access ?? access;
   const readable = async (file: string, mode: number) => {
@@ -76,15 +111,17 @@ export async function inspectFaceTimeArtifacts(params: {
     }
   };
   const [
-    captureBinary,
-    helperDylib,
+    nativeInstall,
+    stagedHelper,
     helperKey,
-    helperBuild,
+    helperBuildStamp,
     stagedHelperDylibs,
     cachedDriver,
-    helperBuildCache,
   ] = await Promise.all([
-    readable(resolveCaptureBinary(params.pluginRoot), constants.X_OK),
+    resolveNativeInstall(params).then(
+      () => true,
+      () => false,
+    ),
     readable(resolveHelperDylib(), constants.R_OK),
     readable(resolveHelperIpcKey(), constants.R_OK),
     readable(resolveHelperBuildStamp(), constants.R_OK),
@@ -103,47 +140,24 @@ export async function inspectFaceTimeArtifacts(params: {
       ),
       constants.R_OK,
     ),
-    readable(
-      resolve(process.env.TMPDIR ?? "/tmp", "openclaw-facetime-macabi", "FaceTimeHelper.dylib"),
-      constants.R_OK,
-    ),
   ]);
   return {
-    captureBinary,
-    helperDylib,
+    nativeInstall,
+    stagedHelper,
     helperKey,
-    helperBuild,
+    helperBuildStamp,
     stagedHelperDylibs,
     cachedDriver,
-    helperBuildCache,
   };
 }
 
-export async function ensureCaptureBinary(params: {
-  pluginRoot: string;
-  runCommandWithTimeout: PluginRuntime["system"]["runCommandWithTimeout"];
-  access?: typeof access;
-}): Promise<string> {
-  const binary = resolveCaptureBinary(params.pluginRoot);
-  const checkAccess = params.access ?? access;
-  try {
-    await checkAccess(binary, constants.X_OK);
-    return binary;
-  } catch {
-    // OpenClaw installs npm plugins with lifecycle scripts disabled. Build the
-    // signed helper from the packaged Swift source on first activation instead.
-  }
-  const buildScript = resolve(params.pluginRoot, "scripts", "build-capture.sh");
-  const result = await params.runCommandWithTimeout(["/bin/bash", buildScript], {
-    timeoutMs: 120_000,
-  });
-  if (result.code !== 0) {
-    throw new Error(
-      `FaceTime capture helper build failed: ${result.stderr || result.stdout || `exit ${result.code}`}`,
-    );
-  }
-  await checkAccess(binary, constants.X_OK);
-  return binary;
+export async function ensureCaptureBinary(
+  params: {
+    access?: typeof access;
+    readFile?: typeof readFile;
+  } = {},
+): Promise<string> {
+  return (await resolveNativeInstall(params)).capture;
 }
 
 export async function ensureHelperArtifacts(params: {
@@ -152,24 +166,27 @@ export async function ensureHelperArtifacts(params: {
   access?: typeof access;
   readFile?: typeof readFile;
 }): Promise<{ buildId: string; dylib: string; ipcKey: string }> {
-  const buildScript = resolve(params.pluginRoot, "scripts", "build-helper-macabi.sh");
-  const result = await params.runCommandWithTimeout(["/bin/bash", buildScript, "--if-needed"], {
+  const installation = await resolveNativeInstall(params);
+  const stageScript = resolve(params.pluginRoot, "scripts", "stage-helper.sh");
+  const result = await params.runCommandWithTimeout(["/bin/bash", stageScript, "--if-needed"], {
     timeoutMs: 120_000,
   });
   if (result.code !== 0) {
     throw new Error(
-      `FaceTime injected helper build failed: ${result.stderr || result.stdout || `exit ${result.code}`}`,
+      `FaceTime native helper staging failed: ${result.stderr || result.stdout || `exit ${result.code}`}`,
     );
   }
+  const checkAccess = params.access ?? access;
+  const loadFile = params.readFile ?? readFile;
   const dylib = resolveHelperDylib();
-  await (params.access ?? access)(dylib, constants.R_OK);
-  const ipcKey = (await (params.readFile ?? readFile)(resolveHelperIpcKey(), "utf8")).trim();
+  await checkAccess(dylib, constants.R_OK);
+  const ipcKey = (await loadFile(resolveHelperIpcKey(), "utf8")).trim();
+  const stagedBuildId = (await loadFile(resolveHelperBuildStamp(), "utf8")).trim();
   if (!/^[\da-f]{64}$/u.test(ipcKey)) {
-    throw new Error("FaceTime helper build produced an invalid IPC authentication key");
+    throw new Error("FaceTime helper produced an invalid IPC authentication key");
   }
-  const buildId = (await (params.readFile ?? readFile)(resolveHelperBuildStamp(), "utf8")).trim();
-  if (!/^[\da-f]{64}$/u.test(buildId)) {
-    throw new Error("FaceTime helper build produced an invalid build identity");
+  if (stagedBuildId !== installation.buildId) {
+    throw new Error("Staged FaceTime helper does not match the installed native package");
   }
-  return { buildId, dylib, ipcKey };
+  return { buildId: installation.buildId, dylib, ipcKey };
 }

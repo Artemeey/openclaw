@@ -7,8 +7,8 @@ title: "FaceTime plugin"
 sidebarTitle: "FaceTime (experimental)"
 ---
 
-The FaceTime plugin is an experimental, source-only code plugin for an
-Apple Silicon Mac. It can answer configured owner handles, place an explicitly
+The FaceTime plugin is an experimental bundled plugin for an Apple Silicon Mac.
+It can answer configured owner handles, place an explicitly
 approved outgoing call, bridge call audio to a realtime provider, consult the
 configured OpenClaw agent, and request carrier hangup.
 
@@ -24,21 +24,21 @@ or System Settings automatically.
 
 - Apple Silicon and macOS 14.4 or later
 - OpenClaw 2026.8.1 or later
+- signed native helpers from `openclaw/openclaw-facetime`
 - full Xcode at `/Applications/Xcode.app`
 - FaceTime signed in for the logged-in user
 - a configured realtime voice provider
 - consent from everyone whose audio will be processed
 
-The current source has not been published to npm or ClawHub. From an OpenClaw
-source checkout, link it explicitly:
+Install the signed and notarized native helpers, then enable the bundled plugin:
 
 ```bash
-openclaw plugins install --link "$PWD/extensions/facetime" --force
+brew install openclaw/tap/openclaw-facetime
 openclaw plugins enable facetime
 ```
 
-`--force` confirms trust in the local code. It does not bypass configuration,
-approval, or platform safety checks.
+The plugin requires native protocol version 1 and fails closed when the
+installed helper package is missing or incompatible.
 
 ## Configure owner identities
 

@@ -92,10 +92,7 @@ export async function createFaceTimeRuntime(params: {
   let driverInstallAbortController: AbortController | undefined;
   let driverInstallTask: Promise<void> | undefined;
   const isDriverInstallPending = () => driverInstall.phase === "installing";
-  const captureBinary = await ensureCaptureBinary({
-    pluginRoot: params.pluginRoot,
-    runCommandWithTimeout: params.runtime.system.runCommandWithTimeout,
-  });
+  const captureBinary = await ensureCaptureBinary();
   const { buildId: helperBuildId, ipcKey: helperIpcKey } = await ensureHelperArtifacts({
     pluginRoot: params.pluginRoot,
     runCommandWithTimeout: params.runtime.system.runCommandWithTimeout,

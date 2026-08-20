@@ -4,19 +4,16 @@
 
 ```bash
 node scripts/run-vitest.mjs extensions/facetime
-pnpm --dir extensions/facetime build:capture
-pnpm --dir extensions/facetime check:helper:macabi
-pnpm --dir extensions/facetime test:native
 sh -n extensions/facetime/scripts/*.sh
 (cd extensions/facetime && npm pack --dry-run)
 ```
 
 The automated boundary proves state/generation fencing, exact pending-dial
 persistence, helper authentication and bounds, typed native outcomes,
-closure-bound consult cancellation, provider response ownership, capture queue
-overflow handling, actual native playback-frame/drain projection, driver
-rollback, and uninstall inventory. Package inspection must show no generated
-driver, dylib, `.build`, or BlackHole artifact.
+closure-bound consult cancellation, provider response ownership, native
+protocol compatibility, driver rollback, and uninstall inventory. Package
+inspection must show no native source, generated driver, dylib, `.build`, or
+BlackHole artifact.
 
 The native `.dataPlayedBack` callback proves consumption by the configured
 `OpenClaw-Feed` output device. It does not prove remote audibility.

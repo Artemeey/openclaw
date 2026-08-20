@@ -20,8 +20,8 @@ openclaw plugins disable facetime
 ```
 
 The uninstall removes the HAL driver, cached driver output, staged and
-timestamped helper dylibs for FaceTime and Phone, the helper key and build
-stamp, and the helper build cache. It does not kill unrelated processes.
+timestamped helper dylibs for FaceTime and Phone, the helper key, and the staged
+helper build stamp. It does not kill unrelated processes.
 
 Quit and reopen FaceTime and Phone so neither app retains a mapped helper.
 If an app will not quit normally, terminate only that exact app from Activity

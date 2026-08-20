@@ -282,12 +282,12 @@ export async function runFaceTimeSetup(params: SetupParams): Promise<FaceTimeSet
     required: true,
     message: xcodeReady
       ? `Full Xcode compiler and macOS SDK are available at ${XCODE_APP}`
-      : `Full Xcode is required at ${XCODE_APP}; Command Line Tools alone cannot build the FaceTime helper`,
+      : `Full Xcode is required at ${XCODE_APP}; Command Line Tools alone cannot perform protected-app injection or build the local audio driver`,
     ...(!xcodeReady ? { actionId: "install-xcode-tools" } : {}),
   });
   if (!xcodeReady) {
     // Keep the established action id stable for setup-report consumers while
-    // directing operators to the full Xcode app the helper build actually uses.
+    // directing operators to the full Xcode app required by the native setup boundary.
     addAction(actions, {
       id: "install-xcode-tools",
       kind: "command",

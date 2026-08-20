@@ -223,7 +223,7 @@ describe("FaceTime guided setup", () => {
     expect(report.checks.find((check) => check.id === "xcode-tools")).toMatchObject({
       label: "Full Xcode installation",
       message:
-        "Full Xcode is required at /Applications/Xcode.app; Command Line Tools alone cannot build the FaceTime helper",
+        "Full Xcode is required at /Applications/Xcode.app; Command Line Tools alone cannot perform protected-app injection or build the local audio driver",
     });
     expect(report.actions.find((action) => action.id === "install-xcode-tools")).toMatchObject({
       label: "Install full Xcode in /Applications",

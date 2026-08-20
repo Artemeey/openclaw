@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-describe("source-only plugin manifest", () => {
-  it("declares a source-only Apple Silicon plugin at the current host contract", () => {
+describe("FaceTime plugin manifest", () => {
+  it("declares an installed-native Apple Silicon plugin at the current host contract", () => {
     const packageManifest = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),
     );
@@ -27,9 +27,11 @@ describe("source-only plugin manifest", () => {
       expect.arrayContaining(["index.ts", "runtime-api.ts", "src/runtime.ts"]),
     );
     expect(packageManifest.files).not.toContain("runtime-entry.ts");
-    expect(packageManifest.files).not.toContain("helper/tests/");
-    expect(packageManifest.files).not.toContain("native/Checks/");
-    expect(packageManifest.files).not.toContain("scripts/");
+    expect(packageManifest.files.some((file: string) => file.startsWith("helper/"))).toBe(false);
+    expect(packageManifest.files.some((file: string) => file.startsWith("native/"))).toBe(false);
+    expect(packageManifest.files).not.toContain("scripts/build-capture.sh");
+    expect(packageManifest.files).not.toContain("scripts/build-helper-macabi.sh");
+    expect(packageManifest.files).toContain("scripts/stage-helper.sh");
     expect(packageManifest.files).not.toContain("dist/");
     expect(packageManifest.files).not.toContain("doctor-contract-api.ts");
     expect(packageManifest.files).toContain("LICENSE");

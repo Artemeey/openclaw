@@ -22,7 +22,7 @@ export async function inspectFaceTimeStaticStatus(params: {
   runCommandWithTimeout: PluginRuntime["system"]["runCommandWithTimeout"];
 }): Promise<FaceTimeStaticStatus> {
   const [artifacts, driver] = await Promise.all([
-    inspectFaceTimeArtifacts({ pluginRoot: params.pluginRoot }),
+    inspectFaceTimeArtifacts({}),
     inspectFaceTimeDriver(params).then(
       (status) => ({ status }),
       (error: unknown) => ({ error: formatErrorMessage(error) }),

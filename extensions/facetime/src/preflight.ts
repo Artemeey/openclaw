@@ -143,7 +143,7 @@ export async function runFaceTimePreflight(params: {
     message:
       executable.code === 0
         ? params.captureBinary
-        : "capture helper is missing; restart the gateway to rebuild plugin artifacts",
+        : "capture helper is missing; reinstall with brew install openclaw/tap/openclaw-facetime",
   });
 
   await checkCallApp({ runCommandWithTimeout, checks });

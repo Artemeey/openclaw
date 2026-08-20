@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-derived_root="${HOME}/Library/Developer/Xcode/DerivedData"
 staged_macabi="${HOME}/Library/Containers/com.apple.FaceTime/Data/tmp/FaceTimeHelper.dylib"
 target_app="${FACETIME_HELPER_APP:-FaceTime}"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ "${1:-}" == "--app" ]]; then
   target_app="${2:-}"
@@ -60,25 +60,17 @@ EOF
   exit 1
 fi
 
-dylib="${FACETIME_HELPER_DYLIB:-}"
-if [[ -z "${dylib}" ]]; then
-  if [[ -f "${staged_macabi}" ]]; then
-    dylib="${staged_macabi}"
-  else
-    dylib="$(find "${derived_root}" -path '*FaceTimeHelper.dylib' -type f -print 2>/dev/null | sort | tail -1)"
-  fi
-fi
+dylib="${staged_macabi}"
 
 if [[ -z "${dylib}" || ! -f "${dylib}" ]]; then
   cat >&2 <<EOF
 FaceTimeHelper.dylib was not found under:
 
   ${staged_macabi}
-  ${derived_root}
 
-Build it first:
+Install and stage the signed native helper first:
 
-  pnpm build:helper:macabi
+  brew install openclaw/tap/openclaw-facetime
 
 EOF
   exit 1
@@ -89,6 +81,60 @@ mkdir -p "${target_tmp}"
 unique_dylib="${target_tmp}/FaceTimeHelper-$(date +%Y%m%d%H%M%S)-$$.dylib"
 cp "${dylib}" "${unique_dylib}"
 dylib="${unique_dylib}"
+ipc_key_file="${HOME}/Library/Application Support/OpenClaw/FaceTime/helper-ipc-key"
+auth_sidecar="${dylib}.auth"
+lldb_pid=""
+watchdog_pid=""
+lldb_log="$(mktemp "${TMPDIR:-/tmp}/openclaw-facetime-lldb.XXXXXX")"
+cleanup_attach() {
+  if [[ -n "${watchdog_pid}" ]] && kill -0 "${watchdog_pid}" 2>/dev/null; then
+    kill "${watchdog_pid}" 2>/dev/null || true
+  fi
+  if [[ -n "${lldb_pid}" ]] && kill -0 "${lldb_pid}" 2>/dev/null; then
+    kill "${lldb_pid}" 2>/dev/null || true
+  fi
+  if [[ -e "${auth_sidecar}" ]]; then
+    # Objective-C +load finishes synchronously inside this dlopen. Reinjection
+    # always uses a new uniquely named dylib and sidecar, so this path is never
+    # reused after LLDB detaches and retaining the credential only adds risk.
+    # Unlink the directory entry without reopening it. The injected target can
+    # write this container and must not be able to redirect cleanup via symlink.
+    /usr/bin/python3 -c \
+      'import os, sys; p=sys.argv[1]; os.unlink(p) if os.path.lexists(p) else None' \
+      "${auth_sidecar}" >/dev/null 2>&1 || true
+  fi
+  if [[ -e "${lldb_log}" ]]; then
+    /usr/bin/python3 -c \
+      'import os, sys; p=sys.argv[1]; os.unlink(p) if os.path.lexists(p) else None' \
+      "${lldb_log}" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_attach EXIT HUP INT TERM
+
+"${repo_root}/scripts/ensure-helper-ipc-key.sh" >/dev/null
+ipc_key="$(tr -d '[:space:]' < "${ipc_key_file}")"
+if [[ ! "${ipc_key}" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "FaceTime helper authentication key is malformed." >&2
+  exit 1
+fi
+umask 077
+printf '%s\n' "${ipc_key}" | /usr/bin/python3 -c '
+import os
+import sys
+
+path = sys.argv[1]
+flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+if hasattr(os, "O_NOFOLLOW"):
+    flags |= os.O_NOFOLLOW
+descriptor = os.open(path, flags, 0o600)
+try:
+    with os.fdopen(descriptor, "wb", closefd=False) as handle:
+        handle.write(sys.stdin.buffer.read())
+        handle.flush()
+        os.fsync(descriptor)
+finally:
+    os.close(descriptor)
+' "${auth_sidecar}"
 
 target_pid="${FACETIME_HELPER_PID:-}"
 target_name="${target_app} app"
@@ -116,23 +162,10 @@ fi
 echo "Injecting ${dylib}"
 echo "Target ${target_name} PID: ${target_pid}"
 
-lldb_pid=""
-watchdog_pid=""
-cleanup_attach() {
-  if [[ -n "${watchdog_pid}" ]] && kill -0 "${watchdog_pid}" 2>/dev/null; then
-    kill "${watchdog_pid}" 2>/dev/null || true
-  fi
-  if [[ -n "${lldb_pid}" ]] && kill -0 "${lldb_pid}" 2>/dev/null; then
-    kill "${lldb_pid}" 2>/dev/null || true
-  fi
-}
-trap cleanup_attach EXIT HUP INT TERM
-
 lldb -p "${target_pid}" \
-  -o "expr (void*)dlopen(\"${dylib}\", 2)" \
-  -o "expr (char*)dlerror()" \
+  -o "expr -- (int)({ void *h = dlopen(\"${dylib}\", 2); int *ready = h ? (int *)dlsym(h, \"OpenClawFaceTimeHelperInitialized\") : 0; ready && *ready == 1; })" \
   -o detach \
-  -o quit &
+  -o quit >"${lldb_log}" 2>&1 &
 lldb_pid=$!
 (
   sleep "${FACETIME_HELPER_ATTACH_TIMEOUT_SECONDS:-90}"
@@ -152,5 +185,11 @@ kill "${watchdog_pid}" 2>/dev/null || true
 wait "${watchdog_pid}" 2>/dev/null || true
 watchdog_pid=""
 if [[ "${lldb_status}" -ne 0 ]]; then
+  /bin/cat "${lldb_log}" >&2
   exit "${lldb_status}"
+fi
+if ! /usr/bin/grep -Eq '^\(int\) \$[0-9]+ = 1$' "${lldb_log}"; then
+  /bin/cat "${lldb_log}" >&2
+  echo "LLDB did not confirm that FaceTimeHelper.dylib initialized" >&2
+  exit 1
 fi
