@@ -534,6 +534,7 @@ function createCronPromptExecutor(params: {
             cfg: params.cfgWithAgentDefaults,
             provider: providerOverride,
             model: modelOverride,
+            agentId: params.agentId,
           });
         if (
           candidateConfiguredThinkLevel !== "off" &&
