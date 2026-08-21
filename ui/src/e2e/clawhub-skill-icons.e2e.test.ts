@@ -13,6 +13,7 @@ const suite = createControlUiE2eSuite({
 });
 const skillIconUrl = `https://registry.example.test/clawhub/api/v1/skill-icons/${"a".repeat(64)}`;
 const detailIconUrl = `https://registry.example.test/clawhub/api/v1/skill-icons/${"b".repeat(64)}`;
+const resourceBasePath = "/openclaw";
 const skillIconPng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4n8/wHwAGTQJu5DkvqwAAAABJRU5ErkJggg==",
   "base64",
@@ -53,6 +54,7 @@ suite.define(() => {
         });
 
         const gateway = await installMockGateway(page, {
+          basePath: resourceBasePath,
           featureMethods: ["skills.status", "skills.search", "skills.detail"],
           methodResponses: {
             "skills.status": {
@@ -87,7 +89,9 @@ suite.define(() => {
 
         await page.route("**/__openclaw__/catalog-icon/**", async (route) => {
           const request = route.request();
-          const encodedSourceUrl = new URL(request.url()).pathname.split("/").at(-1) ?? "";
+          const requestPath = new URL(request.url()).pathname;
+          expect(requestPath).toMatch(/^\/openclaw\/__openclaw__\/catalog-icon\//u);
+          const encodedSourceUrl = requestPath.split("/").at(-1) ?? "";
           proxiedImageRequests.push({
             authorization: request.headers().authorization ?? "",
             sourceUrl: decodeURIComponent(encodedSourceUrl),
@@ -99,7 +103,7 @@ suite.define(() => {
           });
         });
 
-        const skillsUrl = `${suite.server.baseUrl}skills`;
+        const skillsUrl = `${suite.server.baseUrl}${resourceBasePath.slice(1)}/skills`;
         await page.route(skillsUrl, async (route) => {
           const response = await route.fetch();
           const body = await response.text();

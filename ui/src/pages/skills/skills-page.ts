@@ -35,8 +35,8 @@ import {
 import { GatewayPageController } from "../../lit/gateway-page-controller.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
-import { renderPluginsHubHeader } from "../plugins/plugins-hub-header.ts";
 import { fetchCatalogIconBlobUrl } from "../plugins/icon-loader.ts";
+import { renderPluginsHubHeader } from "../plugins/plugins-hub-header.ts";
 import { PLUGINS_HUB_PANEL_ID, type PluginsHubTab } from "../plugins/plugins-hub.ts";
 import { renderSkills, type SkillDetailTab, type SkillsStatusFilter } from "./view.ts";
 
@@ -278,7 +278,7 @@ class SkillsPage extends OpenClawLightDomElement {
     this.clawhubIconRequests.set(iconUrl, request);
     void fetchCatalogIconBlobUrl({
       iconUrl,
-      basePath: this.context.basePath,
+      resourceBasePath: this.context.resourceBasePath,
       gatewayUrl: this.context.gateway.connection.gatewayUrl,
       auth: {
         hello: this.context.gateway.snapshot.hello,
