@@ -1,6 +1,6 @@
 import type {
-  AuthProfileHealthStatus,
   AuthProviderHealthStatus,
+  AuthProfileHealthStatus,
 } from "../../agents/auth-health.js";
 import type { AuthCredentialReasonCode } from "../../agents/auth-profiles/credential-state.js";
 import type {
@@ -24,14 +24,28 @@ export type ModelAuthStatusProfile = {
   expiry?: ModelAuthExpiry;
   /** True only for saved OAuth/token profiles this gateway can remove. */
   logoutSupported?: boolean;
+  /** Non-secret account metadata supplied by the provider login flow. */
+  displayName?: string;
+  email?: string;
+  lastUsedAt?: number;
+  cooldownUntil?: number;
+  cooldownReason?: string;
+  disabledUntil?: number;
+  disabledReason?: string;
+  blockedUntil?: number;
+  blockedReason?: string;
 };
 
 export type ModelAuthStatusProvider = {
   provider: string;
+  /** Canonical credential-order owner; absent only on older gateways. */
+  authProvider?: string;
   displayName: string;
   status: AuthProviderHealthStatus;
   expiry?: ModelAuthExpiry;
   profiles: ModelAuthStatusProfile[];
+  /** Effective stored/config priority; omitted when selection is automatic. */
+  profileOrder?: string[];
   apiKey?: {
     source: "config" | "env";
     envVar?: string;

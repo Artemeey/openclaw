@@ -17,153 +17,144 @@ import {
 
 afterEach(() => {
   document.body.replaceChildren();
-  vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("ModelProvidersPage agent scope", () => {
-  it.each(["direct", "preload"] as const)(
-    "recovers a failed %s provider usage result on the next page activation",
-    async (loadSource) => {
-      const { context, request, snapshot } = createHarness("main");
-      vi.spyOn(document, "hasFocus").mockReturnValue(true);
-      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-      const originalRequest = request.getMockImplementation()!;
-      let providerUnavailable = loadSource === "direct";
-      request.mockImplementation(async (method: string) => {
-        if (method === "usage.status" && providerUnavailable) {
-          throw new Error("provider usage unreachable");
-        }
-        return originalRequest(method);
-      });
-      const page = document.createElement(
-        "openclaw-model-providers-page",
-      ) as ModelProvidersPageTestElement;
-      page.context = context;
-      if (loadSource === "preload") {
-        const routeData = {
-          gateway: context.gateway,
-          gatewaySnapshot: snapshot,
-          data: {
-            ...EMPTY_MODEL_PROVIDERS_DATA,
-            config: {},
-            providerUsage: { ok: false as const, error: { kind: "request-failed" as const } },
-            updatedAt: Date.now(),
-          },
-          client: snapshot.client,
-          agentId: "main",
-        };
-        page.routeData = routeData;
-      }
-      document.body.append(page);
-      await waitForFast(() => expect(page.data?.providerUsage).toMatchObject({ ok: false }));
-      const previousCalls = requestCount(request, "usage.status");
-      providerUnavailable = false;
-
-      window.dispatchEvent(new Event("focus"));
-
-      await vi.waitFor(() => {
-        expect(requestCount(request, "usage.status")).toBe(previousCalls + 1);
-      });
-      await waitForFast(() =>
-        expect(page.data?.providerUsage).toEqual({
-          ok: true,
-          value: { updatedAt: 1, providers: [] },
-        }),
-      );
-    },
-  );
-
-  it.each(["direct", "preload"] as const)(
-    "keeps a successful empty %s provider usage result fresh on page activation",
-    async (loadSource) => {
-      const { context, request, snapshot } = createHarness("main");
-      vi.spyOn(document, "hasFocus").mockReturnValue(true);
-      vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
-      const page = document.createElement(
-        "openclaw-model-providers-page",
-      ) as ModelProvidersPageTestElement;
-      page.context = context;
-      if (loadSource === "preload") {
-        page.routeData = {
-          gateway: context.gateway,
-          gatewaySnapshot: snapshot,
-          data: {
-            ...EMPTY_MODEL_PROVIDERS_DATA,
-            config: {},
-            providerUsage: { ok: true, value: { updatedAt: 1, providers: [] } },
-            updatedAt: Date.now(),
-          },
-          client: snapshot.client,
-          agentId: "main",
-        };
-      }
-      document.body.append(page);
-      await waitForFast(() => expect(page.data?.providerUsage).toMatchObject({ ok: true }));
-      const previousCalls = requestCount(request, "usage.status");
-
-      window.dispatchEvent(new Event("focus"));
-
-      expect(requestCount(request, "usage.status")).toBe(previousCalls);
-      expect(page.data?.providerUsage).toEqual({
-        ok: true,
-        value: { updatedAt: 1, providers: [] },
-      });
-    },
-  );
-
-  it("recovers a failed provider usage result after a same-client reconnect", async () => {
-    const { context, request, snapshot } = createHarness("main");
-    const source = publishableGateway(snapshot);
-    (context as { gateway: unknown }).gateway = source.gateway;
-    vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  it("repaints profile controls at the earliest account-availability deadline", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-26T00:00:00Z"));
+    const { context, request } = createHarness("main");
     const originalRequest = request.getMockImplementation()!;
-    let providerUnavailable = true;
+    const now = Date.now();
     request.mockImplementation(async (method: string) => {
-      if (method === "usage.status" && providerUnavailable) {
-        throw new Error("provider usage unreachable");
+      if (method !== "models.authStatus") {
+        return originalRequest(method);
       }
-      return originalRequest(method);
+      return {
+        ts: now,
+        providers: [
+          {
+            provider: "openai",
+            authProvider: "openai",
+            displayName: "OpenAI",
+            status: "ok",
+            profiles: [
+              {
+                profileId: "openai:first",
+                type: "oauth",
+                status: "ok",
+                email: "first@example.com",
+                cooldownUntil: now + 1_000,
+              },
+              {
+                profileId: "openai:second",
+                type: "oauth",
+                status: "ok",
+                email: "second@example.com",
+                disabledUntil: now + 5_000,
+              },
+              {
+                profileId: "openai:third",
+                type: "oauth",
+                status: "ok",
+                email: "third@example.com",
+                blockedUntil: now + 10_000,
+              },
+            ],
+          },
+        ],
+      };
     });
+
     const page = appendPage(context);
-    await waitForFast(() => expect(page.data?.providerUsage).toMatchObject({ ok: false }));
-    providerUnavailable = false;
+    await waitForFast(() =>
+      expect(page.querySelectorAll(".model-providers__profile-retry")).toHaveLength(3),
+    );
 
-    source.publish({ ...snapshot, phase: "reconnecting" });
-    source.publish({ ...snapshot, phase: "connected" });
-
-    await vi.waitFor(() => expect(requestCount(request, "usage.status")).toBe(2));
-    await waitForFast(() => expect(page.data?.providerUsage).toMatchObject({ ok: true }));
+    await vi.advanceTimersByTimeAsync(1_050);
+    await page.updateComplete;
+    expect(page.querySelectorAll(".model-providers__profile-retry")).toHaveLength(2);
+    const firstRow = page.querySelector<HTMLElement>('[data-profile-id="openai:first"]');
+    expect(firstRow?.textContent).toContain("Ready");
   });
 
-  it("defers failed provider usage recovery while hidden until page activation", async () => {
-    const { context, request, snapshot } = createHarness("main");
-    const source = publishableGateway(snapshot);
-    (context as { gateway: unknown }).gateway = source.gateway;
-    vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  it("cancels account-availability repaint timers when disconnected", async () => {
+    const { context, request } = createHarness("main");
     const originalRequest = request.getMockImplementation()!;
-    let providerUnavailable = true;
+    const deadline = Date.now() + 500;
     request.mockImplementation(async (method: string) => {
-      if (method === "usage.status" && providerUnavailable) {
-        throw new Error("provider usage unreachable");
+      if (method !== "models.authStatus") {
+        return originalRequest(method);
       }
-      return originalRequest(method);
+      return {
+        ts: Date.now(),
+        providers: [
+          {
+            provider: "openai",
+            authProvider: "openai",
+            displayName: "OpenAI",
+            status: "ok",
+            profiles: [
+              {
+                profileId: "openai:first",
+                type: "oauth",
+                status: "ok",
+                cooldownUntil: deadline,
+              },
+            ],
+          },
+        ],
+      };
     });
     const page = appendPage(context);
-    await waitForFast(() => expect(page.data?.providerUsage).toMatchObject({ ok: false }));
-    providerUnavailable = false;
+    await waitForFast(() =>
+      expect(page.querySelectorAll(".model-providers__profile-retry")).toHaveLength(1),
+    );
 
-    source.publish({ ...snapshot, phase: "reconnecting" });
-    source.publish({ ...snapshot, phase: "connected" });
-    expect(requestCount(request, "usage.status")).toBe(1);
+    const requestUpdate = vi.spyOn(page, "requestUpdate");
+    page.remove();
+    await page.updateComplete;
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 100);
+    });
+    requestUpdate.mockClear();
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 500);
+    });
 
-    visibility.mockReturnValue("visible");
-    document.dispatchEvent(new Event("visibilitychange"));
+    expect(requestUpdate).not.toHaveBeenCalled();
+  });
 
-    await vi.waitFor(() => expect(requestCount(request, "usage.status")).toBe(2));
-    await waitForFast(() => expect(page.data?.providerUsage).toMatchObject({ ok: true }));
+  it("reloads account usage after a cold cache response is still pending", async () => {
+    const { context, request } = createHarness("main");
+    const originalRequest = request.getMockImplementation()!;
+    let authStatusCalls = 0;
+    request.mockImplementation(async (method: string) => {
+      if (method !== "models.authStatus") {
+        return originalRequest(method);
+      }
+      authStatusCalls += 1;
+      return {
+        ts: authStatusCalls,
+        providers: [],
+        providerCapabilities: [],
+        ...(authStatusCalls === 1 ? { usageRefreshPending: true } : {}),
+      };
+    });
+
+    const page = appendPage(context);
+
+    await vi.waitFor(() => expect(requestCount(request, "models.authStatus")).toBe(2), {
+      timeout: 2_500,
+    });
+    await waitForFast(() => expect(page.data?.authStatus?.usageRefreshPending).toBeUndefined());
+    const authRequests = request.mock.calls.filter(([method]) => method === "models.authStatus");
+    expect(authRequests[1]?.[1]).toEqual({ agentId: "main" });
+    expect(requestCount(request, "models.list")).toBe(1);
+    expect(requestCount(request, "config.get")).toBe(1);
+    expect(requestCount(request, "sessions.usage")).toBe(1);
   });
 
   it("supersedes a hung load on disconnect so reconnect can replace it", async () => {
@@ -173,7 +164,7 @@ describe("ModelProvidersPage agent scope", () => {
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     const page = appendPage(context);
-    await waitForFast(() => expect(page.data?.providerUsage).toMatchObject({ ok: true }));
+    await waitForFast(() => expect(page.data?.authStatus).not.toBeNull());
     deferNextAuthStatus();
     void page.refresh({ force: true });
     await vi.waitFor(() => expect(requestCount(request, "models.authStatus")).toBe(2));
@@ -182,7 +173,7 @@ describe("ModelProvidersPage agent scope", () => {
     source.publish({ ...snapshot, phase: "connected" });
 
     await vi.waitFor(() => expect(requestCount(request, "models.authStatus")).toBe(3));
-    await waitForFast(() => expect(page.data?.providerUsage).toMatchObject({ ok: true }));
+    await waitForFast(() => expect(page.data?.authStatus).not.toBeNull());
   });
 
   it("keeps direct data visible while a same-client reconnect replaces it", async () => {
@@ -192,7 +183,7 @@ describe("ModelProvidersPage agent scope", () => {
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     const page = appendPage(context);
-    await waitForFast(() => expect(page.data?.providerUsage).toMatchObject({ ok: true }));
+    await waitForFast(() => expect(page.data?.authStatus).not.toBeNull());
     const previousData = page.data;
     const originalRequest = request.getMockImplementation()!;
     request.mockImplementation(async (method: string) => {
@@ -473,95 +464,6 @@ describe("ModelProvidersPage agent scope", () => {
     expect(page.addProviderId).toBe("anthropic");
     expect(page.addProviderKey).toBe("shared-provider-key");
     expect(page.messages.add).toBeUndefined();
-  });
-
-  it("stops queued agent-scoped logouts after the selected agent changes", async () => {
-    const { agentSelection, context, notifySelection, request } = createHarness("main");
-    const page = appendPage(context);
-    await waitForFast(() => expect(page.data?.config).toEqual({}));
-    request.mockClear();
-    const firstLogout = deferred<unknown>();
-    request.mockImplementationOnce(async () => firstLogout.promise);
-
-    const loggingOut = page.logout("openai", [
-      { provider: "openai", profileIds: ["openai:first"] },
-      { provider: "alias", profileIds: ["openai:second"] },
-    ]);
-    await vi.waitFor(() =>
-      expect(request).toHaveBeenCalledWith("models.authLogout", {
-        provider: "openai",
-        profileIds: ["openai:first"],
-        agentId: "main",
-      }),
-    );
-    agentSelection.state.selectedId = "writer";
-    agentSelection.state.scopeId = "writer";
-    notifySelection();
-    await vi.waitFor(() => expect(page.selectedAgentId).toBe("writer"));
-    agentSelection.state.selectedId = "main";
-    agentSelection.state.scopeId = "main";
-    notifySelection();
-    await vi.waitFor(() => expect(page.selectedAgentId).toBe("main"));
-    firstLogout.resolve({});
-    await loggingOut;
-
-    expect(request.mock.calls.filter(([method]) => method === "models.authLogout")).toHaveLength(1);
-  });
-
-  it("stops queued agent-scoped logouts when route data changes the selected agent", async () => {
-    const { agentSelection, context, request, snapshot } = createHarness("main");
-    const page = appendPage(context);
-    await waitForFast(() => expect(page.data?.config).toEqual({}));
-    request.mockClear();
-    const firstLogout = deferred<unknown>();
-    request.mockImplementationOnce(async () => firstLogout.promise);
-
-    const loggingOut = page.logout("openai", [
-      { provider: "openai", profileIds: ["openai:first"] },
-      { provider: "alias", profileIds: ["openai:second"] },
-    ]);
-    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
-    const defaultsDraft: DefaultModelSelection = {
-      primary: "openai/gpt-5",
-      fallbacks: [],
-      utilityModel: null,
-    };
-    page.keyEditorProvider = "openai";
-    page.keyDraft = "synthetic-route-agent-key";
-    page.addProviderOpen = true;
-    page.addProviderId = "anthropic";
-    page.addProviderKey = "synthetic-route-provider-key";
-    page.defaultsDraft = defaultsDraft;
-    page.pendingLogoutProvider = "openai";
-    page.messages = { openai: { kind: "error", text: "Previous agent failure" } };
-    page.probeResults = {
-      openai: { provider: "openai", status: "ok", results: [] },
-    };
-    agentSelection.state.selectedId = "writer";
-    agentSelection.state.scopeId = "writer";
-    page.routeData = {
-      gateway: context.gateway,
-      gatewaySnapshot: snapshot,
-      data: { ...EMPTY_MODEL_PROVIDERS_DATA, config: {}, updatedAt: 1 },
-      client: snapshot.client,
-      agentId: "writer",
-    };
-    await page.updateComplete;
-    expect(page.selectedAgentId).toBe("writer");
-    expect(page.busy).toEqual({});
-    expect(page.pendingLogoutProvider).toBeNull();
-    expect(page.messages).toEqual({});
-    expect(page.probeResults).toEqual({});
-    expect(page.keyEditorProvider).toBeNull();
-    expect(page.keyDraft).toBe("");
-    expect(page.addProviderOpen).toBe(false);
-    expect(page.addProviderId).toBe("");
-    expect(page.addProviderKey).toBe("");
-    expect(page.defaultsDraft).toBe(defaultsDraft);
-    firstLogout.resolve({});
-    await loggingOut;
-
-    expect(request.mock.calls.filter(([method]) => method === "models.authLogout")).toHaveLength(1);
   });
 
   it("reloads credential status when the agent selector changes", async () => {

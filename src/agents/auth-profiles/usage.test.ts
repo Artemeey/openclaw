@@ -849,6 +849,20 @@ describe("clearAuthProfileCooldown", () => {
     await clearAuthProfileCooldown({ store, profileId: "nonexistent" });
     expect(store.usageStats).toBeUndefined();
   });
+
+  it("reports a dropped locked-store update", async () => {
+    const store = makeStore({
+      "anthropic:default": {
+        cooldownUntil: Date.now() + 60_000,
+        errorCount: 1,
+      },
+    });
+    storeMocks.updateAuthProfileStoreWithLock.mockResolvedValueOnce(null);
+
+    await expect(
+      clearAuthProfileCooldown({ store, profileId: "anthropic:default" }),
+    ).resolves.toEqual({ ok: false, error: "store-update-failed" });
+  });
 });
 
 describe("markAuthProfileFailure — active windows do not extend on retry", () => {

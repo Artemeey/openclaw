@@ -12,7 +12,7 @@ type DefaultModelsViewProps = {
   mutationBlockedReason: string | null;
   dirty: boolean;
   busy: Record<string, boolean>;
-  message?: { kind: "success" | "error"; text: string; warning?: string };
+  message?: { kind: "success" | "warning" | "error"; text: string; warning?: string };
   onPrimaryChange: (model: string) => void;
   onFallbackAdd: (model: string) => void;
   onFallbackRemove: (index: number) => void;

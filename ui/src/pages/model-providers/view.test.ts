@@ -10,12 +10,22 @@ type ModelProvidersViewProps = Parameters<typeof renderModelProviders>[0];
 type SegmentedGroup = HTMLElement & { disabled: boolean; value: string };
 
 function card(overrides: Partial<ModelProviderCard> = {}): ModelProviderCard {
+  const id = overrides.id ?? "openai";
+  const profileIds = (overrides.profiles ?? []).map((profile) => profile.profileId);
   return {
-    id: "openai",
+    id,
     displayName: "OpenAI",
     profiles: [],
+    profileProviderIds: Object.fromEntries(profileIds.map((profileId) => [profileId, id])),
+    profileAuthProviderIds: Object.fromEntries(profileIds.map((profileId) => [profileId, id])),
+    profileOwnerProfileIds: profileIds.length > 0 ? { [id]: profileIds } : {},
+    profileOrder: [],
+    profileOrders: {},
+    profileOrderProviders: {},
+    profileOrderFallbacks: {},
+    profileOrderFallbackOrders: {},
+    profileOrderLockedOwners: {},
     credentialProviderIds: ["openai"],
-    logoutTargets: [],
     hasConfigApiKey: false,
     modelCount: 1,
     availableModelCount: 1,
@@ -30,10 +40,8 @@ function props(overrides: Partial<ModelProvidersViewProps> = {}): ModelProviders
     loading: false,
     refreshing: false,
     error: null,
-    providerUsageFailed: false,
     updatedAt: 1,
     costDays: 30,
-    credentialAgentLabel: "Writer",
     cards: [card()],
     configuredModels: [{ id: "openai/gpt-5", provider: "openai", name: "GPT-5", available: true }],
     defaultModels: { primary: "openai/gpt-5", fallbacks: [], utilityModel: null },
@@ -47,14 +55,15 @@ function props(overrides: Partial<ModelProvidersViewProps> = {}): ModelProviders
     unconfiguredProviders: [{ id: "anthropic", displayName: "Anthropic" }],
     canMutate: true,
     mutationBlockedReason: null,
-    providerUsageStalled: false,
     probeAvailable: true,
+    profileCanClearCooldown: true,
+    profileCanLogout: true,
+    profileCanReorder: true,
     busy: {},
     messages: {},
     probeResults: {},
     keyEditorProvider: null,
     keyDraft: "",
-    pendingLogoutProvider: null,
     addProviderOpen: false,
     addProviderId: "",
     addProviderKey: "",
@@ -65,9 +74,9 @@ function props(overrides: Partial<ModelProvidersViewProps> = {}): ModelProviders
     onSaveKey: () => undefined,
     onRemoveKey: () => undefined,
     onProbe: () => undefined,
-    onRequestLogout: () => undefined,
-    onCancelLogout: () => undefined,
-    onLogout: () => undefined,
+    onLogoutProfile: () => undefined,
+    onProfileOrderChange: () => undefined,
+    onClearProfileCooldown: () => undefined,
     onAddProviderToggle: () => undefined,
     onAddProviderIdChange: () => undefined,
     onAddProviderKeyChange: () => undefined,
@@ -120,17 +129,16 @@ function selectSegment(group: SegmentedGroup, value: string) {
 }
 
 describe("renderModelProviders", () => {
-  it("surfaces a provider-usage failure on the provider list", () => {
-    const container = document.createElement("div");
-    render(renderModelProviders(props({ providerUsageFailed: true })), container);
-
-    expect(container.textContent).toContain(
-      "Provider usage is unavailable; the last request failed. Refresh to retry.",
-    );
-  });
-
   beforeEach(async () => {
     await i18n.setLocale("en");
+  });
+
+  afterEach(() => {
+    for (const container of document.body.querySelectorAll("div")) {
+      render(nothing, container);
+    }
+    document.body.replaceChildren();
+    vi.restoreAllMocks();
   });
 
   it("hides quick API-key setup when provider capabilities are unavailable", () => {
@@ -144,13 +152,6 @@ describe("renderModelProviders", () => {
 
     expect(text(container)).not.toContain("Add provider");
     expect(container.querySelector('[data-model-readiness="model-required"]')).not.toBeNull();
-  });
-
-  afterEach(() => {
-    for (const container of document.body.querySelectorAll("div")) {
-      render(nothing, container);
-    }
-    document.body.replaceChildren();
   });
 
   it("renders model behavior next to default models and emits canonical values", () => {
@@ -316,7 +317,7 @@ describe("renderModelProviders", () => {
     expect([...groups].every((group) => group.disabled)).toBe(true);
   });
 
-  it("locks provider and default-model mutations while shared config work is pending", () => {
+  it("locks profile mutations with config controls during shared config work", () => {
     const container = mount(
       props({
         configBusy: true,
@@ -334,7 +335,15 @@ describe("renderModelProviders", () => {
           card({
             hasConfigApiKey: true,
             apiKey: { source: "config" },
-            logoutTargets: [{ provider: "openai", profileIds: ["openai:oauth"] }],
+            profiles: [
+              {
+                profileId: "openai:oauth",
+                type: "oauth",
+                status: "ok",
+                logoutSupported: true,
+              },
+            ],
+            profileProviderIds: { "openai:oauth": "openai" },
           }),
         ],
         keyEditorProvider: "openai",
@@ -364,7 +373,10 @@ describe("renderModelProviders", () => {
     ).toBe(true);
     expect(button(provider!, "Replace key")?.disabled).toBe(true);
     expect(button(provider!, "Remove key")?.disabled).toBe(true);
-    expect(button(provider!, "Log out")?.disabled).toBe(true);
+    expect(
+      provider?.querySelector<HTMLButtonElement>('button[aria-label="Log out openai:oauth"]')
+        ?.disabled,
+    ).toBe(true);
 
     const addForm = container.querySelector(".model-providers__add-form");
     expect(
@@ -504,7 +516,7 @@ describe("renderModelProviders", () => {
     expect(container.querySelector('[data-provider-id="openai"]')).toBeNull();
   });
 
-  it("renders credential provenance and probe results", () => {
+  it("renders probe results without a redundant credential summary", () => {
     const container = mount(
       props({
         probeResults: {
@@ -525,9 +537,7 @@ describe("renderModelProviders", () => {
       }),
     );
     const provider = container.querySelector('[data-provider-id="openai"]');
-    expect(text(provider)).toContain("Credentials for Writer");
-    expect(text(provider)).toContain("Global usage and cost");
-    expect(text(provider)).toContain("API key from environment (OPENAI_API_KEY)");
+    expect(text(provider)).not.toContain("Credentials for");
     expect(text(provider)).toContain("Connected");
     expect(text(provider)).toContain("145 ms");
     expect(text(provider)).toContain("Default profile");
@@ -555,9 +565,7 @@ describe("renderModelProviders", () => {
     expect(text(readiness)).toContain("Connect a verified AI model");
     expect(text(readiness)).toContain("Model required");
     expect(container.querySelector(".model-providers__defaults")).toBeNull();
-    expect(text(container.querySelector('[data-provider-id="openai"]'))).toContain(
-      "Credentials configured",
-    );
+    expect(text(container.querySelector('[data-provider-id="openai"]'))).toContain("Signed in");
 
     button(readiness!, "Connect a verified AI model")?.click();
     expect(onOpenModelSetup).toHaveBeenCalledOnce();
@@ -597,7 +605,7 @@ describe("renderModelProviders", () => {
     );
 
     const provider = container.querySelector('[data-provider-id="openai"]');
-    expect(text(provider)).toContain("Credentials configured");
+    expect(text(provider)).toContain("API key");
     expect(text(provider)).not.toContain("Ready");
   });
 
@@ -647,7 +655,7 @@ describe("renderModelProviders", () => {
     expect(container.querySelector(".model-providers__defaults")).not.toBeNull();
   });
 
-  it("labels provider usage and session cost as global", () => {
+  it("keeps provider-wide session cost separate from account usage", () => {
     const container = mount(
       props({
         cards: [
@@ -659,9 +667,106 @@ describe("renderModelProviders", () => {
     );
 
     const provider = container.querySelector('[data-provider-id="openai"]');
-    expect(text(provider)).toContain("Credentials for Writer");
-    expect(text(provider)).toContain("Global usage and cost");
-    expect(text(provider)).toContain("Global session spend · 30d");
+    expect(text(provider)).not.toContain("Credentials for");
+    expect(text(provider?.querySelector(".model-providers__global-metrics-title") ?? null)).toBe(
+      "Usage and cost",
+    );
+    expect(text(provider)).toContain("Session spend · 30d");
+  });
+
+  it("retains provider cost history and summaries with multiple accounts", () => {
+    const profiles = [
+      {
+        profileId: "openai:one",
+        type: "oauth" as const,
+        status: "ok" as const,
+        email: "one@example.com",
+        usage: {
+          providerId: "openai",
+          windows: [{ label: "5h", usedPercent: 10 }],
+          plan: "Pro",
+          billing: [{ type: "balance" as const, amount: 12, unit: "credits" }],
+        },
+      },
+      {
+        profileId: "openai:two",
+        type: "oauth" as const,
+        status: "ok" as const,
+        email: "two@example.com",
+        usage: {
+          providerId: "openai",
+          windows: [{ label: "Week", usedPercent: 20 }],
+          plan: "Plus",
+        },
+      },
+    ];
+    const container = mount(
+      props({
+        cards: [
+          card({
+            profiles,
+            usage: {
+              provider: "openai",
+              displayName: "OpenAI",
+              windows: [{ label: "5h", usedPercent: 10 }],
+              plan: "Pro",
+              summary: "Organization usage",
+              costHistory: {
+                unit: "USD",
+                periodDays: 30,
+                daily: [
+                  {
+                    date: new Date().toISOString().slice(0, 10),
+                    amount: 4,
+                    requests: 2,
+                    inputTokens: 100,
+                    cacheReadTokens: 20,
+                    cacheWriteTokens: 0,
+                    outputTokens: 30,
+                    totalTokens: 150,
+                  },
+                ],
+                models: [],
+                categories: [],
+              },
+            },
+          }),
+        ],
+      }),
+    );
+
+    const provider = container.querySelector('[data-provider-id="openai"]');
+    expect(text(provider)).toContain("Pro");
+    expect(text(provider)).toContain("Plus");
+    expect(text(provider)).toContain("Balance 12 credits");
+    expect(text(provider)).toContain("Today $4.00");
+    expect(text(provider)).toContain("Organization usage");
+  });
+
+  it("keeps provider usage errors and the explicit no-data state visible", () => {
+    const container = mount(
+      props({
+        cards: [
+          card({
+            id: "openai",
+            usage: {
+              provider: "openai",
+              displayName: "OpenAI",
+              windows: [],
+              error: "usage endpoint unavailable",
+            },
+          }),
+          card({ id: "anthropic", displayName: "Anthropic", usage: undefined }),
+        ],
+      }),
+    );
+
+    expect(text(container.querySelector('[data-provider-id="openai"]'))).toContain(
+      "usage endpoint unavailable",
+    );
+    expect(text(container.querySelector('[data-provider-id="anthropic"]'))).toContain(
+      "No live usage data reported by this provider.",
+    );
   });
 
   it("preserves complete graphemes in custom provider fallback icons", () => {
@@ -688,7 +793,7 @@ describe("renderModelProviders", () => {
     }
   });
 
-  it("does not invent config key provenance when auth status is unavailable", () => {
+  it("keeps configured key actions available when auth status is unavailable", () => {
     const container = mount(
       props({
         cards: [card({ apiKey: undefined, hasConfigApiKey: true })],
@@ -696,8 +801,12 @@ describe("renderModelProviders", () => {
     );
 
     const provider = container.querySelector('[data-provider-id="openai"]');
-    expect(text(provider)).not.toContain("API key set in config");
-    expect(text(provider)).toContain("Not configured");
+    expect(button(provider!, "Replace key")).toBeDefined();
+    expect(button(provider!, "Remove key")).toBeDefined();
+    expect(text(provider?.querySelector(".model-providers__credential-source") ?? null)).toBe(
+      "API key in config",
+    );
+    expect(text(provider)).not.toContain("Credentials for");
   });
 
   it("renders mixed credential probes as connected with warnings", () => {
@@ -788,7 +897,7 @@ describe("renderModelProviders", () => {
     );
 
     const provider = container.querySelector('[data-provider-id="openai"]');
-    expect(text(provider)).toContain("Credentials configured");
+    expect(text(provider)).toContain("Signed in");
     expect(text(provider)).toContain("No models available");
     expect(text(provider)).not.toContain("Connection failed");
   });
@@ -875,37 +984,6 @@ describe("renderModelProviders", () => {
     );
     button(container, "Test connection")?.click();
     expect(onProbe).toHaveBeenCalledWith("openai", ["anthropic", "claude-cli"]);
-  });
-
-  it("shows logout confirmation only for OAuth or token profiles", () => {
-    const onLogout = vi.fn();
-    const container = mount(
-      props({
-        cards: [
-          card({
-            credentialProviderIds: ["openai", "openai-codex"],
-            logoutTargets: [{ provider: "openai-codex", profileIds: ["openai:oauth"] }],
-            profiles: [
-              {
-                profileId: "openai:oauth",
-                type: "oauth",
-                status: "ok",
-                logoutSupported: true,
-              },
-            ],
-          }),
-        ],
-        pendingLogoutProvider: "openai",
-        onLogout,
-      }),
-    );
-    expect(text(container.querySelector(".model-providers__confirm"))).toContain(
-      "Log out of OpenAI?",
-    );
-    container.querySelector<HTMLButtonElement>(".model-providers__confirm .btn.danger")?.click();
-    expect(onLogout).toHaveBeenCalledWith("openai", [
-      { provider: "openai-codex", profileIds: ["openai:oauth"] },
-    ]);
   });
 
   it("uses the original config key for credential mutations", () => {

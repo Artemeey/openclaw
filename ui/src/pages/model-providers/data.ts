@@ -34,11 +34,6 @@ type ModelProviderLocalCost = {
   sessionCount: number;
 };
 
-export type ModelProviderLogoutTarget = {
-  provider: string;
-  profileIds: string[];
-};
-
 export type ModelProviderCard = {
   /** Canonical provider id used for icon + label lookup. */
   id: string;
@@ -48,11 +43,21 @@ export type ModelProviderCard = {
   apiKeySupported?: boolean;
   /** Provider ids that own credentials merged into this card. */
   credentialProviderIds: string[];
-  /** Saved OAuth/token profiles eligible for targeted logout. */
-  logoutTargets: ModelProviderLogoutTarget[];
   displayName: string;
   auth?: ModelProviderAuthSummary;
   profiles: ModelAuthStatusProfile[];
+  /** Exact credential-provider owner for profile-scoped gateway mutations. */
+  profileProviderIds: Record<string, string>;
+  /** Canonical auth-order owner for each profile. */
+  profileAuthProviderIds: Record<string, string>;
+  /** Complete profile membership for each canonical auth-order owner. */
+  profileOwnerProfileIds: Record<string, string[]>;
+  /** Explicit per-agent priority override, in first-choice order. */
+  profileOrder: string[];
+  /** Exact explicit priority override for each credential-provider owner. */
+  profileOrders: Record<string, string[]>;
+  /** Provider route that supplied each owner's explicit priority override. */
+  profileOrderProviders: Record<string, string>;
   apiKey?: ModelAuthStatusProvider["apiKey"];
   hasConfigApiKey: boolean;
   modelCount: number;
@@ -67,6 +72,7 @@ export type ModelProviderCard = {
 type ModelProviderCardsInput = {
   authStatus: ModelAuthStatusResult | null;
   models: ModelCatalogEntry[] | null;
+  catalogModels?: ModelCatalogEntry[] | null;
   providerOutcomes?: ModelCatalogProviderOutcome[];
   configProviderIds?: string[] | null;
   configApiKeyProviderIds?: string[] | null;
@@ -117,8 +123,13 @@ function ensureDraft(drafts: CardDraft[], id: string, displayName: string): Card
       id,
       displayName,
       profiles: [],
+      profileProviderIds: {},
+      profileAuthProviderIds: {},
+      profileOwnerProfileIds: {},
+      profileOrder: [],
+      profileOrders: {},
+      profileOrderProviders: {},
       credentialProviderIds: [],
-      logoutTargets: [],
       hasConfigApiKey: false,
       modelCount: 0,
       availableModelCount: 0,
@@ -137,25 +148,6 @@ function addProviderId(ids: string[], provider: string): void {
   }
 }
 
-function addLogoutTarget(
-  targets: ModelProviderLogoutTarget[],
-  provider: string,
-  profileIds: string[],
-): void {
-  if (profileIds.length === 0) {
-    return;
-  }
-  const normalized = normalizeProviderId(provider);
-  const existing = targets.find(
-    (candidate) => normalizeProviderId(candidate.provider) === normalized,
-  );
-  if (!existing) {
-    targets.push({ provider, profileIds: [...new Set(profileIds)] });
-    return;
-  }
-  existing.profileIds = [...new Set([...existing.profileIds, ...profileIds])];
-}
-
 /**
  * Builds the provider card list. A provider qualifies as "configured" when it
  * has an auth row, catalog models (the default models.list view only contains
@@ -167,12 +159,15 @@ function addLogoutTarget(
 export function buildModelProviderCards(input: ModelProviderCardsInput): ModelProviderCard[] {
   const drafts: CardDraft[] = [];
   const apiKeyCapabilities = new Map<string, boolean>();
-  for (const capability of input.authStatus?.providerCapabilities ?? []) {
-    const id = canonicalProviderId(capability.provider);
+  for (const model of input.catalogModels ?? []) {
+    const id = canonicalProviderId(model.provider);
     if (!id) {
       continue;
     }
-    apiKeyCapabilities.set(id, apiKeyCapabilities.get(id) === true || capability.apiKeySupported);
+    apiKeyCapabilities.set(
+      id,
+      apiKeyCapabilities.get(id) === true || model.apiKeySupported === true,
+    );
   }
 
   for (const provider of input.configProviderIds ?? []) {
@@ -228,6 +223,35 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
     }
   }
 
+  const ownerProfileIds = new Map<string, string[]>();
+  const ownerOrderSources = new Map<string, { provider: string; order: string[] }>();
+  for (const provider of input.authStatus?.providers ?? []) {
+    const authProvider = provider.authProvider ?? provider.provider;
+    const membership = ownerProfileIds.get(authProvider) ?? [];
+    for (const profile of provider.profiles) {
+      if (!membership.includes(profile.profileId)) {
+        membership.push(profile.profileId);
+      }
+    }
+    ownerProfileIds.set(authProvider, membership);
+    if (provider.profileOrder !== undefined) {
+      const candidate = { provider: provider.provider, order: provider.profileOrder };
+      const current = ownerOrderSources.get(authProvider);
+      const rank = (source: typeof candidate) =>
+        normalizeProviderId(source.provider) === normalizeProviderId(authProvider) ? 0 : 1;
+      if (
+        !current ||
+        rank(candidate) < rank(current) ||
+        (rank(candidate) === rank(current) &&
+          normalizeProviderId(candidate.provider).localeCompare(
+            normalizeProviderId(current.provider),
+          ) < 0)
+      ) {
+        ownerOrderSources.set(authProvider, candidate);
+      }
+    }
+  }
+
   for (const provider of input.authStatus?.providers ?? []) {
     const id = canonicalProviderId(provider.provider);
     if (!id) {
@@ -246,16 +270,29 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
     }
     draft.card.displayName = provider.displayName || draft.card.displayName;
     draft.card.profiles.push(...provider.profiles);
+    const authProvider = provider.authProvider ?? provider.provider;
+    draft.card.profileOwnerProfileIds[authProvider] = [
+      ...(ownerProfileIds.get(authProvider) ?? []),
+    ];
+    for (const profile of provider.profiles) {
+      draft.card.profileProviderIds[profile.profileId] = provider.provider;
+      if (provider.authProvider !== undefined) {
+        draft.card.profileAuthProviderIds[profile.profileId] = provider.authProvider;
+      }
+    }
+    const profileOrderSource = ownerOrderSources.get(authProvider);
+    for (const profileId of profileOrderSource?.order ?? []) {
+      if (!draft.card.profileOrder.includes(profileId)) {
+        draft.card.profileOrder.push(profileId);
+      }
+    }
+    if (profileOrderSource) {
+      draft.card.profileOrders[authProvider] = [...profileOrderSource.order];
+      draft.card.profileOrderProviders[authProvider] = profileOrderSource.provider;
+    }
     if (provider.apiKey || provider.profiles.length > 0) {
       addProviderId(draft.card.credentialProviderIds, provider.provider);
     }
-    addLogoutTarget(
-      draft.card.logoutTargets,
-      provider.provider,
-      provider.profiles
-        .filter((profile) => profile.logoutSupported === true)
-        .map((profile) => profile.profileId),
-    );
     draft.card.apiKey ??= provider.apiKey;
     draft.hasAuthRow = true;
     const usage = provider.usage;
@@ -443,17 +480,15 @@ export function readModelProviderConfig(config: Record<string, unknown> | null):
 
 export type ProviderOption = { id: string; displayName: string };
 
-type ModelProviderCapability = NonNullable<ModelAuthStatusResult["providerCapabilities"]>[number];
-
 export function buildUnconfiguredProviderOptions(
-  capabilities: ModelProviderCapability[] | undefined,
+  catalogModels: ModelCatalogEntry[] | null | undefined,
   configuredProviderIds: Iterable<string>,
 ): ProviderOption[] {
   const configured = new Set(Array.from(configuredProviderIds, canonicalProviderId));
   const options = new Map<string, ProviderOption>();
-  for (const capability of capabilities ?? []) {
-    const id = canonicalProviderId(capability.provider);
-    if (capability.quickApiKeySetup && id && !configured.has(id) && !options.has(id)) {
+  for (const model of catalogModels ?? []) {
+    const id = canonicalProviderId(model.provider);
+    if (model.apiKeySupported === true && id && !configured.has(id) && !options.has(id)) {
       options.set(id, { id, displayName: providerDisplayLabel(id) });
     }
   }

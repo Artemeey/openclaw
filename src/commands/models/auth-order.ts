@@ -4,6 +4,7 @@ import {
   type AuthProfileStore,
   externalCliDiscoveryForProviderAuth,
   ensureAuthProfileStore,
+  listProfilesForProvider,
   resolveAuthStatePathForDisplay,
   setAuthProfileOrder,
 } from "../../agents/auth-profiles.js";
@@ -18,16 +19,31 @@ import { loadModelsConfig } from "./load-config.js";
 import { resolveModelsTargetAgent } from "./shared.js";
 
 function describeOrder(store: AuthProfileStore, provider: string, cfg: OpenClawConfig): string[] {
+  return resolveStoredOrder(store, provider, cfg).order;
+}
+
+function resolveStoredOrder(
+  store: AuthProfileStore,
+  provider: string,
+  cfg: OpenClawConfig,
+): { order: string[]; provider?: string } {
   const authProvider = resolveProviderIdForAuth(provider, { config: cfg });
   const canonical = findNormalizedProviderValue(store.order, authProvider);
   if (canonical !== undefined) {
-    return canonical;
+    return { order: canonical, provider: authProvider };
   }
-  return (
-    Object.entries(store.order ?? {})
-      .filter(([key]) => resolveProviderIdForAuth(key, { config: cfg }) === authProvider)
-      .toSorted(([left], [right]) => left.localeCompare(right))[0]?.[1] ?? []
-  );
+  const alias = Object.entries(store.order ?? {})
+    .filter(([key]) => resolveProviderIdForAuth(key, { config: cfg }) === authProvider)
+    .toSorted(([left], [right]) => left.localeCompare(right))[0];
+  return alias ? { order: alias[1], provider: alias[0] } : { order: [] };
+}
+
+function listProviderProfileIds(
+  store: AuthProfileStore,
+  provider: string,
+  cfg: OpenClawConfig,
+): string[] {
+  return listProfilesForProvider(store, provider, { config: cfg }).toSorted();
 }
 
 function describeOrderFallback(cfg: OpenClawConfig, provider: string): string {
@@ -66,8 +82,9 @@ export async function modelsAuthOrderGetCommand(
   runtime: RuntimeEnv,
 ) {
   const { cfg, agentId, agentDir, provider } = await resolveAuthOrderContext(opts, runtime, "read");
+  const externalCli = externalCliDiscoveryForProviderAuth({ cfg, provider });
   const store = ensureAuthProfileStore(agentDir, {
-    externalCli: externalCliDiscoveryForProviderAuth({ cfg, provider }),
+    externalCli,
   });
   const order = describeOrder(store, provider, cfg);
 
@@ -97,14 +114,28 @@ export async function modelsAuthOrderClearCommand(
   opts: { provider: string; agent?: string },
   runtime: RuntimeEnv,
 ) {
-  const context = await resolveAuthOrderContext(opts, runtime, "mutation");
-  const { cfg, agentId, agentDir, provider } = context;
+  const { cfg, agentId, agentDir, provider } = await resolveAuthOrderContext(
+    opts,
+    runtime,
+    "mutation",
+  );
+  const externalCli = externalCliDiscoveryForProviderAuth({ cfg, provider });
+  const store = ensureAuthProfileStore(agentDir, {
+    externalCli,
+  });
+  const providerKey = resolveProviderIdForAuth(provider, { config: cfg });
+  const currentOrder = resolveStoredOrder(store, provider, cfg);
   const updated = await setAuthProfileOrder({
     agentDir,
-    provider: resolveProviderIdForAuth(provider, { config: cfg }),
+    provider: providerKey,
     order: null,
+    authAliasLookupParams: { config: cfg },
+    expectedOrder: currentOrder.provider ? currentOrder.order : null,
+    ...(currentOrder.provider ? { expectedOrderProvider: currentOrder.provider } : {}),
+    expectedProviderProfileIds: listProviderProfileIds(store, providerKey, cfg),
+    externalCli,
   });
-  if (!updated) {
+  if (!updated.ok) {
     throw new Error(
       `Failed to update auth state; the auth state lock may be busy. Wait a moment and rerun ${formatCliCommand("openclaw models auth order clear --provider " + provider)}.`,
     );
@@ -121,13 +152,18 @@ export async function modelsAuthOrderSetCommand(
   opts: { provider: string; agent?: string; order: string[] },
   runtime: RuntimeEnv,
 ) {
-  const context = await resolveAuthOrderContext(opts, runtime, "mutation");
-  const { cfg, agentId, agentDir, provider } = context;
+  const { cfg, agentId, agentDir, provider } = await resolveAuthOrderContext(
+    opts,
+    runtime,
+    "mutation",
+  );
 
+  const externalCli = externalCliDiscoveryForProviderAuth({ cfg, provider });
   const store = ensureAuthProfileStore(agentDir, {
-    externalCli: externalCliDiscoveryForProviderAuth({ cfg, provider }),
+    externalCli,
   });
   const providerKey = resolveProviderIdForAuth(provider, { config: cfg });
+  const currentOrder = resolveStoredOrder(store, provider, cfg);
   const requested = normalizeStringEntries(opts.order ?? []);
   if (requested.length === 0) {
     throw new Error(
@@ -151,8 +187,13 @@ export async function modelsAuthOrderSetCommand(
     agentDir,
     provider: providerKey,
     order: requested,
+    authAliasLookupParams: { config: cfg },
+    expectedOrder: currentOrder.provider ? currentOrder.order : null,
+    ...(currentOrder.provider ? { expectedOrderProvider: currentOrder.provider } : {}),
+    expectedProviderProfileIds: listProviderProfileIds(store, providerKey, cfg),
+    externalCli,
   });
-  if (!updated) {
+  if (!updated.ok) {
     throw new Error(
       `Failed to update auth state; the auth state lock may be busy. Wait a moment and rerun ${formatCliCommand("openclaw models auth order set --provider " + provider + " <profileIds...>")}.`,
     );
@@ -160,6 +201,8 @@ export async function modelsAuthOrderSetCommand(
 
   runtime.log(`Agent: ${agentId}`);
   runtime.log(`Provider: ${provider}`);
-  runtime.log(`Auth profile order override: ${describeOrder(updated, provider, cfg).join(", ")}`);
+  runtime.log(
+    `Auth profile order override: ${describeOrder(updated.value, provider, cfg).join(", ")}`,
+  );
   await refreshRunningGatewayAuthState(agentId);
 }

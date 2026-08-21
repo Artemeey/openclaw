@@ -19,11 +19,8 @@ function catalogEntry(overrides: Partial<ModelCatalogEntry> & { provider: string
   } satisfies ModelCatalogEntry;
 }
 
-function authStatus(
-  providers: ModelAuthStatusResult["providers"],
-  providerCapabilities?: ModelAuthStatusResult["providerCapabilities"],
-): ModelAuthStatusResult {
-  return { ts: 1, providers, ...(providerCapabilities ? { providerCapabilities } : {}) };
+function authStatus(providers: ModelAuthStatusResult["providers"]): ModelAuthStatusResult {
+  return { ts: 1, providers };
 }
 
 function firstCard(cards: ReturnType<typeof buildModelProviderCards>) {
@@ -78,10 +75,7 @@ describe("buildModelProviderCards", () => {
     const cards = buildModelProviderCards({
       ...EMPTY_INPUT,
       models: [catalogEntry({ provider: "github-copilot", available: true })],
-      authStatus: authStatus(
-        [],
-        [{ provider: "github-copilot", apiKeySupported: false, quickApiKeySetup: false }],
-      ),
+      catalogModels: [catalogEntry({ provider: "github-copilot", apiKeySupported: false })],
     });
     expect(firstCard(cards).apiKeySupported).toBe(false);
   });
@@ -116,6 +110,73 @@ describe("buildModelProviderCards", () => {
       plan: "Max",
       windows: [{ label: "5h", usedPercent: 40 }],
     });
+    expect(firstCard(cards).profileProviderIds).toEqual({ p1: "claude-cli" });
+  });
+
+  it("preserves explicit profile priority from auth status", () => {
+    const cards = buildModelProviderCards({
+      ...EMPTY_INPUT,
+      authStatus: authStatus([
+        {
+          provider: "openai",
+          displayName: "OpenAI",
+          status: "ok",
+          profiles: [
+            { profileId: "openai:primary", type: "oauth", status: "ok" },
+            { profileId: "openai:backup", type: "oauth", status: "ok" },
+          ],
+          profileOrder: ["openai:backup", "openai:primary"],
+        },
+      ]),
+    });
+
+    expect(firstCard(cards).profileOrder).toEqual(["openai:backup", "openai:primary"]);
+    expect(firstCard(cards).profileOrders).toEqual({
+      openai: ["openai:backup", "openai:primary"],
+    });
+  });
+
+  it("uses the Gateway effective order and preserves explicit exclusion", () => {
+    const cards = buildModelProviderCards({
+      ...EMPTY_INPUT,
+      authStatus: authStatus([
+        {
+          provider: "openai",
+          authProvider: "openai",
+          displayName: "OpenAI",
+          status: "ok",
+          profiles: [
+            { profileId: "openai:primary", type: "oauth", status: "ok" },
+            { profileId: "openai:backup", type: "oauth", status: "ok" },
+          ],
+          profileOrder: ["openai:backup", "openai:primary"],
+        },
+      ]),
+    });
+
+    expect(firstCard(cards).profileOrder).toEqual(["openai:backup", "openai:primary"]);
+    expect(firstCard(cards).profileOrders).toEqual({
+      openai: ["openai:backup", "openai:primary"],
+    });
+
+    const excluded = buildModelProviderCards({
+      ...EMPTY_INPUT,
+      authStatus: authStatus([
+        {
+          provider: "openai",
+          authProvider: "openai",
+          displayName: "OpenAI",
+          status: "ok",
+          profiles: [
+            { profileId: "openai:primary", type: "oauth", status: "ok" },
+            { profileId: "openai:backup", type: "oauth", status: "ok" },
+          ],
+          profileOrder: [],
+        },
+      ]),
+    });
+    expect(firstCard(excluded).profileOrder).toEqual([]);
+    expect(firstCard(excluded).profileOrders).toEqual({ openai: [] });
   });
 
   it("merges CLI alias auth rows even when usage enrichment is unavailable", () => {
@@ -146,17 +207,21 @@ describe("buildModelProviderCards", () => {
       authStatus: authStatus([
         {
           provider: "anthropic",
+          authProvider: "anthropic",
           displayName: "Claude",
           status: "ok",
           profiles: [{ profileId: "p1", type: "oauth", status: "ok", logoutSupported: true }],
+          profileOrder: ["p1", "p2"],
           usage: { providerId: "anthropic", windows: [] },
         },
         {
           provider: "claude-cli",
+          authProvider: "anthropic",
           displayName: "Claude",
           status: "expired",
           expiry: { at: 1, remainingMs: -1, label: "-1m" },
           profiles: [{ profileId: "p2", type: "oauth", status: "expired", logoutSupported: true }],
+          profileOrder: ["p2", "p1"],
           usage: { providerId: "anthropic", windows: [] },
         },
       ]),
@@ -168,55 +233,101 @@ describe("buildModelProviderCards", () => {
       expiryLabel: "-1m",
     });
     expect(firstCard(cards).credentialProviderIds).toEqual(["anthropic", "claude-cli"]);
-    expect(firstCard(cards).logoutTargets).toEqual([
-      { provider: "anthropic", profileIds: ["p1"] },
-      { provider: "claude-cli", profileIds: ["p2"] },
-    ]);
+    expect(firstCard(cards).profileProviderIds).toEqual({ p1: "anthropic", p2: "claude-cli" });
+    expect(firstCard(cards).profileAuthProviderIds).toEqual({ p1: "anthropic", p2: "anthropic" });
+    expect(firstCard(cards).profileOwnerProfileIds).toEqual({ anthropic: ["p1", "p2"] });
+    expect(firstCard(cards).profileOrder).toEqual(["p1", "p2"]);
+    expect(firstCard(cards).profileOrders).toEqual({
+      anthropic: ["p1", "p2"],
+    });
+    expect(firstCard(cards).profileOrderProviders).toEqual({ anthropic: "anthropic" });
   });
 
-  it("keeps a credential-less missing route visible beside CLI OAuth", () => {
+  it("carries complete owner membership across cards without an explicit order", () => {
     const cards = buildModelProviderCards({
       ...EMPTY_INPUT,
       authStatus: authStatus([
         {
-          provider: "anthropic",
-          displayName: "Claude",
-          status: "missing",
-          profiles: [],
+          provider: "openai",
+          authProvider: "openai",
+          displayName: "OpenAI",
+          status: "ok",
+          profiles: [{ profileId: "openai:primary", type: "oauth", status: "ok" }],
         },
         {
-          provider: "claude-cli",
-          displayName: "Claude",
-          status: "expiring",
-          profiles: [{ profileId: "anthropic:claude-cli", type: "oauth", status: "expiring" }],
+          provider: "fixture-alias",
+          authProvider: "openai",
+          displayName: "Fixture",
+          status: "ok",
+          profiles: [
+            { profileId: "openai:alias-one", type: "token", status: "ok" },
+            { profileId: "openai:alias-two", type: "token", status: "ok" },
+          ],
         },
       ]),
     });
 
-    expect(firstCard(cards).auth).toMatchObject({ kind: "missing", profileCount: 1 });
+    expect(cards).toHaveLength(2);
+    expect(cards.map((card) => card.profileOwnerProfileIds)).toEqual([
+      { openai: ["openai:primary", "openai:alias-one", "openai:alias-two"] },
+      { openai: ["openai:primary", "openai:alias-one", "openai:alias-two"] },
+    ]);
   });
 
-  it("preserves missing MiniMax OAuth beside a separate API key", () => {
+  it("does not invent canonical order ownership for older gateway rows", () => {
+    const cards = buildModelProviderCards({
+      ...EMPTY_INPUT,
+      authStatus: authStatus([
+        {
+          provider: "openai",
+          displayName: "OpenAI",
+          status: "ok",
+          profiles: [{ profileId: "openai:primary", type: "oauth", status: "ok" }],
+        },
+        {
+          provider: "fixture-alias",
+          displayName: "Fixture",
+          status: "ok",
+          profiles: [{ profileId: "openai:alias", type: "token", status: "ok" }],
+        },
+      ]),
+    });
+
+    expect(cards.map((card) => card.profileAuthProviderIds)).toEqual([{}, {}]);
+  });
+
+  it("keeps auth-distinct owners separate when they share a usage card", () => {
     const cards = buildModelProviderCards({
       ...EMPTY_INPUT,
       authStatus: authStatus([
         {
           provider: "minimax",
+          authProvider: "minimax",
           displayName: "MiniMax",
-          status: "static",
-          profiles: [],
-          apiKey: { source: "env", envVar: "MINIMAX_API_KEY" },
+          status: "ok",
+          profiles: [{ profileId: "minimax:api", type: "oauth", status: "ok" }],
+          profileOrder: ["minimax:api"],
         },
         {
           provider: "minimax-portal",
+          authProvider: "minimax-portal",
           displayName: "MiniMax",
-          status: "missing",
-          profiles: [],
+          status: "ok",
+          profiles: [{ profileId: "minimax-portal:web", type: "oauth", status: "ok" }],
+          profileOrder: ["minimax-portal:web"],
         },
       ]),
     });
 
-    expect(firstCard(cards).auth).toMatchObject({ kind: "missing", profileCount: 0 });
+    expect(cards).toHaveLength(1);
+    expect(firstCard(cards).profileAuthProviderIds).toEqual({
+      "minimax:api": "minimax",
+      "minimax-portal:web": "minimax-portal",
+    });
+    expect(firstCard(cards).profileOrders).toEqual({
+      minimax: ["minimax:api"],
+      "minimax-portal": ["minimax-portal:web"],
+    });
   });
 
   it("prefers usage.status snapshots over the auth-status embed", () => {
@@ -426,9 +537,10 @@ describe("model provider configuration data", () => {
   it("lists known providers that are not configured", () => {
     const options = buildUnconfiguredProviderOptions(
       [
-        { provider: "openai", apiKeySupported: true, quickApiKeySetup: true },
-        { provider: "anthropic", apiKeySupported: true, quickApiKeySetup: true },
-        { provider: "github-copilot", apiKeySupported: true, quickApiKeySetup: false },
+        catalogEntry({ provider: "openai", apiKeySupported: true }),
+        catalogEntry({ provider: "anthropic", apiKeySupported: true }),
+        catalogEntry({ provider: "anthropic", id: "anthropic/other", apiKeySupported: true }),
+        catalogEntry({ provider: "github-copilot", apiKeySupported: false }),
       ],
       ["openai"],
     );

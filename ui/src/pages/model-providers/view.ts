@@ -27,27 +27,25 @@ import type {
   DefaultModelSelection,
   ModelPickerEntry,
   ModelProviderCard,
-  ModelProviderLogoutTarget,
   ProviderOption,
 } from "./data.ts";
 import { renderDefaultModels } from "./default-models-view.ts";
+import { renderProfiles } from "./profiles-view.ts";
 import { hasVerifiedProvider, renderProviderStatus } from "./view-status.ts";
 
 export type ModelProviderRowMessage = {
-  kind: "success" | "error";
+  kind: "success" | "warning" | "error";
   text: string;
   warning?: string;
 };
 
-type ModelProvidersViewProps = {
+export type ModelProvidersViewProps = {
   connected: boolean;
   loading: boolean;
   refreshing: boolean;
   error: string | null;
-  providerUsageFailed: boolean;
   updatedAt: number | null;
   costDays: number;
-  credentialAgentLabel: string;
   cards: ModelProviderCard[];
   configuredModels: ModelPickerEntry[];
   defaultModels: DefaultModelSelection;
@@ -61,15 +59,15 @@ type ModelProvidersViewProps = {
   unconfiguredProviders: ProviderOption[];
   canMutate: boolean;
   mutationBlockedReason: string | null;
-  /** Usage never converged before the retry budget ran out; cards lack usage. */
-  providerUsageStalled: boolean;
   probeAvailable: boolean;
+  profileCanReorder: boolean;
+  profileCanLogout: boolean;
+  profileCanClearCooldown: boolean;
   busy: Record<string, boolean>;
   messages: Record<string, ModelProviderRowMessage>;
   probeResults: Record<string, ModelsProbeResult>;
   keyEditorProvider: string | null;
   keyDraft: string;
-  pendingLogoutProvider: string | null;
   addProviderOpen: boolean;
   addProviderId: string;
   addProviderKey: string;
@@ -80,9 +78,15 @@ type ModelProvidersViewProps = {
   onSaveKey: (provider: string, configKey: string) => void;
   onRemoveKey: (provider: string, configKey: string) => void;
   onProbe: (cardId: string, providers: string[]) => void;
-  onRequestLogout: (provider: string) => void;
-  onCancelLogout: () => void;
-  onLogout: (cardId: string, targets: ModelProviderLogoutTarget[]) => void;
+  onLogoutProfile: (
+    cardId: string,
+    provider: string,
+    owner: string,
+    profileId: string,
+    label: string,
+  ) => void;
+  onProfileOrderChange: (owner: string, profileIds: string[] | null) => void;
+  onClearProfileCooldown: (owner: string, provider: string, profileId: string) => void;
   onAddProviderToggle: () => void;
   onAddProviderIdChange: (provider: string) => void;
   onAddProviderKeyChange: (value: string) => void;
@@ -234,34 +238,37 @@ function renderLocalCost(card: ModelProviderCard, costDays: number) {
   `;
 }
 
-function renderCredentialSummary(card: ModelProviderCard, agentLabel: string) {
-  const oauthCount = card.profiles.filter((profile) => profile.type === "oauth").length;
-  const tokenCount = card.profiles.filter((profile) => profile.type === "token").length;
-  const apiProfileCount = card.profiles.filter((profile) => profile.type === "api_key").length;
-  const parts = [];
-  if (oauthCount > 0) {
-    parts.push(t("modelProviders.credentials.oauth", { count: String(oauthCount) }));
-  }
-  if (tokenCount > 0) {
-    parts.push(t("modelProviders.credentials.tokenProfiles", { count: String(tokenCount) }));
-  }
-  if (card.apiKey?.source === "config") {
-    parts.push(t("modelProviders.credentials.configKey"));
-  } else if (card.apiKey?.source === "env") {
-    parts.push(
-      card.apiKey.envVar
-        ? t("modelProviders.credentials.envKeyNamed", { name: card.apiKey.envVar })
-        : t("modelProviders.credentials.envKey"),
-    );
-  } else if (apiProfileCount > 0) {
-    parts.push(t("modelProviders.credentials.profileKey", { count: String(apiProfileCount) }));
+function hasAccountScopedProfiles(card: ModelProviderCard): boolean {
+  return card.profiles.some((profile) => profile.type === "oauth" || profile.type === "token");
+}
+
+function renderProviderUsageAndCost(card: ModelProviderCard, costDays: number) {
+  const hasLocalCost = Boolean(
+    card.localCost && (card.localCost.totalTokens > 0 || card.localCost.totalCost > 0),
+  );
+  const accountScoped = hasAccountScopedProfiles(card);
+  const providerUsage = card.usage;
+  const hasProviderUsage = Boolean(
+    providerUsage &&
+    (providerUsage.error ||
+      providerUsage.windows.length > 0 ||
+      providerUsage.billing?.length ||
+      providerUsage.costHistory?.daily.length ||
+      providerUsage.summary?.trim()),
+  );
+  const showNoProviderData = !accountScoped && !hasProviderUsage;
+  if (!hasProviderUsage && !hasLocalCost && !showNoProviderData) {
+    return nothing;
   }
   return html`
-    <div class="model-providers__credentials">
-      <span>${t("modelProviders.credentials.label", { agent: agentLabel })}</span>
-      <strong
-        >${parts.length > 0 ? parts.join(" · ") : t("modelProviders.credentials.none")}</strong
-      >
+    <div class="model-providers__global-metrics">
+      <div class="model-providers__global-metrics-title">${t("modelProviders.usageAndCost")}</div>
+      ${hasProviderUsage && providerUsage
+        ? renderProviderUsageDetails(providerUsage)
+        : showNoProviderData
+          ? html`<div class="model-providers__no-stats">${t("modelProviders.noStats")}</div>`
+          : nothing}
+      ${renderLocalCost(card, costDays)}
     </div>
   `;
 }
@@ -351,10 +358,8 @@ function renderProviderActions(card: ModelProviderCard, props: ModelProvidersVie
     ? card.credentialProviderIds
     : [card.id];
   const isConfigured = card.hasConfigApiKey || Boolean(card.apiKey) || card.profiles.length > 0;
-  const canLogout = card.logoutTargets.length > 0;
   const probeBusy = Boolean(props.busy[`probe:${card.id}`]);
   const keyBusy = Boolean(props.busy[`key:${card.id}`]);
-  const logoutBusy = Boolean(props.busy[`logout:${card.id}`]);
   const blocked = props.mutationBlockedReason ?? "";
   const authModeBlocked = Boolean(card.configAuthMode && card.configAuthMode !== "api-key");
   const apiKeyUnsupported = card.apiKeySupported === false;
@@ -362,8 +367,22 @@ function renderProviderActions(card: ModelProviderCard, props: ModelProvidersVie
   const keyBlocked = authModeBlocked
     ? t("modelProviders.apiKey.authModeBlocked", { mode: card.configAuthMode ?? "" })
     : blocked;
+  const apiProfileCount = card.profiles.filter((profile) => profile.type === "api_key").length;
+  const credentialSource =
+    card.apiKey?.source === "config" || (!card.apiKey && card.hasConfigApiKey)
+      ? t("modelProviders.apiKey.sourceConfig")
+      : card.apiKey?.source === "env"
+        ? card.apiKey.envVar
+          ? t("modelProviders.apiKey.sourceEnvNamed", { name: card.apiKey.envVar })
+          : t("modelProviders.apiKey.sourceEnv")
+        : apiProfileCount > 0
+          ? t("modelProviders.apiKey.sourceProfiles", { count: String(apiProfileCount) })
+          : null;
   return html`
     <div class="model-providers__card-actions">
+      ${credentialSource
+        ? html`<span class="model-providers__credential-source">${credentialSource}</span>`
+        : nothing}
       ${isConfigured
         ? html`
             <button
@@ -402,40 +421,7 @@ function renderProviderActions(card: ModelProviderCard, props: ModelProvidersVie
             </button>
           `
         : nothing}
-      ${canLogout
-        ? html`
-            <button
-              class="btn btn--sm"
-              ?disabled=${logoutBusy || mutationDisabled}
-              title=${blocked}
-              @click=${() => props.onRequestLogout(card.id)}
-            >
-              ${t("modelProviders.logout.action")}
-            </button>
-          `
-        : nothing}
     </div>
-    ${props.pendingLogoutProvider === card.id
-      ? html`
-          <div class="model-providers__confirm" role="alert">
-            <span>${t("modelProviders.logout.confirm", { provider: card.displayName })}</span>
-            <div class="model-providers__form-actions">
-              <button
-                class="btn danger btn--sm"
-                ?disabled=${logoutBusy || mutationDisabled}
-                @click=${() => props.onLogout(card.id, card.logoutTargets)}
-              >
-                ${logoutBusy
-                  ? t("modelProviders.logout.loggingOut")
-                  : t("modelProviders.logout.action")}
-              </button>
-              <button class="btn btn--sm" ?disabled=${logoutBusy} @click=${props.onCancelLogout}>
-                ${t("common.cancel")}
-              </button>
-            </div>
-          </div>
-        `
-      : nothing}
   `;
 }
 
@@ -458,18 +444,13 @@ function renderProviderRow(card: ModelProviderCard, props: ModelProvidersViewPro
           </div>
         </div>
         <div class="settings-row__control">
-          ${card.usage?.plan ? renderSettingsValue(card.usage.plan) : nothing}
+          ${!hasAccountScopedProfiles(card) && card.usage?.plan
+            ? renderSettingsValue(card.usage.plan)
+            : nothing}
           ${renderProviderStatus(card)}
         </div>
       </div>
-      ${renderCredentialSummary(card, props.credentialAgentLabel)}
-      <div class="model-providers__global-metrics">
-        <div class="model-providers__global-metrics-title">${t("modelProviders.globalUsage")}</div>
-        ${card.usage
-          ? renderProviderUsageDetails(card.usage)
-          : html`<div class="model-providers__no-stats">${t("modelProviders.noStats")}</div>`}
-        ${renderLocalCost(card, props.costDays)}
-      </div>
+      ${renderProfiles(card, props)} ${renderProviderUsageAndCost(card, props.costDays)}
       ${renderProviderActions(card, props)} ${renderKeyEditor(card, props)}
       ${renderProbeResult(props.probeResults[card.id])} ${renderMutationMessage(message)}
     </div>
@@ -477,6 +458,9 @@ function renderProviderRow(card: ModelProviderCard, props: ModelProvidersViewPro
 }
 
 function renderAddProvider(props: ModelProvidersViewProps) {
+  if (!props.quickAddSupported) {
+    return nothing;
+  }
   const busy = Boolean(props.busy.add);
   const disabled = configMutationDisabled(props) || busy;
   const rows = html`
@@ -563,26 +547,14 @@ function renderModelReadiness(props: ModelProvidersViewProps) {
           control: html`
             ${renderSettingsStatus({
               kind: "warn",
-              label: signedIn
-                ? t("modelProviders.readiness.noModels")
-                : t("modelProviders.readiness.modelRequired"),
+              label: t("modelProviders.readiness.modelRequired"),
             })}
             <button class="btn primary" @click=${props.onOpenModelSetup}>
-              ${signedIn ? t("modelProviders.readiness.chooseProvider") : t("modelSetup.heading")}
+              ${t("modelSetup.heading")}
             </button>
           `,
         }),
       )}
-    </div>
-  `;
-}
-
-function renderProviderNoticeRow(text: string) {
-  return html`
-    <div class="settings-row">
-      <div class="settings-row__text">
-        <span class="settings-row__desc provider-usage-error">${text}</span>
-      </div>
     </div>
   `;
 }
@@ -599,11 +571,15 @@ export function renderModelProviders(props: ModelProvidersViewProps) {
       <div aria-busy="true">${renderSettingsGroup(renderSettingsEmpty(t("common.loading")))}</div>
     `);
   }
+  const renderProviderNotice = (text: string) => html`
+    <div class="settings-row">
+      <div class="settings-row__text">
+        <span class="settings-row__desc provider-usage-error">${text}</span>
+      </div>
+    </div>
+  `;
   const providerRows = html`
-    ${props.error ? renderProviderNoticeRow(props.error) : nothing}
-    ${props.providerUsageFailed
-      ? renderProviderNoticeRow(t("usage.providerUsage.unavailable"))
-      : nothing}
+    ${props.error ? renderProviderNotice(props.error) : nothing}
     ${props.cards.length === 0
       ? renderSettingsEmpty(
           html`<strong>${t("modelProviders.emptyTitle")}</strong><br />${t(
@@ -651,10 +627,7 @@ export function renderModelProviders(props: ModelProvidersViewProps) {
       },
       providerRows,
     )}
-    ${props.quickAddSupported ? renderAddProvider(props) : nothing}
-    ${props.providerUsageStalled
-      ? html`<div class="callout warning" role="status">${t("usage.providerUsage.stalled")}</div>`
-      : nothing}
+    ${renderAddProvider(props)}
     ${props.mutationBlockedReason
       ? html`<div class="callout warning">${props.mutationBlockedReason}</div>`
       : nothing}

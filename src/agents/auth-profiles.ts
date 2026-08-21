@@ -10,6 +10,7 @@ export type {
 } from "./auth-profiles/credential-state.js";
 export type { AuthProfileEligibilityReasonCode } from "./auth-profiles/order.js";
 export { resolveAuthProfileDisplayLabel } from "./auth-profiles/display.js";
+export { resolveAuthProfileMetadata } from "./auth-profiles/identity.js";
 export { formatAuthDoctorHint } from "./auth-profiles/doctor.js";
 export {
   externalCliDiscoveryForConfigStatus,
@@ -38,6 +39,7 @@ export {
   markAuthProfileSuccess,
   removeAuthProfilesAcrossOwnerStores,
   removeAuthProfilesWithLock,
+  removeProviderAuthProfilesAcrossOwnerStores,
   removeProviderAuthProfilesWithLock,
   resolveSubscriptionAuthModeForProfiles,
   setAuthProfileOrder,

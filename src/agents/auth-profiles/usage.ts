@@ -11,6 +11,7 @@ import {
   resolveExpiresAtMsFromDurationMs,
   resolveExpiresAtMsFromEpochSeconds,
 } from "@openclaw/normalization-core/number-coercion";
+import { err as resultErr, ok as resultOk, type Result } from "@openclaw/normalization-core/result";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { cancelUnreadResponseBody } from "../../infra/http-body.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -1274,7 +1275,7 @@ export async function clearAuthProfileCooldown(params: {
   store: AuthProfileStore;
   profileId: string;
   agentDir?: string;
-}): Promise<void> {
+}): Promise<Result<void, "store-update-failed">> {
   const { store, profileId, agentDir } = params;
   const updated = await authProfileUsageDeps.updateAuthProfileStoreWithLock({
     agentDir,
@@ -1289,10 +1290,9 @@ export async function clearAuthProfileCooldown(params: {
   });
   if (updated) {
     store.usageStats = updated.usageStats;
-    return;
+    return resultOk(undefined);
   }
-  if (updated === null) {
-    logDroppedAuthProfileBookkeeping("clear_cooldown", profileId);
-  }
+  logDroppedAuthProfileBookkeeping("clear_cooldown", profileId);
+  return resultErr("store-update-failed");
 }
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

@@ -17,8 +17,15 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../agents/auth-profiles.js", () => ({
   ensureAuthProfileStore: mocks.ensureAuthProfileStore,
+  listProfilesForProvider: (store: AuthProfileStore, provider: string) =>
+    Object.entries(store.profiles)
+      .filter(([, credential]) => credential.provider === provider)
+      .map(([profileId]) => profileId),
   setAuthProfileOrder: mocks.setAuthProfileOrder,
-  externalCliDiscoveryForProviderAuth: () => undefined,
+  externalCliDiscoveryForProviderAuth: (params: { provider: string }) => ({
+    mode: "scoped",
+    providerIds: [params.provider],
+  }),
   resolveAuthStatePathForDisplay: (agentDir: string) => `${agentDir}/auth-profiles.json`,
 }));
 
@@ -72,9 +79,10 @@ describe("models auth order", () => {
     mocks.ensureAuthProfileStore.mockReturnValue(
       storeWith(["anthropic:a", "anthropic:b"], ["anthropic:a"]),
     );
-    mocks.setAuthProfileOrder.mockResolvedValue(
-      storeWith(["anthropic:a", "anthropic:b"], ["anthropic:b", "anthropic:a"]),
-    );
+    mocks.setAuthProfileOrder.mockResolvedValue({
+      ok: true,
+      value: storeWith(["anthropic:a", "anthropic:b"], ["anthropic:b", "anthropic:a"]),
+    });
   });
 
   it("get resolves an omitted agent through the read target", async () => {
@@ -98,6 +106,11 @@ describe("models auth order", () => {
       agentDir: "/tmp/agent-ops",
       provider: "anthropic",
       order: ["anthropic:b", "anthropic:a"],
+      authAliasLookupParams: { config: {} },
+      expectedOrder: ["anthropic:a"],
+      expectedOrderProvider: "anthropic",
+      expectedProviderProfileIds: ["anthropic:a", "anthropic:b"],
+      externalCli: { mode: "scoped", providerIds: ["anthropic"] },
     });
     expect(mocks.resolveModelsTargetAgent).toHaveBeenCalledWith(expect.anything(), "ops", {
       kind: "mutation",
@@ -114,9 +127,12 @@ describe("models auth order", () => {
       },
     });
     mocks.setAuthProfileOrder.mockResolvedValue({
-      version: 1,
-      profiles: {},
-      order: { xai: ["xai:a"] },
+      ok: true,
+      value: {
+        version: 1,
+        profiles: {},
+        order: { xai: ["xai:a"] },
+      },
     });
     const runtime = createRuntime();
 
@@ -126,6 +142,10 @@ describe("models auth order", () => {
       agentDir: "/tmp/agent-main",
       provider: "xai",
       order: ["xai:a"],
+      authAliasLookupParams: { config: {} },
+      expectedOrder: null,
+      expectedProviderProfileIds: ["xai:a"],
+      externalCli: { mode: "scoped", providerIds: ["x-ai"] },
     });
     expect(runtime.logs).toContain("Auth profile order override: xai:a");
   });
@@ -138,6 +158,11 @@ describe("models auth order", () => {
       agentDir: "/tmp/agent-main",
       provider: "anthropic",
       order: null,
+      authAliasLookupParams: { config: {} },
+      expectedOrder: ["anthropic:a"],
+      expectedOrderProvider: "anthropic",
+      expectedProviderProfileIds: ["anthropic:a", "anthropic:b"],
+      externalCli: { mode: "scoped", providerIds: ["anthropic"] },
     });
     expect(mocks.resolveModelsTargetAgent).toHaveBeenCalledWith(expect.anything(), undefined, {
       kind: "mutation",
@@ -148,8 +173,61 @@ describe("models auth order", () => {
     );
   });
 
+  it("sets a new order from an explicitly empty stored order", async () => {
+    mocks.ensureAuthProfileStore.mockReturnValue(storeWith(["anthropic:a", "anthropic:b"], []));
+
+    await modelsAuthOrderSetCommand(
+      { provider: "anthropic", order: ["anthropic:b", "anthropic:a"] },
+      createRuntime(),
+    );
+
+    expect(mocks.setAuthProfileOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedOrder: [],
+        expectedOrderProvider: "anthropic",
+      }),
+    );
+  });
+
+  it("clears an explicitly empty stored order without changing its CAS baseline", async () => {
+    mocks.ensureAuthProfileStore.mockReturnValue(storeWith(["anthropic:a", "anthropic:b"], []));
+
+    await modelsAuthOrderClearCommand({ provider: "anthropic" }, createRuntime());
+
+    expect(mocks.setAuthProfileOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedOrder: [],
+        expectedOrderProvider: "anthropic",
+      }),
+    );
+  });
+
+  it.each(["set", "clear"] as const)(
+    "%s includes runtime-external accounts in its membership baseline",
+    async (action) => {
+      const store = storeWith(["anthropic:a", "anthropic:cli"], ["anthropic:a"]);
+      store.runtimeExternalProfileIds = ["anthropic:cli"];
+      mocks.ensureAuthProfileStore.mockReturnValue(store);
+
+      if (action === "set") {
+        await modelsAuthOrderSetCommand(
+          { provider: "anthropic", order: ["anthropic:cli", "anthropic:a"] },
+          createRuntime(),
+        );
+      } else {
+        await modelsAuthOrderClearCommand({ provider: "anthropic" }, createRuntime());
+      }
+
+      expect(mocks.setAuthProfileOrder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expectedProviderProfileIds: ["anthropic:a", "anthropic:cli"],
+        }),
+      );
+    },
+  );
+
   it("does not refresh the gateway when the store update fails", async () => {
-    mocks.setAuthProfileOrder.mockResolvedValue(null);
+    mocks.setAuthProfileOrder.mockResolvedValue({ ok: false, error: "store-update-failed" });
 
     await expect(
       modelsAuthOrderSetCommand({ provider: "anthropic", order: ["anthropic:a"] }, createRuntime()),

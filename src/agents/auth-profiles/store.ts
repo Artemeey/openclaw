@@ -28,6 +28,7 @@ import {
   warnLegacyAuthProfileSourcesIgnored,
 } from "./legacy-source-diagnostic.js";
 import {
+  overlayRuntimeExternalOAuthProfiles,
   shouldPersistRuntimeExternalOAuthProfile,
   type RuntimeExternalOAuthProfile,
 } from "./oauth-shared.js";
@@ -105,6 +106,10 @@ const INLINE_OAUTH_TOKEN_FIELDS = ["access", "refresh", "idToken"] as const;
 type AuthProfileRuntimeMode =
   | { kind: "env-only" }
   | { kind: "agent-dir"; agentDir: string; sharedStore?: AuthProfileStore };
+
+function resolveAuthStorePath(agentDir?: string): string {
+  return agentDir ? resolveAgentAuthPath(agentDir) : resolveSharedAuthPath();
+}
 
 const authProfileRuntimeMode = new AsyncLocalStorage<AuthProfileRuntimeMode>();
 
@@ -1006,33 +1011,80 @@ export async function updateAuthProfileStoreWithLock(params: {
   sharedStoreWrite?: boolean;
   stateDir?: string;
   saveOptions?: SaveAuthProfileStoreOptions;
-  updater: (store: AuthProfileStore) => boolean;
+  lockInheritedProfileMembership?: boolean;
+  effectiveExternalCli?: ExternalCliAuthDiscovery;
+  updater: (store: AuthProfileStore, effectiveStore?: AuthProfileStore) => boolean;
 }): Promise<AuthProfileStore | null> {
   const agentDir = resolveRuntimeAuthProfileAgentDir(params.agentDir);
   let publishRuntimeSnapshots: RuntimeSnapshotPublication | undefined;
   let store: AuthProfileStore;
   try {
-    store = runAuthProfileWriteTransaction(
-      agentDir,
-      (database) => {
-        const loadedStore = loadAuthProfileStoreForAgent(agentDir, {
-          database,
-          readOnly: true,
-          syncExternalCli: false,
-        });
-        const shouldSave = params.updater(loadedStore);
-        if (shouldSave) {
-          publishRuntimeSnapshots = saveAuthProfileStoreInTransaction(
-            loadedStore,
-            agentDir,
-            params.saveOptions,
+    const externalCliOptions = params.effectiveExternalCli
+      ? resolveExternalCliOverlayOptions({ externalCli: params.effectiveExternalCli })
+      : undefined;
+    const effectiveExternalProfilesAuthoritative = externalCliOptions
+      ? !hasScopedExternalCliOverlay(externalCliOptions)
+      : false;
+    // Resolve external credentials before taking SQLite locks. Discovery may
+    // access provider hooks, the filesystem, or the keychain.
+    const effectiveExternalProfiles = externalCliOptions
+      ? listRuntimeExternalAuthProfiles({
+          store: loadAuthProfileStoreWithoutExternalProfiles(agentDir),
+          agentDir,
+          externalCli: externalCliOptions,
+        })
+      : undefined;
+    const updateLocalStore = (inheritedStore?: AuthProfileStore) =>
+      runAuthProfileWriteTransaction(
+        agentDir,
+        (database) => {
+          const loadedStore = loadAuthProfileStoreForAgent(agentDir, {
             database,
-          );
-        }
-        return loadedStore;
-      },
-      { sharedStoreWrite: params.sharedStoreWrite, stateDir: params.stateDir },
-    );
+            readOnly: true,
+            syncExternalCli: false,
+          });
+          const mergedStore = inheritedStore
+            ? mergeAuthProfileStores(inheritedStore, loadedStore, {
+                preserveBaseRuntimeExternalProfiles: true,
+              })
+            : loadedStore;
+          const effectiveStore = effectiveExternalProfiles
+            ? overlayRuntimeExternalOAuthProfiles(mergedStore, effectiveExternalProfiles, {
+                runtimeExternalProfileIdsAuthoritative: effectiveExternalProfilesAuthoritative,
+              })
+            : mergedStore;
+          const shouldSave = params.updater(loadedStore, effectiveStore);
+          if (shouldSave) {
+            publishRuntimeSnapshots = saveAuthProfileStoreInTransaction(
+              loadedStore,
+              agentDir,
+              params.saveOptions,
+              database,
+            );
+          }
+          return loadedStore;
+        },
+        { sharedStoreWrite: params.sharedStoreWrite, stateDir: params.stateDir },
+      );
+    const mainAgentDir = resolveRuntimeAuthProfileAgentDir();
+    const inheritsMainStore = resolveAuthStorePath(agentDir) !== resolveAuthStorePath(mainAgentDir);
+    // A secondary order can reference inherited credentials. Keep the main
+    // owner locked until the local compare-and-swap commits.
+    store =
+      params.lockInheritedProfileMembership && inheritsMainStore
+        ? runAuthProfileWriteTransaction(
+            mainAgentDir,
+            (database) => {
+              const inheritedStore = loadAuthProfileStoreForAgent(mainAgentDir, {
+                database,
+                readOnly: true,
+                syncExternalCli: false,
+              });
+              return updateLocalStore(inheritedStore);
+            },
+            { stateDir: params.stateDir },
+          )
+        : updateLocalStore();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     authProfilesLog.warn(`auth profile store update failed: ${message}`, {
@@ -1046,6 +1098,97 @@ export async function updateAuthProfileStoreWithLock(params: {
   }
   publishRuntimeSnapshotsAfterCommit(publishRuntimeSnapshots);
   return store;
+}
+
+/** Apply related updates while every participating auth store is locked. */
+export function updateAuthProfileStoresWithLocks(params: {
+  updates: Array<{
+    agentDir?: string;
+    lockPriority?: number;
+    updater: (store: AuthProfileStore) => boolean;
+  }>;
+}): boolean {
+  const updatesByPath = new Map<
+    string,
+    {
+      agentDir: string | undefined;
+      lockPriority: number;
+      updaters: Array<(store: AuthProfileStore) => boolean>;
+    }
+  >();
+  for (const update of params.updates) {
+    const agentDir = resolveRuntimeAuthProfileAgentDir(update.agentDir);
+    const storePath = resolveAuthStorePath(agentDir);
+    const existing = updatesByPath.get(storePath);
+    if (existing) {
+      existing.lockPriority = Math.min(existing.lockPriority, update.lockPriority ?? 0);
+      existing.updaters.push(update.updater);
+    } else {
+      updatesByPath.set(storePath, {
+        agentDir,
+        lockPriority: update.lockPriority ?? 0,
+        updaters: [update.updater],
+      });
+    }
+  }
+  const stores = [...updatesByPath].map(([storePath, update]) => ({
+    storePath,
+    agentDir: update.agentDir,
+    lockPriority: update.lockPriority,
+    updaters: update.updaters,
+  }));
+  stores.sort((left, right) => {
+    const priority = left.lockPriority - right.lockPriority;
+    if (priority !== 0) {
+      return priority;
+    }
+    return left.storePath.localeCompare(right.storePath);
+  });
+
+  const databases = new Map<string, AuthProfileDatabase>();
+  const publications: Array<() => void> = [];
+  const acquire = (index: number): void => {
+    const entry = stores[index];
+    if (!entry) {
+      for (const storeEntry of stores) {
+        const database = databases.get(storeEntry.storePath);
+        if (!database) {
+          throw new Error(`auth profile store lock missing for ${storeEntry.storePath}`);
+        }
+        const store = loadAuthProfileStoreForAgent(storeEntry.agentDir, {
+          database,
+          readOnly: true,
+          syncExternalCli: false,
+        });
+        let changed = false;
+        for (const updater of storeEntry.updaters) {
+          changed = updater(store) || changed;
+        }
+        if (changed) {
+          publications.push(
+            saveAuthProfileStoreInTransaction(store, storeEntry.agentDir, undefined, database),
+          );
+        }
+      }
+      return;
+    }
+    runAuthProfileWriteTransaction(entry.agentDir, (database) => {
+      databases.set(entry.storePath, database);
+      acquire(index + 1);
+    });
+  };
+
+  try {
+    acquire(0);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    authProfilesLog.warn(`multi-store auth profile update failed: ${message}`, { error: message });
+    return false;
+  }
+  for (const publish of publications) {
+    publishRuntimeSnapshotsAfterCommit(publish);
+  }
+  return true;
 }
 
 /** Load the main auth profile store with runtime external profiles overlaid. */

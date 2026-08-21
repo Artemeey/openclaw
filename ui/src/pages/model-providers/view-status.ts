@@ -41,7 +41,9 @@ function hasProviderCredentials(card: ModelProviderCard): boolean {
 
 export function hasVerifiedProvider(card: ModelProviderCard): boolean {
   return (
-    card.catalogStatus === "ready" &&
+    hasProviderCredentials(card) &&
+    card.catalogStatus !== "auth-rejected" &&
+    (card.catalogStatus === "ready" || (card.profiles.length > 0 && card.auth?.kind === "ok")) &&
     card.auth?.kind !== "expired" &&
     card.auth?.kind !== "missing" &&
     card.auth?.kind !== "expiring"
