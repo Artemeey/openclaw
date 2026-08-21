@@ -1748,9 +1748,11 @@ openclaw gateway
 ```
 
 This is a process-wide credential-routing contract, not an account setting. A complete group
-redirects REST, Gateway, media, webhook, voice, OAuth, and Activity traffic for every Discord
-account in that Gateway. The provider therefore receives Discord credentials and message data;
-use only endpoints controlled by the operator. Non-loopback endpoints require HTTPS/WSS.
+redirects REST, Gateway, provider-origin media, webhook, voice, OAuth, and Activity traffic for
+every Discord account in that Gateway. The provider therefore receives Discord credentials and
+message data; use only endpoints controlled by the operator. Non-loopback endpoints require
+HTTPS/WSS. Public Discord CDN assets are never fetched in provider mode: provider-origin
+attachments remain available, while Discord-generated avatar and sticker assets are skipped.
 
 The three values are all-or-none and are read once during Discord startup. Put them in the
 Gateway supervisor environment or trusted global runtime dotenv, not a workspace `.env`. A
