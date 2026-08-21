@@ -333,6 +333,18 @@ describe("resolveMediaList", () => {
       "http://127.0.0.1:43123",
     );
     expect(requireArray(policy.hostnameAllowlist, "hostname allowlist")).toContain("127.0.0.1");
+
+    readRemoteMediaBuffer.mockClear();
+    const publicAttachment = attachmentFixture("att-public", "public.png", {
+      url: "https://cdn.discordapp.com/attachments/public.png",
+    });
+    await expect(
+      resolveMediaList(asMessage({ attachments: [publicAttachment] }), 512, {
+        fetchImpl: proxyFetch,
+      }),
+    ).resolves.toStrictEqual([{ contentType: "image/png" }]);
+    expect(readRemoteMediaBuffer).not.toHaveBeenCalled();
+    expect(proxyFetch).not.toHaveBeenCalled();
   });
 
   it("downloads stickers", async () => {

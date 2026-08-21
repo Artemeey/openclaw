@@ -379,10 +379,10 @@ describe("Discord provider endpoint runtime", () => {
         hostnameAllowlist: ["127.0.0.1"],
       },
     });
-    expect(
+    expect(() =>
       providerEndpoint.resolveDiscordProviderMediaDownloadGuard(
         "https://cdn.discordapp.com/attachment.png",
       ),
-    ).toBeUndefined();
+    ).toThrow("outside the configured REST origin");
   });
 });

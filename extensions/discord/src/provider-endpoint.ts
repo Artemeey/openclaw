@@ -278,7 +278,7 @@ export function resolveDiscordProviderMediaDownloadGuard(mediaUrl: string):
   const target = parseHttpAnchor(mediaUrl, "Discord provider media URL");
   const restOrigin = new URL(runtime.descriptor.restApiBaseUrl).origin;
   if (target.origin !== restOrigin) {
-    return undefined;
+    throw new Error("Discord provider media URL is outside the configured REST origin");
   }
   return {
     maxRedirects: 0,
