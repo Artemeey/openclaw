@@ -50,8 +50,8 @@ import {
 } from "../auth-rate-limit.js";
 import * as gatewayAuth from "../auth.js";
 import { buildDeviceAuthPayload } from "../device-auth.js";
-import { createWorkerEnvironmentStore } from "../worker-environments/store.js";
 import { MAX_QUEUED_GATEWAY_PREAUTH_FRAMES } from "../server-constants.js";
+import { createWorkerEnvironmentStore } from "../worker-environments/store.js";
 import { attachGatewayWsConnectionHandler } from "./ws-connection.js";
 import {
   attachGatewayWsForTest,
@@ -178,36 +178,38 @@ async function attachStartupNodeConnect(params: {
   markGatewayRestartDraining();
   socket.emit(
     "message",
-    JSON.stringify({
-      type: "req",
-      id: "startup-node-connect",
-      method: "connect",
-      params: {
-        minProtocol: PROTOCOL_VERSION,
-        maxProtocol: PROTOCOL_VERSION,
-        client: {
-          id: GATEWAY_CLIENT_NAMES.NODE_HOST,
-          version: "dev",
-          platform: "linux",
-          mode: GATEWAY_CLIENT_MODES.NODE,
+    Buffer.from(
+      JSON.stringify({
+        type: "req",
+        id: "startup-node-connect",
+        method: "connect",
+        params: {
+          minProtocol: PROTOCOL_VERSION,
+          maxProtocol: PROTOCOL_VERSION,
+          client: {
+            id: GATEWAY_CLIENT_NAMES.NODE_HOST,
+            version: "dev",
+            platform: "linux",
+            mode: GATEWAY_CLIENT_MODES.NODE,
+          },
+          role: "node",
+          scopes: [],
+          caps: [],
+          commands: [],
+          auth: {
+            ...(params.bootstrapToken ? { bootstrapToken: params.bootstrapToken } : {}),
+            ...(params.sharedToken ? { token: params.sharedToken } : {}),
+          },
+          device: {
+            id: identity.deviceId,
+            publicKey,
+            signature: signDevicePayload(identity.privateKeyPem, devicePayload),
+            signedAt,
+            nonce,
+          },
         },
-        role: "node",
-        scopes: [],
-        caps: [],
-        commands: [],
-        auth: {
-          ...(params.bootstrapToken ? { bootstrapToken: params.bootstrapToken } : {}),
-          ...(params.sharedToken ? { token: params.sharedToken } : {}),
-        },
-        device: {
-          id: identity.deviceId,
-          publicKey,
-          signature: signDevicePayload(identity.privateKeyPem, devicePayload),
-          signedAt,
-          nonce,
-        },
-      },
-    }),
+      }),
+    ),
   );
   const response = async () => {
     await vi.waitFor(() => {
