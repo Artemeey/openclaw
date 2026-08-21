@@ -18181,6 +18181,7 @@ public struct PendingApprovalSnapshot: Codable, Sendable {
     public let createdatms: Int
     public let expiresatms: Int
     public let presentation: ApprovalPresentation
+    public let instanceid: String?
     public let status: String
     public let sourcesessionkey: String?
 
@@ -18190,6 +18191,7 @@ public struct PendingApprovalSnapshot: Codable, Sendable {
         createdatms: Int,
         expiresatms: Int,
         presentation: ApprovalPresentation,
+        instanceid: String? = nil,
         status: String,
         sourcesessionkey: String? = nil)
     {
@@ -18198,6 +18200,7 @@ public struct PendingApprovalSnapshot: Codable, Sendable {
         self.createdatms = createdatms
         self.expiresatms = expiresatms
         self.presentation = presentation
+        self.instanceid = instanceid
         self.status = status
         self.sourcesessionkey = sourcesessionkey
     }
@@ -18208,6 +18211,7 @@ public struct PendingApprovalSnapshot: Codable, Sendable {
         case createdatms = "createdAtMs"
         case expiresatms = "expiresAtMs"
         case presentation
+        case instanceid = "instanceId"
         case status
         case sourcesessionkey = "sourceSessionKey"
     }
