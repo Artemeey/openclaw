@@ -35,7 +35,7 @@ import {
 import { GatewayPageController } from "../../lit/gateway-page-controller.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
-import { fetchCatalogIconBlobUrl } from "../plugins/icon-loader.ts";
+import { CatalogIconLoader } from "../plugins/catalog-icon-loader.ts";
 import { renderPluginsHubHeader } from "../plugins/plugins-hub-header.ts";
 import { PLUGINS_HUB_PANEL_ID, type PluginsHubTab } from "../plugins/plugins-hub.ts";
 import { renderSkills, type SkillDetailTab, type SkillsStatusFilter } from "./view.ts";
@@ -102,11 +102,11 @@ class SkillsPage extends OpenClawLightDomElement {
   private routeDataInitialized = false;
   private routeDataEnabled = true;
   private debouncedClawHubSearchQuery = "";
-  private readonly clawhubIconMisses = new Set<string>();
-  private readonly clawhubIconRequests = new Map<
-    string,
-    { controller: AbortController; timeout: ReturnType<typeof setTimeout> }
-  >();
+  private readonly clawhubIconLoader = new CatalogIconLoader(
+    () => this.context,
+    (iconUrl) => this.currentClawHubIconUrls().has(iconUrl),
+    (urls) => (this.clawhubIconUrls = urls),
+  );
   private readonly gateway = new GatewayPageController(this, {
     getGateway: () => this.context?.gateway,
     invalidateRequests: () => this.resetLoadedSkillState(),
@@ -153,7 +153,7 @@ class SkillsPage extends OpenClawLightDomElement {
       clearTimeout(this.clawhubSearchTimer);
       this.clawhubSearchTimer = null;
     }
-    this.resetClawHubIcons();
+    this.clawhubIconLoader.reset();
     super.disconnectedCallback();
   }
 
@@ -171,7 +171,7 @@ class SkillsPage extends OpenClawLightDomElement {
 
   private resetLoadedSkillState() {
     void this.clawhubSearchTask.run([null, ""]);
-    this.resetClawHubIcons();
+    this.clawhubIconLoader.reset();
     if (this.clawhubSearchTimer) {
       clearTimeout(this.clawhubSearchTimer);
       this.clawhubSearchTimer = null;
@@ -216,101 +216,10 @@ class SkillsPage extends OpenClawLightDomElement {
     );
   }
 
-  private resetClawHubIcons() {
-    for (const request of this.clawhubIconRequests.values()) {
-      clearTimeout(request.timeout);
-      request.controller.abort();
-    }
-    for (const url of Object.values(this.clawhubIconUrls)) {
-      URL.revokeObjectURL(url);
-    }
-    this.clawhubIconRequests.clear();
-    this.clawhubIconMisses.clear();
-    this.clawhubIconUrls = {};
-  }
-
   // Blob URLs and pending requests belong only to visible registry results;
   // revoke or abort removed entries so stale searches cannot publish artwork.
   private syncClawHubIcons() {
-    const sourceUrls = this.currentClawHubIconUrls();
-    const nextUrls = { ...this.clawhubIconUrls };
-    let urlsChanged = false;
-    for (const [sourceUrl, blobUrl] of Object.entries(nextUrls)) {
-      if (!sourceUrls.has(sourceUrl)) {
-        URL.revokeObjectURL(blobUrl);
-        delete nextUrls[sourceUrl];
-        urlsChanged = true;
-      }
-    }
-    if (urlsChanged) {
-      this.clawhubIconUrls = nextUrls;
-    }
-    for (const [sourceUrl, request] of this.clawhubIconRequests) {
-      if (!sourceUrls.has(sourceUrl)) {
-        clearTimeout(request.timeout);
-        request.controller.abort();
-        this.clawhubIconRequests.delete(sourceUrl);
-      }
-    }
-    for (const sourceUrl of this.clawhubIconMisses) {
-      if (!sourceUrls.has(sourceUrl)) {
-        this.clawhubIconMisses.delete(sourceUrl);
-      }
-    }
-    for (const sourceUrl of sourceUrls) {
-      if (
-        !this.clawhubIconUrls[sourceUrl] &&
-        !this.clawhubIconMisses.has(sourceUrl) &&
-        !this.clawhubIconRequests.has(sourceUrl)
-      ) {
-        this.fetchClawHubIcon(sourceUrl);
-      }
-    }
-  }
-
-  private fetchClawHubIcon(iconUrl: string) {
-    const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(new DOMException("catalog icon fetch timed out", "TimeoutError")),
-      10_000,
-    );
-    const request = { controller, timeout };
-    this.clawhubIconRequests.set(iconUrl, request);
-    void fetchCatalogIconBlobUrl({
-      iconUrl,
-      resourceBasePath: this.context.resourceBasePath,
-      gatewayUrl: this.context.gateway.connection.gatewayUrl,
-      auth: {
-        hello: this.context.gateway.snapshot.hello,
-        settings: { token: this.context.gateway.connection.token },
-        password: this.context.gateway.connection.password,
-      },
-      signal: controller.signal,
-    })
-      .then((blobUrl) => {
-        if (this.clawhubIconRequests.get(iconUrl) !== request || !this.connected) {
-          if (blobUrl) {
-            URL.revokeObjectURL(blobUrl);
-          }
-          return;
-        }
-        if (blobUrl) {
-          this.clawhubIconUrls = { ...this.clawhubIconUrls, [iconUrl]: blobUrl };
-        } else {
-          this.clawhubIconMisses.add(iconUrl);
-        }
-      })
-      .catch(() => {
-        if (this.clawhubIconRequests.get(iconUrl) === request) {
-          this.clawhubIconMisses.add(iconUrl);
-        }
-      })
-      .finally(() => {
-        clearTimeout(timeout);
-        if (this.clawhubIconRequests.get(iconUrl) === request) {
-          this.clawhubIconRequests.delete(iconUrl);
-        }
-      });
+    this.clawhubIconLoader.reconcile(this.currentClawHubIconUrls());
   }
 
   private applyRouteData() {
