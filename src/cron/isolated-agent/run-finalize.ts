@@ -110,6 +110,7 @@ export async function finalizeCronRun(params: {
     cfg: prepared.cfgWithAgentDefaults,
     provider: providerUsed,
     model: modelUsed,
+    agentId: prepared.agentId,
     allowAsyncLoad: false,
   });
   const agentHarnessId = normalizeOptionalString(finalRunResult.meta?.agentMeta?.agentHarnessId);
