@@ -243,6 +243,10 @@
   justify-self: end;
 }
 
+.model-providers__profile-status:not(:has(.model-providers__profile-retry)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .model-providers__profile-status:not(:has(.model-providers__profile-retry)) .settings-status {
   display: grid;
   grid-template-columns: 7px 64px;
