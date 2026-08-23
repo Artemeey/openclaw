@@ -232,11 +232,15 @@
 }
 
 .model-providers__profile-status {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-1);
+  width: 220px;
   min-width: 0;
+}
+
+.model-providers__profile-status .settings-status {
+  justify-self: end;
 }
 
 .model-providers__profile-icon-action {
@@ -262,7 +266,7 @@
 }
 
 .model-providers__profile-retry {
-  flex: 0 0 44px;
+  grid-column: 2;
   color: color-mix(in srgb, var(--muted) 72%, transparent);
 }
 
