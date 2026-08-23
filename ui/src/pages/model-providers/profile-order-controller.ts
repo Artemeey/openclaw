@@ -184,30 +184,12 @@ export class ProfileOrderController {
     success: string,
     busyKey = messageKey,
   ) {
-    const client = this.host.snapshot().client;
-    if (!client || !this.host.canMutate() || this.host.isBusy(busyKey)) {
-      return;
-    }
-    const { agentEpoch, agentId, clientEpoch } = this.host.current();
-    this.host.setBusy(busyKey, true);
-    this.host.setMessage(messageKey, null);
-    try {
-      await client.request(method, { ...params, agentId });
-      if (this.isCurrent(client, clientEpoch, agentEpoch)) {
-        await this.refreshAfterCommit({ messageKey, success, client, clientEpoch, agentEpoch });
-      }
-    } catch (error) {
-      if (this.isCurrent(client, clientEpoch, agentEpoch)) {
-        this.host.setMessage(messageKey, {
-          kind: "error",
-          text: modelProviderErrorMessage(error),
-        });
-      }
-    } finally {
-      if (this.isCurrent(client, clientEpoch, agentEpoch)) {
-        this.host.setBusy(busyKey, false);
-      }
-    }
+    await this.runProfileMutation({
+      messageKey,
+      busyKey,
+      success,
+      request: (client, agentId) => client.request(method, { ...params, agentId }),
+    });
   }
 
   private async logout(
@@ -217,25 +199,39 @@ export class ProfileOrderController {
     profileId: string,
     success: string,
   ) {
-    const client = this.host.snapshot().client;
     const key = `logout:${owner}`;
-    if (!client || !this.host.canMutate() || this.host.isBusy(key)) {
-      return;
-    }
     await this.waitFor(owner);
-    const { agentEpoch, agentId, clientEpoch } = this.host.current();
-    if (!this.isCurrent(client, clientEpoch, agentEpoch)) {
+    await this.runProfileMutation({
+      messageKey: `profiles:${owner}`,
+      busyKey: key,
+      success,
+      beforeRequest: () => this.host.clearProbe(cardId),
+      request: (client, agentId) =>
+        client.request("models.authLogout", { provider, profileIds: [profileId], agentId }),
+    });
+  }
+
+  private async runProfileMutation(params: {
+    messageKey: string;
+    busyKey: string;
+    success: string;
+    beforeRequest?: () => void;
+    request: (client: GatewayBrowserClient, agentId: string) => Promise<unknown>;
+  }) {
+    const client = this.host.snapshot().client;
+    if (!client || !this.host.canMutate() || this.host.isBusy(params.busyKey)) {
       return;
     }
-    this.host.clearProbe(cardId);
-    this.host.setBusy(key, true);
-    this.host.setMessage(`profiles:${owner}`, null);
+    const { agentEpoch, agentId, clientEpoch } = this.host.current();
+    params.beforeRequest?.();
+    this.host.setBusy(params.busyKey, true);
+    this.host.setMessage(params.messageKey, null);
     try {
-      await client.request("models.authLogout", { provider, profileIds: [profileId], agentId });
+      await params.request(client, agentId);
       if (this.isCurrent(client, clientEpoch, agentEpoch)) {
         await this.refreshAfterCommit({
-          messageKey: `profiles:${owner}`,
-          success,
+          messageKey: params.messageKey,
+          success: params.success,
           client,
           clientEpoch,
           agentEpoch,
@@ -243,14 +239,14 @@ export class ProfileOrderController {
       }
     } catch (error) {
       if (this.isCurrent(client, clientEpoch, agentEpoch)) {
-        this.host.setMessage(`profiles:${owner}`, {
+        this.host.setMessage(params.messageKey, {
           kind: "error",
           text: modelProviderErrorMessage(error),
         });
       }
     } finally {
       if (this.isCurrent(client, clientEpoch, agentEpoch)) {
-        this.host.setBusy(key, false);
+        this.host.setBusy(params.busyKey, false);
       }
     }
   }

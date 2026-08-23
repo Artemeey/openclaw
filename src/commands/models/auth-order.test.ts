@@ -15,19 +15,23 @@ const mocks = vi.hoisted(() => ({
   refreshRunningGatewayAuthState: vi.fn(async () => undefined),
 }));
 
-vi.mock("../../agents/auth-profiles.js", () => ({
-  ensureAuthProfileStore: mocks.ensureAuthProfileStore,
-  listProfilesForProvider: (store: AuthProfileStore, provider: string) =>
-    Object.entries(store.profiles)
-      .filter(([, credential]) => credential.provider === provider)
-      .map(([profileId]) => profileId),
-  setAuthProfileOrder: mocks.setAuthProfileOrder,
-  externalCliDiscoveryForProviderAuth: (params: { provider: string }) => ({
-    mode: "scoped",
-    providerIds: [params.provider],
-  }),
-  resolveAuthStatePathForDisplay: (agentDir: string) => `${agentDir}/auth-profiles.json`,
-}));
+vi.mock("../../agents/auth-profiles.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../agents/auth-profiles.js")>();
+  return {
+    ...actual,
+    ensureAuthProfileStore: mocks.ensureAuthProfileStore,
+    listProfilesForProvider: (store: AuthProfileStore, provider: string) =>
+      Object.entries(store.profiles)
+        .filter(([, credential]) => credential.provider === provider)
+        .map(([profileId]) => profileId),
+    setAuthProfileOrder: mocks.setAuthProfileOrder,
+    externalCliDiscoveryForProviderAuth: (params: { provider: string }) => ({
+      mode: "scoped",
+      providerIds: [params.provider],
+    }),
+    resolveAuthStatePathForDisplay: (agentDir: string) => `${agentDir}/auth-profiles.json`,
+  };
+});
 
 vi.mock("./load-config.js", () => ({
   loadModelsConfig: mocks.loadModelsConfig,

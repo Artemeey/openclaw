@@ -41,6 +41,7 @@ export {
   removeAuthProfilesWithLock,
   removeProviderAuthProfilesAcrossOwnerStores,
   removeProviderAuthProfilesWithLock,
+  resolveProviderAuthStateEntry,
   resolveSubscriptionAuthModeForProfiles,
   setAuthProfileOrder,
   upsertAuthProfile,

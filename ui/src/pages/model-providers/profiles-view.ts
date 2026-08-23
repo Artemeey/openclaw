@@ -285,8 +285,7 @@ function startProfilePointerDrag(params: {
 }
 
 export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps) {
-  const allOrderedProfiles = orderedProfiles(card);
-  const profiles = allOrderedProfiles;
+  const profiles = orderedProfiles(card);
   if (profiles.length === 0) {
     return nothing;
   }
@@ -317,7 +316,7 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
       return false;
     }
     const orderProvider = card.profileAuthProviderIds[profile.profileId] ?? provider;
-    const membership = profileOwnerMembership(card, allOrderedProfiles, orderProvider);
+    const membership = profileOwnerMembership(card, profiles, orderProvider);
     const explicitOrder = card.profileOrders[orderProvider];
     return explicitOrder === undefined ? membership.length > 1 : explicitOrder.length > 1;
   });
@@ -373,7 +372,7 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
             const orderProvider = card.profileOrderProviders[orderOwner] ?? orderOwner;
             const cooldown = profileCooldown(profile);
             const explicitOrder = card.profileOrders[orderOwner];
-            const ownerMembershipIds = profileOwnerMembership(card, allOrderedProfiles, orderOwner);
+            const ownerMembershipIds = profileOwnerMembership(card, profiles, orderOwner);
             const moveContext = (draggedId: string) => {
               const ownerProfileIds = explicitOrder
                 ? explicitOrder.includes(draggedId)

@@ -5,6 +5,7 @@ import {
   externalCliDiscoveryForProviderAuth,
   ensureAuthProfileStore,
   listProfilesForProvider,
+  resolveProviderAuthStateEntry,
   resolveAuthStatePathForDisplay,
   setAuthProfileOrder,
 } from "../../agents/auth-profiles.js";
@@ -27,15 +28,8 @@ function resolveStoredOrder(
   provider: string,
   cfg: OpenClawConfig,
 ): { order: string[]; provider?: string } {
-  const authProvider = resolveProviderIdForAuth(provider, { config: cfg });
-  const canonical = findNormalizedProviderValue(store.order, authProvider);
-  if (canonical !== undefined) {
-    return { order: canonical, provider: authProvider };
-  }
-  const alias = Object.entries(store.order ?? {})
-    .filter(([key]) => resolveProviderIdForAuth(key, { config: cfg }) === authProvider)
-    .toSorted(([left], [right]) => left.localeCompare(right))[0];
-  return alias ? { order: alias[1], provider: alias[0] } : { order: [] };
+  const entry = resolveProviderAuthStateEntry(store.order, provider, { config: cfg });
+  return entry ? { order: entry.value, provider: entry.provider } : { order: [] };
 }
 
 function listProviderProfileIds(
@@ -76,6 +70,23 @@ async function resolveAuthOrderContext(
   return { cfg, agentId, agentDir, provider };
 }
 
+async function resolveAuthOrderMutationContext(
+  opts: { provider: string; agent?: string },
+  runtime: RuntimeEnv,
+) {
+  const context = await resolveAuthOrderContext(opts, runtime, "mutation");
+  const externalCli = externalCliDiscoveryForProviderAuth(context);
+  const store = ensureAuthProfileStore(context.agentDir, { externalCli });
+  const providerKey = resolveProviderIdForAuth(context.provider, { config: context.cfg });
+  return {
+    ...context,
+    externalCli,
+    store,
+    providerKey,
+    currentOrder: resolveStoredOrder(store, context.provider, context.cfg),
+  };
+}
+
 /** Shows the configured auth profile priority order for a provider. */
 export async function modelsAuthOrderGetCommand(
   opts: { provider: string; agent?: string; json?: boolean },
@@ -114,17 +125,8 @@ export async function modelsAuthOrderClearCommand(
   opts: { provider: string; agent?: string },
   runtime: RuntimeEnv,
 ) {
-  const { cfg, agentId, agentDir, provider } = await resolveAuthOrderContext(
-    opts,
-    runtime,
-    "mutation",
-  );
-  const externalCli = externalCliDiscoveryForProviderAuth({ cfg, provider });
-  const store = ensureAuthProfileStore(agentDir, {
-    externalCli,
-  });
-  const providerKey = resolveProviderIdForAuth(provider, { config: cfg });
-  const currentOrder = resolveStoredOrder(store, provider, cfg);
+  const { cfg, agentId, agentDir, provider, externalCli, store, providerKey, currentOrder } =
+    await resolveAuthOrderMutationContext(opts, runtime);
   const updated = await setAuthProfileOrder({
     agentDir,
     provider: providerKey,
@@ -152,18 +154,8 @@ export async function modelsAuthOrderSetCommand(
   opts: { provider: string; agent?: string; order: string[] },
   runtime: RuntimeEnv,
 ) {
-  const { cfg, agentId, agentDir, provider } = await resolveAuthOrderContext(
-    opts,
-    runtime,
-    "mutation",
-  );
-
-  const externalCli = externalCliDiscoveryForProviderAuth({ cfg, provider });
-  const store = ensureAuthProfileStore(agentDir, {
-    externalCli,
-  });
-  const providerKey = resolveProviderIdForAuth(provider, { config: cfg });
-  const currentOrder = resolveStoredOrder(store, provider, cfg);
+  const { cfg, agentId, agentDir, provider, externalCli, store, providerKey, currentOrder } =
+    await resolveAuthOrderMutationContext(opts, runtime);
   const requested = normalizeStringEntries(opts.order ?? []);
   if (requested.length === 0) {
     throw new Error(
