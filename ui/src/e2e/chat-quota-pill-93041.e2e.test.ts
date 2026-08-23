@@ -195,7 +195,7 @@ suite.define(() => {
       const rows = await page.locator(".context-usage__limit").allTextContents();
       const normalized = rows.map((row) => row.replace(/\s+/g, " ").trim());
       expect(normalized).toHaveLength(1);
-      expect(normalized[0]).toMatch(/^Weekly Resets .+ 71%$/);
+      expect(normalized[0]).toMatch(/^Weekly limit Resets .+ 71%$/);
       expect(
         (await page.locator('[data-chat-usage-provider="true"]').textContent())
           ?.replace(/\s+/g, " ")
@@ -228,7 +228,7 @@ suite.define(() => {
       const rows = await page.locator(".context-usage__limit").allTextContents();
       const normalized = rows.map((row) => row.replace(/\s+/g, " ").trim());
       expect(normalized[0]).toMatch(/^5-hour limit Resets .+ 22%$/);
-      expect(normalized[1]).toMatch(/^Weekly Resets .+ 25%$/);
+      expect(normalized[1]).toMatch(/^Weekly limit Resets .+ 25%$/);
       expect(normalized[2]).toBe("Fable 45%");
       expect(normalized[3]).toBe("Usage credits $157.85 of $400.00");
 

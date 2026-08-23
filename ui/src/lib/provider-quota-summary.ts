@@ -1,6 +1,27 @@
 // Control UI module implements provider quota summary behavior.
 import { asDateTimestampMs } from "@openclaw/normalization-core/number-coercion";
 import type { ModelAuthStatusProvider, ModelAuthStatusResult } from "../api/types.ts";
+import { t } from "../i18n/index.ts";
+
+// Provider window labels arrive as compact data strings ("5h", "Week"); model
+// scoped labels (e.g. "Opus") pass through untranslated.
+export function formatUsageWindowLabel(label: string): string {
+  const normalized = label.trim().toLowerCase();
+  const hours = /^(\d+)h$/.exec(normalized)?.[1];
+  if (normalized === "week" || normalized === "weekly" || hours === "168") {
+    return t("usage.providerUsage.limitWeekly");
+  }
+  if (normalized === "day" || normalized === "daily" || hours === "24") {
+    return t("usage.providerUsage.limitDaily");
+  }
+  if (hours === "5") {
+    return t("usage.providerUsage.limitFiveHour");
+  }
+  if (hours) {
+    return t("usage.providerUsage.limitHours", { hours });
+  }
+  return label;
+}
 
 export function formatQuotaReset(resetAt?: number): string | null {
   const timestampMs = asDateTimestampMs(resetAt);

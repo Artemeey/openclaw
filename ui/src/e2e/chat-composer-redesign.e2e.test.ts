@@ -332,7 +332,7 @@ suite.define(() => {
             ?.replace(/\s+/g, " ")
             .trim(),
         )
-        .toBe("Weekly 72%");
+        .toBe("Weekly limit 72%");
       await contextUsage.click();
 
       await effort.click();

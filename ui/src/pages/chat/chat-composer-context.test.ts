@@ -45,7 +45,7 @@ describe("renderChatComposer context usage", () => {
               usage: {
                 providerId: "openai",
                 windows: [
-                  { label: "Week", usedPercent: 72, resetAt: 1_700_000_000_000 + 3 * 3_600_000 },
+                  { label: "168h", usedPercent: 72, resetAt: 1_700_000_000_000 + 3 * 3_600_000 },
                 ],
               },
             },
@@ -63,7 +63,7 @@ describe("renderChatComposer context usage", () => {
       [...container.querySelectorAll(".context-usage__limit")].map((row) =>
         row.textContent?.replace(/\s+/g, " ").trim(),
       ),
-    ).toEqual(["Weekly Resets 3h 72%"]);
+    ).toEqual(["Weekly limit Resets 3h 72%"]);
     expect(
       container
         .querySelector("[data-chat-usage-provider='true']")
@@ -170,7 +170,7 @@ describe("renderChatComposer context usage", () => {
       ),
     ).toEqual([
       "5-hour limit Resets 2h 22%",
-      "Weekly 25%",
+      "Weekly limit 25%",
       "Fable 92%",
       "Usage credits $157.85 of $400.00",
     ]);
@@ -345,7 +345,7 @@ describe("renderChatComposer context usage", () => {
       [...container.querySelectorAll(".context-usage__limit")].map((row) =>
         row.textContent?.replace(/\s+/g, " ").trim(),
       ),
-    ).toEqual(["Weekly 25%", "Weekly 72%"]);
+    ).toEqual(["Weekly limit 25%", "Weekly limit 72%"]);
     expect(
       [...container.querySelectorAll("[data-chat-usage-provider='true']")].map((row) =>
         row.textContent?.replace(/\s+/g, " ").trim(),

@@ -6,6 +6,7 @@ import type { ProviderUsageSnapshot } from "../../../src/infra/provider-usage.ty
 import { t } from "../i18n/index.ts";
 import { formatUiExternalText } from "../lib/format-error.ts";
 import { formatCompactTokenCount } from "../lib/format.ts";
+import { formatUsageWindowLabel } from "../lib/provider-quota-summary.ts";
 
 function formatProviderAmount(amount: number, unit: string): string {
   const normalizedUnit = unit.trim().toUpperCase();
@@ -192,10 +193,11 @@ export function renderProviderUsageDetails(snapshot: ProviderUsageSnapshot) {
               const used = Math.max(0, Math.min(100, window.usedPercent));
               const remaining = Math.max(0, 100 - used);
               const reset = formatProviderReset(window.resetAt);
+              const label = formatUsageWindowLabel(window.label);
               return html`
                 <div class="provider-usage-window">
                   <div class="provider-usage-window__meta">
-                    <span>${window.label}</span>
+                    <span>${label}</span>
                     <strong
                       >${t("usage.providerUsage.remaining", {
                         percent: remaining.toFixed(0),
@@ -205,7 +207,7 @@ export function renderProviderUsageDetails(snapshot: ProviderUsageSnapshot) {
                   <div
                     class="provider-usage-progress"
                     role="progressbar"
-                    aria-label=${window.label}
+                    aria-label=${label}
                     aria-valuemin="0"
                     aria-valuemax="100"
                     aria-valuenow=${used.toFixed(0)}
