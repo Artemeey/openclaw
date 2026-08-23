@@ -243,6 +243,12 @@
   justify-self: end;
 }
 
+.model-providers__profile-status:not(:has(.model-providers__profile-retry)) .settings-status {
+  display: grid;
+  grid-template-columns: 7px 64px;
+  align-items: center;
+}
+
 .model-providers__profile-icon-action {
   display: inline-grid;
   width: 44px;
