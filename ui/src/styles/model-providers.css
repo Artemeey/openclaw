@@ -505,14 +505,14 @@
 
   .model-providers__profile-status {
     grid-column: 3;
-    grid-row: 1;
+    grid-row: 2;
     width: auto;
     justify-self: end;
   }
 
   .model-providers__profile-actions {
     grid-column: 3;
-    grid-row: 2;
+    grid-row: 1;
   }
 
   .model-providers__profiles--with-allowance .model-providers__profile-copy {
