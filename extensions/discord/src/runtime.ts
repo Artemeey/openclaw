@@ -12,7 +12,7 @@ const {
   errorMessage: "Discord runtime not initialized",
 });
 
-function setDiscordRuntime(runtime: DiscordRuntime): void {
+function setDiscordRuntime(runtime: PluginRuntime): void {
   initializeDiscordProviderEndpointFromEnv();
   setDiscordRuntimeStore(runtime);
 }
