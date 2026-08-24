@@ -259,13 +259,13 @@
 
 .model-providers__profile-allowance-cell {
   display: grid;
-  justify-items: end;
+  justify-items: start;
   min-width: 0;
 }
 
 .model-providers__profile-allowance {
   display: grid;
-  justify-items: end;
+  justify-items: start;
   line-height: 1.25;
 }
 
