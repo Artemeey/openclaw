@@ -21,7 +21,7 @@ const USAGE_CACHE_TTL_MS = 60_000;
 
 export type ProviderUsageStatus = Pick<
   ProviderUsageSnapshot,
-  "windows" | "summary" | "plan" | "billing" | "accountEmail"
+  "windows" | "summary" | "plan" | "billing" | "costHistory" | "accountEmail" | "error"
 >;
 
 type ProviderUsageCacheEntry = {
@@ -65,7 +65,7 @@ export function clearModelAuthStatusUsageCache(): void {
   clearProviderUsageRuntimeSnapshot();
 }
 
-export type ProfileUsageTarget = {
+type ProfileUsageTarget = {
   profileId: string;
   providerId: UsageProviderId;
 };
@@ -83,7 +83,9 @@ function snapshotUsage(snapshot: ProviderUsageSnapshot): ProviderUsageStatus {
     ...(snapshot.summary ? { summary: snapshot.summary } : {}),
     ...(snapshot.plan ? { plan: snapshot.plan } : {}),
     ...(snapshot.billing?.length ? { billing: snapshot.billing } : {}),
+    ...(snapshot.costHistory ? { costHistory: snapshot.costHistory } : {}),
     ...(snapshot.accountEmail ? { accountEmail: snapshot.accountEmail } : {}),
+    ...(snapshot.error ? { error: snapshot.error } : {}),
   };
 }
 

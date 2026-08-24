@@ -481,14 +481,14 @@ export function readModelProviderConfig(config: Record<string, unknown> | null):
 export type ProviderOption = { id: string; displayName: string };
 
 export function buildUnconfiguredProviderOptions(
-  catalogModels: ModelCatalogEntry[] | null | undefined,
+  capabilities: ModelAuthStatusResult["providerCapabilities"],
   configuredProviderIds: Iterable<string>,
 ): ProviderOption[] {
   const configured = new Set(Array.from(configuredProviderIds, canonicalProviderId));
   const options = new Map<string, ProviderOption>();
-  for (const model of catalogModels ?? []) {
-    const id = canonicalProviderId(model.provider);
-    if (model.apiKeySupported === true && id && !configured.has(id) && !options.has(id)) {
+  for (const capability of capabilities ?? []) {
+    const id = canonicalProviderId(capability.provider);
+    if (capability.quickApiKeySetup && id && !configured.has(id) && !options.has(id)) {
       options.set(id, { id, displayName: providerDisplayLabel(id) });
     }
   }

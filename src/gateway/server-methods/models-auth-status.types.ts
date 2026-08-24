@@ -5,6 +5,7 @@ import type {
 import type { AuthCredentialReasonCode } from "../../agents/auth-profiles/credential-state.js";
 import type {
   ProviderUsageBilling,
+  ProviderUsageCostHistory,
   UsageProviderId,
   UsageWindow,
 } from "../../infra/provider-usage.types.js";
@@ -22,7 +23,9 @@ export type ModelAuthUsage = {
   summary?: string;
   plan?: string;
   billing?: ProviderUsageBilling[];
+  costHistory?: ProviderUsageCostHistory;
   accountEmail?: string;
+  error?: string;
 };
 
 export type ModelAuthStatusProfile = {

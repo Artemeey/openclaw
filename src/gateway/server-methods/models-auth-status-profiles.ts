@@ -48,7 +48,9 @@ function mapUsage(providerId: ModelAuthUsage["providerId"], usage: ProviderUsage
     ...(usage.summary ? { summary: usage.summary } : {}),
     ...(usage.plan ? { plan: usage.plan } : {}),
     ...(usage.billing?.length ? { billing: usage.billing } : {}),
+    ...(usage.costHistory ? { costHistory: usage.costHistory } : {}),
     ...(usage.accountEmail ? { accountEmail: usage.accountEmail } : {}),
+    ...(usage.error ? { error: usage.error } : {}),
   } satisfies ModelAuthUsage;
 }
 

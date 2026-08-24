@@ -2,10 +2,10 @@ import { html, nothing, svg } from "lit";
 import { repeat } from "lit/directives/repeat.js";
 import { strokeIcon } from "../../components/icons-tools.ts";
 import { icons } from "../../components/icons.ts";
+import { renderProviderUsageDetails } from "../../components/provider-usage.ts";
 import { renderSettingsStatus } from "../../components/settings-ui.ts";
 import { t } from "../../i18n/index.ts";
 import { formatDurationHuman } from "../../lib/format.ts";
-import { formatQuotaReset, formatUsageWindowLabel } from "../../lib/provider-quota-summary.ts";
 import type { ModelProviderCard } from "./data.ts";
 import type { ModelProvidersViewProps } from "./view.ts";
 
@@ -55,6 +55,9 @@ function profileMeta(profile: ProviderProfile): string {
         time: formatDurationHuman(Date.now() - profile.lastUsedAt),
       }),
     );
+  }
+  if (profile.usage?.plan) {
+    parts.push(profile.usage.plan);
   }
   return parts.join(" · ");
 }
@@ -124,43 +127,21 @@ function renderProfileStatus(profile: ProviderProfile) {
   return renderSettingsStatus(status);
 }
 
-function profileAllowanceWindow(profile: ProviderProfile) {
-  const windows = profile.usage?.windows ?? [];
-  const durationHours = (label: string) => {
-    const normalized = label.trim().toLowerCase();
-    if (normalized === "week" || normalized === "weekly") {
-      return 168;
-    }
-    if (normalized === "day" || normalized === "daily") {
-      return 24;
-    }
-    return Number.parseInt(/^(\d+)h$/.exec(normalized)?.[1] ?? "0", 10);
-  };
-  return windows.toSorted(
-    (left, right) => durationHours(right.label) - durationHours(left.label),
-  )[0];
-}
-
-function renderProfileAllowance(profile: ProviderProfile) {
-  const window = profileAllowanceWindow(profile);
-  if (!window) {
-    return html`<span class="model-providers__profile-allowance--empty" aria-hidden="true"
-      >—</span
-    >`;
+function renderProfileUsage(profile: ProviderProfile) {
+  const usage = profile.usage;
+  if (!usage) {
+    return html`<span class="model-providers__no-stats">${t("modelProviders.noStats")}</span>`;
   }
-  const remaining = Math.max(0, 100 - Math.round(window.usedPercent));
-  const label = formatUsageWindowLabel(window.label);
-  const reset = formatQuotaReset(window.resetAt);
-  const title = reset ? `${label} · ${t("usage.providerUsage.resets", { date: reset })}` : label;
-  const context = reset
-    ? t("usage.providerUsage.resets", { date: reset })
-    : label.replace(/ limit$/u, "");
-  return html`
-    <span class="model-providers__profile-allowance" title=${title}>
-      <strong>${t("usage.providerUsage.remaining", { percent: String(remaining) })}</strong>
-      <span>${context}</span>
-    </span>
-  `;
+  return renderProviderUsageDetails({
+    provider: usage.providerId,
+    displayName: profileIdentity(profile),
+    windows: usage.windows,
+    ...(usage.summary ? { summary: usage.summary } : {}),
+    ...(usage.billing?.length ? { billing: usage.billing } : {}),
+    ...(usage.costHistory ? { costHistory: usage.costHistory } : {}),
+    ...(usage.accountEmail ? { accountEmail: usage.accountEmail } : {}),
+    ...(usage.error ? { error: usage.error } : {}),
+  });
 }
 
 function renderProfileMessage(message: ProfileMessage | undefined) {
@@ -360,13 +341,11 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
     const explicitOrder = card.profileOrders[orderProvider];
     return explicitOrder === undefined ? membership.length > 1 : explicitOrder.length > 1;
   });
-  const showsAllowance = profiles.some((profile) => profileAllowanceWindow(profile) !== undefined);
-
   return html`
     <section
       class="model-providers__profiles${reorderOffered
         ? " model-providers__profiles--reorderable"
-        : ""}${showsAllowance ? " model-providers__profiles--with-allowance" : ""}"
+        : ""}"
       aria-label=${t("modelProviders.profiles.title")}
       aria-busy=${busy ? "true" : "false"}
     >
@@ -516,11 +495,7 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
                   <strong title=${identity}>${identity}</strong>
                   <span>${profileMeta(profile)}</span>
                 </span>
-                ${showsAllowance
-                  ? html`<span class="model-providers__profile-allowance-cell">
-                      ${renderProfileAllowance(profile)}
-                    </span>`
-                  : nothing}
+                <span class="model-providers__profile-usage">${renderProfileUsage(profile)}</span>
                 <span class="model-providers__profile-status">
                   ${renderProfileStatus(profile)}
                   ${canClearCooldown

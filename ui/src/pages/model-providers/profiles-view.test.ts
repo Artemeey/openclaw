@@ -50,6 +50,10 @@ function mount(provider: ModelProviderCard, viewProps = props()): HTMLDivElement
   return container;
 }
 
+function text(element: Element | null): string {
+  return element?.textContent?.replace(/\s+/gu, " ").trim() ?? "";
+}
+
 function profileCard(overrides: Partial<ModelProviderCard> = {}): ModelProviderCard {
   const profileIds = ["openai:one", "openai:two"];
   return card({
@@ -140,14 +144,23 @@ describe("provider profile roster", () => {
     ).toBe(false);
   });
 
-  it("shows each account's own allowance in one aligned column", () => {
+  it("shows every quota window, plan, billing fact, and summary for each account", () => {
     const base = profileCard();
     const container = mount(
       profileCard({
         profiles: [
           {
             ...base.profiles[0]!,
-            usage: { providerId: "openai", windows: [{ label: "Week", usedPercent: 3 }] },
+            usage: {
+              providerId: "openai",
+              windows: [
+                { label: "5h", usedPercent: 25 },
+                { label: "Week", usedPercent: 3 },
+              ],
+              plan: "Pro",
+              billing: [{ type: "balance", amount: 12, unit: "credits" }],
+              summary: "Priority account",
+            },
           },
           {
             ...base.profiles[1]!,
@@ -157,11 +170,46 @@ describe("provider profile roster", () => {
       }),
     );
 
+    const first = container.querySelector('[data-profile-id="openai:one"]')!;
+    expect(first.textContent?.replace(/\s+/gu, " ")).toContain(
+      "One · Pro 5-hour limit 75% left Weekly limit 97% left Balance 12 credits Priority account",
+    );
     expect(
-      [...container.querySelectorAll(".model-providers__profile-allowance")].map((entry) =>
-        entry.textContent?.replace(/\s+/gu, " ").trim(),
-      ),
-    ).toEqual(["97% left Weekly", "95% left Weekly"]);
+      [...first.querySelectorAll('[role="progressbar"]')].map((entry) => ({
+        label: entry.getAttribute("aria-label"),
+        value: entry.getAttribute("aria-valuenow"),
+      })),
+    ).toEqual([
+      { label: "5-hour limit", value: "25" },
+      { label: "Weekly limit", value: "3" },
+    ]);
+    expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(3);
+  });
+
+  it("keeps account usage failures and missing-data states on the affected account", () => {
+    const base = profileCard();
+    const container = mount(
+      profileCard({
+        profiles: [
+          {
+            ...base.profiles[0]!,
+            usage: {
+              providerId: "openai",
+              windows: [],
+              error: "account usage unavailable",
+            },
+          },
+          base.profiles[1]!,
+        ],
+      }),
+    );
+
+    expect(text(container.querySelector('[data-profile-id="openai:one"]'))).toContain(
+      "account usage unavailable",
+    );
+    expect(text(container.querySelector('[data-profile-id="openai:two"]'))).toContain(
+      "No live usage data reported by this provider.",
+    );
   });
 
   it("reorders immediately with pointer drag or keyboard", () => {

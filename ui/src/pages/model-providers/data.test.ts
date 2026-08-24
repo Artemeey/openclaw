@@ -537,10 +537,9 @@ describe("model provider configuration data", () => {
   it("lists known providers that are not configured", () => {
     const options = buildUnconfiguredProviderOptions(
       [
-        catalogEntry({ provider: "openai", apiKeySupported: true }),
-        catalogEntry({ provider: "anthropic", apiKeySupported: true }),
-        catalogEntry({ provider: "anthropic", id: "anthropic/other", apiKeySupported: true }),
-        catalogEntry({ provider: "github-copilot", apiKeySupported: false }),
+        { provider: "openai", apiKeySupported: true, quickApiKeySetup: true },
+        { provider: "anthropic", apiKeySupported: true, quickApiKeySetup: true },
+        { provider: "github-copilot", apiKeySupported: false, quickApiKeySetup: false },
       ],
       ["openai"],
     );

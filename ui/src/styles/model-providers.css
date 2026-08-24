@@ -124,19 +124,15 @@
 .model-providers__profile {
   position: relative;
   display: grid;
-  grid-template-columns: 44px 28px minmax(0, 1fr) minmax(100px, auto) minmax(44px, auto);
+  grid-template-columns: 44px 28px minmax(110px, 1fr) minmax(280px, 1.4fr) 140px 44px;
   align-items: center;
   gap: var(--space-2);
-  min-height: 52px;
+  min-height: 68px;
   border-top: 1px solid color-mix(in srgb, var(--border) 62%, transparent);
   transition:
     background var(--duration-fast) var(--ease-out),
     opacity var(--duration-fast) var(--ease-out),
     transform var(--duration-normal) var(--ease-out);
-}
-
-.model-providers__profiles--with-allowance .model-providers__profile {
-  grid-template-columns: 44px 28px minmax(0, 1fr) 112px minmax(100px, auto) minmax(44px, auto);
 }
 
 .model-providers__profile--dragging {
@@ -239,7 +235,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) 44px;
   align-items: center;
-  width: 220px;
+  width: 140px;
   min-width: 0;
 }
 
@@ -257,30 +253,41 @@
   align-items: center;
 }
 
-.model-providers__profile-allowance-cell {
+.model-providers__profile-usage {
   display: grid;
-  justify-items: start;
+  gap: var(--space-2);
   min-width: 0;
+  padding-block: var(--space-2);
 }
 
-.model-providers__profile-allowance {
+.model-providers__profile-usage .provider-usage-windows {
   display: grid;
-  justify-items: start;
-  line-height: 1.25;
+  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+  gap: var(--space-3);
 }
 
-.model-providers__profile-allowance strong {
-  color: var(--text-strong);
-  font-size: var(--control-ui-text-sm);
-  font-weight: 600;
+.model-providers__profile-usage .provider-usage-window {
+  gap: 4px;
+}
+
+.model-providers__profile-usage .provider-usage-window__meta {
+  gap: var(--space-1);
   white-space: nowrap;
 }
 
-.model-providers__profile-allowance span,
-.model-providers__profile-allowance--empty {
-  color: var(--muted);
-  font-size: var(--control-ui-text-xs);
+.model-providers__profile-usage .provider-usage-progress {
+  height: 4px;
+}
+
+.model-providers__profile-usage .provider-usage-reset {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.model-providers__profile-usage .provider-usage-billing,
+.model-providers__profile-usage .provider-cost-history {
+  padding-top: var(--space-2);
 }
 
 .model-providers__profile-icon-action {
@@ -452,6 +459,21 @@
   grid-template-columns: minmax(160px, 0.8fr) minmax(220px, 1.4fr) auto;
 }
 
+@media (min-width: 769px) and (max-width: 1320px) {
+  .model-providers__profile {
+    grid-template-columns: 44px 28px minmax(160px, 1fr) minmax(220px, 1.4fr) 110px 44px;
+    gap: 6px;
+  }
+
+  .model-providers__profile-status {
+    width: 110px;
+  }
+
+  .model-providers__profile-usage .provider-usage-windows {
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  }
+}
+
 @media (max-width: 768px) {
   .model-providers__head {
     align-items: flex-start;
@@ -491,23 +513,29 @@
     flex: 0 0 auto;
   }
 
-  .model-providers__profile,
-  .model-providers__profiles--with-allowance .model-providers__profile {
-    grid-template-columns: 44px minmax(0, 1fr) auto;
-    grid-template-rows: auto auto;
+  .model-providers__profile {
+    grid-template-columns: 44px minmax(0, 1fr) 44px;
+    grid-template-rows: auto auto auto;
     gap: var(--space-2);
+    padding-block: var(--space-1);
   }
 
-  .model-providers__profile-grip,
+  .model-providers__profile-grip {
+    grid-column: 1;
+    grid-row: 1 / 4;
+    align-self: start;
+  }
+
   .model-providers__profile-copy {
-    grid-row: 1 / -1;
+    grid-column: 2;
+    grid-row: 1;
   }
 
   .model-providers__profile-status {
-    grid-column: 3;
-    grid-row: 2;
+    grid-column: 2 / 4;
+    grid-row: 3;
     width: auto;
-    justify-self: end;
+    justify-self: start;
   }
 
   .model-providers__profile-actions {
@@ -515,24 +543,10 @@
     grid-row: 1;
   }
 
-  .model-providers__profiles--with-allowance .model-providers__profile-copy {
-    grid-row: 1;
-  }
-
-  .model-providers__profile-allowance-cell {
-    grid-column: 2;
+  .model-providers__profile-usage {
+    grid-column: 2 / 4;
     grid-row: 2;
-    justify-items: start;
-  }
-
-  .model-providers__profile-allowance {
-    grid-auto-flow: column;
-    gap: var(--space-1);
-    justify-items: start;
-  }
-
-  .model-providers__profile-allowance span {
-    display: none;
+    padding-block: 0;
   }
 
   .model-providers__profile-avatar {

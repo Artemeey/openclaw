@@ -1755,7 +1755,31 @@ describe("models.authStatus", () => {
           {
             provider: "openai",
             displayName: "OpenAI",
-            windows: [{ label: "Week", usedPercent: 3 }],
+            windows: [
+              { label: "5h", usedPercent: 20 },
+              { label: "Week", usedPercent: 3 },
+            ],
+            plan: "Pro",
+            billing: [{ type: "balance", amount: 12, unit: "credits" }],
+            summary: "Priority account",
+            costHistory: {
+              unit: "USD",
+              periodDays: 1,
+              daily: [
+                {
+                  date: "2026-08-24",
+                  amount: 4,
+                  inputTokens: 100,
+                  cacheReadTokens: 20,
+                  cacheWriteTokens: 0,
+                  outputTokens: 30,
+                  totalTokens: 150,
+                },
+              ],
+              models: [],
+              categories: [],
+            },
+            error: "provider warning",
           },
         ],
       })
@@ -1774,8 +1798,15 @@ describe("models.authStatus", () => {
 
     expect(
       result.providers[0]?.profiles.map((profile) => profile.usage?.windows[0]?.usedPercent),
-    ).toEqual([3, 5]);
-    expect(result.providers[0]?.usage?.windows[0]?.usedPercent).toBe(3);
+    ).toEqual([20, 5]);
+    expect(result.providers[0]?.profiles[0]?.usage).toMatchObject({
+      plan: "Pro",
+      billing: [{ type: "balance", amount: 12, unit: "credits" }],
+      summary: "Priority account",
+      costHistory: { unit: "USD", periodDays: 1 },
+      error: "provider warning",
+    });
+    expect(result.providers[0]?.usage?.windows[0]?.usedPercent).toBe(20);
     expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(2);
   });
 
