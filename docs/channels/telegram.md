@@ -345,6 +345,39 @@ curl "https://api.telegram.org/bot<bot_token>/getUpdates"
 ## Feature reference
 
 <AccordionGroup>
+  <Accordion title="Automatic DM topic names and icons">
+    Automatic DM topic editing is off by default. Enable it for every Telegram DM topic:
+
+```json5
+{
+  channels: {
+    telegram: {
+      autoTopicLabel: true,
+    },
+  },
+}
+```
+
+    Or enable it for one DM chat:
+
+```json5
+{
+  channels: {
+    telegram: {
+      direct: {
+        "123456789": { autoTopicLabel: true },
+      },
+    },
+  },
+}
+```
+
+    On the first message in a DM topic, OpenClaw uses standard [utility-model routing](/concepts/models) to generate a name of at most 10 characters and choose a matching icon. Set `agents.defaults.utilityModel` or `agents.entries.*.utilityModel` to select that model; normal title-generation fallback behavior still applies. The icon is selected only from the free topic-icon list returned by Telegram's `getForumTopicIconStickers`; model-provided custom emoji IDs are never accepted. OpenClaw applies the name and icon together with `editForumTopic`.
+
+    Use `{ enabled: true, prompt: "<naming guidance>" }` instead of `true` to customize the naming prompt. The 10-character cap and Telegram icon allowlist still apply. If the feature is disabled, the utility model or Telegram icon lookup fails, or the model does not return a valid name and icon choice, OpenClaw leaves the topic unchanged.
+
+  </Accordion>
+
   <Accordion title="Live stream preview (message edits)">
     OpenClaw streams partial replies in real time in direct chats, groups, and topics: send a preview message, then `editMessageText` repeatedly, finalizing in place.
 
@@ -1013,7 +1046,7 @@ Primary reference: [Configuration reference - Telegram](/gateway/config-channels
 - topic defaults: `groups.<chatId>.topics."*"` applies to unmatched forum topics; exact topic IDs override it
 - exec approvals: `execApprovals`, `accounts.*.execApprovals`
 - command/menu: `commands.native`, `commands.nativeSkills`, `customCommands`
-- threading/replies: `replyToMode`, `threadBindings`
+- threading/replies: `replyToMode`, `threadBindings`, `autoTopicLabel` (opt-in DM topic name/icon generation)
 - streaming: `streaming` (modes `off | partial | block | progress`), `streaming.preview.toolProgress`
 - formatting/delivery: `textChunkLimit`, `streaming.chunkMode`, `richMessages`, `markdown.tables` (`off | bullets | code | block`), `linkPreview`, `responsePrefix`
 - media/network: `mediaMaxMb`, `network.autoSelectFamily`, `network.dangerouslyAllowPrivateNetwork`, `proxy`

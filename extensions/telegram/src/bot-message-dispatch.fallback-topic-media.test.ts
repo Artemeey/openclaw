@@ -14,7 +14,7 @@ import {
   dispatchReplyWithBufferedBlockDispatcher,
   dispatchTelegramMessage,
   dispatchWithContext,
-  generateTopicLabel,
+  generateTopicEdit,
   loadSessionStore,
   telegramDepsForTest,
 } from "./bot-message-dispatch.test-harness.js";
@@ -99,7 +99,31 @@ describeTelegramDispatch("dispatchTelegramMessage fallback-topic-media", () => {
       },
     });
 
-    expect(generateTopicLabel).not.toHaveBeenCalled();
+    expect(generateTopicEdit).not.toHaveBeenCalled();
+    expect(bot.api["getForumTopicIconStickers"]).not.toHaveBeenCalled();
+    expect(bot.api["editForumTopic"]).not.toHaveBeenCalled();
+  });
+
+  it("keeps DM topic renaming off by default", async () => {
+    dispatchReplyWithBufferedBlockDispatcher.mockResolvedValue({
+      queuedFinal: true,
+      settledReceipt: visibleFinalReceipt,
+    });
+    loadSessionStore.mockReturnValue({ s1: {} });
+    const bot = createBot();
+
+    await dispatchWithContext({
+      bot,
+      context: createContext({
+        ctxPayload: {
+          SessionKey: "s1",
+          RawBody: "Need help with invoices",
+        } as TelegramMessageContext["ctxPayload"],
+      }),
+    });
+
+    expect(generateTopicEdit).not.toHaveBeenCalled();
+    expect(bot.api["getForumTopicIconStickers"]).not.toHaveBeenCalled();
     expect(bot.api["editForumTopic"]).not.toHaveBeenCalled();
   });
 
@@ -128,10 +152,20 @@ describeTelegramDispatch("dispatchTelegramMessage fallback-topic-media", () => {
     });
 
     await vi.waitFor(() => {
-      expect(generateTopicLabel).toHaveBeenCalled();
+      expect(generateTopicEdit).toHaveBeenCalled();
     });
-    const call = generateTopicLabel.mock.calls[0]?.[0] as { userMessage: string };
+    const call = generateTopicEdit.mock.calls[0]?.[0] as {
+      iconOptions: Array<{ customEmojiId: string }>;
+      userMessage: string;
+    };
     expect(call.userMessage).toBe(base);
+    expect(call.iconOptions).toEqual([{ emoji: "💬", customEmojiId: "free-icon-id" }]);
+    await vi.waitFor(() => {
+      expect(bot.api["editForumTopic"]).toHaveBeenCalledWith(123, 777, {
+        name: "Invoices",
+        icon_custom_emoji_id: "free-icon-id",
+      });
+    });
   });
 
   it("does not emit a silent-reply fallback when the dispatcher reports a queued final reply", async () => {

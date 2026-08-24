@@ -153,7 +153,7 @@ export type TelegramAccountConfig = CommonChannelMessagingConfig<
     apiRoot?: string;
     /** Trusted local filesystem roots for self-hosted Telegram Bot API absolute file_path values. */
     trustedLocalFileRoots?: string[];
-    /** Auto-rename DM forum topics on first message using LLM. Default: true. */
+    /** Auto-rename DM topics and select a Telegram-provided icon on first message. Default: false. */
     autoTopicLabel?: AutoTopicLabelConfig;
   };
 
@@ -204,12 +204,12 @@ export type TelegramGroupConfig = {
   errorPolicy?: "always" | "once" | "silent";
 };
 
-/** Config for LLM-based auto-topic labeling. */
+/** Config for utility-model DM topic naming and icon selection. */
 export type AutoTopicLabelConfig =
   | boolean
   | {
       enabled?: boolean;
-      /** Custom prompt for LLM-based topic naming. */
+      /** Custom prompt for topic naming. Icon output remains constrained to Telegram's allowed list. */
       prompt?: string;
     };
 
@@ -233,7 +233,7 @@ export type TelegramDirectConfig = {
   systemPrompt?: string;
   /** Controls outbound error reporting for this DM. */
   errorPolicy?: "always" | "once" | "silent";
-  /** Auto-rename DM forum topics on first message using LLM. Default: true. */
+  /** Auto-rename DM topics and select a Telegram-provided icon on first message. Default: false. */
   autoTopicLabel?: AutoTopicLabelConfig;
 };
 

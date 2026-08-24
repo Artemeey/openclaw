@@ -8,15 +8,18 @@ vi.mock("openclaw/plugin-sdk/reply-dispatch-runtime", () => ({
 }));
 
 import { resolveAutoTopicLabelConfig } from "./auto-topic-label-config.js";
-import { generateTelegramTopicLabel } from "./auto-topic-label.js";
+import { generateTelegramTopicEdit } from "./auto-topic-label.js";
 
 const EXPECTED_DEFAULT_PROMPT =
-  "Generate a very short topic label (2-4 words, max 25 chars) for a chat conversation based on the user's first message below. No emoji. Use the same language as the message, in sentence case: capitalize only the first word and words that language always capitalizes. Be concise and descriptive. Return ONLY the topic name, nothing else.";
+  "Generate a concise topic name of at most 10 characters from the user's first message. No emoji. Use the same language as the message, in sentence case.";
 
 describe("resolveAutoTopicLabelConfig", () => {
-  it("returns enabled with default prompt when configs are undefined", () => {
-    const result = resolveAutoTopicLabelConfig(undefined, undefined);
-    expect(result).toEqual({ enabled: true, prompt: EXPECTED_DEFAULT_PROMPT });
+  it("keeps automatic topic edits off unless configured", () => {
+    expect(resolveAutoTopicLabelConfig(undefined, undefined)).toBeNull();
+    expect(resolveAutoTopicLabelConfig(true, undefined)).toEqual({
+      enabled: true,
+      prompt: EXPECTED_DEFAULT_PROMPT,
+    });
   });
 
   it("prefers direct config over account config", () => {
@@ -37,25 +40,47 @@ describe("resolveAutoTopicLabelConfig", () => {
   });
 });
 
-describe("generateTelegramTopicLabel", () => {
-  it("delegates to the generic conversation label helper with telegram max length", async () => {
-    generateConversationLabel.mockResolvedValue("Billing");
+describe("generateTelegramTopicEdit", () => {
+  it("caps the name and maps the model choice to a Telegram-provided icon", async () => {
+    generateConversationLabel.mockResolvedValue("NAME: Invoices overdue\nICON: 2");
 
     await expect(
-      generateTelegramTopicLabel({
+      generateTelegramTopicEdit({
         userMessage: "Need help with invoices",
         prompt: "prompt",
         cfg: {},
         agentId: "billing",
+        iconOptions: [
+          { emoji: "📎", customEmojiId: "allowed-1" },
+          { emoji: "💳", customEmojiId: "allowed-2" },
+        ],
       }),
-    ).resolves.toBe("Billing");
+    ).resolves.toEqual({ name: "Invoices o", iconCustomEmojiId: "allowed-2" });
 
-    expect(generateConversationLabel).toHaveBeenCalledWith({
-      userMessage: "Need help with invoices",
-      prompt: "prompt",
-      cfg: {},
-      agentId: "billing",
-      maxLength: 128,
-    });
+    expect(generateConversationLabel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userMessage: "Need help with invoices",
+        cfg: {},
+        agentId: "billing",
+        maxLength: 128,
+      }),
+    );
+    const prompt = generateConversationLabel.mock.calls[0]?.[0]?.prompt as string;
+    expect(prompt).toContain("1: 📎\n2: 💳");
+    expect(prompt).not.toContain("allowed-1");
+    expect(prompt).not.toContain("allowed-2");
+  });
+
+  it("rejects an icon choice outside Telegram's allowed list", async () => {
+    generateConversationLabel.mockResolvedValue("NAME: Billing\nICON: 3");
+
+    await expect(
+      generateTelegramTopicEdit({
+        userMessage: "Need help with invoices",
+        prompt: "prompt",
+        cfg: {},
+        iconOptions: [{ emoji: "💳", customEmojiId: "allowed-1" }],
+      }),
+    ).resolves.toBeNull();
   });
 });

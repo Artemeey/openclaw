@@ -29,7 +29,7 @@ import {
   resolveDefaultModelForAgent,
 } from "./bot-message-dispatch.agent.runtime.js";
 import {
-  generateTopicLabel,
+  generateTopicEdit,
   getAgentScopedMediaLocalRoots,
   resolveAutoTopicLabelConfig,
   resolveChunkMode,
@@ -259,19 +259,33 @@ function scheduleDmTopicLabel(params: {
   const topicThreadId = context.threadSpec.id!;
   void (async () => {
     try {
-      const label = await generateTopicLabel({
+      const iconOptions = (await params.bot.api.getForumTopicIconStickers()).flatMap((sticker) =>
+        sticker.custom_emoji_id
+          ? [
+              {
+                ...(sticker.emoji ? { emoji: sticker.emoji } : {}),
+                customEmojiId: sticker.custom_emoji_id,
+              },
+            ]
+          : [],
+      );
+      const topicEdit = await generateTopicEdit({
         userMessage,
         prompt: autoTopicConfig.prompt,
         cfg: params.cfg,
         agentId: context.route.agentId,
         agentDir: resolveAgentDir(params.cfg, context.route.agentId),
+        iconOptions,
       });
-      if (!label) {
-        logVerbose("auto-topic-label: LLM returned empty label");
+      if (!topicEdit) {
+        logVerbose("auto-topic-label: no valid topic name and icon generated");
         return;
       }
-      logVerbose(`auto-topic-label: generated label (len=${label.length})`);
-      await params.bot.api.editForumTopic(context.chatId, topicThreadId, { name: label });
+      logVerbose(`auto-topic-label: generated label (len=${topicEdit.name.length})`);
+      await params.bot.api.editForumTopic(context.chatId, topicThreadId, {
+        name: topicEdit.name,
+        icon_custom_emoji_id: topicEdit.iconCustomEmojiId,
+      });
       logVerbose(`auto-topic-label: renamed topic ${context.chatId}/${topicThreadId}`);
     } catch (err) {
       logVerbose(`auto-topic-label: failed: ${String(err)}`);

@@ -99,7 +99,7 @@ const readLatestAssistantTextByIdentityHoisted = vi.hoisted(() =>
   ),
 );
 const resolveStorePathHoisted = vi.hoisted(() => vi.fn(() => "/tmp/sessions.json"));
-const generateTopicLabelHoisted = vi.hoisted(() => vi.fn());
+const generateTopicEditHoisted = vi.hoisted(() => vi.fn());
 const describeStickerImageHoisted = vi.hoisted(() =>
   vi.fn(async (): Promise<string | null> => null),
 );
@@ -149,7 +149,7 @@ const getSessionEntry = getSessionEntryHoisted;
 export const loadSessionStore = loadSessionStoreHoisted;
 export const readLatestAssistantTextByIdentity = readLatestAssistantTextByIdentityHoisted;
 const resolveStorePath = resolveStorePathHoisted;
-export const generateTopicLabel = generateTopicLabelHoisted;
+export const generateTopicEdit = generateTopicEditHoisted;
 export const describeStickerImage = describeStickerImageHoisted;
 const loadModelCatalog = loadModelCatalogHoisted;
 const findModelInCatalog = findModelInCatalogHoisted;
@@ -288,7 +288,7 @@ vi.mock("./send.js", () => ({
 }));
 
 vi.mock("./bot-message-dispatch.runtime.js", () => ({
-  generateTopicLabel: generateTopicLabelHoisted,
+  generateTopicEdit: generateTopicEditHoisted,
   getSessionEntry: getSessionEntryHoisted,
   getAgentScopedMediaLocalRoots: getAgentScopedMediaLocalRootsHoisted,
   resolveAutoTopicLabelConfig: resolveAutoTopicLabelConfigRuntime,
@@ -404,7 +404,7 @@ function resetTelegramDispatchTestState() {
   getSessionEntry.mockReset();
   loadSessionStore.mockReset();
   resolveStorePath.mockReset();
-  generateTopicLabel.mockReset();
+  generateTopicEdit.mockReset();
   getAgentScopedMediaLocalRoots.mockClear();
   resolveChunkMode.mockClear();
   resolveMarkdownTableMode.mockClear();
@@ -462,7 +462,7 @@ function resetTelegramDispatchTestState() {
     ({ sessionKey }: { sessionKey: string }) =>
       (loadSessionStore() as Record<string, unknown>)[sessionKey],
   );
-  generateTopicLabel.mockResolvedValue("Topic label");
+  generateTopicEdit.mockResolvedValue({ name: "Invoices", iconCustomEmojiId: "free-icon-id" });
   describeStickerImage.mockResolvedValue(null);
   loadModelCatalog.mockResolvedValue({});
   findModelInCatalog.mockReturnValue(null);
@@ -646,6 +646,9 @@ export function createBot(): Bot {
       })),
       editMessageText: vi.fn(async () => ({ message_id: 1001 })),
       deleteMessage: vi.fn().mockResolvedValue(true),
+      getForumTopicIconStickers: vi
+        .fn()
+        .mockResolvedValue([{ custom_emoji_id: "free-icon-id", emoji: "💬" }]),
       editForumTopic: vi.fn().mockResolvedValue(true),
     },
   } as unknown as Bot;

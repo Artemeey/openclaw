@@ -74,16 +74,16 @@ export const telegramChannelConfigUiHints = {
     help: "Trusted local filesystem roots for self-hosted Telegram Bot API file_path values. Exact in-root paths are read directly; container paths under /var/lib/telegram-bot-api can map into a host volume mount. Other absolute paths are rejected.",
   },
   autoTopicLabel: {
-    label: "Telegram Auto Topic Label",
-    help: "Auto-rename DM forum topics on first message using LLM. Default: true. Set to false to disable, or use object form { enabled: true, prompt: '...' } for custom prompt.",
+    label: "Telegram Auto Topic Rename",
+    help: "Opt in to utility-model DM topic naming and Telegram-provided icon selection on the first message. Default: false. Set to true, or use { enabled: true, prompt: '...' } for custom naming guidance.",
   },
   "autoTopicLabel.enabled": {
-    label: "Telegram Auto Topic Label Enabled",
-    help: "Whether auto topic labeling is enabled. Default: true.",
+    label: "Telegram Auto Topic Rename Enabled",
+    help: "Whether automatic DM topic naming and icon selection is enabled. Default: false.",
   },
   "autoTopicLabel.prompt": {
-    label: "Telegram Auto Topic Label Prompt",
-    help: "Custom prompt for LLM-based topic naming. The user message is appended after the prompt.",
+    label: "Telegram Auto Topic Rename Prompt",
+    help: "Custom utility-model guidance for topic naming. Names are capped at 10 characters and icons remain restricted to Telegram's allowed free icon list.",
   },
   "capabilities.inlineButtons": {
     label: "Telegram Inline Buttons",
