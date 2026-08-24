@@ -16,6 +16,7 @@ import type {
   ModelAuthExpiry,
   ModelAuthStatusProfile,
   ModelAuthStatusProvider,
+  ModelAuthUsage,
 } from "./models-auth-status.types.js";
 
 type ModelAuthStatusRollup = {
@@ -38,6 +39,17 @@ function buildExpiry(
 function providerDisplayName(provider: string): string {
   const usageId = resolveUsageProviderId(provider);
   return (usageId ? providerUsageLabel(usageId) : undefined) ?? provider;
+}
+
+function mapUsage(providerId: ModelAuthUsage["providerId"], usage: ProviderUsageStatus) {
+  return {
+    providerId,
+    windows: usage.windows,
+    ...(usage.summary ? { summary: usage.summary } : {}),
+    ...(usage.plan ? { plan: usage.plan } : {}),
+    ...(usage.billing?.length ? { billing: usage.billing } : {}),
+    ...(usage.accountEmail ? { accountEmail: usage.accountEmail } : {}),
+  } satisfies ModelAuthUsage;
 }
 
 function aggregateProfileStatus(
@@ -88,6 +100,7 @@ export function mapModelAuthStatusProvider(params: {
   provider: AuthProviderHealth;
   config: OpenClawConfig;
   usageByProvider: Map<string, ProviderUsageStatus>;
+  usageByProfile: Map<string, ProviderUsageStatus>;
   expectsOAuth: ReadonlySet<string>;
   apiKeys: ReadonlyMap<string, ModelAuthStatusProvider["apiKey"]>;
   logoutProfileIds: ReadonlySet<string>;
@@ -102,7 +115,10 @@ export function mapModelAuthStatusProvider(params: {
   const usageKey = resolveUsageProviderId(provider.provider, {
     credentialType: usageProfile?.type,
   });
-  const usage = usageKey ? params.usageByProvider.get(usageKey) : undefined;
+  const usage = usageKey
+    ? (params.usageByProvider.get(usageKey) ??
+      (usageProfile ? params.usageByProfile.get(usageProfile.profileId) : undefined))
+    : undefined;
   const rawRollup = aggregateRefreshableAuthStatus(
     provider,
     Date.now(),
@@ -177,6 +193,13 @@ export function mapModelAuthStatusProvider(params: {
         statusProfile.blockedUntil = usageStats.blockedUntil;
         statusProfile.blockedReason = usageStats.blockedReason;
       }
+      const profileUsage = params.usageByProfile.get(profile.profileId);
+      const profileUsageProvider = resolveUsageProviderId(profile.provider, {
+        credentialType: profile.type,
+      });
+      if (profileUsage && profileUsageProvider) {
+        statusProfile.usage = mapUsage(profileUsageProvider, profileUsage);
+      }
       if (
         (profile.type === "oauth" || profile.type === "token") &&
         params.logoutProfileIds.has(profile.profileId) &&
@@ -188,16 +211,6 @@ export function mapModelAuthStatusProvider(params: {
     }),
     ...(profileOrder !== undefined ? { profileOrder } : {}),
     ...(apiKey ? { apiKey } : {}),
-    usage:
-      usage && usageKey
-        ? {
-            providerId: usageKey,
-            windows: usage.windows,
-            ...(usage.summary ? { summary: usage.summary } : {}),
-            ...(usage.plan ? { plan: usage.plan } : {}),
-            ...(usage.billing?.length ? { billing: usage.billing } : {}),
-            ...(usage.accountEmail ? { accountEmail: usage.accountEmail } : {}),
-          }
-        : undefined,
+    usage: usage && usageKey ? mapUsage(usageKey, usage) : undefined,
   };
 }

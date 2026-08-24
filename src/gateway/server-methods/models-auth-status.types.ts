@@ -16,6 +16,15 @@ export type ModelAuthExpiry = {
   label: string;
 };
 
+export type ModelAuthUsage = {
+  providerId: UsageProviderId;
+  windows: UsageWindow[];
+  summary?: string;
+  plan?: string;
+  billing?: ProviderUsageBilling[];
+  accountEmail?: string;
+};
+
 export type ModelAuthStatusProfile = {
   profileId: string;
   type: "oauth" | "token" | "api_key";
@@ -34,6 +43,8 @@ export type ModelAuthStatusProfile = {
   disabledReason?: string;
   blockedUntil?: number;
   blockedReason?: string;
+  /** Account-scoped provider quota and billing facts for this exact credential. */
+  usage?: ModelAuthUsage;
 };
 
 export type ModelAuthStatusProvider = {
@@ -50,15 +61,7 @@ export type ModelAuthStatusProvider = {
     source: "config" | "env";
     envVar?: string;
   };
-  usage?: {
-    /** Normalized provider id the usage payload was fetched under. */
-    providerId: UsageProviderId;
-    windows: UsageWindow[];
-    summary?: string;
-    plan?: string;
-    billing?: ProviderUsageBilling[];
-    accountEmail?: string;
-  };
+  usage?: ModelAuthUsage;
 };
 
 export type ModelProviderCapability = {

@@ -4733,6 +4733,7 @@ export const en: TranslationMap = {
     modelOne: "1 model",
     modelsAvailable: "{available} of {count} models available",
     usageAndCost: "Usage and cost",
+    cost: "Cost",
     noStats: "No live usage data reported by this provider.",
     localCost: "Session spend · {days}d",
     localCostDetail: "{tokens} tokens · {sessions} sessions",

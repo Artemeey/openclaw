@@ -1,8 +1,9 @@
 // Stale-while-revalidate cache for models.authStatus provider usage enrichment.
 import type { AuthProfileStore } from "../../agents/auth-profiles.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { resolveProviderProfileUsageAuth } from "../../infra/provider-usage.auth.js";
 import { loadProviderUsageSummary } from "../../infra/provider-usage.load.js";
-import { PROVIDER_USAGE_TIMEOUT_MS } from "../../infra/provider-usage.shared.js";
+import { PROVIDER_USAGE_TIMEOUT_MS, raceUsageTimeout } from "../../infra/provider-usage.shared.js";
 import type {
   ProviderUsageSnapshot,
   UsageProviderId,
@@ -43,13 +44,148 @@ type ProviderUsageRefresh = {
 
 const usageCacheByAgentId = new Map<string, ProviderUsageCacheEntry>();
 const usageRefreshByAgentId = new Map<string, ProviderUsageRefresh>();
+type ProfileUsageCacheEntry = {
+  agentDir: string;
+  workspaceDir: string;
+  configRef: OpenClawConfig;
+  credentialKey: string;
+  profileKey: string;
+  refreshedAt: number;
+  usageByProfile: Map<string, ProviderUsageStatus>;
+  refresh?: Promise<Map<string, ProviderUsageStatus>>;
+};
+const profileUsageCacheByAgentId = new Map<string, ProfileUsageCacheEntry>();
 let cacheGeneration = 0;
 
 export function clearModelAuthStatusUsageCache(): void {
   cacheGeneration += 1;
   usageCacheByAgentId.clear();
   usageRefreshByAgentId.clear();
+  profileUsageCacheByAgentId.clear();
   clearProviderUsageRuntimeSnapshot();
+}
+
+export type ProfileUsageTarget = {
+  profileId: string;
+  providerId: UsageProviderId;
+};
+
+function profileUsageKey(targets: readonly ProfileUsageTarget[]): string {
+  return targets
+    .map(({ profileId, providerId }) => `${profileId}\0${providerId}`)
+    .toSorted()
+    .join("\0");
+}
+
+function snapshotUsage(snapshot: ProviderUsageSnapshot): ProviderUsageStatus {
+  return {
+    windows: snapshot.windows,
+    ...(snapshot.summary ? { summary: snapshot.summary } : {}),
+    ...(snapshot.plan ? { plan: snapshot.plan } : {}),
+    ...(snapshot.billing?.length ? { billing: snapshot.billing } : {}),
+    ...(snapshot.accountEmail ? { accountEmail: snapshot.accountEmail } : {}),
+  };
+}
+
+/** Account-scoped quota snapshots; cold reads wait, warm reads refresh in the background. */
+export async function loadProfileUsageStaleWhileRevalidate(params: {
+  agentId: string;
+  agentDir: string;
+  workspaceDir: string;
+  authStore: AuthProfileStore;
+  configRef: OpenClawConfig;
+  credentialKey: string;
+  forceRefresh?: boolean;
+  targets: ProfileUsageTarget[];
+  now: number;
+}): Promise<Map<string, ProviderUsageStatus>> {
+  if (params.targets.length === 0) {
+    profileUsageCacheByAgentId.delete(params.agentId);
+    return new Map();
+  }
+  const profileKey = profileUsageKey(params.targets);
+  const cached = profileUsageCacheByAgentId.get(params.agentId);
+  let entry =
+    cached?.agentDir === params.agentDir &&
+    cached.workspaceDir === params.workspaceDir &&
+    cached.configRef === params.configRef &&
+    cached.credentialKey === params.credentialKey &&
+    cached.profileKey === profileKey
+      ? cached
+      : undefined;
+  if (!entry) {
+    entry = {
+      agentDir: params.agentDir,
+      workspaceDir: params.workspaceDir,
+      configRef: params.configRef,
+      credentialKey: params.credentialKey,
+      profileKey,
+      refreshedAt: 0,
+      usageByProfile: new Map(),
+    };
+    profileUsageCacheByAgentId.set(params.agentId, entry);
+  }
+  const needsRefresh =
+    params.forceRefresh === true ||
+    entry.refreshedAt === 0 ||
+    params.now - entry.refreshedAt >= USAGE_CACHE_TTL_MS;
+  if (!needsRefresh) {
+    return entry.usageByProfile;
+  }
+
+  if (!entry.refresh) {
+    const refresh = Promise.all(
+      params.targets.map(async (target) => {
+        try {
+          const auth = await resolveProviderProfileUsageAuth({
+            provider: target.providerId,
+            profileId: target.profileId,
+            store: params.authStore,
+            agentDir: params.agentDir,
+            config: params.configRef,
+          });
+          if (!auth) {
+            return undefined;
+          }
+          const summary = await loadProviderUsageSummary({
+            auth: [auth],
+            agentDir: params.agentDir,
+            authStore: params.authStore,
+            config: params.configRef,
+            workspaceDir: params.workspaceDir,
+            timeoutMs: PROVIDER_USAGE_TIMEOUT_MS,
+          });
+          const snapshot = summary.providers[0];
+          return snapshot ? ([target.profileId, snapshotUsage(snapshot)] as const) : undefined;
+        } catch (error) {
+          log.debug(
+            `profile usage refresh failed: profile=${target.profileId} error=${formatForLog(error)}`,
+          );
+          return undefined;
+        }
+      }),
+    ).then((entries) => {
+      const usageByProfile = new Map(entry.usageByProfile);
+      for (const result of entries) {
+        if (result) {
+          usageByProfile.set(...result);
+        }
+      }
+      if (profileUsageCacheByAgentId.get(params.agentId) === entry) {
+        entry.usageByProfile = usageByProfile;
+        entry.refreshedAt = Date.now();
+        entry.refresh = undefined;
+      }
+      return usageByProfile;
+    });
+    entry.refresh = refresh;
+  }
+  if (entry.refreshedAt > 0) {
+    return entry.usageByProfile;
+  }
+  // Give fast account endpoints a chance to fill the first response without
+  // letting quota telemetry hold credential management hostage.
+  return await raceUsageTimeout(entry.refresh, 250, new Map());
 }
 
 function providerUsageCacheKey(providerIds: readonly UsageProviderId[]): string {
@@ -88,13 +224,7 @@ function scopeProviderUsageCredentialKey(
 function mapProviderUsage(usage: Awaited<ReturnType<typeof loadProviderUsageSummary>>) {
   const usageByProvider = new Map<string, ProviderUsageStatus>();
   for (const snap of usage.providers) {
-    usageByProvider.set(snap.provider, {
-      windows: snap.windows,
-      ...(snap.summary ? { summary: snap.summary } : {}),
-      ...(snap.plan ? { plan: snap.plan } : {}),
-      ...(snap.billing?.length ? { billing: snap.billing } : {}),
-      ...(snap.accountEmail ? { accountEmail: snap.accountEmail } : {}),
-    });
+    usageByProvider.set(snap.provider, snapshotUsage(snap));
   }
   return usageByProvider;
 }

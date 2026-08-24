@@ -140,6 +140,30 @@ describe("provider profile roster", () => {
     ).toBe(false);
   });
 
+  it("shows each account's own allowance in one aligned column", () => {
+    const base = profileCard();
+    const container = mount(
+      profileCard({
+        profiles: [
+          {
+            ...base.profiles[0]!,
+            usage: { providerId: "openai", windows: [{ label: "Week", usedPercent: 3 }] },
+          },
+          {
+            ...base.profiles[1]!,
+            usage: { providerId: "openai", windows: [{ label: "Week", usedPercent: 5 }] },
+          },
+        ],
+      }),
+    );
+
+    expect(
+      [...container.querySelectorAll(".model-providers__profile-allowance")].map((entry) =>
+        entry.textContent?.replace(/\s+/gu, " ").trim(),
+      ),
+    ).toEqual(["97% left Weekly", "95% left Weekly"]);
+  });
+
   it("reorders immediately with pointer drag or keyboard", () => {
     const onProfileOrderChange = vi.fn();
     const container = mount(profileCard(), props({ onProfileOrderChange }));
