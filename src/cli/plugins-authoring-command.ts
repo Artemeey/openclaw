@@ -601,37 +601,12 @@ function writeProviderPluginScaffold(params: { rootDir: string; id: string; name
     `Replace https://api.example.com/v1 with your ${params.name} API base URL.`,
   );
   const indexSource = `import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
-import { createProviderApiKeyAuthMethod } from "openclaw/plugin-sdk/provider-auth-api-key";
-import { buildSingleProviderApiKeyCatalog } from "openclaw/plugin-sdk/provider-catalog-shared";
-import type { ModelProviderConfig } from "openclaw/plugin-sdk/provider-model-shared";
+import { createProviderApiKeyAuthMethod } from "openclaw/plugin-sdk/provider-auth";
 
 const PLUGIN_ID = ${idLiteral};
 const PROVIDER_ID = PLUGIN_ID;
 const DEFAULT_MODEL_ID = ${defaultModelIdLiteral};
 const DEFAULT_MODEL_REF = ${defaultModelRefLiteral};
-
-function buildProvider(): ModelProviderConfig {
-  return {
-    api: "openai-completions",
-    baseUrl: "https://api.example.com/v1",
-    models: [
-      {
-        id: DEFAULT_MODEL_ID,
-        name: "Example Chat",
-        reasoning: false,
-        input: ["text"],
-        cost: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-        },
-        contextWindow: 128000,
-        maxTokens: 8192,
-      },
-    ],
-  };
-}
 
 export default definePluginEntry({
   id: PLUGIN_ID,
@@ -661,13 +636,32 @@ export default definePluginEntry({
       ],
       catalog: {
         order: "simple",
-        run: (ctx) =>
-          buildSingleProviderApiKeyCatalog({
-            ctx,
-            providerId: PROVIDER_ID,
-            buildProvider,
-            allowExplicitBaseUrl: true,
-          }),
+        run: async (ctx) => {
+          const providerId = PROVIDER_ID.trim().toLowerCase();
+          const apiKey = ctx.resolveProviderApiKey(providerId).apiKey;
+          if (!apiKey) return null;
+          const configuredBaseUrl = Object.entries(ctx.config.models?.providers ?? {}).find(
+            ([id]) => id.trim().toLowerCase() === providerId,
+          )?.[1]?.baseUrl?.trim();
+          return {
+            provider: {
+              api: "openai-completions",
+              baseUrl: configuredBaseUrl || "https://api.example.com/v1",
+              apiKey,
+              models: [
+                {
+                  id: DEFAULT_MODEL_ID,
+                  name: "Example Chat",
+                  reasoning: false,
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 128000,
+                  maxTokens: 8192,
+                },
+              ],
+            },
+          };
+        },
       },
     });
   },
