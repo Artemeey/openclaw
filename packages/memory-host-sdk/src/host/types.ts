@@ -72,6 +72,8 @@ export type MemorySessionSyncTarget = {
   sessionId: string;
   /** Optional visible session-store key for callers that already carry it. */
   sessionKey?: string;
+  /** Authoritative archive file produced for this transcript identity. */
+  sessionFile?: string;
 };
 
 export type MemorySyncParams = {
