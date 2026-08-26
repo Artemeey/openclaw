@@ -22,13 +22,13 @@ function rateLimitReachedSummary(value: unknown): string | undefined {
     case "rate_limit_reached":
       return "Usage limit reached";
     case "workspace_owner_credits_depleted":
-      return "Workspace credits depleted";
+      return "Workspace credits depleted — add credits to continue";
     case "workspace_member_credits_depleted":
-      return "Account credits depleted";
+      return "Workspace credits depleted — ask an owner to refill";
     case "workspace_owner_usage_limit_reached":
-      return "Workspace usage limit reached";
+      return "Workspace spend cap reached — increase it to continue";
     case "workspace_member_usage_limit_reached":
-      return "Account usage limit reached";
+      return "Workspace spend cap reached — ask an owner to increase it";
     default:
       return undefined;
   }

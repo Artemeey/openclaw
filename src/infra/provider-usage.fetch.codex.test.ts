@@ -203,7 +203,19 @@ describe("fetchCodexUsage", () => {
         resetAt: 1_700_000_789_000,
       },
     ]);
-    expect(result.summary).toBe("Account credits depleted");
+    expect(result.summary).toBe("Workspace credits depleted — ask an owner to refill");
+  });
+
+  it("explains who can change a workspace member's spend cap", async () => {
+    const mockFetch = createProviderUsageFetch(async () =>
+      makeResponse(200, {
+        rate_limit_reached_type: { type: "workspace_member_usage_limit_reached" },
+      }),
+    );
+
+    const result = await fetchCodexUsage("token", undefined, 5000, mockFetch);
+
+    expect(result.summary).toBe("Workspace spend cap reached — ask an owner to increase it");
   });
 
   it("shows a reached spend limit as exhausted", async () => {
