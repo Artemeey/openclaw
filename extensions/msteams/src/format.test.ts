@@ -253,6 +253,12 @@ describe("formatMSTeamsMarkdown", () => {
     expect(output).toContain("![x](https://e.test/x.png)");
   });
 
+  it("does not let nested mentions complete malformed outer candidates", () => {
+    const output = formatMSTeamsMarkdown("@[broken\n# Next @[Alice](29:abc)", "off");
+    expect(output).toContain("**Next");
+    expect(output).toContain("@[Alice](29:abc)");
+  });
+
   it("tracks fences opened on list continuation lines", () => {
     const before = [
       "- item",
