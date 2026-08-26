@@ -1185,14 +1185,13 @@ describe("qa cli runtime", () => {
       channelDriver: "crabline",
       channel: "discord",
       providerMode: "mock-openai",
-      scenarioIds: ["channel-canary"],
     });
 
     expect(runQaSuite).toHaveBeenCalledWith(
       expect.objectContaining({
         channelDriver: "crabline",
         channelDriverSelection: expect.objectContaining({ channel: "discord" }),
-        scenarioIds: ["channel-canary"],
+        scenarioIds: ["discord-crabline-roundtrip"],
       }),
     );
   });
@@ -1232,7 +1231,7 @@ describe("qa cli runtime", () => {
       expect.objectContaining({
         channelDriver: "crabline",
         channelDriverSelection: expect.objectContaining({ channel: "telegram" }),
-        scenarioIds: [],
+        scenarioIds: expect.arrayContaining(["telegram-help-command"]),
       }),
     );
   });
