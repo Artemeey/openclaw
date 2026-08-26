@@ -277,6 +277,9 @@ export function buildThreadResumeParams(
       });
   return {
     threadId: options.threadId,
+    // Raw completion receipts are a live subscription, not persisted thread state.
+    // Re-enable them after reconnecting so native child results are not announced twice.
+    experimentalRawEvents: true,
     ...(options.cwd ? { cwd: options.cwd } : {}),
     ...(options.appServer.sessionRoot
       ? { runtimeWorkspaceRoots: [options.appServer.sessionRoot] }

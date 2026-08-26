@@ -190,6 +190,7 @@ export type CodexThreadStartParams = JsonObject & {
 
 export type CodexThreadResumeParams = JsonObject & {
   threadId: string;
+  experimentalRawEvents?: boolean;
   cwd?: string | null;
   runtimeWorkspaceRoots?: string[] | null;
   model?: string;
