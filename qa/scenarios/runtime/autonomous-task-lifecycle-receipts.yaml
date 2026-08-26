@@ -13,7 +13,7 @@ scenario:
     - A real forced scheduled agent run binds one exact context/execution to its cron receipt and task row.
     - A real Gateway agent action binds one exact context/execution to its CLI task row; focused owner tests cover bound flow rows.
     - JSON and human audit inspection expose only bounded attribution-only lifecycle displays with closed producers, accept the cron cursor prefix, and omit task/prompt content.
-    - A replacement Gateway returns byte-equivalent JSON and the generic decision-fact table remains empty.
+    - A replacement Gateway returns byte-equivalent JSON and owner-native lifecycle rows have no matching generic decision-fact copies.
   docsRefs:
     - docs/gateway/audit.md
     - docs/cli/audit.md

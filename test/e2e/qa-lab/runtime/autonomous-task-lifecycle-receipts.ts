@@ -500,7 +500,7 @@ async function runProof(options: ProducerOptions): Promise<string> {
             displayProducers: ["task-lifecycle"],
           },
           cursorCompatibility: { cronPrefixAccepted: true },
-          genericDuplicateAbsent: true,
+          ownerLifecycleDuplicateAbsent: true,
           byteEquivalentAfterRestart: true,
           privacy: { cronPromptAbsent: true, taskPromptAbsent: true },
           resultSha256: sha256(afterRestart),
