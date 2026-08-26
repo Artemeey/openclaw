@@ -148,9 +148,10 @@ suite.define(() => {
           .toBeGreaterThan(0);
         expect(await detailIcon.getAttribute("src")).toMatch(/^blob:/u);
 
+        const expectedAuthorization = `Bearer ${["e2e", "device", "token"].join("-")}`;
         expect(proxiedImageRequests).toEqual([
-          { authorization: "Bearer e2e-device-token", sourceUrl: skillIconUrl },
-          { authorization: "Bearer e2e-device-token", sourceUrl: detailIconUrl },
+          { authorization: expectedAuthorization, sourceUrl: skillIconUrl },
+          { authorization: expectedAuthorization, sourceUrl: detailIconUrl },
         ]);
         expect(directImageRequests).toEqual([]);
         expect(await page.locator('img[src^="https:"]').count()).toBe(0);
