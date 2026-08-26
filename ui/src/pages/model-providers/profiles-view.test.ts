@@ -19,6 +19,9 @@ function card(overrides: Partial<ModelProviderCard> = {}): ModelProviderCard {
     profileOrder: [],
     profileOrders: {},
     profileOrderProviders: {},
+    profileOrderFallbacks: {},
+    profileOrderFallbackOrders: {},
+    profileOrderLockedOwners: {},
     credentialProviderIds: ["openai"],
     hasConfigApiKey: false,
     modelCount: 1,
@@ -34,7 +37,9 @@ function props(overrides: Partial<ProfileViewProps> = {}): ProfileViewProps {
     canMutate: true,
     configBusy: false,
     messages: {},
-    profileCanMutate: true,
+    profileCanClearCooldown: true,
+    profileCanLogout: true,
+    profileCanReorder: true,
     onClearProfileCooldown: () => undefined,
     onLogoutProfile: () => undefined,
     onOpenModelSetup: () => undefined,
@@ -80,6 +85,8 @@ function profileCard(overrides: Partial<ModelProviderCard> = {}): ModelProviderC
     profileOwnerProfileIds: { openai: profileIds },
     profileOrder: profileIds,
     profileOrders: { openai: profileIds },
+    profileOrderProviders: { openai: "openai" },
+    profileOrderFallbacks: { openai: "automatic" },
     ...overrides,
   });
 }
@@ -139,9 +146,67 @@ describe("provider profile roster", () => {
     expect(container.querySelectorAll(".model-providers__profile-logout")).toHaveLength(3);
     expect(container.querySelectorAll(".model-providers__profile-order")).toHaveLength(0);
     expect(container.querySelector(".model-providers__profile-retry")).not.toBeNull();
+  });
+
+  it("only offers profile actions advertised by the connected gateway", () => {
+    const base = profileCard();
+    const container = mount(
+      profileCard({
+        profiles: [{ ...base.profiles[0]!, cooldownUntil: Date.now() + 60_000 }, base.profiles[1]!],
+      }),
+      props({
+        profileCanClearCooldown: false,
+        profileCanLogout: true,
+        profileCanReorder: false,
+      }),
+    );
+
+    expect(text(container.querySelector(".model-providers__profiles-heading"))).toContain(
+      "tried in priority order",
+    );
+    expect(container.querySelector('button[aria-label="Use automatic rotation"]')).toBeNull();
+    expect(container.querySelector(".model-providers__profile-retry")).toBeNull();
+    expect(container.querySelectorAll(".model-providers__profile-logout")).toHaveLength(2);
     expect(
-      container.querySelector(".model-providers__profile-logout")?.classList.contains("btn"),
-    ).toBe(false);
+      [...container.querySelectorAll<HTMLButtonElement>(".model-providers__profile-grip")].every(
+        (grip) => grip.disabled,
+      ),
+    ).toBe(true);
+  });
+
+  it("targets logout to the selected saved profile", () => {
+    const onLogoutProfile = vi.fn();
+    const container = mount(
+      card({
+        profileProviderIds: { "openai:oauth": "openai-codex" },
+        profileAuthProviderIds: { "openai:oauth": "openai" },
+        profileOwnerProfileIds: { openai: ["openai:oauth"] },
+        profiles: [
+          {
+            profileId: "openai:oauth",
+            type: "oauth",
+            status: "ok",
+            logoutSupported: true,
+          },
+        ],
+      }),
+      props({ onLogoutProfile }),
+    );
+    const logout = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Log out openai:oauth"]',
+    );
+
+    expect(logout?.textContent?.trim()).toBe("");
+    expect(logout?.querySelector("svg")).not.toBeNull();
+    expect(logout?.title).toBe("Log out openai:oauth");
+    logout?.click();
+    expect(onLogoutProfile).toHaveBeenCalledWith(
+      "openai",
+      "openai-codex",
+      "openai",
+      "openai:oauth",
+      "openai:oauth",
+    );
   });
 
   it("shows every quota window, plan, billing fact, and summary for each account", () => {
@@ -186,6 +251,31 @@ describe("provider profile roster", () => {
     expect(container.querySelectorAll('[role="progressbar"]')).toHaveLength(3);
   });
 
+  it("uses provider-reported account email when stored metadata has none", () => {
+    const base = profileCard();
+    const container = mount(
+      profileCard({
+        profiles: [
+          {
+            ...base.profiles[0]!,
+            email: undefined,
+            displayName: undefined,
+            usage: {
+              providerId: "openai",
+              windows: [],
+              accountEmail: "provider@example.com",
+            },
+          },
+          base.profiles[1]!,
+        ],
+      }),
+    );
+
+    expect(text(container.querySelector('[data-profile-id="openai:one"]'))).toContain(
+      "provider@example.com",
+    );
+  });
+
   it("keeps account usage failures and missing-data states on the affected account", () => {
     const base = profileCard();
     const container = mount(
@@ -210,6 +300,69 @@ describe("provider profile roster", () => {
     expect(text(container.querySelector('[data-profile-id="openai:two"]'))).toContain(
       "No live usage data reported by this provider.",
     );
+  });
+
+  it("shows externally managed CLI credentials without a false expiry warning", () => {
+    const base = profileCard();
+    const container = mount(
+      profileCard({
+        profiles: [
+          {
+            ...base.profiles[0]!,
+            status: "expired",
+            externallyManaged: true,
+          },
+          base.profiles[1]!,
+        ],
+      }),
+    );
+
+    expect(text(container.querySelector('[data-profile-id="openai:one"]'))).toContain(
+      "CLI managed",
+    );
+    expect(text(container.querySelector('[data-profile-id="openai:one"]'))).not.toContain(
+      "Expired",
+    );
+  });
+
+  it("sends the exact owner, provider, and profile when retrying an account", () => {
+    const onClearProfileCooldown = vi.fn();
+    const base = profileCard();
+    const container = mount(
+      profileCard({
+        profiles: [{ ...base.profiles[0]!, cooldownUntil: Date.now() + 60_000 }, base.profiles[1]!],
+      }),
+      props({ onClearProfileCooldown }),
+    );
+
+    container
+      .querySelector<HTMLButtonElement>(
+        '[data-profile-id="openai:one"] .model-providers__profile-retry',
+      )
+      ?.click();
+
+    expect(onClearProfileCooldown).toHaveBeenCalledOnce();
+    expect(onClearProfileCooldown).toHaveBeenCalledWith("openai", "openai", "openai:one");
+  });
+
+  it("does not mark an entire account unavailable for a model-scoped cooldown", () => {
+    const base = profileCard();
+    const container = mount(
+      profileCard({
+        profiles: [
+          {
+            ...base.profiles[0]!,
+            cooldownUntil: Date.now() + 60_000,
+            cooldownModel: "gpt-5.4",
+          },
+          base.profiles[1]!,
+        ],
+      }),
+    );
+    const row = container.querySelector('[data-profile-id="openai:one"]');
+
+    expect(text(row)).toContain("Ready");
+    expect(row?.querySelector(".model-providers__profile-retry")).toBeNull();
   });
 
   it("reorders immediately with pointer drag or keyboard", () => {
@@ -238,12 +391,91 @@ describe("provider profile roster", () => {
     expect(onProfileOrderChange).toHaveBeenCalledWith("openai", ["openai:two", "openai:one"]);
 
     onProfileOrderChange.mockClear();
+    const keyboardEvent = new KeyboardEvent("keydown", {
+      key: "ArrowUp",
+      bubbles: true,
+      cancelable: true,
+    });
     container
       .querySelector<HTMLButtonElement>(
         '[data-profile-id="openai:two"] .model-providers__profile-grip',
       )
-      ?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+      ?.dispatchEvent(keyboardEvent);
     expect(onProfileOrderChange).toHaveBeenCalledWith("openai", ["openai:two", "openai:one"]);
+    expect(keyboardEvent.defaultPrevented).toBe(true);
+    expect(text(container.querySelector("[data-profile-reorder-status]"))).toBe(
+      "Moved two@example.com to priority 1",
+    );
+
+    const boundaryEvent = new KeyboardEvent("keydown", {
+      key: "ArrowUp",
+      bubbles: true,
+      cancelable: true,
+    });
+    firstGrip.dispatchEvent(boundaryEvent);
+    expect(boundaryEvent.defaultPrevented).toBe(true);
+  });
+
+  it("restores automatic rotation from an explicit order", () => {
+    const onProfileOrderChange = vi.fn();
+    const container = mount(
+      profileCard(),
+      props({ busy: { "profiles:openai": true }, onProfileOrderChange }),
+    );
+    const automatic = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Use automatic rotation"]',
+    );
+
+    expect(automatic?.disabled).toBe(false);
+    automatic?.click();
+
+    expect(onProfileOrderChange).toHaveBeenCalledWith("openai", null);
+  });
+
+  it("describes the configured fallback and hides reset when config already owns the order", () => {
+    const onProfileOrderChange = vi.fn();
+    const configuredFallback = mount(
+      profileCard({ profileOrderFallbacks: { openai: "config" } }),
+      props({ onProfileOrderChange }),
+    );
+
+    configuredFallback
+      .querySelector<HTMLButtonElement>('button[aria-label="Use configured order"]')
+      ?.click();
+    expect(onProfileOrderChange).toHaveBeenCalledWith("openai", null);
+
+    const configuredOrder = mount(profileCard({ profileOrderFallbacks: {} }));
+    expect(configuredOrder.querySelector('button[aria-label="Use automatic rotation"]')).toBeNull();
+    expect(configuredOrder.querySelector('button[aria-label="Use configured order"]')).toBeNull();
+  });
+
+  it("describes an inherited order behind the local override", () => {
+    const container = mount(profileCard({ profileOrderFallbacks: { openai: "inherited" } }));
+
+    expect(container.querySelector('button[aria-label="Use inherited order"]')).not.toBeNull();
+  });
+
+  it("does not offer reordering when config pins the profile", () => {
+    const onProfileOrderChange = vi.fn();
+    const container = mount(
+      profileCard({
+        profileOrders: { openai: ["openai:one"] },
+        profileOrderLockedOwners: { openai: true },
+      }),
+      props({ onProfileOrderChange }),
+    );
+
+    expect(text(container.querySelector(".model-providers__profiles-heading"))).toContain(
+      "profile pinned in config",
+    );
+    expect(container.querySelector('button[aria-label="Use automatic rotation"]')).toBeNull();
+    const grips = container.querySelectorAll<HTMLButtonElement>(".model-providers__profile-grip");
+    expect([...grips].every((grip) => grip.disabled)).toBe(true);
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[aria-label="Include two@example.com in rotation"]',
+      )?.disabled,
+    ).toBe(true);
   });
 
   it("keeps excluded accounts out of reorder payloads until included", () => {
@@ -251,7 +483,12 @@ describe("provider profile roster", () => {
     const provider = profileCard({
       profiles: [
         ...profileCard().profiles,
-        { profileId: "openai:excluded", type: "oauth", status: "ok" },
+        {
+          profileId: "openai:excluded",
+          type: "oauth",
+          status: "ok",
+          logoutSupported: true,
+        },
       ],
       profileProviderIds: {
         ...profileCard().profileProviderIds,
@@ -271,6 +508,9 @@ describe("provider profile roster", () => {
     expect(
       excluded.querySelector<HTMLButtonElement>(".model-providers__profile-grip")?.disabled,
     ).toBe(true);
+    expect(
+      excluded.querySelectorAll<HTMLButtonElement>(".model-providers__profile-actions button"),
+    ).toHaveLength(2);
     [...excluded.querySelectorAll<HTMLButtonElement>("button")]
       .find((entry) => entry.textContent?.includes("Include"))
       ?.click();
@@ -314,19 +554,33 @@ describe("provider profile roster", () => {
     ).toBe(false);
   });
 
-  it("does not reorder profiles without canonical owner metadata", () => {
-    const onProfileOrderChange = vi.fn();
-    const provider = profileCard({ profileAuthProviderIds: {} });
-    const container = mount(provider, props({ onProfileOrderChange }));
+  it("disables every profile mutation while settings are saving", () => {
+    const base = profileCard();
+    const provider = profileCard({
+      profiles: [
+        { ...base.profiles[0]!, cooldownUntil: Date.now() + 60_000 },
+        base.profiles[1]!,
+        {
+          profileId: "openai:excluded",
+          type: "oauth",
+          status: "ok",
+          logoutSupported: true,
+        },
+      ],
+      profileProviderIds: { ...base.profileProviderIds, "openai:excluded": "openai" },
+      profileAuthProviderIds: { ...base.profileAuthProviderIds, "openai:excluded": "openai" },
+      profileOwnerProfileIds: {
+        openai: ["openai:one", "openai:two", "openai:excluded"],
+      },
+    });
+    const container = mount(provider, props({ configBusy: true }));
 
     expect(
-      [...container.querySelectorAll<HTMLButtonElement>(".model-providers__profile-grip")].every(
-        (grip) => grip.disabled,
-      ),
+      [
+        ...container.querySelectorAll<HTMLButtonElement>(
+          ".model-providers__profile-grip, .model-providers__profile-retry, .model-providers__profile-actions button",
+        ),
+      ].every((button) => button.disabled),
     ).toBe(true);
-    expect(container.textContent?.replace(/\s+/gu, " ")).toContain(
-      "2 accounts · tried in priority order",
-    );
-    expect(onProfileOrderChange).not.toHaveBeenCalled();
   });
 });

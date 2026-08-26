@@ -2,10 +2,7 @@ import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { asNullableRecord as asRecord } from "@openclaw/normalization-core/record-coerce";
 // Merges gateway provider signals (auth status, live usage/quota, local session
 // cost) into one card list for the Models settings page.
-import type {
-  ProviderUsageSnapshot,
-  UsageSummary,
-} from "../../../../src/infra/provider-usage.types.js";
+import type { ProviderUsageSnapshot } from "../../../../src/infra/provider-usage.types.js";
 import type { SessionModelUsage } from "../../../../src/infra/session-cost-usage.types.js";
 import type {
   ModelAuthStatusProvider,
@@ -58,6 +55,12 @@ export type ModelProviderCard = {
   profileOrders: Record<string, string[]>;
   /** Provider route that supplied each owner's explicit priority override. */
   profileOrderProviders: Record<string, string>;
+  /** Result of clearing each owner's stored priority override. */
+  profileOrderFallbacks: Record<string, "automatic" | "config" | "inherited">;
+  /** Configured priority revealed by clearing each owner's stored override. */
+  profileOrderFallbackOrders: Record<string, string[]>;
+  /** Owners whose runtime selection is pinned by provider configuration. */
+  profileOrderLockedOwners: Record<string, boolean>;
   apiKey?: ModelAuthStatusProvider["apiKey"];
   hasConfigApiKey: boolean;
   modelCount: number;
@@ -77,7 +80,6 @@ type ModelProviderCardsInput = {
   configProviderIds?: string[] | null;
   configApiKeyProviderIds?: string[] | null;
   configProviderAuthModes?: Record<string, string> | null;
-  providerUsage: UsageSummary | null;
   costByProvider: SessionModelUsage[] | null;
 };
 
@@ -85,8 +87,6 @@ type CardDraft = {
   ids: Set<string>;
   card: ModelProviderCard;
   hasAuthRow: boolean;
-  /** True when usage came from usage.status (richer than the auth-status embed). */
-  hasUsageSnapshot: boolean;
 };
 
 // Canonicalize alias provider ids (claude-cli → anthropic, minimax-* →
@@ -106,6 +106,10 @@ function authKindForProvider(provider: ModelAuthStatusProvider): ModelProviderAu
     default:
       return "api-key";
   }
+}
+
+function authProviderFor(provider: ModelAuthStatusProvider): string {
+  return provider.authProvider || provider.provider;
 }
 
 function findDraft(drafts: CardDraft[], ids: string[]): CardDraft | undefined {
@@ -129,13 +133,15 @@ function ensureDraft(drafts: CardDraft[], id: string, displayName: string): Card
       profileOrder: [],
       profileOrders: {},
       profileOrderProviders: {},
+      profileOrderFallbacks: {},
+      profileOrderFallbackOrders: {},
+      profileOrderLockedOwners: {},
       credentialProviderIds: [],
       hasConfigApiKey: false,
       modelCount: 0,
       availableModelCount: 0,
     },
     hasAuthRow: false,
-    hasUsageSnapshot: false,
   };
   drafts.push(draft);
   return draft;
@@ -158,7 +164,12 @@ function addProviderId(ids: string[], provider: string): void {
  */
 export function buildModelProviderCards(input: ModelProviderCardsInput): ModelProviderCard[] {
   const drafts: CardDraft[] = [];
-  const apiKeyCapabilities = new Map<string, boolean>();
+  const apiKeyCapabilities = new Map(
+    (input.authStatus?.providerCapabilities ?? []).flatMap((capability) => {
+      const id = canonicalProviderId(capability.provider);
+      return id ? [[id, capability.apiKeySupported] as const] : [];
+    }),
+  );
   for (const model of input.catalogModels ?? []) {
     const id = canonicalProviderId(model.provider);
     if (!id) {
@@ -224,9 +235,22 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
   }
 
   const ownerProfileIds = new Map<string, string[]>();
-  const ownerOrderSources = new Map<string, { provider: string; order: string[] }>();
+  const lockedOrderOwners = new Set<string>();
+  const reorderableOwners = new Set<string>();
+  const ownerOrderSources = new Map<
+    string,
+    {
+      provider: string;
+      order: string[] | undefined;
+      fallback: "automatic" | "config" | "inherited" | undefined;
+      fallbackOrder: string[] | undefined;
+    }
+  >();
   for (const provider of input.authStatus?.providers ?? []) {
-    const authProvider = provider.authProvider ?? provider.provider;
+    const authProvider = authProviderFor(provider);
+    if (provider.profiles.length > 0) {
+      (provider.profileOrderLocked ? lockedOrderOwners : reorderableOwners).add(authProvider);
+    }
     const membership = ownerProfileIds.get(authProvider) ?? [];
     for (const profile of provider.profiles) {
       if (!membership.includes(profile.profileId)) {
@@ -234,21 +258,29 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
       }
     }
     ownerProfileIds.set(authProvider, membership);
-    if (provider.profileOrder !== undefined) {
-      const candidate = { provider: provider.provider, order: provider.profileOrder };
-      const current = ownerOrderSources.get(authProvider);
-      const rank = (source: typeof candidate) =>
-        normalizeProviderId(source.provider) === normalizeProviderId(authProvider) ? 0 : 1;
-      if (
-        !current ||
-        rank(candidate) < rank(current) ||
-        (rank(candidate) === rank(current) &&
-          normalizeProviderId(candidate.provider).localeCompare(
-            normalizeProviderId(current.provider),
-          ) < 0)
-      ) {
-        ownerOrderSources.set(authProvider, candidate);
-      }
+    const candidate = {
+      provider: provider.profileOrderProvider ?? provider.provider,
+      order: provider.profileOrder,
+      fallback: provider.profileOrderFallback,
+      fallbackOrder: provider.profileOrderFallbackOrder,
+    };
+    const sourceKey = `${authProvider}\0${canonicalProviderId(provider.provider)}`;
+    const current = ownerOrderSources.get(sourceKey);
+    const rank = (source: typeof candidate) =>
+      normalizeProviderId(source.provider) === normalizeProviderId(authProvider) ? 0 : 1;
+    const candidateHasOrder = candidate.order !== undefined;
+    const currentHasOrder = current?.order !== undefined;
+    if (
+      !current ||
+      (candidateHasOrder && !currentHasOrder) ||
+      (candidateHasOrder === currentHasOrder && rank(candidate) < rank(current)) ||
+      (candidateHasOrder === currentHasOrder &&
+        rank(candidate) === rank(current) &&
+        normalizeProviderId(candidate.provider).localeCompare(
+          normalizeProviderId(current.provider),
+        ) < 0)
+    ) {
+      ownerOrderSources.set(sourceKey, candidate);
     }
   }
 
@@ -257,55 +289,41 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
     if (!id) {
       continue;
     }
-    // The usage embed names the id the payload was fetched under; keep both
-    // ids matchable in case it diverges from the static alias table.
-    const canonicalId = provider.usage ? canonicalProviderId(provider.usage.providerId) : id;
-    const ids = [...new Set([id, canonicalId])];
-    const existing = findDraft(drafts, ids);
-    // Fresh cards adopt the canonical usage id so icon/label lookups resolve
-    // brand assets (claude-cli would miss the anthropic icon alias).
-    const draft = existing ?? ensureDraft(drafts, canonicalId, providerDisplayLabel(canonicalId));
-    for (const candidate of ids) {
-      draft.ids.add(candidate);
-    }
+    const draft = findDraft(drafts, [id]) ?? ensureDraft(drafts, id, providerDisplayLabel(id));
     draft.card.displayName = provider.displayName || draft.card.displayName;
     draft.card.profiles.push(...provider.profiles);
-    const authProvider = provider.authProvider ?? provider.provider;
+    const authProvider = authProviderFor(provider);
     draft.card.profileOwnerProfileIds[authProvider] = [
       ...(ownerProfileIds.get(authProvider) ?? []),
     ];
     for (const profile of provider.profiles) {
       draft.card.profileProviderIds[profile.profileId] = provider.provider;
-      if (provider.authProvider !== undefined) {
-        draft.card.profileAuthProviderIds[profile.profileId] = provider.authProvider;
-      }
+      draft.card.profileAuthProviderIds[profile.profileId] = authProvider;
     }
-    const profileOrderSource = ownerOrderSources.get(authProvider);
+    const profileOrderSource = ownerOrderSources.get(`${authProvider}\0${id}`);
     for (const profileId of profileOrderSource?.order ?? []) {
       if (!draft.card.profileOrder.includes(profileId)) {
         draft.card.profileOrder.push(profileId);
       }
     }
-    if (profileOrderSource) {
+    if (profileOrderSource?.order !== undefined) {
       draft.card.profileOrders[authProvider] = [...profileOrderSource.order];
       draft.card.profileOrderProviders[authProvider] = profileOrderSource.provider;
+      if (profileOrderSource.fallback) {
+        draft.card.profileOrderFallbacks[authProvider] = profileOrderSource.fallback;
+      }
+      if (profileOrderSource.fallbackOrder) {
+        draft.card.profileOrderFallbackOrders[authProvider] = [...profileOrderSource.fallbackOrder];
+      }
+    }
+    if (lockedOrderOwners.has(authProvider) && !reorderableOwners.has(authProvider)) {
+      draft.card.profileOrderLockedOwners[authProvider] = true;
     }
     if (provider.apiKey || provider.profiles.length > 0) {
       addProviderId(draft.card.credentialProviderIds, provider.provider);
     }
     draft.card.apiKey ??= provider.apiKey;
     draft.hasAuthRow = true;
-    const usage = provider.usage;
-    if (usage && !draft.card.usage) {
-      draft.card.usage = {
-        provider: usage.providerId,
-        displayName: provider.displayName,
-        windows: usage.windows,
-        ...(usage.summary ? { summary: usage.summary } : {}),
-        ...(usage.plan ? { plan: usage.plan } : {}),
-        ...(usage.billing?.length ? { billing: usage.billing } : {}),
-      };
-    }
   }
 
   for (const provider of listEffectiveModelAuthProviders(input.authStatus?.providers ?? [])) {
@@ -319,19 +337,24 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
     }
   }
 
-  for (const snapshot of input.providerUsage?.providers ?? []) {
-    const id = canonicalProviderId(snapshot.provider);
+  for (const usage of input.authStatus?.providerUsage ?? []) {
+    const id = canonicalProviderId(usage.providerId);
     if (!id) {
       continue;
     }
     const draft =
       findDraft(drafts, [id]) ??
-      ensureDraft(drafts, id, snapshot.displayName || providerDisplayLabel(id));
-    draft.ids.add(id);
-    // usage.status snapshots carry cost history and errors that the
-    // auth-status embed drops, so they win when both are present.
-    draft.card.usage = snapshot;
-    draft.hasUsageSnapshot = true;
+      ensureDraft(drafts, id, usage.displayName || providerDisplayLabel(id));
+    draft.card.usage = {
+      provider: usage.providerId,
+      displayName: usage.displayName,
+      windows: usage.windows,
+      ...(usage.summary ? { summary: usage.summary } : {}),
+      ...(usage.plan ? { plan: usage.plan } : {}),
+      ...(usage.billing?.length ? { billing: usage.billing } : {}),
+      ...(usage.costHistory ? { costHistory: usage.costHistory } : {}),
+      ...(usage.error ? { error: usage.error } : {}),
+    };
   }
 
   for (const entry of input.costByProvider ?? []) {
@@ -360,7 +383,6 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
       (draft) =>
         draft.hasAuthRow ||
         (input.configProviderIds ?? []).some((id) => canonicalProviderId(id) === draft.card.id) ||
-        draft.hasUsageSnapshot ||
         Boolean(draft.card.usage) ||
         draft.card.modelCount > 0 ||
         Boolean(draft.card.catalogStatus) ||

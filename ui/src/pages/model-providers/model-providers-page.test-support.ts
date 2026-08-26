@@ -2,7 +2,8 @@ import { vi } from "vitest";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { ModelsProbeResult } from "../../api/types.ts";
 import type { ApplicationContext, ApplicationGatewaySnapshot } from "../../app/context.ts";
-import type { DefaultModelSelection, ModelProviderLogoutTarget } from "./data.ts";
+import { gatewayHelloForMethods } from "../../test-helpers/gateway-methods.ts";
+import type { DefaultModelSelection } from "./data.ts";
 import type { ModelProvidersData } from "./load.ts";
 import type { ModelProvidersRouteData } from "./route.ts";
 import "./model-providers-page.ts";
@@ -19,12 +20,13 @@ export type ModelProvidersPageTestElement = HTMLElement & {
   defaultsDraft: DefaultModelSelection | null;
   keyDraft: string;
   keyEditorProvider: string | null;
-  logout: (cardId: string, targets: ModelProviderLogoutTarget[]) => Promise<void>;
-  messages: Record<string, { kind: "success" | "error"; text: string; warning?: string }>;
-  pendingLogoutProvider: string | null;
+  messages: Record<
+    string,
+    { kind: "success" | "warning" | "error"; text: string; warning?: string }
+  >;
   probe: (cardId: string, providers: string[]) => Promise<void>;
   probeResults: Record<string, ModelsProbeResult>;
-  refresh: (opts: { force: boolean }) => Promise<void>;
+  refresh: (opts: { force: boolean; requireApplied?: boolean }) => Promise<void>;
   routeData: ModelProvidersRouteData | undefined;
   requestUpdate: () => void;
   saveDefaultModels: () => Promise<void>;
@@ -53,8 +55,6 @@ export function createHarness(initialScopeId: string) {
     });
     return () => releaseAuthStatus?.();
   };
-  let usageStatus: unknown = { updatedAt: 1, providers: [] };
-  let usageStatusRejects = false;
   const request = vi.fn(async (method: string): Promise<unknown> => {
     switch (method) {
       case "models.authStatus": {
@@ -75,11 +75,6 @@ export function createHarness(initialScopeId: string) {
         return { models: [] };
       case "config.get":
         return { config: {}, hash: "hash" };
-      case "usage.status":
-        if (usageStatusRejects) {
-          throw new Error("usage.status unavailable");
-        }
-        return usageStatus;
       case "sessions.usage":
         return { aggregates: { byProvider: [] } };
       default:
@@ -91,7 +86,12 @@ export function createHarness(initialScopeId: string) {
     phase: "connected",
     offlineStable: false,
     canvasPluginSurfaceUrl: null,
-    hello: null,
+    hello: gatewayHelloForMethods([
+      "models.authCooldownClear",
+      "models.authLogout",
+      "models.authOrderSet",
+      "models.probe",
+    ]),
     assistantAgentId: "main",
     sessionKey: "main",
     lastError: null,
@@ -176,16 +176,6 @@ export function createHarness(initialScopeId: string) {
     request,
     runtimeConfig,
     snapshot,
-    publishPhase: (phase: ApplicationGatewaySnapshot["phase"]) => {
-      snapshot.phase = phase;
-      gatewaySource.publish({ ...snapshot });
-    },
-    setUsageStatus: (value: unknown) => {
-      usageStatus = value;
-    },
-    failUsageStatus: () => {
-      usageStatusRejects = true;
-    },
   };
 }
 
@@ -213,17 +203,6 @@ export function publishableGateway(initial: ApplicationGatewaySnapshot) {
 
 export function requestCount(request: ReturnType<typeof vi.fn>, method: string): number {
   return request.mock.calls.filter(([candidate]) => candidate === method).length;
-}
-
-export async function advanceUsageRetries(): Promise<void> {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await vi.advanceTimersByTimeAsync(5_000);
-  }
-}
-
-export function focusDocument(): void {
-  vi.spyOn(document, "hasFocus").mockReturnValue(true);
-  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
 }
 
 export function appendPage(context: ApplicationContext) {

@@ -1,8 +1,13 @@
+import type {
+  ModelAuthCooldownClearResult,
+  ModelAuthLogoutResult,
+  ModelAuthOrderSetResult,
+} from "../../../../src/gateway/server-methods/models-auth-status.types.ts";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { ApplicationGatewaySnapshot } from "../../app/context.ts";
-import { hasOperatorAdminAccess } from "../../app/operator-access.ts";
 import { showConfirmDialog } from "../../components/confirm-dialog.ts";
 import { t } from "../../i18n/index.ts";
+import { canCallGatewayMethod } from "../../lib/gateway-methods.ts";
 import { modelProviderErrorMessage } from "./config-mutation.ts";
 import {
   buildModelProviderCards,
@@ -14,10 +19,14 @@ import type { ModelProviderRowMessage } from "./view.ts";
 
 export type ProfileOrderDrafts = Record<string, string[]>;
 
+export type ProfileMutationMethod =
+  | "models.authOrderSet"
+  | "models.authCooldownClear"
+  | "models.authLogout";
+
 type ProfileOrderHost = {
   snapshot: () => ApplicationGatewaySnapshot;
   current: () => { agentEpoch: number; agentId: string; clientEpoch: number };
-  canMutate: () => boolean;
   isBusy: (key: string) => boolean;
   isCurrentClient: (client: GatewayBrowserClient, clientEpoch: number) => boolean;
   prepareForMutation: (agentId: string) => void;
@@ -31,16 +40,32 @@ type ProfileOrderHost = {
   setMessage: (key: string, message: ModelProviderRowMessage | null) => void;
 };
 
-export function canMutateProviderProfiles(
+type ProfileMutationContext = {
+  client: GatewayBrowserClient;
+  clientEpoch: number;
+  agentEpoch: number;
+  agentId: string;
+};
+
+function canMutateProviderProfiles(
   snapshot: ApplicationGatewaySnapshot,
   agentId: string,
+  method: ProfileMutationMethod,
 ): boolean {
-  return (
-    snapshot.phase === "connected" &&
-    Boolean(snapshot.client) &&
-    Boolean(agentId) &&
-    hasOperatorAdminAccess(snapshot.hello?.auth ?? null)
-  );
+  return Boolean(agentId) && canCallGatewayMethod(snapshot, method, "operator.admin");
+}
+
+export function readProviderProfileMutationAccess(
+  snapshot: ApplicationGatewaySnapshot,
+  agentId: string,
+) {
+  const can = (method: ProfileMutationMethod) =>
+    canMutateProviderProfiles(snapshot, agentId, method);
+  return {
+    profileCanReorder: can("models.authOrderSet"),
+    profileCanLogout: can("models.authLogout"),
+    profileCanClearCooldown: can("models.authCooldownClear"),
+  };
 }
 
 function sameOrder(left: readonly string[], right: readonly string[]): boolean {
@@ -51,7 +76,6 @@ function buildCards(data: ModelProvidersData) {
   const config = readModelProviderConfig(data.config);
   return buildModelProviderCards({
     ...data,
-    providerUsage: data.providerUsage?.ok ? data.providerUsage.value : null,
     configProviderIds: config.providerIds,
     configApiKeyProviderIds: config.apiKeyProviderIds,
     configProviderAuthModes: config.providerAuthModes,
@@ -95,17 +119,44 @@ export class ProfileOrderController {
         }
       }
       const profileOrders = { ...card.profileOrders };
+      const profileOrderProviders = { ...card.profileOrderProviders };
+      const profileOrderFallbacks = { ...card.profileOrderFallbacks };
       for (const [owner, draft] of ownedDrafts) {
-        const ownerIds = new Set(draft);
+        const membership = card.profileOwnerProfileIds[owner] ?? [];
+        const fallbackOrder = card.profileOrderFallbackOrders[owner];
+        const visibleOrder = draft.length > 0 ? draft : (fallbackOrder ?? membership);
+        if (draft.length === 0) {
+          if (fallbackOrder) {
+            profileOrders[owner] = fallbackOrder;
+          } else {
+            delete profileOrders[owner];
+            delete profileOrderProviders[owner];
+          }
+          delete profileOrderFallbacks[owner];
+        }
+        const displayOrder = [
+          ...visibleOrder,
+          ...membership.filter((profileId) => !visibleOrder.includes(profileId)),
+        ];
+        const ownerIds = new Set(membership);
         let draftIndex = 0;
         for (let index = 0; index < profileOrder.length; index += 1) {
           if (ownerIds.has(profileOrder[index]!)) {
-            profileOrder[index] = draft[draftIndex++] ?? profileOrder[index]!;
+            profileOrder[index] = displayOrder[draftIndex++] ?? profileOrder[index]!;
           }
         }
-        profileOrders[owner] = draft;
+        if (draft.length > 0) {
+          profileOrders[owner] = draft;
+          profileOrderFallbacks[owner] ??=
+            card.profileOrders[owner] === undefined ? "automatic" : "config";
+        }
       }
-      return Object.assign({}, card, { profileOrder, profileOrders });
+      return Object.assign({}, card, {
+        profileOrder,
+        profileOrders,
+        profileOrderProviders,
+        profileOrderFallbacks,
+      });
     });
   }
 
@@ -113,10 +164,15 @@ export class ProfileOrderController {
     const client = this.host.snapshot().client;
     const owner = this.canonicalOwner(provider);
     const membership = owner ? this.ownerMembership(owner) : null;
-    if (!client || !this.host.canMutate() || !owner || !membership || profileIds.length === 0) {
+    const { agentEpoch, agentId, clientEpoch } = this.host.current();
+    if (
+      !client ||
+      !canMutateProviderProfiles(this.host.snapshot(), agentId, "models.authOrderSet") ||
+      !owner ||
+      !membership
+    ) {
       return;
     }
-    const { agentEpoch, agentId, clientEpoch } = this.host.current();
     this.providers.set(owner, provider);
     this.memberships.set(owner, membership);
     this.setDraft(owner, profileIds);
@@ -152,10 +208,11 @@ export class ProfileOrderController {
     success: string,
   ) {
     const client = this.host.snapshot().client;
-    if (!client) {
+    const { agentEpoch, agentId, clientEpoch } = this.host.current();
+    if (!client || !canMutateProviderProfiles(this.host.snapshot(), agentId, "models.authLogout")) {
       return;
     }
-    const { agentEpoch, clientEpoch } = this.host.current();
+    const context = { client, clientEpoch, agentEpoch, agentId };
     const controller = new AbortController();
     this.logoutConfirmation?.abort();
     this.logoutConfirmation = controller;
@@ -168,7 +225,7 @@ export class ProfileOrderController {
         signal: controller.signal,
       });
       if (confirmed && this.isCurrent(client, clientEpoch, agentEpoch)) {
-        await this.logout(cardId, provider, owner, profileId, success);
+        await this.logout(cardId, provider, owner, profileId, success, context);
       }
     } finally {
       if (this.logoutConfirmation === controller) {
@@ -185,10 +242,12 @@ export class ProfileOrderController {
     busyKey = messageKey,
   ) {
     await this.runProfileMutation({
+      method,
       messageKey,
       busyKey,
       success,
-      request: (client, agentId) => client.request(method, { ...params, agentId }),
+      request: (client, agentId) =>
+        client.request<ModelAuthCooldownClearResult>(method, { ...params, agentId }),
     });
   }
 
@@ -198,31 +257,50 @@ export class ProfileOrderController {
     owner: string,
     profileId: string,
     success: string,
+    context: ProfileMutationContext,
   ) {
     const key = `logout:${owner}`;
     await this.waitFor(owner);
+    if (!this.isCurrent(context.client, context.clientEpoch, context.agentEpoch)) {
+      return;
+    }
     await this.runProfileMutation({
+      method: "models.authLogout",
       messageKey: `profiles:${owner}`,
       busyKey: key,
       success,
+      context,
       beforeRequest: () => this.host.clearProbe(cardId),
       request: (client, agentId) =>
-        client.request("models.authLogout", { provider, profileIds: [profileId], agentId }),
+        client.request<ModelAuthLogoutResult>("models.authLogout", {
+          provider,
+          profileIds: [profileId],
+          agentId,
+        }),
     });
   }
 
   private async runProfileMutation(params: {
+    method: ProfileMutationMethod;
     messageKey: string;
     busyKey: string;
     success: string;
+    context?: ProfileMutationContext;
     beforeRequest?: () => void;
     request: (client: GatewayBrowserClient, agentId: string) => Promise<unknown>;
   }) {
-    const client = this.host.snapshot().client;
-    if (!client || !this.host.canMutate() || this.host.isBusy(params.busyKey)) {
+    const client = params.context?.client ?? this.host.snapshot().client;
+    const { agentEpoch, agentId, clientEpoch } = params.context ?? this.host.current();
+    if (
+      !client ||
+      !canMutateProviderProfiles(this.host.snapshot(), agentId, params.method) ||
+      this.host.isBusy(params.busyKey)
+    ) {
       return;
     }
-    const { agentEpoch, agentId, clientEpoch } = this.host.current();
+    if (!this.isCurrent(client, clientEpoch, agentEpoch)) {
+      return;
+    }
     params.beforeRequest?.();
     this.host.setBusy(params.busyKey, true);
     this.host.setMessage(params.messageKey, null);
@@ -267,9 +345,9 @@ export class ProfileOrderController {
         return;
       }
       try {
-        await client.request("models.authOrderSet", {
+        await client.request<ModelAuthOrderSetResult>("models.authOrderSet", {
           provider,
-          profileIds,
+          profileIds: profileIds.length > 0 ? profileIds : null,
           expectedProfileIds: this.authoritativeOrder(owner, provider),
           expectedProfileMembership,
           agentId,
@@ -301,6 +379,9 @@ export class ProfileOrderController {
         clientEpoch,
         agentEpoch,
       });
+      if (this.host.getDrafts()[owner]) {
+        continue;
+      }
       return;
     }
   }
@@ -311,9 +392,10 @@ export class ProfileOrderController {
       ?.authStatus?.providers.find(
         (candidate) =>
           candidate.provider === provider ||
-          (candidate.authProvider ?? candidate.provider) === provider,
+          candidate.authProvider === provider ||
+          candidate.profileOrderProvider === provider,
       );
-    return row ? (row.authProvider ?? row.provider) : null;
+    return row?.authProvider ?? null;
   }
 
   private ownerMembership(owner: string): string[] | null {
@@ -329,10 +411,8 @@ export class ProfileOrderController {
     const rows = this.host.getData()?.authStatus?.providers;
     const row =
       rows?.find(
-        (candidate) =>
-          candidate.provider === provider &&
-          (candidate.authProvider ?? candidate.provider) === owner,
-      ) ?? rows?.find((candidate) => (candidate.authProvider ?? candidate.provider) === owner);
+        (candidate) => candidate.provider === provider && candidate.authProvider === owner,
+      ) ?? rows?.find((candidate) => candidate.authProvider === owner);
     return row?.profileOrder ? [...row.profileOrder] : null;
   }
 
@@ -342,11 +422,26 @@ export class ProfileOrderController {
     if (!data || !authStatus) {
       return;
     }
-    const providers = authStatus.providers.map((row) =>
-      (row.authProvider ?? row.provider) === owner
-        ? { ...row, profileOrder: [...profileIds] }
-        : row,
-    );
+    const providers = authStatus.providers.map((row) => {
+      if (row.authProvider !== owner) {
+        return row;
+      }
+      const updated = { ...row };
+      if (profileIds.length === 0) {
+        if (updated.profileOrderFallbackOrder) {
+          updated.profileOrder = [...updated.profileOrderFallbackOrder];
+        } else {
+          delete updated.profileOrder;
+        }
+        delete updated.profileOrderFallback;
+        delete updated.profileOrderFallbackOrder;
+      } else {
+        updated.profileOrderFallback ??=
+          updated.profileOrder === undefined ? "automatic" : "config";
+        updated.profileOrder = [...profileIds];
+      }
+      return updated;
+    });
     this.host.setData({ ...data, authStatus: { ...authStatus, providers } });
   }
 

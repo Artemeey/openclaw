@@ -35,7 +35,9 @@ async function loadModelProvidersRouteData(
   return {
     gateway,
     gatewaySnapshot,
-    data: await loadModelProvidersData(client, { agentId }),
+    data: await loadModelProvidersData(client, {
+      agentId,
+    }),
     client,
     agentId,
   };

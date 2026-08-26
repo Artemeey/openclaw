@@ -20,7 +20,9 @@ type ProfileViewProps = Pick<
   | "onLogoutProfile"
   | "onOpenModelSetup"
   | "onProfileOrderChange"
-  | "profileCanMutate"
+  | "profileCanClearCooldown"
+  | "profileCanLogout"
+  | "profileCanReorder"
 >;
 
 type ProfileMessage = {
@@ -38,13 +40,21 @@ const logoutIcon = strokeIcon(svg` <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-
   <polyline points="16 17 21 12 16 7" />
   <line x1="21" x2="9" y1="12" y2="12" />`);
 
+function requiredProfileRoute(routes: Record<string, string>, profileId: string): string {
+  const route = routes[profileId];
+  if (!route) {
+    throw new Error(`Missing profile route for ${profileId}`);
+  }
+  return route;
+}
+
 function profileIdentity(profile: ProviderProfile): string {
-  return profile.email || profile.displayName || profile.profileId;
+  return profile.email || profile.usage?.accountEmail || profile.displayName || profile.profileId;
 }
 
 function profileMeta(profile: ProviderProfile): string {
   const parts: string[] = [];
-  if (profile.email && profile.displayName) {
+  if ((profile.email || profile.usage?.accountEmail) && profile.displayName) {
     parts.push(profile.displayName);
   } else if (profileIdentity(profile) !== profile.profileId) {
     parts.push(profile.profileId);
@@ -100,9 +110,9 @@ function profileOwnerMembership(
 
 function profileCooldown(profile: ProviderProfile) {
   return Math.max(
-    profile.cooldownUntil ?? 0,
+    profile.cooldownModel ? 0 : (profile.cooldownUntil ?? 0),
     profile.disabledUntil ?? 0,
-    profile.blockedUntil ?? 0,
+    profile.blockedScope === "model" && profile.blockedModel ? 0 : (profile.blockedUntil ?? 0),
   );
 }
 
@@ -114,6 +124,15 @@ function renderProfileStatus(profile: ProviderProfile) {
       label: t("modelProviders.profiles.cooldown", {
         time: formatDurationHuman(cooldown - Date.now()),
       }),
+    });
+  }
+  if (
+    profile.externallyManaged === true &&
+    (profile.status === "expired" || profile.status === "expiring")
+  ) {
+    return renderSettingsStatus({
+      kind: "ok",
+      label: t("modelProviders.profiles.cliManaged"),
     });
   }
   const status =
@@ -223,15 +242,31 @@ function profileRowAtPointer(event: PointerEvent): HTMLElement | null {
   );
 }
 
+function announceProfileMove(target: EventTarget | null, account: string, position: number): void {
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  const announcer = target
+    .closest(".model-providers__profiles")
+    ?.querySelector<HTMLElement>("[data-profile-reorder-status]");
+  if (announcer) {
+    announcer.textContent = t("modelProviders.profiles.moved", {
+      account,
+      position: String(position),
+    });
+  }
+}
+
 function startProfilePointerDrag(params: {
   event: PointerEvent;
+  account: string;
   canMove: boolean;
   draggedId: string;
   owner: string;
   ownerProfileIds: readonly string[];
-  move: (position: ProfileDropPosition, targetId: string) => void;
+  move: (position: ProfileDropPosition, targetId: string) => number | null;
 }): void {
-  const { event, canMove, draggedId, owner, ownerProfileIds, move } = params;
+  const { event, account, canMove, draggedId, owner, ownerProfileIds, move } = params;
   if (!canMove || event.button !== 0) {
     return;
   }
@@ -294,7 +329,10 @@ function startProfilePointerDrag(params: {
       // Capture can already be gone when the pointer is cancelled.
     }
     if (apply && targetId && position) {
-      move(position, targetId);
+      const nextPosition = move(position, targetId);
+      if (nextPosition !== null) {
+        announceProfileMove(grip, account, nextPosition);
+      }
     }
   };
   const handleMove = (pointerEvent: PointerEvent) => updateTarget(pointerEvent);
@@ -312,10 +350,9 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
   }
   const owners = [
     ...new Set(
-      profiles.map((profile) => {
-        const provider = card.profileProviderIds[profile.profileId] ?? card.id;
-        return card.profileAuthProviderIds[profile.profileId] ?? provider;
-      }),
+      profiles.map((profile) =>
+        requiredProfileRoute(card.profileAuthProviderIds, profile.profileId),
+      ),
     ),
   ];
   const busy = owners.some(
@@ -324,23 +361,34 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
       props.busy[`cooldown:${owner}`] ||
       props.busy[`logout:${owner}`],
   );
+  const orderMutationBusy = owners.some((owner) => props.busy[`logout:${owner}`]);
   const configMutationDisabled = !props.canMutate || props.configBusy;
-  const profileMutationDisabled = !props.profileCanMutate;
-  const hasExplicitOrder = profiles.some((profile) => {
-    const provider = card.profileProviderIds[profile.profileId] ?? card.id;
-    const orderProvider = card.profileAuthProviderIds[profile.profileId] ?? provider;
-    return card.profileOrders[orderProvider] !== undefined;
-  });
-  const reorderOffered = profiles.some((profile) => {
-    const provider = card.profileProviderIds[profile.profileId] ?? card.id;
-    if (card.profileAuthProviderIds[profile.profileId] === undefined) {
-      return false;
-    }
-    const orderProvider = card.profileAuthProviderIds[profile.profileId] ?? provider;
-    const membership = profileOwnerMembership(card, profiles, orderProvider);
-    const explicitOrder = card.profileOrders[orderProvider];
-    return explicitOrder === undefined ? membership.length > 1 : explicitOrder.length > 1;
-  });
+  const reorderMutationDisabled = !props.profileCanReorder || props.configBusy;
+  const explicitOrderOwners = owners.filter((owner) => card.profileOrders[owner] !== undefined);
+  const hasExplicitOrder = explicitOrderOwners.length > 0;
+  const resettableOrderOwners = owners.filter(
+    (owner) =>
+      card.profileOrderFallbacks[owner] !== undefined && !card.profileOrderLockedOwners[owner],
+  );
+  const profileOrderLocked = owners.some((owner) => card.profileOrderLockedOwners[owner]);
+  const resetLabel = t(
+    resettableOrderOwners.some((owner) => card.profileOrderFallbacks[owner] === "config")
+      ? "modelProviders.profiles.useConfigured"
+      : resettableOrderOwners.some((owner) => card.profileOrderFallbacks[owner] === "inherited")
+        ? "modelProviders.profiles.useInherited"
+        : "modelProviders.profiles.useAutomatic",
+  );
+  const reorderOffered =
+    props.profileCanReorder &&
+    profiles.some((profile) => {
+      const orderProvider = requiredProfileRoute(card.profileAuthProviderIds, profile.profileId);
+      if (card.profileOrderLockedOwners[orderProvider]) {
+        return false;
+      }
+      const membership = profileOwnerMembership(card, profiles, orderProvider);
+      const explicitOrder = card.profileOrders[orderProvider];
+      return explicitOrder === undefined ? membership.length > 1 : explicitOrder.length > 1;
+    });
   return html`
     <section
       class="model-providers__profiles${reorderOffered
@@ -363,13 +411,33 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
             ${t(
               reorderOffered
                 ? "modelProviders.profiles.reorderHint"
-                : hasExplicitOrder
-                  ? "modelProviders.profiles.orderHint"
-                  : "modelProviders.profiles.automaticHint",
+                : profileOrderLocked
+                  ? "modelProviders.profiles.configPinnedHint"
+                  : hasExplicitOrder
+                    ? "modelProviders.profiles.orderHint"
+                    : "modelProviders.profiles.automaticHint",
             )}
           </span>
         </span>
         <span class="model-providers__profiles-heading-actions">
+          ${resettableOrderOwners.length > 0 && props.profileCanReorder
+            ? html`<button
+                type="button"
+                class="btn btn--sm btn--ghost"
+                ?disabled=${orderMutationBusy || reorderMutationDisabled}
+                aria-label=${resetLabel}
+                @click=${() => {
+                  for (const owner of resettableOrderOwners) {
+                    props.onProfileOrderChange(
+                      requiredProfileRoute(card.profileOrderProviders, owner),
+                      null,
+                    );
+                  }
+                }}
+              >
+                ${resetLabel}
+              </button>`
+            : nothing}
           <button
             type="button"
             class="btn btn--sm"
@@ -385,10 +453,8 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
           profiles,
           (profile) => profile.profileId,
           (profile) => {
-            const provider = card.profileProviderIds[profile.profileId] ?? card.id;
-            const orderOwnerAvailable =
-              card.profileAuthProviderIds[profile.profileId] !== undefined;
-            const orderOwner = card.profileAuthProviderIds[profile.profileId] ?? provider;
+            const provider = requiredProfileRoute(card.profileProviderIds, profile.profileId);
+            const orderOwner = requiredProfileRoute(card.profileAuthProviderIds, profile.profileId);
             const orderProvider = card.profileOrderProviders[orderOwner] ?? orderOwner;
             const cooldown = profileCooldown(profile);
             const explicitOrder = card.profileOrders[orderOwner];
@@ -403,6 +469,7 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
             };
             const ownerProfileIds = moveContext(profile.profileId);
             const ownerIndex = ownerProfileIds.indexOf(profile.profileId);
+            const orderLocked = Boolean(card.profileOrderLockedOwners[orderOwner]);
             const logoutBusy = Boolean(props.busy[`logout:${orderOwner}`]);
             const ownerBusy = Boolean(
               props.busy[`profiles:${orderOwner}`] ||
@@ -411,13 +478,13 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
             );
             const canMove =
               reorderOffered &&
-              orderOwnerAvailable &&
               ownerIndex >= 0 &&
               ownerProfileIds.length > 1 &&
+              !orderLocked &&
               !logoutBusy &&
-              !profileMutationDisabled;
-            const canClearCooldown = cooldown > Date.now();
-            const canLogout = profile.logoutSupported === true;
+              !reorderMutationDisabled;
+            const canClearCooldown = props.profileCanClearCooldown && cooldown > Date.now();
+            const canLogout = props.profileCanLogout && profile.logoutSupported === true;
             const identity = profileIdentity(profile);
             const logoutLabel = t("modelProviders.logout.actionFor", { account: identity });
             const excluded =
@@ -427,16 +494,18 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
                   account: identity,
                   position: String(ownerIndex + 1),
                 })
-              : !explicitOrder
-                ? t("modelProviders.profiles.automaticFor", { account: identity })
-                : excluded
-                  ? t("modelProviders.profiles.notInRotationFor", { account: identity })
-                  : ownerIndex === 0
-                    ? t("modelProviders.profiles.primaryFor", { account: identity })
-                    : t("modelProviders.profiles.priorityFor", {
-                        account: identity,
-                        position: String(ownerIndex + 1),
-                      });
+              : orderLocked
+                ? t("modelProviders.profiles.pinnedFor", { account: identity })
+                : !explicitOrder
+                  ? t("modelProviders.profiles.automaticFor", { account: identity })
+                  : excluded
+                    ? t("modelProviders.profiles.notInRotationFor", { account: identity })
+                    : ownerIndex === 0
+                      ? t("modelProviders.profiles.primaryFor", { account: identity })
+                      : t("modelProviders.profiles.priorityFor", {
+                          account: identity,
+                          position: String(ownerIndex + 1),
+                        });
             const move = (position: ProfileDropPosition, targetId: string) => {
               const next = reorderedOwnerProfileIds(
                 moveContext(profile.profileId),
@@ -446,7 +515,9 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
               );
               if (next) {
                 props.onProfileOrderChange(orderProvider, next);
+                return next.indexOf(profile.profileId) + 1;
               }
+              return null;
             };
             return html`
               <div
@@ -464,6 +535,7 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
                   @pointerdown=${(event: PointerEvent) =>
                     startProfilePointerDrag({
                       event,
+                      account: identity,
                       canMove,
                       draggedId: profile.profileId,
                       owner: orderOwner,
@@ -478,12 +550,15 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
                     if (delta === 0) {
                       return;
                     }
+                    event.preventDefault();
                     const adjacentId = ownerProfileIds[ownerIndex + delta];
                     if (!adjacentId) {
                       return;
                     }
-                    event.preventDefault();
-                    move(delta < 0 ? "before" : "after", adjacentId);
+                    const position = move(delta < 0 ? "before" : "after", adjacentId);
+                    if (position !== null) {
+                      announceProfileMove(event.currentTarget, identity, position);
+                    }
                   }}
                 >
                   ${icons.gripVertical}
@@ -508,7 +583,7 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
                         title=${t("modelProviders.profiles.clearCooldownFor", {
                           account: identity,
                         })}
-                        ?disabled=${ownerBusy || profileMutationDisabled}
+                        ?disabled=${ownerBusy || props.configBusy}
                         @click=${() =>
                           props.onClearProfileCooldown(orderOwner, provider, profile.profileId)}
                       >
@@ -517,14 +592,14 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
                     : nothing}
                 </span>
                 <span class="model-providers__profile-actions">
-                  ${excluded && orderOwnerAvailable
+                  ${excluded
                     ? html`<button
                         type="button"
                         class="btn btn--sm btn--ghost model-providers__profile-action"
                         aria-label=${t("modelProviders.profiles.includeFor", {
                           account: identity,
                         })}
-                        ?disabled=${ownerBusy || profileMutationDisabled}
+                        ?disabled=${orderLocked || ownerBusy || reorderMutationDisabled}
                         @click=${() =>
                           props.onProfileOrderChange(orderProvider, [
                             ...(explicitOrder ?? []),
@@ -540,7 +615,7 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
                         class="model-providers__profile-icon-action model-providers__profile-logout"
                         aria-label=${logoutLabel}
                         title=${logoutLabel}
-                        ?disabled=${ownerBusy || profileMutationDisabled}
+                        ?disabled=${ownerBusy || props.configBusy}
                         @click=${() =>
                           props.onLogoutProfile(
                             card.id,
@@ -559,6 +634,13 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
           },
         )}
       </div>
+      <span
+        class="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-profile-reorder-status
+      ></span>
       ${owners.map((owner) => renderProfileMessage(props.messages[`profiles:${owner}`]))}
     </section>
   `;

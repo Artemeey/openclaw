@@ -12,8 +12,6 @@ describe("loadModelProvidersData", () => {
           return { models: [] };
         case "config.get":
           return { config: {}, hash: "hash" };
-        case "usage.status":
-          return { updatedAt: 1, providers: [] };
         case "sessions.usage":
           return { aggregates: { byProvider: [] } };
         default:
@@ -22,7 +20,9 @@ describe("loadModelProvidersData", () => {
     });
     const client = { request } as unknown as GatewayBrowserClient;
 
-    await loadModelProvidersData(client, { agentId: "writer" });
+    await loadModelProvidersData(client, {
+      agentId: "writer",
+    });
 
     expect(request).toHaveBeenCalledWith("models.list", {
       view: "configured",
@@ -46,8 +46,6 @@ describe("loadModelProvidersData", () => {
           return { models: [] };
         case "config.get":
           return { config: {}, hash: "hash" };
-        case "usage.status":
-          return { updatedAt: 1, providers: [] };
         case "sessions.usage":
           return { aggregates: { byProvider: [] } };
         default:
@@ -56,7 +54,10 @@ describe("loadModelProvidersData", () => {
     });
     const client = { request } as unknown as GatewayBrowserClient;
 
-    await loadModelProvidersData(client, { refresh: true, agentId: "writer" });
+    await loadModelProvidersData(client, {
+      refresh: true,
+      agentId: "writer",
+    });
 
     expect(request).toHaveBeenCalledWith("models.authStatus", {
       refresh: true,
@@ -72,7 +73,7 @@ describe("loadModelProvidersData", () => {
       agentId: "writer",
       refresh: true,
     });
-    expect(request).toHaveBeenCalledWith("usage.status");
+    expect(request).not.toHaveBeenCalledWith("usage.status");
     const sessionUsageCall = request.mock.calls.find(([method]) => method === "sessions.usage");
     expect(sessionUsageCall?.[1]).not.toHaveProperty("agentId");
     expect(sessionUsageCall?.[1]).toHaveProperty("agentScope", "all");
@@ -129,8 +130,6 @@ describe("loadModelProvidersData", () => {
           return { models: [] };
         case "config.get":
           return { config: {}, hash: "hash" };
-        case "usage.status":
-          return { updatedAt: 1, providers: [] };
         case "sessions.usage":
           return { aggregates: { byProvider: [] } };
         default:
@@ -139,81 +138,17 @@ describe("loadModelProvidersData", () => {
     });
     const client = { request } as unknown as GatewayBrowserClient;
 
-    const result = await loadModelProvidersData(client, { agentId: "main" });
+    const result = await loadModelProvidersData(client, {
+      agentId: "main",
+    });
 
     expect(result.authStatus).toBeNull();
     expect(result.models).toEqual([]);
     expect(result.providerOutcomes).toEqual([]);
     expect(result.catalogError).toBeNull();
     expect(result.config).toEqual({});
-    expect(result.providerUsage).toEqual({ ok: true, value: { updatedAt: 1, providers: [] } });
     expect(result.costByProvider).toEqual([]);
     expect(result.error).toBeNull();
-  });
-
-  it("records a usage.status failure instead of reducing it to no data", async () => {
-    const request = vi.fn(async (method: string) => {
-      switch (method) {
-        case "models.authStatus":
-          return { ts: 1, providers: [] };
-        case "models.list":
-          return { models: [] };
-        case "config.get":
-          return { config: {}, hash: "hash" };
-        case "usage.status":
-          throw new Error("usage.status failed");
-        case "sessions.usage":
-          return { aggregates: { byProvider: [] } };
-        default:
-          return {};
-      }
-    });
-    const client = { request } as unknown as GatewayBrowserClient;
-
-    const result = await loadModelProvidersData(client, { agentId: "main" });
-
-    expect(result.providerUsage).toEqual({
-      ok: false,
-      error: { kind: "request-failed" },
-    });
-    expect(result.error).toBeNull();
-  });
-
-  it("keeps provider-scoped usage errors as data instead of a global request failure", async () => {
-    const request = vi.fn(async (method: string) => {
-      switch (method) {
-        case "models.authStatus":
-          return { ts: 1, providers: [] };
-        case "models.list":
-          return { models: [] };
-        case "config.get":
-          return { config: {}, hash: "hash" };
-        case "usage.status":
-          return {
-            updatedAt: 1,
-            providers: [
-              {
-                provider: "openai",
-                displayName: "OpenAI",
-                windows: [],
-                error: "provider API unavailable",
-              },
-            ],
-          };
-        case "sessions.usage":
-          return { aggregates: { byProvider: [] } };
-        default:
-          return {};
-      }
-    });
-    const client = { request } as unknown as GatewayBrowserClient;
-
-    const result = await loadModelProvidersData(client, { agentId: "main" });
-
-    expect(result.providerUsage).toMatchObject({
-      ok: true,
-      value: { providers: [{ error: "provider API unavailable" }] },
-    });
   });
 
   it("surfaces an explicit catalog refresh failure while retaining cached configured models", async () => {
@@ -233,8 +168,6 @@ describe("loadModelProvidersData", () => {
           throw new Error("configured discovery repeated after refresh failure");
         case "config.get":
           return { config: {}, hash: "hash" };
-        case "usage.status":
-          return { updatedAt: 1, providers: [] };
         case "sessions.usage":
           return { aggregates: { byProvider: [] } };
         default:
@@ -242,10 +175,15 @@ describe("loadModelProvidersData", () => {
       }
     });
     const client = { request } as unknown as GatewayBrowserClient;
-    await loadModelProvidersData(client, { agentId: "writer" });
+    await loadModelProvidersData(client, {
+      agentId: "writer",
+    });
     request.mockClear();
 
-    const result = await loadModelProvidersData(client, { refresh: true, agentId: "writer" });
+    const result = await loadModelProvidersData(client, {
+      refresh: true,
+      agentId: "writer",
+    });
 
     expect(result.catalogError).toBe("catalog refresh failed: OPENAI_API_KEY=sk-123...cdef");
     expect(result.models).toEqual([{ id: "cached", name: "Cached", provider: "openai" }]);
