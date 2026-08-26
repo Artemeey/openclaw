@@ -107,6 +107,7 @@ let pushEpoch = 0;
 const loadedSnapshots = new Map<string, unknown>();
 let loadEpoch = 0;
 let lastLoadKey = "";
+let lastAppliedScope: string | null = null;
 function readStorageState(
   root: string,
   scope: string,
@@ -294,6 +295,7 @@ export function resetServerUiPrefsSync() {
   loadedSnapshots.clear();
   loadEpoch += 1;
   lastLoadKey = "";
+  lastAppliedScope = null;
   requestedServerUiPrefResets.clear();
   requestedDeviceLocalPrefResets.clear();
 }
@@ -348,18 +350,19 @@ export function refreshServerUiPrefs(
   options: { canSync?: boolean; force?: boolean } = {},
 ): Promise<void> {
   adoptPushWriter(writer, hooks.scope);
-  pushCanSync = options.canSync ?? writer.canPatch !== false;
+  const canSync = options.canSync ?? writer.canPatch !== false;
+  pushCanSync = canSync;
   const defaults = extractServerUiPrefs(configObject);
+  const client = writer.state.client;
+  if (!writer.state.connected || !client) {
+    return Promise.resolve();
+  }
   const loadKey = hooks.scope + JSON.stringify(defaults);
   if (!options.force && lastLoadKey === loadKey) {
     return Promise.resolve();
   }
   lastLoadKey = loadKey;
   const epoch = ++loadEpoch;
-  const client = writer.state.client;
-  if (!writer.state.connected || !client) {
-    return Promise.resolve();
-  }
   const load = (async () => {
     const result = await client.request<UsersPrefsGetResult>("users.prefs.get", {
       keys: [...USER_PREF_KEYS, USER_PREF_MIGRATION_KEY],
@@ -368,17 +371,21 @@ export function refreshServerUiPrefs(
       return;
     }
     let userPrefs = decodeUserUiPrefs(result.entries);
-    if (result.entries[USER_PREF_MIGRATION_KEY] !== true) {
-      const migration = await client.request<UsersPrefsSetResult>("users.prefs.set", {
-        entries: {
-          ...encodeUserUiPrefs(defaults),
-          [USER_PREF_MIGRATION_KEY]: true,
-        },
-      });
-      if (epoch !== loadEpoch || migration.status !== "ok") {
+    if (result.entries[USER_PREF_MIGRATION_KEY] !== true && canSync) {
+      const migration = await client
+        .request<UsersPrefsSetResult>("users.prefs.set", {
+          entries: {
+            ...encodeUserUiPrefs(defaults),
+            [USER_PREF_MIGRATION_KEY]: true,
+          },
+        })
+        .catch(() => null);
+      if (epoch !== loadEpoch) {
         return;
       }
-      userPrefs = defaults;
+      if (migration?.status === "ok") {
+        userPrefs = defaults;
+      }
     }
     const snapshot = {
       ui: { prefs: { ...defaults, ...userPrefs }, prefDefaults: defaults, userPrefs },
@@ -407,7 +414,9 @@ export function applyServerUiPrefs(
   const prefs = extractServerUiPrefs(configObject);
   const key = JSON.stringify(prefs);
   const lastSeenRaw = readStorage(LAST_SEEN_KEY, scope);
-  if (key === lastSeenRaw) {
+  const scopeChanged = lastAppliedScope !== null && lastAppliedScope !== scope;
+  lastAppliedScope = scope;
+  if (!scopeChanged && key === lastSeenRaw) {
     if (retainedLocalKeys.size) {
       updateRetainedLocalKeys(scope, [...retainedLocalKeys], false);
     }
@@ -417,22 +426,27 @@ export function applyServerUiPrefs(
   const changed: ServerUiPrefs = {};
   // Apply per field: only keys whose server value changed since last seen. Reapplying unchanged
   // fields would revert unpushable local edits whenever any other server field moves.
-  for (const prefKey of Object.keys(prefs) as Array<keyof ServerUiPrefs>) {
-    if (
-      !(shadowPrefs && prefKey in shadowPrefs) &&
-      !retainedLocalKeys.has(prefKey) &&
-      (lastSeenRaw === null || !prefValuesEqual(prefs[prefKey], lastSeen[prefKey]))
-    ) {
-      (changed as Record<string, unknown>)[prefKey] = prefs[prefKey];
+  for (const prefKey of SYNCED_PREF_KEYS) {
+    if (shadowPrefs && prefKey in shadowPrefs) {
+      if (scopeChanged) {
+        (changed as Record<string, unknown>)[prefKey] = shadowPrefs[prefKey];
+      }
+      continue;
     }
-  }
-  for (const prefKey of Object.keys(lastSeen) as Array<keyof ServerUiPrefs>) {
-    if (
-      !(prefKey in prefs) &&
-      !(shadowPrefs && prefKey in shadowPrefs) &&
-      !retainedLocalKeys.has(prefKey) &&
-      SYNCED_PREFS[prefKey]?.clearable
-    ) {
+    if (retainedLocalKeys.has(prefKey)) {
+      continue;
+    }
+    if (prefKey in prefs) {
+      if (
+        scopeChanged ||
+        lastSeenRaw === null ||
+        !prefValuesEqual(prefs[prefKey], lastSeen[prefKey])
+      ) {
+        (changed as Record<string, unknown>)[prefKey] = prefs[prefKey];
+      }
+      continue;
+    }
+    if ((scopeChanged || prefKey in lastSeen) && SYNCED_PREFS[prefKey]?.clearable) {
       (changed as Record<string, unknown>)[prefKey] = null;
     }
   }

@@ -213,6 +213,52 @@ describe("profile preference loading", () => {
     });
   });
 
+  it("loads preferences again when reconnect forces a refresh", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: "ok",
+        entries: { "ui.migratedFromConfigPrefsV1": true, "ui.themeMode": "dark" },
+      })
+      .mockResolvedValueOnce({
+        status: "ok",
+        entries: { "ui.migratedFromConfigPrefsV1": true, "ui.themeMode": "light" },
+      });
+    const onLoaded = vi.fn();
+    const config = configWithPrefs({ themeMode: "system" });
+    const writer = createServerPrefsWriter(request);
+
+    await refreshServerUiPrefs(writer, config, {
+      scope: "ws://gw#ada",
+      onLoaded,
+    });
+    await refreshServerUiPrefs(writer, config, { scope: "ws://gw#ada", onLoaded }, { force: true });
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(onLoaded).toHaveBeenCalledTimes(2);
+  });
+
+  it("loads defaults for a read-only profile without attempting migration", async () => {
+    const request = vi.fn(async () => ({ status: "ok", entries: {} }));
+    const onApplied = vi.fn();
+
+    await refreshServerUiPrefs(
+      createServerPrefsWriter(request, "ws://gw", true, { ok: true }, false),
+      configWithPrefs({ themeMode: "dark", locale: "de" }),
+      {
+        scope: "ws://gw#viewer",
+        onLoaded: (snapshot) =>
+          applyServerUiPrefs(snapshot, { scope: "ws://gw#viewer", onApplied }),
+      },
+      { canSync: false },
+    );
+
+    expect(request).toHaveBeenCalledExactlyOnceWith("users.prefs.get", {
+      keys: expect.arrayContaining(["ui.themeMode", "ui.locale", "ui.migratedFromConfigPrefsV1"]),
+    });
+    expect(onApplied).toHaveBeenCalledWith({ themeMode: "dark", locale: "de" });
+  });
+
   it("keeps an unidentified browser local", async () => {
     patchSettings({ themeMode: "dark" });
     const request = vi.fn(async () => ({ status: "no_durable_identity" }));
@@ -230,6 +276,19 @@ describe("profile preference loading", () => {
 });
 
 describe("applyServerUiPrefs", () => {
+  it("reapplies a profile snapshot when returning from another profile", () => {
+    const onApplied = vi.fn();
+    const ada = configWithPrefs({ themeMode: "dark", locale: "de" });
+    const grace = configWithPrefs({ themeMode: "light", locale: "fr" });
+
+    applyServerUiPrefs(ada, { scope: "ws://gw#ada", onApplied });
+    applyServerUiPrefs(grace, { scope: "ws://gw#grace", onApplied });
+    expect(loadSettings()).toMatchObject({ themeMode: "light", locale: "fr" });
+
+    expect(applyServerUiPrefs(ada, { scope: "ws://gw#ada", onApplied })).toBe(true);
+    expect(loadSettings()).toMatchObject({ themeMode: "dark", locale: "de" });
+  });
+
   it("applies a server delta to the local mirror once", () => {
     const onApplied = vi.fn();
     const config = configWithPrefs({ themeMode: "dark" });

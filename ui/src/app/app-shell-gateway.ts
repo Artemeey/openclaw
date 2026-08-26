@@ -280,10 +280,11 @@ export class ShellGatewayOwner {
     this.ensureAgentsList(snapshot);
     this.ensureRuntimeConfig(snapshot);
     const runtimeConfig = this.host.context?.runtimeConfig;
+    const justConnected = previousPhase !== "connected" && snapshot.phase === "connected";
     if (runtimeConfig) {
-      this.reconcileServerUiPrefs(runtimeConfig);
+      this.reconcileServerUiPrefs(runtimeConfig, { force: justConnected });
     }
-    if (previousPhase !== "connected" && snapshot.phase === "connected") {
+    if (justConnected) {
       i18n.retryPendingLocale();
     }
     this.host.syncSidebarWorkboard();
