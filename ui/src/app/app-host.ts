@@ -78,6 +78,7 @@ import { hasStoredLazyShellAction } from "./lazy-shell-action.ts";
 import { postNativeNavState, type NativeNavState } from "./native-nav-state.ts";
 import { readNativeHistoryState, type NativeHistoryState } from "./native-web-chrome.ts";
 import { resolveOnboardingMode } from "./onboarding-mode.ts";
+import { hasOperatorWriteAccess } from "./operator-access.ts";
 import {
   changedServerUiPrefs,
   isApplyingServerUiPrefs,
@@ -426,20 +427,11 @@ class OpenClawShell
   }
 
   /**
-   * Server config (ui.prefs) is the canonical home for synced display prefs;
-   * apply server-side deltas to the browser mirror whenever a config snapshot
-   * lands (connect, settings pages, reloads).
+   * Profile preferences are canonical for synced display prefs; config ui.prefs
+   * supplies inherited defaults. Reconcile when the profile or defaults change.
    */
   private reconcileServerUiPrefs(runtimeConfig: ApplicationContext["runtimeConfig"]) {
     this.shellGateway.reconcileServerUiPrefs(runtimeConfig);
-  }
-
-  private reconcileCommittedServerUiPrefs(
-    runtimeConfig: ApplicationContext["runtimeConfig"],
-    needsRefresh: boolean,
-    retainedLocal = false,
-  ) {
-    this.shellGateway.reconcileCommittedServerUiPrefs(runtimeConfig, needsRefresh, retainedLocal);
   }
 
   override connectedCallback() {
@@ -449,8 +441,8 @@ class OpenClawShell
     }
     this.outboxStoreImport.schedule();
     this.shellChrome.connect();
-    // Write-through of synced display prefs to config ui.prefs. Server-applied
-    // deltas are suppressed so a reconcile never echoes back to the gateway.
+    // Write through synced display prefs to the authenticated profile. Remote
+    // deltas are suppressed so reconciliation never echoes back to the gateway.
     setSettingsChangeListener((previous, next) => {
       if (isApplyingServerUiPrefs()) {
         return;
@@ -458,9 +450,11 @@ class OpenClawShell
       const prefs = changedServerUiPrefs(previous, next);
       const runtimeConfig = this.context?.runtimeConfig;
       if (prefs && runtimeConfig) {
+        const gateway = this.context?.gateway;
+        const profileId = gateway?.snapshot.selfUser?.id;
         pushServerUiPrefs(runtimeConfig, prefs, {
-          afterCommit: ({ needsRefresh, retainedLocal }) =>
-            this.reconcileCommittedServerUiPrefs(runtimeConfig, needsRefresh, retainedLocal),
+          scope: profileId ? `${gateway?.connection.gatewayUrl ?? ""}#${profileId}` : "",
+          canSync: hasOperatorWriteAccess(gateway?.snapshot.hello?.auth ?? null),
         });
       }
     });

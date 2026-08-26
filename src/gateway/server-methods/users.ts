@@ -29,6 +29,7 @@ import {
 } from "../../state/user-profiles.js";
 import { invalidateOperatorRolePolicy } from "../operator-role-policy.js";
 import { ADMIN_SCOPE } from "../operator-scopes.js";
+import type { GatewayRequestContextWithClientLookup } from "../server-request-context.js";
 import {
   authenticatedProfileUnavailableError,
   isGatewayClientProfilePending,
@@ -45,6 +46,22 @@ function refreshConnectedProfile(
     updatedAt: profile.updatedAt,
   });
   return display;
+}
+
+function broadcastPreferenceChange(
+  context: GatewayRequestHandlerOptions["context"],
+  profileId: string,
+  keys: readonly string[],
+): void {
+  const clientContext = context as GatewayRequestContextWithClientLookup; // SAFETY: websocket contexts install optional connection lookup; in-process callers safely omit it.
+  const connIds =
+    clientContext.getClientConnIds?.((client) => {
+      const connectedProfileId = client.authenticatedUserProfile?.profileId;
+      return Boolean(connectedProfileId && resolveUserProfileId(connectedProfileId) === profileId);
+    }) ?? new Set<string>();
+  if (connIds.size > 0) {
+    context.broadcastToConnIds("users.prefs.changed", { keys }, connIds);
+  }
 }
 
 function decodeBase64(value: string): Uint8Array | undefined {
@@ -198,7 +215,7 @@ export const usersHandlers: GatewayRequestHandlers = {
       respond(false, undefined, profileError(error));
     }
   },
-  "users.prefs.set": ({ client, params, respond }) => {
+  "users.prefs.set": ({ client, context, params, respond }) => {
     if (!validateUsersPrefsSetParams(params)) {
       respond(
         false,
@@ -253,6 +270,7 @@ export const usersHandlers: GatewayRequestHandlers = {
         );
         return;
       }
+      broadcastPreferenceChange(context, canonicalProfileId, Object.keys(params.entries));
       respond(true, { status: "ok" }, undefined);
     } catch (error) {
       respond(false, undefined, profileError(error));

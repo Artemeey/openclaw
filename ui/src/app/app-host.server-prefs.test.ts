@@ -6,19 +6,45 @@ import { createStorageMock } from "../test-helpers/storage.ts";
 import "./app-host.ts";
 import type { ApplicationContext } from "./context.ts";
 import { resetServerUiPrefsSync } from "./server-prefs.ts";
-import { loadSettings, patchSettings } from "./settings.ts";
+import { loadSettings } from "./settings.ts";
 
 type ShellServerPreferencesState = {
   runtime: { context: ApplicationContext };
-  reconcileCommittedServerUiPrefs: (
-    runtimeConfig: ApplicationContext["runtimeConfig"],
-    needsRefresh: boolean,
-    retainedLocal?: boolean,
-  ) => void;
   reconcileServerUiPrefs: (runtimeConfig: ApplicationContext["runtimeConfig"]) => void;
 };
 
-describe("OpenClaw shell locale preferences", () => {
+function createPreferenceContext(
+  gatewayUrl: string,
+  request: ReturnType<typeof vi.fn>,
+  config: Record<string, unknown>,
+) {
+  const state = {
+    connected: true,
+    client: { request, gatewayUrl },
+    configSnapshot: { config, hash: "config-hash" },
+  };
+  const runtimeConfig = { state } as unknown as ApplicationContext["runtimeConfig"];
+  const context = {
+    gateway: {
+      connection: { gatewayUrl },
+      snapshot: { selfUser: { id: "profile-ada" } },
+    },
+    navigation: { update: vi.fn() },
+    theme: { recordServerSelection: vi.fn(), refresh: vi.fn(), serverSelection: null },
+    runtimeConfig,
+  } as unknown as ApplicationContext;
+  return { context, runtimeConfig, state };
+}
+
+function createShell(context: ApplicationContext): ShellServerPreferencesState {
+  const shell = document.createElement(
+    "openclaw-app-shell",
+  ) as unknown as ShellServerPreferencesState;
+  shell.runtime = { context };
+  return shell;
+}
+
+describe("OpenClaw shell profile preferences", () => {
   beforeEach(() => {
     vi.stubGlobal("localStorage", createStorageMock());
     resetServerUiPrefsSync();
@@ -30,111 +56,73 @@ describe("OpenClaw shell locale preferences", () => {
     vi.unstubAllGlobals();
   });
 
-  it("uses canonical server locale provenance and clears a stale local pin", () => {
+  it("uses canonical profile locale provenance and clears a stale local pin", async () => {
     localStorage.setItem("openclaw.i18n.locale", "fr");
     const setLocale = vi.spyOn(i18n, "setLocale").mockResolvedValue();
     const useSystemLocale = vi.spyOn(i18n, "useSystemLocale").mockResolvedValue();
-    const state: {
-      configSnapshot: {
-        config: { ui: { prefs: Record<string, unknown> } };
-        hash: string;
-      };
-    } = {
-      configSnapshot: {
-        config: { ui: { prefs: { locale: "de" } } },
-        hash: "locale-config-hash",
-      },
-    };
-    const runtimeConfig = { state } as unknown as ApplicationContext["runtimeConfig"];
-    const refreshTheme = vi.fn();
-    const context = {
-      gateway: { connection: { gatewayUrl: "ws://locale.test" } },
-      navigation: { update: vi.fn() },
-      theme: { refresh: refreshTheme },
-      runtimeConfig,
-    } as unknown as ApplicationContext;
-    const shell = document.createElement(
-      "openclaw-app-shell",
-    ) as unknown as ShellServerPreferencesState;
-    shell.runtime = { context };
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: "ok",
+        entries: { "ui.migratedFromConfigPrefsV1": true, "ui.locale": "de" },
+      })
+      .mockResolvedValueOnce({
+        status: "ok",
+        entries: { "ui.migratedFromConfigPrefsV1": true },
+      });
+    const { context, runtimeConfig, state } = createPreferenceContext("ws://locale.test", request, {
+      ui: { prefs: { locale: "de" } },
+    });
+    const shell = createShell(context);
 
     shell.reconcileServerUiPrefs(runtimeConfig);
-    shell.reconcileServerUiPrefs(runtimeConfig);
+    await vi.waitFor(() => expect(setLocale).toHaveBeenCalledExactlyOnceWith("de"));
+
     state.configSnapshot = {
       config: { ui: { prefs: {} } },
       hash: "locale-config-cleared-hash",
     };
     shell.reconcileServerUiPrefs(runtimeConfig);
-    shell.reconcileServerUiPrefs(runtimeConfig);
+    await vi.waitFor(() => expect(useSystemLocale).toHaveBeenCalledOnce());
 
-    expect(setLocale).toHaveBeenCalledExactlyOnceWith("de");
-    expect(useSystemLocale).toHaveBeenCalledOnce();
     expect(loadSettings().locale).toBeUndefined();
   });
 
-  it("keeps a retained device-local locale instead of realigning to the rejected server value", () => {
-    const setLocale = vi.spyOn(i18n, "setLocale").mockResolvedValue();
-    const useSystemLocale = vi.spyOn(i18n, "useSystemLocale").mockResolvedValue();
-    const state = {
-      configSnapshot: {
-        config: { ui: { prefs: { locale: "de" } } },
-        hash: "locale-config-hash",
-      },
-    };
-    const runtimeConfig = { state } as unknown as ApplicationContext["runtimeConfig"];
-    const refreshTheme = vi.fn();
-    const context = {
-      gateway: { connection: { gatewayUrl: "ws://locale.test" } },
-      navigation: { update: vi.fn() },
-      theme: { refresh: refreshTheme },
-      runtimeConfig,
-    } as unknown as ApplicationContext;
-    const shell = document.createElement(
-      "openclaw-app-shell",
-    ) as unknown as ShellServerPreferencesState;
-    shell.runtime = { context };
+  it("publishes authored theme changes when the local mirror needs no patch", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: "ok",
+        entries: { "ui.migratedFromConfigPrefsV1": true, "ui.theme": "custom" },
+      })
+      .mockResolvedValueOnce({
+        status: "ok",
+        entries: { "ui.migratedFromConfigPrefsV1": true, "ui.theme": "claw" },
+      });
+    const { context, runtimeConfig, state } = createPreferenceContext("ws://theme.test", request, {
+      ui: { prefs: { theme: "custom" } },
+    });
+    const shell = createShell(context);
 
     shell.reconcileServerUiPrefs(runtimeConfig);
-    refreshTheme.mockClear();
-    patchSettings({ locale: "fr" });
-    shell.reconcileCommittedServerUiPrefs(runtimeConfig, false, true);
-
-    expect(setLocale).toHaveBeenNthCalledWith(1, "de");
-    expect(setLocale).toHaveBeenNthCalledWith(2, "fr");
-    expect(useSystemLocale).not.toHaveBeenCalled();
-    expect(loadSettings().locale).toBe("fr");
-    expect(refreshTheme).toHaveBeenCalledOnce();
-  });
-
-  it("publishes authored theme changes when the local mirror needs no patch", () => {
-    const state = {
-      configSnapshot: {
-        config: { ui: { prefs: { theme: "custom" } } },
-        hash: "theme-custom",
-      },
-    };
-    const runtimeConfig = { state } as unknown as ApplicationContext["runtimeConfig"];
-    const recordServerSelection = vi.fn();
-    const context = {
-      gateway: { connection: { gatewayUrl: "ws://theme.test" } },
-      navigation: { update: vi.fn() },
-      theme: { recordServerSelection, refresh: vi.fn(), serverSelection: null },
-      runtimeConfig,
-    } as unknown as ApplicationContext;
-    const shell = document.createElement(
-      "openclaw-app-shell",
-    ) as unknown as ShellServerPreferencesState;
-    shell.runtime = { context };
-
-    shell.reconcileServerUiPrefs(runtimeConfig);
-    expect(recordServerSelection).toHaveBeenLastCalledWith("custom", "ws://theme.test");
+    await vi.waitFor(() =>
+      expect(context.theme.recordServerSelection).toHaveBeenLastCalledWith(
+        "custom",
+        "ws://theme.test#profile-ada",
+      ),
+    );
 
     state.configSnapshot = {
       config: { ui: { prefs: { theme: "claw" } } },
       hash: "theme-claw",
     };
     shell.reconcileServerUiPrefs(runtimeConfig);
-    expect(recordServerSelection).toHaveBeenLastCalledWith("claw", "ws://theme.test");
+    await vi.waitFor(() =>
+      expect(context.theme.recordServerSelection).toHaveBeenLastCalledWith(
+        "claw",
+        "ws://theme.test#profile-ada",
+      ),
+    );
     expect(loadSettings().theme).toBe("claw");
   });
 });

@@ -179,18 +179,25 @@ export function resolveServerUiPrefStateFromSnapshot<K extends SyncedPrefKey>(
   const productDefault = (
     resetPatch ? specification.local({ ...settings, ...resetPatch }) : undefined
   ) as SyncedPrefValue<K> | undefined;
+  const ui = asRecord(asRecord(configObject)?.ui);
+  const authoredUserPrefs = asRecord(ui?.userPrefs);
+  const configuredDefaults = asRecord(ui?.prefDefaults);
+  const configuredDefault = configuredDefaults
+    ? (specification.extract(configuredDefaults[key]) as SyncedPrefValue<K> | undefined) // SAFETY: each keyed descriptor's extractor defines its value type.
+    : undefined;
+  const resetValue = configuredDefault ?? productDefault;
   const localState = (
-    resetValue: SyncedPrefValue<K> | undefined,
+    fallbackValue: SyncedPrefValue<K> | undefined,
   ): ServerUiPrefState<SyncedPrefValue<K>> => {
-    const overridden = !prefValuesEqual(localValue, resetValue);
+    const overridden = !prefValuesEqual(localValue, fallbackValue);
     return {
       overridden,
       provenance: overridden ? "device-local" : "default",
-      resetValue,
+      resetValue: fallbackValue,
       value: localValue,
     };
   };
-  const prefs = asRecord(asRecord(asRecord(configObject)?.ui)?.prefs);
+  const prefs = authoredUserPrefs ?? asRecord(ui?.prefs);
   const serverValue =
     prefs && Object.hasOwn(prefs, key)
       ? (specification.extract(prefs[key]) as SyncedPrefValue<K> | undefined)
@@ -202,7 +209,7 @@ export function resolveServerUiPrefStateFromSnapshot<K extends SyncedPrefKey>(
         serverValue,
         settings,
       ));
-  const applicableServerValue = canApplyServerValue ? serverValue : productDefault;
+  const applicableServerValue = canApplyServerValue ? serverValue : resetValue;
   if (shadowPrefs && key in shadowPrefs) {
     if (canSync === false) {
       return {
@@ -214,28 +221,28 @@ export function resolveServerUiPrefStateFromSnapshot<K extends SyncedPrefKey>(
     }
     const shadowValue = shadowPrefs[key];
     if (shadowValue === null) {
-      return { ...localState(productDefault), provenance: "pending" };
+      return { ...localState(resetValue), provenance: "pending" };
     }
     return {
       overridden: true,
       provenance: "pending",
-      resetValue: productDefault,
+      resetValue,
       value: shadowValue as SyncedPrefValue<K>,
     };
   }
   if (!prefs || !Object.hasOwn(prefs, key) || serverValue === undefined) {
-    return localState(productDefault);
+    return localState(resetValue);
   }
   if (!canApplyServerValue) {
     if (canSync === false) {
-      return localState(productDefault);
+      return localState(resetValue);
     }
     // Preserve authored server provenance even when this browser cannot render
     // the value, so Restore default still removes the server override.
     return {
       overridden: true,
       provenance: "synced",
-      resetValue: productDefault,
+      resetValue,
       value: localValue,
     };
   }
@@ -243,7 +250,7 @@ export function resolveServerUiPrefStateFromSnapshot<K extends SyncedPrefKey>(
     return {
       overridden: true,
       provenance: "synced",
-      resetValue: productDefault,
+      resetValue,
       value: serverValue,
     };
   }

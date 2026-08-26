@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { GatewayErrorDetailCodes } from "../../../packages/gateway-protocol/src/index.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { ensureProfileForEmail, linkEmail } from "../../state/user-profiles.js";
@@ -9,6 +9,7 @@ async function invokePreferenceMethod(
   method: "users.prefs.get" | "users.prefs.set",
   params: Record<string, unknown>,
   profileId?: string,
+  context: Record<string, unknown> = {},
 ) {
   let result: { ok: boolean; payload?: unknown; error?: unknown } | undefined;
   await usersHandlers[method]!({
@@ -17,7 +18,7 @@ async function invokePreferenceMethod(
     respond: (ok, payload, error) => {
       result = { ok, payload, error };
     },
-    context: {} as never,
+    context: context as never,
     client: {
       connect: { scopes: ["operator.admin"] },
       ...(profileId ? { authenticatedUserProfile: { profileId } } : {}),
@@ -62,6 +63,43 @@ test("users.prefs remains self-scoped across durable identities", async () => {
         entries: { "new-session.v1:main": { folder: "/ada" } },
       },
     });
+  } finally {
+    await state.cleanup();
+  }
+});
+
+test("users.prefs.set notifies only connections for the same profile", async () => {
+  const state = await createOpenClawTestState({
+    layout: "state-only",
+    prefix: "users-prefs-event-",
+  });
+  try {
+    const ada = ensureProfileForEmail("ada-event@example.test");
+    const grace = ensureProfileForEmail("grace-event@example.test");
+    const clients = [
+      { connId: "ada-1", authenticatedUserProfile: { profileId: ada.id } },
+      { connId: "ada-2", authenticatedUserProfile: { profileId: ada.id } },
+      { connId: "grace-1", authenticatedUserProfile: { profileId: grace.id } },
+    ];
+    const broadcastToConnIds = vi.fn();
+    const context = {
+      broadcastToConnIds,
+      getClientConnIds: (filter: (client: (typeof clients)[number]) => boolean) =>
+        new Set(clients.filter(filter).map((client) => client.connId)),
+    };
+
+    await invokePreferenceMethod(
+      "users.prefs.set",
+      { entries: { "ui.themeMode": "dark" } },
+      ada.id,
+      context,
+    );
+
+    expect(broadcastToConnIds).toHaveBeenCalledWith(
+      "users.prefs.changed",
+      { keys: ["ui.themeMode"] },
+      new Set(["ada-1", "ada-2"]),
+    );
   } finally {
     await state.cleanup();
   }

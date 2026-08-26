@@ -19,7 +19,7 @@ import {
   type ApplicationGatewaySnapshot,
 } from "../../app/context.ts";
 import { importCustomThemeFromUrl } from "../../app/custom-theme.ts";
-import { hasOperatorAdminAccess } from "../../app/operator-access.ts";
+import { hasOperatorAdminAccess, hasOperatorWriteAccess } from "../../app/operator-access.ts";
 import {
   resetServerUiPref,
   resolveServerUiPrefState,
@@ -859,7 +859,7 @@ export class ConfigPage extends OpenClawLightDomElement {
     return resolveServerUiPrefState(
       this.context.runtimeConfig.state.configSnapshot?.config,
       "locale",
-      this.context.gateway.connection.gatewayUrl,
+      this.preferenceScope(),
       this.settings,
       { canSync: this.serverUiPrefsCanSync() },
     );
@@ -869,7 +869,7 @@ export class ConfigPage extends OpenClawLightDomElement {
     return resolveServerUiPrefState(
       this.context.runtimeConfig.state.configSnapshot?.config,
       "theme",
-      this.context.gateway.connection.gatewayUrl,
+      this.preferenceScope(),
       this.settings,
       { canSync: this.serverUiPrefsCanSync() },
     );
@@ -879,7 +879,7 @@ export class ConfigPage extends OpenClawLightDomElement {
     return resolveServerUiPrefState(
       this.context.runtimeConfig.state.configSnapshot?.config,
       "themeMode",
-      this.context.gateway.connection.gatewayUrl,
+      this.preferenceScope(),
       this.settings,
       { canSync: this.serverUiPrefsCanSync() },
     );
@@ -889,7 +889,7 @@ export class ConfigPage extends OpenClawLightDomElement {
     return resolveServerUiPrefState(
       this.context.runtimeConfig.state.configSnapshot?.config,
       "accent",
-      this.context.gateway.connection.gatewayUrl,
+      this.preferenceScope(),
       this.settings,
       { canSync: this.serverUiPrefsCanSync() },
     );
@@ -899,7 +899,7 @@ export class ConfigPage extends OpenClawLightDomElement {
     return resolveServerUiPrefState(
       this.context.runtimeConfig.state.configSnapshot?.config,
       "chatSendShortcut",
-      this.context.gateway.connection.gatewayUrl,
+      this.preferenceScope(),
       this.settings,
       { canSync: this.serverUiPrefsCanSync() },
     );
@@ -909,23 +909,26 @@ export class ConfigPage extends OpenClawLightDomElement {
     return resolveServerUiPrefState(
       this.context.runtimeConfig.state.configSnapshot?.config,
       "chatFollowUpMode",
-      this.context.gateway.connection.gatewayUrl,
+      this.preferenceScope(),
       this.settings,
       { canSync: this.serverUiPrefsCanSync() },
     );
   }
 
   private serverUiPrefsCanSync(): boolean | null {
-    const runtimeConfig = this.context.runtimeConfig;
-    return runtimeConfig.state.connected ? runtimeConfig.canPatch !== false : null;
+    const gateway = this.context.gateway.snapshot;
+    return gateway?.phase === "connected"
+      ? hasOperatorWriteAccess(gateway.hello?.auth ?? null)
+      : null;
+  }
+
+  private preferenceScope(): string {
+    const gateway = this.context.gateway;
+    return `${gateway.connection.gatewayUrl}#${gateway.snapshot?.selfUser?.id ?? "browser"}`;
   }
 
   private resetLocale() {
-    this.settings = resetServerUiPref(
-      "locale",
-      this.currentLocalePref(),
-      this.context.gateway.connection.gatewayUrl,
-    );
+    this.settings = resetServerUiPref("locale", this.currentLocalePref(), this.preferenceScope());
     if (isSupportedLocale(this.settings.locale)) {
       void i18n.setLocale(this.settings.locale);
     } else {
@@ -936,40 +939,29 @@ export class ConfigPage extends OpenClawLightDomElement {
   private resetSyncedAppearancePref(
     key: "theme" | "themeMode" | "accent" | "chatSendShortcut" | "chatFollowUpMode",
   ) {
+    const scope = this.preferenceScope();
     switch (key) {
       case "theme":
-        this.settings = resetServerUiPref(
-          "theme",
-          this.currentThemePref(),
-          this.context.gateway.connection.gatewayUrl,
-        );
+        this.settings = resetServerUiPref("theme", this.currentThemePref(), scope);
         break;
       case "themeMode":
-        this.settings = resetServerUiPref(
-          "themeMode",
-          this.currentThemeModePref(),
-          this.context.gateway.connection.gatewayUrl,
-        );
+        this.settings = resetServerUiPref("themeMode", this.currentThemeModePref(), scope);
         break;
       case "accent":
-        this.settings = resetServerUiPref(
-          "accent",
-          this.currentAccentPref(),
-          this.context.gateway.connection.gatewayUrl,
-        );
+        this.settings = resetServerUiPref("accent", this.currentAccentPref(), scope);
         break;
       case "chatSendShortcut":
         this.settings = resetServerUiPref(
           "chatSendShortcut",
           this.currentChatSendShortcutPref(),
-          this.context.gateway.connection.gatewayUrl,
+          scope,
         );
         break;
       case "chatFollowUpMode":
         this.settings = resetServerUiPref(
           "chatFollowUpMode",
           this.currentChatFollowUpModePref(),
-          this.context.gateway.connection.gatewayUrl,
+          scope,
         );
         break;
     }

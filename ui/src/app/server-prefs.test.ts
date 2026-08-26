@@ -11,6 +11,7 @@ import {
   changedServerUiPrefs,
   flushServerUiPrefs,
   pushServerUiPrefs,
+  refreshServerUiPrefs,
   resetServerUiPref,
   resetServerUiPrefsSync,
   resolveServerUiPrefState,
@@ -152,6 +153,82 @@ describe("server pref extraction", () => {
   });
 });
 
+describe("profile preference loading", () => {
+  it("migrates configured defaults once into the authenticated profile", async () => {
+    const request = vi.fn(async (method: string) =>
+      method === "users.prefs.get" ? { status: "ok", entries: {} } : { status: "ok" },
+    );
+    const writer = createServerPrefsWriter(request);
+    const onApplied = vi.fn();
+
+    await refreshServerUiPrefs(writer, configWithPrefs({ themeMode: "dark", locale: "de" }), {
+      scope: "ws://gw#ada",
+      onLoaded: (snapshot) => applyServerUiPrefs(snapshot, { scope: "ws://gw#ada", onApplied }),
+    });
+
+    expect(request.mock.calls[0]).toEqual([
+      "users.prefs.get",
+      {
+        keys: expect.arrayContaining(["ui.themeMode", "ui.locale", "ui.migratedFromConfigPrefsV1"]),
+      },
+    ]);
+    expect(request.mock.calls[1]).toEqual([
+      "users.prefs.set",
+      {
+        entries: {
+          "ui.themeMode": "dark",
+          "ui.locale": "de",
+          "ui.migratedFromConfigPrefsV1": true,
+        },
+      },
+    ]);
+    expect(onApplied).toHaveBeenCalledWith({ themeMode: "dark", locale: "de" });
+  });
+
+  it("applies a profile override over the configured default", async () => {
+    const request = vi.fn(async () => ({
+      status: "ok",
+      entries: {
+        "ui.migratedFromConfigPrefsV1": true,
+        "ui.themeMode": "dark",
+      },
+    }));
+    const writer = createServerPrefsWriter(request);
+    const onApplied = vi.fn();
+
+    await refreshServerUiPrefs(writer, configWithPrefs({ themeMode: "light" }), {
+      scope: "ws://gw#ada",
+      onLoaded: (snapshot) => applyServerUiPrefs(snapshot, { scope: "ws://gw#ada", onApplied }),
+    });
+
+    expect(request).toHaveBeenCalledOnce();
+    expect(onApplied).toHaveBeenCalledWith({ themeMode: "dark" });
+    expect(
+      resolveServerUiPrefState(configWithPrefs({ themeMode: "light" }), "themeMode", "ws://gw#ada"),
+    ).toEqual({
+      overridden: true,
+      provenance: "synced",
+      resetValue: "light",
+      value: "dark",
+    });
+  });
+
+  it("keeps an unidentified browser local", async () => {
+    patchSettings({ themeMode: "dark" });
+    const request = vi.fn(async () => ({ status: "no_durable_identity" }));
+    const onLoaded = vi.fn();
+
+    await refreshServerUiPrefs(
+      createServerPrefsWriter(request),
+      configWithPrefs({ themeMode: "light" }),
+      { scope: "ws://gw#browser", onLoaded },
+    );
+
+    expect(loadSettings().themeMode).toBe("dark");
+    expect(onLoaded).not.toHaveBeenCalled();
+  });
+});
+
 describe("applyServerUiPrefs", () => {
   it("applies a server delta to the local mirror once", () => {
     const onApplied = vi.fn();
@@ -167,7 +244,7 @@ describe("applyServerUiPrefs", () => {
     expect(loadSettings().themeMode).toBe("light");
   });
 
-  it("does not reapply a retained pre-commit snapshot after an ack moves lastSeen", async () => {
+  it("does not reapply the last observed snapshot after an acknowledgement", async () => {
     const scope = "ws://gw";
     const oldSnapshot = configWithPrefs({ themeMode: "light" });
     const onApplied = vi.fn();
@@ -182,44 +259,6 @@ describe("applyServerUiPrefs", () => {
     );
 
     expect(applyServerUiPrefs(oldSnapshot, { scope, onApplied })).toBe(false);
-    expect(loadSettings().themeMode).toBe("dark");
-  });
-
-  it("treats a new object with old content after ack as a genuine LWW restore", async () => {
-    const scope = "ws://gw";
-    const oldSnapshot = configWithPrefs({ themeMode: "light" });
-    const onApplied = vi.fn();
-    applyServerUiPrefs(oldSnapshot, { scope, onApplied });
-    patchSettings({ themeMode: "dark" });
-    const request = vi.fn(async () => ({}));
-    const client = createServerPrefsWriter(request, scope);
-    pushServerUiPrefs(client, { themeMode: "dark" });
-    await waitForFast(() =>
-      expect(localStorage.getItem(`openclaw.control.serverPrefs.pending.v1:${scope}`)).toBeNull(),
-    );
-
-    // A new post-bump snapshot object represents a genuine foreign restore and is LWW-correct.
-    expect(applyServerUiPrefs(configWithPrefs({ themeMode: "light" }), { scope, onApplied })).toBe(
-      true,
-    );
-    expect(loadSettings().themeMode).toBe("light");
-  });
-
-  it("clears the retained-object memo on reset", () => {
-    const scope = "ws://memo";
-    const snapshot = configWithPrefs({ themeMode: "dark" });
-    const onApplied = vi.fn();
-    expect(applyServerUiPrefs(snapshot, { scope, onApplied })).toBe(true);
-    patchSettings({ themeMode: "light" });
-    localStorage.setItem(
-      `openclaw.control.serverPrefs.v1:${scope}`,
-      JSON.stringify({ themeMode: "light" }),
-    );
-    expect(applyServerUiPrefs(snapshot, { scope, onApplied })).toBe(false);
-
-    resetServerUiPrefsSync();
-
-    expect(applyServerUiPrefs(snapshot, { scope, onApplied })).toBe(true);
     expect(loadSettings().themeMode).toBe("dark");
   });
 
@@ -390,12 +429,7 @@ describe("changedServerUiPrefs", () => {
     resetServerUiPref("theme", state);
 
     await vi.waitFor(() =>
-      expect(request).toHaveBeenCalledWith(
-        "config.patch",
-        expect.objectContaining({
-          raw: JSON.stringify({ ui: { prefs: { theme: null } } }),
-        }),
-      ),
+      expect(request).toHaveBeenCalledWith("users.prefs.set", { entries: { "ui.theme": null } }),
     );
   });
 });
@@ -551,19 +585,12 @@ describe("pushServerUiPrefs", () => {
       chatFollowUpMode: "steer",
     });
     const prefs = changedServerUiPrefs(beforeLocalEdit, retained);
-    const afterCommit = vi.fn();
     const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(async () => {
       throw validationError();
     });
 
-    pushServerUiPrefs(createClient(request, scope), prefs ?? {}, { afterCommit });
-
-    await waitForFast(() =>
-      expect(afterCommit).toHaveBeenCalledWith({
-        needsRefresh: false,
-        retainedLocal: true,
-      }),
-    );
+    pushServerUiPrefs(createClient(request, scope), prefs ?? {});
+    await waitForFast(() => expect(localStorage.getItem(pendingKey(scope))).toBeNull());
     const themeState = resolveServerUiPrefState(config, "theme", scope);
     const localeState = resolveServerUiPrefState(config, "locale", scope);
     const followUpState = resolveServerUiPrefState(config, "chatFollowUpMode", scope);
@@ -608,18 +635,12 @@ describe("pushServerUiPrefs", () => {
     const beforeLocalEdit = loadSettings();
     const retained = patchSettings({ theme: "knot" });
     const prefs = changedServerUiPrefs(beforeLocalEdit, retained);
-    const afterCommit = vi.fn();
     const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(async () => {
       throw validationError();
     });
 
-    pushServerUiPrefs(createClient(request, scope), prefs ?? {}, { afterCommit });
-    await waitForFast(() =>
-      expect(afterCommit).toHaveBeenCalledWith({
-        needsRefresh: false,
-        retainedLocal: true,
-      }),
-    );
+    pushServerUiPrefs(createClient(request, scope), prefs ?? {});
+    await waitForFast(() => expect(localStorage.getItem(pendingKey(scope))).toBeNull());
 
     expect(
       applyServerUiPrefs(configWithPrefs({ theme: "claw", locale: "de" }), { scope, onApplied }),
@@ -643,24 +664,18 @@ describe("pushServerUiPrefs", () => {
     expect(loadSettings().theme).toBe("dash");
   });
 
-  it("sends one hash-free patch and acknowledges lastSeen plus pending", async () => {
+  it("sets one profile preference and clears pending intent", async () => {
     const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(async () => ({}));
-    const afterCommit = vi.fn();
     const client = createClient(request);
 
-    pushServerUiPrefs(client, { themeMode: "dark" }, { afterCommit });
-    await waitForFast(() => expect(afterCommit).toHaveBeenCalledOnce());
-    expect(afterCommit).toHaveBeenCalledWith({ needsRefresh: false });
+    pushServerUiPrefs(client, { themeMode: "dark" });
+    await waitForFast(() => expect(localStorage.getItem(pendingKey("ws://gw"))).toBeNull());
 
-    expect(request).toHaveBeenCalledExactlyOnceWith("config.patch", {
-      raw: JSON.stringify({ ui: { prefs: { themeMode: "dark" } } }),
-      note: "control-ui prefs sync",
+    expect(request).toHaveBeenCalledExactlyOnceWith("users.prefs.set", {
+      entries: { "ui.themeMode": "dark" },
     });
     expect(request.mock.calls.some(([method]) => method === "config.get")).toBe(false);
-    expect(localStorage.getItem(pendingKey("ws://gw"))).toBeNull();
-    expect(JSON.parse(localStorage.getItem(lastSeenKey("ws://gw")) ?? "{}")).toEqual({
-      themeMode: "dark",
-    });
+    expect(localStorage.getItem(lastSeenKey("ws://gw"))).toBeNull();
   });
 
   it("merges this tab's edit with sibling persisted pending keys", () => {
@@ -745,8 +760,7 @@ describe("pushServerUiPrefs", () => {
 
     await waitForFast(() => expect(request).toHaveBeenCalledTimes(2));
     expect(request.mock.calls[1]?.[1]).toEqual({
-      raw: JSON.stringify({ ui: { prefs: { themeMode: "light" } } }),
-      note: "control-ui prefs sync",
+      entries: { "ui.themeMode": "light" },
     });
   });
 
@@ -790,9 +804,8 @@ describe("pushServerUiPrefs", () => {
     flushServerUiPrefs(client);
 
     await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
-    expect(request).toHaveBeenCalledWith("config.patch", {
-      raw: JSON.stringify({ ui: { prefs: { locale: "de" } } }),
-      note: "control-ui prefs sync",
+    expect(request).toHaveBeenCalledWith("users.prefs.set", {
+      entries: { "ui.locale": "de" },
     });
   });
 
@@ -851,7 +864,7 @@ describe("pushServerUiPrefs", () => {
   });
 
   it("reconciles the refreshed snapshot again after clearing its pending shadow", async () => {
-    const refreshedSnapshot = configWithPrefs({ themeMode: "light" });
+    const refreshedSnapshot = configWithPrefs({ themeMode: "dark" });
     patchSettings({ themeMode: "dark" });
     const onApplied = vi.fn();
     const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(async () => {
@@ -860,41 +873,26 @@ describe("pushServerUiPrefs", () => {
     });
     const client = createClient(request);
 
-    pushServerUiPrefs(
-      client,
-      { themeMode: "dark" },
-      {
-        afterCommit: ({ needsRefresh }) => {
-          expect(needsRefresh).toBe(false);
-          applyServerUiPrefs(refreshedSnapshot, {
-            scope: "ws://gw",
-            onApplied,
-          });
-        },
-      },
-    );
+    pushServerUiPrefs(client, { themeMode: "dark" });
     await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
     await waitForFast(() => expect(localStorage.getItem(pendingKey("ws://gw"))).toBeNull());
+    applyServerUiPrefs(configWithPrefs({ themeMode: "light" }), {
+      scope: "ws://gw",
+      onApplied,
+    });
 
     expect(onApplied).toHaveBeenCalledWith({ themeMode: "light" });
     expect(loadSettings().themeMode).toBe("light");
   });
 
-  it("requests a retry refresh when the post-mutation refresh failed", async () => {
-    const afterCommit = vi.fn();
+  it("commits profile preferences without requesting a config refresh", async () => {
     const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(async () => ({}));
-    const client = createClient(request, "ws://gw", true, {
-      ok: false,
-      error: "config.get failed",
-    });
+    const client = createClient(request);
 
-    pushServerUiPrefs(client, { themeMode: "dark" }, { afterCommit });
+    pushServerUiPrefs(client, { themeMode: "dark" });
 
-    await waitForFast(() =>
-      expect(afterCommit).toHaveBeenCalledWith({
-        needsRefresh: true,
-      }),
-    );
+    await waitForFast(() => expect(localStorage.getItem(pendingKey("ws://gw"))).toBeNull());
+    expect(request.mock.calls.some(([method]) => method === "config.get")).toBe(false);
   });
 
   it("lets pending local intent shadow only its own server key", async () => {
@@ -946,20 +944,7 @@ describe("pushServerUiPrefs", () => {
     });
   });
 
-  it("retries one conflict then retains pending, but drops validation failures", async () => {
-    vi.useFakeTimers();
-    const conflictRequest = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(
-      async () => {
-        throw new Error("config changed since last load; re-run config.get and retry");
-      },
-    );
-    pushServerUiPrefs(createClient(conflictRequest), { locale: "de" });
-    await vi.advanceTimersByTimeAsync(250);
-    expect(conflictRequest).toHaveBeenCalledTimes(2);
-    expect(localStorage.getItem(pendingKey("ws://gw"))).not.toBeNull();
-
-    resetServerUiPrefsSync();
-    localStorage.clear();
+  it("drops validation-rejected profile preferences", async () => {
     const validationRequest = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(
       async () => {
         throw validationError();
@@ -970,92 +955,15 @@ describe("pushServerUiPrefs", () => {
     await vi.waitFor(() => expect(localStorage.getItem(pendingKey("ws://gw"))).toBeNull());
   });
 
-  it("re-drains pending intent after a twice-conflicting batch", async () => {
-    vi.useFakeTimers();
-    let calls = 0;
-    const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(async () => {
-      calls += 1;
-      if (calls <= 2) {
-        throw new Error("config changed since last load; re-run config.get and retry");
-      }
-      return {};
-    });
-
-    pushServerUiPrefs(createClient(request), { locale: "de" });
-    await vi.advanceTimersByTimeAsync(250);
-    expect(request).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(999);
-    expect(request).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(1);
-
-    expect(request).toHaveBeenCalledTimes(3);
-    expect(localStorage.getItem(pendingKey("ws://gw"))).toBeNull();
-  });
-
-  it("cancels a conflict re-drain when flush or reset supersedes its epoch", async () => {
-    vi.useFakeTimers();
-    let calls = 0;
-    const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(async () => {
-      calls += 1;
-      if (calls <= 2) {
-        throw new Error("config changed since last load; re-run config.get and retry");
-      }
-      return {};
-    });
-    const client = createClient(request);
-
-    pushServerUiPrefs(client, { locale: "de" });
-    await vi.advanceTimersByTimeAsync(250);
-    flushServerUiPrefs(client);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(request).toHaveBeenCalledTimes(3);
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(request).toHaveBeenCalledTimes(3);
-
-    resetServerUiPrefsSync();
-    localStorage.clear();
-    const conflicting = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(async () => {
-      throw new Error("config changed since last load; re-run config.get and retry");
-    });
-    pushServerUiPrefs(createClient(conflicting), { locale: "fr" });
-    await vi.advanceTimersByTimeAsync(250);
-    expect(conflicting).toHaveBeenCalledTimes(2);
-    resetServerUiPrefsSync();
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(conflicting).toHaveBeenCalledTimes(2);
-  });
-
-  it("caps conflict-triggered re-drains at five", async () => {
-    vi.useFakeTimers();
-    const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(async () => {
-      throw new Error("config changed since last load; re-run config.get and retry");
-    });
-
-    pushServerUiPrefs(createClient(request), { locale: "de" });
-    for (let round = 0; round <= 5; round += 1) {
-      await vi.advanceTimersByTimeAsync(250);
-      expect(request).toHaveBeenCalledTimes((round + 1) * 2);
-      if (round < 5) {
-        await vi.advanceTimersByTimeAsync(1_000);
-      }
-    }
-    await vi.advanceTimersByTimeAsync(5_000);
-
-    expect(request).toHaveBeenCalledTimes(12);
-    expect(localStorage.getItem(pendingKey("ws://gw"))).not.toBeNull();
-  });
-
-  it("marks sidebar arrays for replacement", async () => {
+  it("stores sidebar arrays as one profile preference value", async () => {
     const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(async () => ({}));
     const sidebarEntries = ["route:usage"];
 
     pushServerUiPrefs(createClient(request), { sidebarEntries });
     await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
 
-    expect(request).toHaveBeenCalledWith("config.patch", {
-      raw: JSON.stringify({ ui: { prefs: { sidebarEntries } } }),
-      replacePaths: ["ui.prefs.sidebarEntries"],
-      note: "control-ui prefs sync",
+    expect(request).toHaveBeenCalledWith("users.prefs.set", {
+      entries: { "ui.sidebarEntries": sidebarEntries },
     });
   });
 
@@ -1084,7 +992,7 @@ describe("pushServerUiPrefs", () => {
     flushServerUiPrefs(createClient(replayRequest, "ws://b"));
     await vi.waitFor(() => expect(replayRequest).toHaveBeenCalledOnce());
     expect(replayRequest.mock.calls[0]?.[1]).toMatchObject({
-      raw: JSON.stringify({ ui: { prefs: { locale: "de" } } }),
+      entries: { "ui.locale": "de" },
     });
     expect(localStorage.getItem(pendingKey("ws://a"))).not.toBeNull();
   });
@@ -1120,7 +1028,7 @@ describe("pushServerUiPrefs", () => {
 
     await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
     expect(request.mock.calls[1]?.[1]).toMatchObject({
-      raw: JSON.stringify({ ui: { prefs: { themeMode: "dark" } } }),
+      entries: { "ui.themeMode": "dark" },
     });
   });
 
@@ -1132,7 +1040,7 @@ describe("pushServerUiPrefs", () => {
 
     await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
     expect(request.mock.calls[0]?.[1]).toMatchObject({
-      raw: JSON.stringify({ ui: { prefs: { locale: "de" } } }),
+      entries: { "ui.locale": "de" },
     });
     await waitForFast(() => expect(localStorage.getItem(pendingKey("ws://first"))).toBeNull());
     expect(localStorage.getItem(pendingKey(""))).toBeNull();

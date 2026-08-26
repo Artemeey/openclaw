@@ -31,15 +31,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const deferred = () => {
-  let resolve!: (value: unknown) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<unknown>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, reject, resolve };
-};
 const pendingKey = (scope: string) => `openclaw.control.serverPrefs.pending.v1:${scope}`;
 const readPending = (scope: string) =>
   JSON.parse(localStorage.getItem(pendingKey(scope)) ?? "{}") as Record<string, unknown>;
@@ -74,7 +65,6 @@ describe("read-only server preference lifecycle", () => {
     });
     const prefs = changedServerUiPrefs(previous, next);
     const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>();
-    const afterCommit = vi.fn();
 
     expect(Object.keys(prefs ?? {}).toSorted()).toEqual(
       [
@@ -89,16 +79,10 @@ describe("read-only server preference lifecycle", () => {
         "sidebarEntries",
       ].toSorted(),
     );
-    pushServerUiPrefs(createClient(request, scope, true, { ok: true }, false), prefs ?? {}, {
-      afterCommit,
-    });
+    pushServerUiPrefs(createClient(request, scope, true, { ok: true }, false), prefs ?? {});
 
     expect(request).not.toHaveBeenCalled();
     expect(localStorage.getItem(pendingKey(scope))).toBeNull();
-    expect(afterCommit).toHaveBeenCalledExactlyOnceWith({
-      needsRefresh: false,
-      retainedLocal: true,
-    });
     for (const key of [
       "theme",
       "themeMode",
@@ -121,11 +105,9 @@ describe("read-only server preference lifecycle", () => {
     const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>();
     patchSettings({ theme: "knot" });
 
-    pushServerUiPrefs(
-      createClient(request, scope, true, { ok: true }, false),
-      { theme: "knot" },
-      { afterCommit: vi.fn() },
-    );
+    pushServerUiPrefs(createClient(request, scope, true, { ok: true }, false), {
+      theme: "knot",
+    });
 
     const initial = configWithPrefs({ theme: "claw" });
     expect(applyServerUiPrefs(initial, { scope, onApplied: vi.fn() })).toBe(false);
@@ -159,16 +141,10 @@ describe("read-only server preference lifecycle", () => {
     applyServerUiPrefs(initial, { scope, onApplied: vi.fn() });
     patchSettings({ theme: "knot" });
 
-    pushServerUiPrefs(
-      createClient(vi.fn(), scope, true, { ok: true }, false),
-      { theme: "knot" },
-      {
-        afterCommit: ({ retainedLocal }) => {
-          expect(retainedLocal).toBe(true);
-          expect(applyServerUiPrefs(initial, { scope, onApplied: vi.fn() })).toBe(false);
-        },
-      },
-    );
+    pushServerUiPrefs(createClient(vi.fn(), scope, true, { ok: true }, false), {
+      theme: "knot",
+    });
+    expect(applyServerUiPrefs(initial, { scope, onApplied: vi.fn() })).toBe(false);
 
     expect(
       localStorage.getItem(`openclaw.control.serverPrefs.retained-local.v1:${scope}`),
@@ -239,42 +215,6 @@ describe("read-only server preference lifecycle", () => {
     expect(localStorage.getItem(pendingKey(scope))).toBeNull();
   });
 
-  it("rechecks write capability after queued config writes settle", async () => {
-    const scope = "ws://gw";
-    const gate = deferred();
-    const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(async () => ({}));
-    const client = {
-      request,
-      gatewayUrl: scope,
-      connected: true,
-    } as unknown as GatewayBrowserClient;
-    let canPatch = true;
-    const writer: Parameters<typeof pushServerUiPrefs>[0] = {
-      get canPatch() {
-        return canPatch;
-      },
-      state: { client, connected: true },
-      runExternalMutation: async (task, options) => {
-        await gate.promise;
-        if (options?.canDispatch && !options.canDispatch()) {
-          return {
-            ok: false,
-            reason: "unavailable",
-            error: options.dispatchError ?? "dispatch blocked",
-          };
-        }
-        return { ok: true, value: await task(client), refresh: { ok: true } };
-      },
-    };
-
-    pushServerUiPrefs(writer, { locale: "de" });
-    canPatch = false;
-    gate.resolve(undefined);
-    await vi.waitFor(() => expect(readPending(scope)).toEqual({ locale: "de" }));
-
-    expect(request).not.toHaveBeenCalled();
-  });
-
   it("does not replay persisted intent that another tab cancelled", async () => {
     const scope = "ws://gw";
     const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(async () => ({}));
@@ -308,9 +248,8 @@ describe("read-only server preference lifecycle", () => {
     (client as { canPatch: boolean }).canPatch = true;
     flushServerUiPrefs(client);
     await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
-    expect(request).toHaveBeenCalledWith("config.patch", {
-      raw: JSON.stringify({ ui: { prefs: { theme: "knot" } } }),
-      note: "control-ui prefs sync",
+    expect(request).toHaveBeenCalledWith("users.prefs.set", {
+      entries: { "ui.theme": "knot" },
     });
   });
 
@@ -325,9 +264,8 @@ describe("read-only server preference lifecycle", () => {
     flushServerUiPrefs(client);
 
     await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
-    expect(request).toHaveBeenCalledWith("config.patch", {
-      raw: JSON.stringify({ ui: { prefs: { theme: "dash" } } }),
-      note: "control-ui prefs sync",
+    expect(request).toHaveBeenCalledWith("users.prefs.set", {
+      entries: { "ui.theme": "dash" },
     });
   });
 
@@ -349,9 +287,8 @@ describe("read-only server preference lifecycle", () => {
     pushServerUiPrefs(writer, { themeMode: "dark" });
 
     await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
-    expect(request).toHaveBeenCalledWith("config.patch", {
-      raw: JSON.stringify({ ui: { prefs: { themeMode: "dark" } } }),
-      note: "control-ui prefs sync",
+    expect(request).toHaveBeenCalledWith("users.prefs.set", {
+      entries: { "ui.themeMode": "dark" },
     });
   });
 });

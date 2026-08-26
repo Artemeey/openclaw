@@ -11,9 +11,11 @@ import {
 import { i18n, isSupportedLocale } from "../i18n/index.ts";
 import type { ShellRouteState } from "./app-host-route-state.ts";
 import type { ApplicationContext } from "./context.ts";
+import { hasOperatorWriteAccess } from "./operator-access.ts";
 import {
   applyServerUiPrefs,
   flushServerUiPrefs,
+  refreshServerUiPrefs,
   resetServerUiPrefsSync,
   resolveServerUiPrefState,
 } from "./server-prefs.ts";
@@ -89,52 +91,58 @@ function diffAgentRoster(
 export class ShellGatewayOwner {
   constructor(private readonly host: ShellGatewayHost) {}
 
-  reconcileServerUiPrefs(runtimeConfig: ApplicationContext["runtimeConfig"]): void {
+  reconcileServerUiPrefs(
+    runtimeConfig: ApplicationContext["runtimeConfig"],
+    options: { force?: boolean } = {},
+  ): void {
     const snapshot = runtimeConfig.state.configSnapshot;
     const context = this.host.context;
     if (!snapshot?.config || !context || context.runtimeConfig !== runtimeConfig) {
       return;
     }
-    const scope = context.gateway.connection.gatewayUrl;
-    applyServerUiPrefs(snapshot.config, {
-      scope,
-      onThemeChanged: (theme) => context.theme.recordServerSelection(theme, scope),
-      onApplied: (patch) => {
-        if (patch.sidebarEntries !== undefined) {
-          context.navigation.update({ sidebarEntries: patch.sidebarEntries });
-        }
-        context.theme.refresh();
+    const profileId = context.gateway.snapshot?.selfUser?.id;
+    if (!profileId) {
+      return;
+    }
+    const scope = `${context.gateway.connection.gatewayUrl}#${profileId}`;
+    void refreshServerUiPrefs(
+      runtimeConfig,
+      snapshot.config,
+      {
+        scope,
+        onLoaded: (preferenceSnapshot) => {
+          applyServerUiPrefs(preferenceSnapshot, {
+            scope,
+            onThemeChanged: (theme) => context.theme.recordServerSelection(theme, scope),
+            onApplied: (patch) => {
+              if (patch.sidebarEntries !== undefined) {
+                context.navigation.update({ sidebarEntries: patch.sidebarEntries });
+              }
+              context.theme.refresh();
+            },
+          });
+          const localePref = resolveServerUiPrefState(preferenceSnapshot, "locale", scope);
+          const localePrefSignature = JSON.stringify([
+            scope,
+            localePref.overridden,
+            localePref.value,
+          ]);
+          if (localePrefSignature === this.host.lastLocalePrefSignature) {
+            return;
+          }
+          this.host.lastLocalePrefSignature = localePrefSignature;
+          if (localePref.overridden && isSupportedLocale(localePref.value)) {
+            void i18n.setLocale(localePref.value);
+            return;
+          }
+          void i18n.useSystemLocale();
+        },
       },
-    });
-    const localePref = resolveServerUiPrefState(snapshot.config, "locale", scope);
-    const localePrefSignature = JSON.stringify([scope, localePref.overridden, localePref.value]);
-    if (localePrefSignature === this.host.lastLocalePrefSignature) {
-      return;
-    }
-    this.host.lastLocalePrefSignature = localePrefSignature;
-    if (localePref.overridden && isSupportedLocale(localePref.value)) {
-      void i18n.setLocale(localePref.value);
-      return;
-    }
-    void i18n.useSystemLocale();
-  }
-
-  reconcileCommittedServerUiPrefs(
-    runtimeConfig: ApplicationContext["runtimeConfig"],
-    needsRefresh: boolean,
-    retainedLocal = false,
-  ): void {
-    if (this.host.context?.runtimeConfig !== runtimeConfig) {
-      return;
-    }
-    if (needsRefresh) {
-      void runtimeConfig.refresh();
-      return;
-    }
-    this.reconcileServerUiPrefs(runtimeConfig);
-    if (retainedLocal) {
-      this.host.context?.theme.refresh();
-    }
+      {
+        ...options,
+        canSync: hasOperatorWriteAccess(context.gateway.snapshot.hello?.auth ?? null),
+      },
+    );
   }
 
   handleGatewayEvent(event: GatewayEventFrame): void {
@@ -172,6 +180,13 @@ export class ShellGatewayOwner {
         void runtimeConfig.refresh();
       }
       this.scheduleAgentRosterRefresh();
+      return;
+    }
+    if (event.event === "users.prefs.changed") {
+      const runtimeConfig = this.host.context?.runtimeConfig;
+      if (runtimeConfig) {
+        this.reconcileServerUiPrefs(runtimeConfig, { force: true });
+      }
       return;
     }
     if (event.event !== "ui.command" || !event.payload) {
@@ -264,6 +279,10 @@ export class ShellGatewayOwner {
     this.updateGatewaySessionKey(snapshot);
     this.ensureAgentsList(snapshot);
     this.ensureRuntimeConfig(snapshot);
+    const runtimeConfig = this.host.context?.runtimeConfig;
+    if (runtimeConfig) {
+      this.reconcileServerUiPrefs(runtimeConfig);
+    }
     if (previousPhase !== "connected" && snapshot.phase === "connected") {
       i18n.retryPendingLocale();
     }
@@ -291,9 +310,12 @@ export class ShellGatewayOwner {
     }
     this.host.runtimeConfigClient = snapshot.client;
     this.host.runtimeConfigSource = runtimeConfig;
+    const context = this.host.context;
+    const profileId = context?.gateway.snapshot.selfUser?.id;
+    const scope = profileId ? `${context?.gateway.connection.gatewayUrl ?? ""}#${profileId}` : "";
     flushServerUiPrefs(runtimeConfig, {
-      afterCommit: ({ needsRefresh, retainedLocal }) =>
-        this.reconcileCommittedServerUiPrefs(runtimeConfig, needsRefresh, retainedLocal),
+      scope,
+      canSync: hasOperatorWriteAccess(snapshot.hello?.auth ?? null),
     });
     void runtimeConfig.ensureLoaded();
   }
