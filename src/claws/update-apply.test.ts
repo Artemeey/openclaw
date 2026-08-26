@@ -778,7 +778,7 @@ describe("applyClawUpdatePlan", () => {
     expect(applyPackage).toHaveBeenCalledOnce();
   });
 
-  it("rolls workspace and MCP changes back when root provenance cannot advance", async () => {
+  it("runs every rollback sequentially when root provenance cannot advance", async () => {
     const updatePlan = plan([
       {
         kind: "workspaceFile",
@@ -789,8 +789,23 @@ describe("applyClawUpdatePlan", () => {
         reason: "target changed",
       },
     ]);
-    const workspaceRollback = vi.fn(async () => undefined);
-    const mcpRollback = vi.fn(async () => undefined);
+    const rollbackOrder: string[] = [];
+    let activeRollback: string | undefined;
+    const failingRollback = (label: string, message: string) =>
+      vi.fn(async () => {
+        if (activeRollback) {
+          throw new Error(`rollback overlap: ${activeRollback} -> ${label}`);
+        }
+        activeRollback = label;
+        rollbackOrder.push(`${label}:start`);
+        await Promise.resolve();
+        rollbackOrder.push(`${label}:end`);
+        activeRollback = undefined;
+        throw new Error(message);
+      });
+    const cronRollback = failingRollback("cron", "cron failed");
+    const mcpRollback = failingRollback("MCP", "MCP failed");
+    const workspaceRollback = failingRollback("workspace", "workspace failed");
 
     await expect(
       applyClawUpdatePlan(
@@ -807,12 +822,26 @@ describe("applyClawUpdatePlan", () => {
             rollback: workspaceRollback,
           })),
           applyMcp: vi.fn(async () => ({ appliedNames: [], rollback: mcpRollback })),
+          applyCron: vi.fn(async () => ({ appliedIds: [], rollback: cronRollback })),
           persistInstall: vi.fn(() => {
             throw new Error("provenance race");
           }),
         },
       ),
-    ).rejects.toMatchObject({ code: "provenance_update_failed" });
+    ).rejects.toMatchObject({
+      code: "update_partial",
+      message:
+        "provenance race; cron rollback failed: cron failed; MCP rollback failed: MCP failed; workspace rollback failed: workspace failed",
+    });
+    expect(rollbackOrder).toEqual([
+      "cron:start",
+      "cron:end",
+      "MCP:start",
+      "MCP:end",
+      "workspace:start",
+      "workspace:end",
+    ]);
+    expect(cronRollback).toHaveBeenCalledOnce();
     expect(mcpRollback).toHaveBeenCalledOnce();
     expect(workspaceRollback).toHaveBeenCalledOnce();
   });
