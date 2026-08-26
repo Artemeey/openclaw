@@ -58,21 +58,19 @@ function resolveBrowserOperationRequestTimeoutMs(timeoutMs: unknown): number {
   return addTimerTimeoutGraceMs(operationTimeoutMs, BROWSER_ACTION_TRANSPORT_SLACK_MS) ?? 1;
 }
 
-async function postDownloadRequest(
+async function postBrowserOperationRequest<T>(
   baseUrl: string | undefined,
-  route: "/download" | "/wait/download",
+  route: "/download" | "/wait/download" | "/hooks/dialog" | "/hooks/file-chooser",
   body: Record<string, unknown>,
-  profile?: string,
-  timeoutMs?: number,
-  signal?: AbortSignal,
-): Promise<BrowserDownloadActionResult> {
-  const q = buildProfileQuery(profile);
-  return await fetchBrowserJson<BrowserDownloadActionResult>(withBaseUrl(baseUrl, `${route}${q}`), {
+  opts: { profile?: string; timeoutMs?: number; signal?: AbortSignal },
+): Promise<T> {
+  const q = buildProfileQuery(opts.profile);
+  return await fetchBrowserJson<T>(withBaseUrl(baseUrl, `${route}${q}`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    timeoutMs: resolveBrowserOperationRequestTimeoutMs(timeoutMs),
-    signal,
+    timeoutMs: resolveBrowserOperationRequestTimeoutMs(opts.timeoutMs),
+    signal: opts.signal,
   });
 }
 
@@ -113,20 +111,18 @@ export async function browserArmDialog(
     signal?: AbortSignal;
   },
 ): Promise<BrowserActionOk> {
-  const q = buildProfileQuery(opts.profile);
-  return await fetchBrowserJson<BrowserActionOk>(withBaseUrl(baseUrl, `/hooks/dialog${q}`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+  return await postBrowserOperationRequest<BrowserActionOk>(
+    baseUrl,
+    "/hooks/dialog",
+    {
       accept: opts.accept,
       promptText: opts.promptText,
       dialogId: opts.dialogId,
       targetId: opts.targetId,
       timeoutMs: opts.timeoutMs,
-    }),
-    timeoutMs: resolveBrowserOperationRequestTimeoutMs(opts.timeoutMs),
-    signal: opts.signal,
-  });
+    },
+    opts,
+  );
 }
 
 /** Arm or execute a browser file chooser upload. */
@@ -143,21 +139,19 @@ export async function browserArmFileChooser(
     signal?: AbortSignal;
   },
 ): Promise<BrowserActionOk> {
-  const q = buildProfileQuery(opts.profile);
-  return await fetchBrowserJson<BrowserActionOk>(withBaseUrl(baseUrl, `/hooks/file-chooser${q}`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+  return await postBrowserOperationRequest<BrowserActionOk>(
+    baseUrl,
+    "/hooks/file-chooser",
+    {
       paths: opts.paths,
       ref: opts.ref,
       inputRef: opts.inputRef,
       element: opts.element,
       targetId: opts.targetId,
       timeoutMs: opts.timeoutMs,
-    }),
-    timeoutMs: resolveBrowserOperationRequestTimeoutMs(opts.timeoutMs),
-    signal: opts.signal,
-  });
+    },
+    opts,
+  );
 }
 
 /** Wait for the next managed browser download and save it under the guarded download root. */
@@ -171,7 +165,7 @@ export async function browserWaitForDownload(
     signal?: AbortSignal;
   },
 ): Promise<BrowserDownloadActionResult> {
-  return await postDownloadRequest(
+  return await postBrowserOperationRequest<BrowserDownloadActionResult>(
     baseUrl,
     "/wait/download",
     {
@@ -179,9 +173,7 @@ export async function browserWaitForDownload(
       path: opts.path,
       timeoutMs: opts.timeoutMs,
     },
-    opts.profile,
-    opts.timeoutMs,
-    opts.signal,
+    opts,
   );
 }
 
@@ -197,7 +189,7 @@ export async function browserDownload(
     signal?: AbortSignal;
   },
 ): Promise<BrowserDownloadActionResult> {
-  return await postDownloadRequest(
+  return await postBrowserOperationRequest<BrowserDownloadActionResult>(
     baseUrl,
     "/download",
     {
@@ -206,9 +198,7 @@ export async function browserDownload(
       path: opts.path,
       timeoutMs: opts.timeoutMs,
     },
-    opts.profile,
-    opts.timeoutMs,
-    opts.signal,
+    opts,
   );
 }
 

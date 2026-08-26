@@ -8,14 +8,17 @@ vi.mock("./client-fetch.js", () => clientFetchMocks);
 
 import { browserArmDialog, browserArmFileChooser } from "./client-actions-core.js";
 
-function lastFetchCall(): { url: string; options: { body?: string; timeoutMs?: number } } {
+function lastFetchCall(): {
+  url: string;
+  options: Omit<RequestInit, "body"> & { body?: string; timeoutMs?: number };
+} {
   const call = clientFetchMocks.fetchBrowserJson.mock.calls.at(-1);
   if (!call) {
     throw new Error("fetchBrowserJson was not called");
   }
   return {
     url: String(call[0]),
-    options: call[1] as { body?: string; timeoutMs?: number },
+    options: call[1] as Omit<RequestInit, "body"> & { body?: string; timeoutMs?: number },
   };
 }
 
@@ -33,6 +36,10 @@ describe("browser hook client actions", () => {
 
     const call = lastFetchCall();
     expect(call.url).toBe("/hooks/file-chooser?profile=openclaw");
+    expect(call.options).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
     expect(call.options.timeoutMs).toBe(35_000);
     expect(JSON.parse(call.options.body ?? "{}")).toEqual({
       paths: ["/tmp/openclaw/uploads/report.pdf"],
