@@ -64,11 +64,28 @@ describe.sequential("authenticated request connection liveness", () => {
     const held = new Promise<void>((resolve) => {
       releaseHandler = resolve;
     });
-    runtime.beforeHandler.mockReturnValue(held);
+    // Dispatch is fire-and-forget behind a shared lazy import, so the handler
+    // may start well after dispatch() resolves. Synchronize on the handler's
+    // own entry/response signals instead of polling call counts on a clock.
+    let handlerStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      handlerStarted = resolve;
+    });
+    runtime.beforeHandler.mockImplementation(() => {
+      handlerStarted();
+      return held;
+    });
     const state = createGatewayConnectionState({ cfg: {} });
     const client = createClient();
     state.clients.add(client);
-    const send = vi.fn((_frame: unknown) => ({ kind: "sent" }) as const);
+    let respondToRequest!: (frame: unknown) => void;
+    const response = new Promise<unknown>((resolve) => {
+      respondToRequest = resolve;
+    });
+    const send = vi.fn((frame: unknown) => {
+      respondToRequest(frame);
+      return { kind: "sent" } as const;
+    });
     const context = {
       getRuntimeConfig: () => ({}),
       logGateway: { error: vi.fn() },
@@ -93,15 +110,15 @@ describe.sequential("authenticated request connection liveness", () => {
       { type: "req", id: testCase.method, method: testCase.method, params: testCase.params },
       client,
     );
-    await vi.waitFor(() => expect(runtime.beforeHandler).toHaveBeenCalledOnce());
+    await started;
 
     state.clients.delete(client);
     state.sessionEventSubscribers.unsubscribe(client.connId);
     state.sessionMessageSubscribers.unsubscribeAll(client.connId);
     releaseHandler();
 
-    await vi.waitFor(() =>
-      expect(send).toHaveBeenCalledWith(expect.objectContaining({ id: testCase.method, ok: true })),
+    await expect(response).resolves.toEqual(
+      expect.objectContaining({ id: testCase.method, ok: true }),
     );
     testCase.assertEmpty(state);
   });
