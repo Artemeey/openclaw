@@ -39,15 +39,19 @@ describe("renderChatComposer context usage", () => {
           providers: [
             {
               provider: "openai",
+              authProvider: "openai",
               displayName: "OpenAI",
               status: "ok",
               profiles: [{ profileId: "openai", type: "oauth", status: "ok" }],
-              usage: {
-                providerId: "openai",
-                windows: [
-                  { label: "168h", usedPercent: 72, resetAt: 1_700_000_000_000 + 3 * 3_600_000 },
-                ],
-              },
+            },
+          ],
+          providerUsage: [
+            {
+              providerId: "openai",
+              displayName: "OpenAI",
+              windows: [
+                { label: "168h", usedPercent: 72, resetAt: 1_700_000_000_000 + 3 * 3_600_000 },
+              ],
             },
           ],
         },
@@ -86,10 +90,31 @@ describe("renderChatComposer context usage", () => {
           providers: [
             {
               provider: "openai",
+              authProvider: "openai",
               displayName: "OpenAI",
               status: "ok",
-              profiles: [{ profileId: "openai", type: "oauth", status: "ok" }],
-              usage: { providerId: "openai", windows: [{ label: "Week", usedPercent: 72 }] },
+              profiles: [
+                {
+                  profileId: "openai:work",
+                  type: "oauth",
+                  status: "ok",
+                  email: "work@example.com",
+                  usage: {
+                    providerId: "openai",
+                    windows: [{ label: "Week", usedPercent: 72 }],
+                  },
+                },
+                {
+                  profileId: "openai:personal",
+                  type: "oauth",
+                  status: "ok",
+                  displayName: "Personal",
+                  usage: {
+                    providerId: "openai",
+                    windows: [{ label: "Week", usedPercent: 25 }],
+                  },
+                },
+              ],
             },
           ],
         },
@@ -106,6 +131,11 @@ describe("renderChatComposer context usage", () => {
         .querySelector<HTMLAnchorElement>("[data-chat-provider-usage='true']")
         ?.getAttribute("href"),
     ).toBe("/control/usage");
+    expect(
+      [...container.querySelectorAll("[data-chat-usage-account='true']")].map((row) =>
+        row.textContent?.trim(),
+      ),
+    ).toEqual(["work@example.com", "Personal"]);
   });
 
   it("deduplicates provider aliases and hides cost estimates for subscriptions", () => {
@@ -145,19 +175,20 @@ describe("renderChatComposer context usage", () => {
           providers: [
             {
               provider: "anthropic",
+              authProvider: "anthropic",
               displayName: "Claude",
               status: "ok",
               profiles: [{ profileId: "anthropic:oauth", type: "oauth", status: "ok" }],
-              usage,
             },
             {
               provider: "claude-cli",
+              authProvider: "anthropic",
               displayName: "Claude",
               status: "ok",
               profiles: [{ profileId: "claude-cli", type: "oauth", status: "ok" }],
-              usage,
             },
           ],
+          providerUsage: [{ ...usage, displayName: "Claude" }],
         },
       },
     });
@@ -212,20 +243,25 @@ describe("renderChatComposer context usage", () => {
               displayName: "Claude",
               status: "ok",
               profiles: [{ profileId: "anthropic:oauth", type: "oauth", status: "ok" }],
-              usage: {
-                providerId: "anthropic",
-                windows: [{ label: "Week", usedPercent: 25 }],
-              },
             },
             {
               provider: "openai",
+              authProvider: "openai",
               displayName: "OpenAI",
               status: "ok",
               profiles: [{ profileId: "openai", type: "oauth", status: "ok" }],
-              usage: {
-                providerId: "openai",
-                windows: [{ label: "Week", usedPercent: 72 }],
-              },
+            },
+          ],
+          providerUsage: [
+            {
+              providerId: "anthropic",
+              displayName: "Claude",
+              windows: [{ label: "Week", usedPercent: 25 }],
+            },
+            {
+              providerId: "openai",
+              displayName: "OpenAI",
+              windows: [{ label: "Week", usedPercent: 72 }],
             },
           ],
         },
@@ -318,23 +354,29 @@ describe("renderChatComposer context usage", () => {
           providers: [
             {
               provider: "openai",
+              authProvider: "openai",
               displayName: "OpenAI",
               status: "ok",
               profiles: [{ profileId: "openai", type: "oauth", status: "ok" }],
-              usage: {
-                providerId: "openai",
-                windows: [{ label: "Week", usedPercent: 72 }],
-              },
             },
             {
               provider: "claude-cli",
+              authProvider: "anthropic",
               displayName: "Claude",
               status: "ok",
               profiles: [{ profileId: "claude-cli", type: "oauth", status: "ok" }],
-              usage: {
-                providerId: "anthropic",
-                windows: [{ label: "Week", usedPercent: 25 }],
-              },
+            },
+          ],
+          providerUsage: [
+            {
+              providerId: "openai",
+              displayName: "OpenAI",
+              windows: [{ label: "Week", usedPercent: 72 }],
+            },
+            {
+              providerId: "anthropic",
+              displayName: "Claude",
+              windows: [{ label: "Week", usedPercent: 25 }],
             },
           ],
         },

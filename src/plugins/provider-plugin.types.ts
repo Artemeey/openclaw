@@ -59,6 +59,7 @@ import type {
   ProviderNormalizeTransportContext,
   ProviderPrepareRuntimeAuthContext,
   ProviderPreparedRuntimeAuth,
+  ProviderResolveProfileUsageAuthContext,
   ProviderResolveUsageAuthContext,
   ProviderResolvedUsageAuth,
   ProviderFetchUsageSnapshotContext,
@@ -373,6 +374,14 @@ export type ProviderPlugin = {
    */
   resolveUsageAuth?: (
     ctx: ProviderResolveUsageAuthContext,
+  ) =>
+    | Promise<ProviderResolvedUsageAuth | null | undefined>
+    | ProviderResolvedUsageAuth
+    | null
+    | undefined;
+  /** Resolve usage auth for one exact saved profile before generic OAuth handling. */
+  resolveProfileUsageAuth?: (
+    ctx: ProviderResolveProfileUsageAuthContext,
   ) =>
     | Promise<ProviderResolvedUsageAuth | null | undefined>
     | ProviderResolvedUsageAuth

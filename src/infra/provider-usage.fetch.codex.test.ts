@@ -137,6 +137,56 @@ describe("fetchCodexUsage", () => {
     expect(result.windows).toEqual([{ label: "6h", usedPercent: 11, resetAt: undefined }]);
   });
 
+  it("includes every additional metered quota window", async () => {
+    const mockFetch = createProviderUsageFetch(async () =>
+      makeResponse(200, {
+        rate_limit: {
+          primary_window: {
+            limit_window_seconds: 18_000,
+            used_percent: 8,
+            reset_at: 1_700_000_000,
+          },
+        },
+        additional_rate_limits: [
+          {
+            limit_name: "codex_other",
+            metered_feature: "codex_other",
+            rate_limit: {
+              primary_window: {
+                limit_window_seconds: 900,
+                used_percent: 70,
+                reset_at: 1_700_000_900,
+              },
+            },
+          },
+        ],
+      }),
+    );
+
+    const result = await fetchCodexUsage("token", undefined, 5000, mockFetch);
+    expect(result.windows).toEqual([
+      { label: "5h", usedPercent: 8, resetAt: 1_700_000_000_000 },
+      { label: "codex other · 15m", usedPercent: 70, resetAt: 1_700_000_900_000 },
+    ]);
+  });
+
+  it("ignores malformed successful fields without throwing", async () => {
+    const mockFetch = createProviderUsageFetch(async () =>
+      makeResponse(200, {
+        rate_limit: "unexpected",
+        additional_rate_limits: [null, 42, { rate_limit: "unexpected" }],
+        plan_type: { name: "Plus" },
+        credits: { balance: { amount: 12 } },
+      }),
+    );
+
+    const result = await fetchCodexUsage("token", undefined, 5000, mockFetch);
+
+    expect(result).toMatchObject({ provider: "openai", windows: [] });
+    expect(result.plan).toBeUndefined();
+    expect(result.billing).toBeUndefined();
+  });
+
   it("keeps credits as a provider unit instead of assuming dollars", async () => {
     const mockFetch = createProviderUsageFetch(async () =>
       makeResponse(200, {

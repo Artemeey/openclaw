@@ -272,6 +272,11 @@ describe("Models auth params schemas", () => {
       profileIds: ["openai:primary", "openai:backup"],
       expectedProfileIds: null,
     });
+    expectAccepted(ModelsAuthOrderSetParamsSchema, {
+      provider: "openai",
+      profileIds: null,
+      expectedProfileIds: ["openai:primary", "openai:backup"],
+    });
     expectRejected(ModelsAuthOrderSetParamsSchema, { provider: "openai", profileIds: [] });
     expectAccepted(ModelsAuthCooldownClearParamsSchema, {
       provider: "openai",

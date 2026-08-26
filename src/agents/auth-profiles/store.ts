@@ -255,6 +255,7 @@ type ExternalCliSyncResult = {
 };
 
 let runtimeSnapshotPublisherForTest: ((publish: () => void) => void) | undefined;
+let beforeMultiStoreCommitForTest: ((agentDir: string | undefined) => void) | undefined;
 
 type RuntimeSnapshotPublication = {
   agentDir?: string;
@@ -295,8 +296,14 @@ function publishRuntimeSnapshotsAfterCommit(
 }
 
 const testing = {
+  resetBeforeMultiStoreCommitForTest(): void {
+    beforeMultiStoreCommitForTest = undefined;
+  },
   resetRuntimeSnapshotPublisherForTest(): void {
     runtimeSnapshotPublisherForTest = undefined;
+  },
+  setBeforeMultiStoreCommitForTest(run: (agentDir: string | undefined) => void): void {
+    beforeMultiStoreCommitForTest = run;
   },
   setRuntimeSnapshotPublisherForTest(publisher: (publish: () => void) => void): void {
     runtimeSnapshotPublisherForTest = publisher;
@@ -781,13 +788,29 @@ function buildRuntimeAuthProfileStoreForSave(params: {
 function setRuntimeLocalProfileMetadata(
   store: AuthProfileStore,
   localProfileIds: Iterable<string>,
+  localOrderProviders: Iterable<string>,
+  inheritedOrder?: AuthProfileStore["order"],
   runtimeInheritsMainState = false,
 ): RuntimeAuthProfileStore {
   return {
     ...store,
     runtimeLocalProfileIds: [...new Set(localProfileIds)].toSorted(),
+    runtimeLocalOrderProviders: [...new Set(localOrderProviders)].toSorted(),
+    ...(inheritedOrder ? { runtimeInheritedOrder: inheritedOrder } : {}),
     ...(runtimeInheritsMainState ? { runtimeInheritsMainState: true } : {}),
   };
+}
+
+export function getRuntimeLocalAuthProfileOrderProviders(
+  store: RuntimeAuthProfileStore,
+): string[] | undefined {
+  return store.runtimeLocalOrderProviders;
+}
+
+export function getRuntimeInheritedAuthProfileOrder(
+  store: RuntimeAuthProfileStore,
+): Record<string, string[]> | undefined {
+  return store.runtimeInheritedOrder;
 }
 
 function runtimeStoreInheritsMainState(
@@ -814,6 +837,8 @@ function mergeLocalAuthProfileStoreWithInheritedStore(
   return setRuntimeLocalProfileMetadata(
     stripRuntimeExternalProfileMetadata(merged),
     listRuntimeLocalProfileIds(localStore, inheritedStore),
+    Object.keys(localStore.order ?? {}),
+    inheritedStore.order,
     runtimeStoreInheritsMainState(merged, localStore),
   );
 }
@@ -1100,19 +1125,20 @@ export async function updateAuthProfileStoreWithLock(params: {
   return store;
 }
 
+/** Reports both the overall result and whether any independently committed store changed. */
+export type AuthProfileStoresUpdateResult = Readonly<{ ok: boolean; committed: boolean }>;
+
 /** Apply related updates while every participating auth store is locked. */
 export function updateAuthProfileStoresWithLocks(params: {
   updates: Array<{
     agentDir?: string;
-    lockPriority?: number;
     updater: (store: AuthProfileStore) => boolean;
   }>;
-}): boolean {
+}): AuthProfileStoresUpdateResult {
   const updatesByPath = new Map<
     string,
     {
       agentDir: string | undefined;
-      lockPriority: number;
       updaters: Array<(store: AuthProfileStore) => boolean>;
     }
   >();
@@ -1121,12 +1147,10 @@ export function updateAuthProfileStoresWithLocks(params: {
     const storePath = resolveAuthStorePath(agentDir);
     const existing = updatesByPath.get(storePath);
     if (existing) {
-      existing.lockPriority = Math.min(existing.lockPriority, update.lockPriority ?? 0);
       existing.updaters.push(update.updater);
     } else {
       updatesByPath.set(storePath, {
         agentDir,
-        lockPriority: update.lockPriority ?? 0,
         updaters: [update.updater],
       });
     }
@@ -1134,19 +1158,25 @@ export function updateAuthProfileStoresWithLocks(params: {
   const stores = [...updatesByPath].map(([storePath, update]) => ({
     storePath,
     agentDir: update.agentDir,
-    lockPriority: update.lockPriority,
     updaters: update.updaters,
   }));
+  const mainStorePath = resolveAuthStorePath(resolveRuntimeAuthProfileAgentDir());
   stores.sort((left, right) => {
-    const priority = left.lockPriority - right.lockPriority;
-    if (priority !== 0) {
-      return priority;
+    // Every multi-store mutation takes the inherited main owner first, matching
+    // updateAuthProfileStoreWithLock, then uses path order for any other stores.
+    // Request order would let concurrent logout/reorder operations deadlock.
+    if (left.storePath === mainStorePath) {
+      return right.storePath === mainStorePath ? 0 : -1;
+    }
+    if (right.storePath === mainStorePath) {
+      return 1;
     }
     return left.storePath.localeCompare(right.storePath);
   });
 
   const databases = new Map<string, AuthProfileDatabase>();
-  const publications: Array<() => void> = [];
+  const pendingPublications = new Map<string, () => void>();
+  const committedPublications: Array<() => void> = [];
   const acquire = (index: number): void => {
     const entry = stores[index];
     if (!entry) {
@@ -1165,7 +1195,8 @@ export function updateAuthProfileStoresWithLocks(params: {
           changed = updater(store) || changed;
         }
         if (changed) {
-          publications.push(
+          pendingPublications.set(
+            storeEntry.storePath,
             saveAuthProfileStoreInTransaction(store, storeEntry.agentDir, undefined, database),
           );
         }
@@ -1175,20 +1206,33 @@ export function updateAuthProfileStoresWithLocks(params: {
     runAuthProfileWriteTransaction(entry.agentDir, (database) => {
       databases.set(entry.storePath, database);
       acquire(index + 1);
+      beforeMultiStoreCommitForTest?.(entry.agentDir);
     });
+    const publish = pendingPublications.get(entry.storePath);
+    if (publish) {
+      committedPublications.push(publish);
+      pendingPublications.delete(entry.storePath);
+    }
+  };
+
+  const publishCommittedSnapshots = () => {
+    for (const publish of committedPublications) {
+      publishRuntimeSnapshotsAfterCommit(publish);
+    }
   };
 
   try {
     acquire(0);
   } catch (error) {
+    // Nested agent-store transactions commit independently. Publish every
+    // store that made it across its own commit edge before a later store failed.
+    publishCommittedSnapshots();
     const message = error instanceof Error ? error.message : String(error);
     authProfilesLog.warn(`multi-store auth profile update failed: ${message}`, { error: message });
-    return false;
+    return { ok: false, committed: committedPublications.length > 0 };
   }
-  for (const publish of publications) {
-    publishRuntimeSnapshotsAfterCommit(publish);
-  }
-  return true;
+  publishCommittedSnapshots();
+  return { ok: true, committed: committedPublications.length > 0 };
 }
 
 /** Load the main auth profile store with runtime external profiles overlaid. */
@@ -1274,6 +1318,7 @@ export function loadAuthProfileStoreForRuntime(
         ...externalCli,
       }),
       listRuntimeLocalProfileIds(store),
+      Object.keys(store.order ?? {}),
     );
   }
 
@@ -1290,6 +1335,8 @@ export function loadAuthProfileStoreForRuntime(
       ...externalCli,
     }),
     listRuntimeLocalProfileIds(store, mainStore),
+    Object.keys(store.order ?? {}),
+    mainStore.order,
     runtimeStoreInheritsMainState(mergedStore, store),
   );
 }
@@ -1338,6 +1385,7 @@ export function loadAuthProfileStoreWithoutExternalProfiles(
     return setRuntimeLocalProfileMetadata(
       stripRuntimeExternalProfileMetadata(store),
       listRuntimeLocalProfileIds(store),
+      Object.keys(store.order ?? {}),
     );
   }
 
@@ -1477,24 +1525,24 @@ export function findPersistedAuthProfileCredential(params: {
   ];
 }
 
-/** Resolve which agent dir owns a persisted profile, accounting for inherited OAuth. */
-export function resolvePersistedAuthProfileOwnerAgentDir(params: {
+/** Resolve the stores that own a persisted profile, accounting for inherited OAuth mirrors. */
+export function resolvePersistedAuthProfileOwnerAgentDirs(params: {
   agentDir?: string;
   profileId: string;
-}): string | undefined {
+}): Array<string | undefined> {
   if (isEnvOnlyAuthProfileRuntime()) {
-    return undefined;
+    return [undefined];
   }
   const agentDir = resolveRuntimeAuthProfileAgentDir(params.agentDir);
   if (!agentDir) {
-    return undefined;
+    return [undefined];
   }
   const requestedStore = loadPersistedAuthProfileStore(agentDir);
   const requestedPath = resolveAgentAuthPath(agentDir);
   const mainAgentDir = resolveRuntimeAuthProfileAgentDir();
   const mainPath = mainAgentDir ? resolveAgentAuthPath(mainAgentDir) : resolveSharedAuthPath();
   if (requestedPath === mainPath) {
-    return undefined;
+    return [undefined];
   }
 
   const mainStore = loadPersistedAuthProfileStore(mainAgentDir);
@@ -1504,11 +1552,19 @@ export function resolvePersistedAuthProfileOwnerAgentDir(params: {
       local: requestedProfile,
       main: mainStore?.profiles[params.profileId],
     })
-      ? undefined
-      : agentDir;
+      ? [undefined, agentDir]
+      : [agentDir];
   }
 
-  return mainStore?.profiles[params.profileId] ? undefined : agentDir;
+  return mainStore?.profiles[params.profileId] ? [undefined, agentDir] : [agentDir];
+}
+
+/** Resolve the canonical store used for refreshes and single-owner mutations. */
+export function resolvePersistedAuthProfileOwnerAgentDir(params: {
+  agentDir?: string;
+  profileId: string;
+}): string | undefined {
+  return resolvePersistedAuthProfileOwnerAgentDirs(params)[0];
 }
 
 /** Load the store shape used when applying local-only auth updates. */

@@ -7,6 +7,9 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 const resolveProviderUsageAuthWithPluginMock = vi.fn(
   async (..._args: unknown[]): Promise<unknown> => null,
 );
+const resolveProviderProfileUsageAuthWithPluginMock = vi.fn(
+  async (..._args: unknown[]): Promise<unknown> => null,
+);
 const hasAnyAuthProfileStoreSourceMock = vi.fn(() => false);
 const ensureAuthProfileStoreMock = vi.fn(() => ({
   profiles: {},
@@ -36,6 +39,7 @@ vi.mock("../plugins/provider-runtime.js", async () => {
   );
   return {
     ...actual,
+    resolveProviderProfileUsageAuthWithPlugin: resolveProviderProfileUsageAuthWithPluginMock,
     resolveProviderUsageAuthWithPlugin: resolveProviderUsageAuthWithPluginMock,
   };
 });
@@ -85,6 +89,7 @@ vi.mock("../secrets/provider-env-vars.js", () => ({
 }));
 
 let resolveProviderAuths: typeof import("./provider-usage.auth.js").resolveProviderAuths;
+let resolveProviderProfileUsageAuth: typeof import("./provider-usage.auth.js").resolveProviderProfileUsageAuth;
 
 function resolveProviderAuthsForTest(
   params: Parameters<typeof resolveProviderAuths>[0],
@@ -114,7 +119,8 @@ function providerCalls(mockFn: { mock: { calls: unknown[][] } }): unknown[] {
 
 describe("resolveProviderAuths plugin boundary", () => {
   beforeAll(async () => {
-    ({ resolveProviderAuths } = await import("./provider-usage.auth.js"));
+    ({ resolveProviderAuths, resolveProviderProfileUsageAuth } =
+      await import("./provider-usage.auth.js"));
   });
 
   beforeEach(() => {
@@ -134,6 +140,49 @@ describe("resolveProviderAuths plugin boundary", () => {
     resolveApiKeyForProfileMock.mockResolvedValue(null);
     resolveProviderUsageAuthWithPluginMock.mockReset();
     resolveProviderUsageAuthWithPluginMock.mockResolvedValue(null);
+    resolveProviderProfileUsageAuthWithPluginMock.mockReset();
+    resolveProviderProfileUsageAuthWithPluginMock.mockResolvedValue(null);
+  });
+
+  it("lets a provider own usage auth for one exact native profile", async () => {
+    resolveProviderProfileUsageAuthWithPluginMock.mockResolvedValueOnce({
+      token: "native-usage-marker",
+      subscriptionType: "max",
+      email: "native@example.com",
+    });
+
+    await expect(
+      resolveProviderProfileUsageAuth({
+        provider: "anthropic",
+        profileId: "anthropic:claude-cli",
+        store: {
+          version: 1,
+          profiles: {
+            "anthropic:claude-cli": {
+              type: "oauth",
+              provider: "claude-cli",
+              access: "retired-access",
+              refresh: "retired-refresh",
+              expires: 1,
+            },
+          },
+        },
+        config: {},
+      }),
+    ).resolves.toEqual({
+      provider: "anthropic",
+      token: "native-usage-marker",
+      subscriptionType: "max",
+      email: "native@example.com",
+      authProfileId: "anthropic:claude-cli",
+    });
+    expect(resolveApiKeyForProfileMock).not.toHaveBeenCalled();
+    expect(resolveProviderProfileUsageAuthWithPluginMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "anthropic",
+        context: expect.objectContaining({ profileId: "anthropic:claude-cli" }),
+      }),
+    );
   });
 
   it("prefers plugin-owned usage auth when available", async () => {
@@ -274,6 +323,49 @@ describe("resolveProviderAuths plugin boundary", () => {
     expect(resolveApiKeyForProfileMock).toHaveBeenCalledWith(
       expect.objectContaining({ profileId: "anthropic:managed" }),
     );
+  });
+
+  it("resolves config-bound API-key profiles before plugin usage auth", async () => {
+    const store = {
+      profiles: {
+        "openrouter:saved": {
+          type: "api_key",
+          provider: "openrouter",
+          key: "sk-or-saved",
+        },
+        "openrouter:other": {
+          type: "api_key",
+          provider: "openrouter",
+          key: "sk-or-other",
+        },
+      },
+    };
+    resolveAuthProfileOrderMock.mockReturnValue(["openrouter:other"]);
+    resolveProviderUsageAuthWithPluginMock.mockImplementationOnce(async (rawParams) => {
+      const params = rawParams as {
+        context: { resolveApiKeyFromConfigAndStore: () => string | undefined };
+      };
+      const token = params.context.resolveApiKeyFromConfigAndStore();
+      return token ? { token } : null;
+    });
+
+    const result = await resolveProviderAuthsForTest({
+      providers: ["openrouter"],
+      config: {
+        models: {
+          providers: {
+            openrouter: {
+              baseUrl: "https://openrouter.ai/api/v1",
+              models: [],
+              apiKey: "openrouter:saved",
+            },
+          },
+        },
+      },
+      store: store as never,
+    });
+
+    expect(result).toEqual([{ provider: "openrouter", token: "sk-or-saved" }]);
   });
 
   it("does not synthesize Codex app-server auth for generic OpenAI usage", async () => {
@@ -459,6 +551,188 @@ describe("resolveProviderAuths plugin boundary", () => {
     });
 
     expect(providerCalls(resolveProviderUsageAuthWithPluginMock)).toEqual(["openai"]);
+  });
+
+  it("excludes OAuth account auth from provider-wide usage", async () => {
+    const store = {
+      profiles: {
+        "openai:work": {
+          type: "oauth",
+          provider: "openai",
+          accessToken: "oauth-token",
+        },
+      },
+    };
+    ensureAuthProfileStoreMock.mockReturnValue(store as never);
+    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue(store as never);
+    resolveAuthProfileOrderMock.mockReturnValue(["openai:work"]);
+    resolveApiKeyForProfileMock.mockResolvedValue({
+      apiKey: "oauth-token",
+      provider: "openai",
+    });
+    resolveProviderUsageAuthWithPluginMock.mockImplementationOnce(async (rawParams) => {
+      const params = rawParams as {
+        context: { resolveOAuthToken: () => Promise<{ token: string } | null> };
+      };
+      return await params.context.resolveOAuthToken();
+    });
+
+    await expect(
+      resolveProviderAuthsForTest({
+        providers: ["openai"],
+        store: store as never,
+        providerWideAuthOnly: true,
+      }),
+    ).resolves.toEqual([]);
+    expect(resolveProviderUsageAuthWithPluginMock).toHaveBeenCalledOnce();
+  });
+
+  it("lets provider-wide hooks continue from OAuth to API-key auth", async () => {
+    const store = {
+      profiles: {
+        "minimax:work": {
+          type: "oauth",
+          provider: "minimax",
+          accessToken: "oauth-token",
+        },
+      },
+    };
+    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue(store as never);
+    resolveAuthProfileOrderMock.mockReturnValue(["minimax:work"]);
+    resolveProviderUsageAuthWithPluginMock.mockImplementationOnce(async (rawParams) => {
+      const params = rawParams as {
+        context: { resolveOAuthToken: () => Promise<{ token: string } | null> };
+      };
+      expect(await params.context.resolveOAuthToken()).toBeNull();
+      return { token: "minimax-api-key" };
+    });
+
+    await expect(
+      resolveProviderAuthsForTest({
+        providers: ["minimax"],
+        store: store as never,
+        providerWideAuthOnly: true,
+      }),
+    ).resolves.toEqual([{ provider: "minimax", token: "minimax-api-key" }]);
+  });
+
+  it("excludes saved token accounts from provider-wide API-key candidates", async () => {
+    const store = {
+      profiles: {
+        "anthropic:setup-token": {
+          type: "token",
+          provider: "anthropic",
+          token: "sk-ant-oat01-account-token",
+        },
+      },
+    };
+    ensureAuthProfileStoreMock.mockReturnValue(store as never);
+    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue(store as never);
+    resolveAuthProfileOrderMock.mockReturnValue(["anthropic:setup-token"]);
+    resolveProviderUsageAuthWithPluginMock.mockImplementationOnce(async (rawParams) => {
+      const params = rawParams as {
+        context: {
+          resolveApiKeyCandidatesFromConfigAndStore: () => Promise<string[]>;
+        };
+      };
+      expect(await params.context.resolveApiKeyCandidatesFromConfigAndStore()).toEqual([]);
+      return { handled: true };
+    });
+
+    await expect(
+      resolveProviderAuthsForTest({
+        providers: ["anthropic"],
+        store: store as never,
+        providerWideAuthOnly: true,
+      }),
+    ).resolves.toEqual([]);
+    expect(resolveProviderUsageAuthWithPluginMock).toHaveBeenCalledOnce();
+    expect(resolveApiKeyForProfileMock).not.toHaveBeenCalled();
+  });
+
+  it("disables fallback when resolving one exact usage profile", async () => {
+    const store = {
+      profiles: {
+        "openai:default": {
+          type: "oauth",
+          provider: "openai",
+          accessToken: "oauth-token",
+        },
+      },
+    };
+    resolveApiKeyForProfileMock.mockResolvedValue({
+      apiKey: "oauth-token",
+      provider: "openai",
+    });
+
+    await resolveProviderProfileUsageAuth({
+      provider: "openai",
+      profileId: "openai:default",
+      store: store as never,
+      agentDir: "/tmp/openclaw-agent",
+      config: {},
+    });
+
+    expect(resolveApiKeyForProfileMock).toHaveBeenCalledWith({
+      cfg: {},
+      store,
+      profileId: "openai:default",
+      agentDir: "/tmp/openclaw-agent",
+      allowProfileFallback: false,
+    });
+  });
+
+  it("surfaces failures from one exact usage profile", async () => {
+    const refreshError = new Error("saved token refresh failed");
+    resolveApiKeyForProfileMock.mockRejectedValueOnce(refreshError);
+
+    await expect(
+      resolveProviderProfileUsageAuth({
+        provider: "openai",
+        profileId: "openai:default",
+        store: {
+          version: 1,
+          profiles: {
+            "openai:default": {
+              type: "token",
+              provider: "openai",
+              token: "expired-token",
+            },
+          },
+        },
+        config: {},
+      }),
+    ).rejects.toBe(refreshError);
+  });
+
+  it("keeps provider-wide admin auth when OAuth accounts also exist", async () => {
+    const store = {
+      profiles: {
+        "openai:work": {
+          type: "oauth",
+          provider: "openai",
+          accessToken: "oauth-token",
+        },
+      },
+    };
+    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue(store as never);
+    resolveAuthProfileOrderMock.mockReturnValue(["openai:work"]);
+    resolveProviderUsageAuthWithPluginMock.mockResolvedValueOnce({
+      token: "encoded-openai-admin-token",
+    });
+
+    await expect(
+      resolveProviderAuthsForTest({
+        providers: ["openai"],
+        store: store as never,
+        providerWideAuthOnly: true,
+      }),
+    ).resolves.toEqual([
+      {
+        provider: "openai",
+        token: "encoded-openai-admin-token",
+      },
+    ]);
   });
 
   it("does not overlay external auth profiles while checking the skip gate", async () => {

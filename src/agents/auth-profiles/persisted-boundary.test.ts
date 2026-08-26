@@ -299,6 +299,8 @@ describe("persisted auth profile boundary", () => {
         version: AUTH_STORE_VERSION,
         runtimePersistedProfileIds: ["openai:added"],
         runtimeLocalProfileIds: ["openai:added"],
+        runtimeLocalOrderProviders: ["openai"],
+        runtimeInheritedOrder: { openai: ["openai:base"] },
         profiles: {
           "openai:overridden": {
             type: "api_key",
@@ -316,6 +318,8 @@ describe("persisted auth profile boundary", () => {
 
     expect(merged.runtimePersistedProfileIds).toEqual(["openai:added", "openai:base"]);
     expect(merged.runtimeLocalProfileIds).toEqual(["openai:added"]);
+    expect(merged.runtimeLocalOrderProviders).toEqual(["openai"]);
+    expect(merged.runtimeInheritedOrder).toEqual({ openai: ["openai:base"] });
   });
 
   it("preserves config-only order fallbacks during agent-store merges", () => {

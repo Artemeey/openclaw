@@ -475,6 +475,8 @@ enum class GatewayMethod(
   CommandsList("commands.list"),
   ModelsList("models.list"),
   ModelsAuthStatus("models.authStatus"),
+  ModelsAuthOrderSet("models.authOrderSet"),
+  ModelsAuthCooldownClear("models.authCooldownClear"),
   ModelsAuthLogout("models.authLogout"),
   ToolsCatalog("tools.catalog"),
   ToolsEffective("tools.effective"),

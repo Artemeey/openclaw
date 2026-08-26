@@ -6,7 +6,10 @@ import {
   setAuthProfileOrder,
   type AuthProfileStore,
 } from "../../agents/auth-profiles.js";
-import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
+import {
+  type ProviderAuthAliasLookupParams,
+  resolveProviderIdForAuth,
+} from "../../agents/provider-auth-aliases.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { KeyedAsyncQueue } from "../../plugin-sdk/keyed-async-queue.js";
 
@@ -32,8 +35,11 @@ function resolveOrderForProvider(
   store: AuthProfileStore,
   orderProvider: string,
   authProvider: string,
+  authAliasLookupParams?: ProviderAuthAliasLookupParams,
+  source: "effective" | "configured" = "effective",
 ): ModelAuthProfileOrder {
-  const stored = findNormalizedProviderValue(store.order, orderProvider);
+  const stored =
+    source === "effective" ? findNormalizedProviderValue(store.order, orderProvider) : undefined;
   const configured = findNormalizedProviderValue(cfg.auth?.order, orderProvider);
   const raw = stored ?? configured;
   const effective = raw
@@ -42,7 +48,10 @@ function resolveOrderForProvider(
           const credential = store.profiles[profileId];
           return (
             credential !== undefined &&
-            resolveProviderIdForAuth(credential.provider, { config: cfg }) === authProvider
+            resolveProviderIdForAuth(
+              credential.provider,
+              authAliasLookupParams ?? { config: cfg },
+            ) === authProvider
           );
         }),
       )
@@ -57,24 +66,10 @@ function resolveOrderForProvider(
   return { configured, effective: repairedEffective, stored, orderProvider };
 }
 
-function listModelAuthOrderProviders(
-  cfg: OpenClawConfig,
-  store: AuthProfileStore,
-  provider: string,
-  authProvider: string,
-): string[] {
-  return uniqueStrings([
-    authProvider,
-    provider,
-    ...Object.keys(store.order ?? {}),
-    ...Object.keys(cfg.auth?.order ?? {}),
-  ])
-    .filter((candidate) => resolveProviderIdForAuth(candidate, { config: cfg }) === authProvider)
-    .toSorted((left, right) => {
-      const rank = (candidate: string) =>
-        candidate === authProvider ? 0 : candidate === provider ? 1 : 2;
-      return rank(left) - rank(right) || left.localeCompare(right);
-    });
+function listModelAuthOrderProviders(provider: string, authProvider: string): string[] {
+  // Match runtime selection exactly: canonical auth owner first, then only the
+  // requested provider route. A sibling alias can have a different valid order.
+  return uniqueStrings([authProvider, provider]);
 }
 
 export function resolveModelAuthProfileOrder(
@@ -82,16 +77,38 @@ export function resolveModelAuthProfileOrder(
   store: AuthProfileStore,
   provider: string,
   authProvider: string,
+  authAliasLookupParams?: ProviderAuthAliasLookupParams,
 ): ModelAuthProfileOrder {
-  const canonical = resolveOrderForProvider(cfg, store, authProvider, authProvider);
-  if (canonical.stored !== undefined || provider === authProvider) {
-    return canonical;
+  const configured = listModelAuthOrderProviders(provider, authProvider)
+    .map((orderProvider) =>
+      resolveOrderForProvider(
+        cfg,
+        store,
+        orderProvider,
+        authProvider,
+        authAliasLookupParams,
+        "configured",
+      ),
+    )
+    .find((order) => order.configured !== undefined);
+  const canonical = resolveOrderForProvider(
+    cfg,
+    store,
+    authProvider,
+    authProvider,
+    authAliasLookupParams,
+  );
+  if (canonical.stored !== undefined) {
+    return { ...canonical, configured: configured?.configured };
   }
-  const alias = resolveOrderForProvider(cfg, store, provider, authProvider);
-  if (alias.stored !== undefined) {
-    return alias;
+  const alias =
+    provider === authProvider
+      ? canonical
+      : resolveOrderForProvider(cfg, store, provider, authProvider, authAliasLookupParams);
+  if (provider !== authProvider && alias.stored !== undefined) {
+    return { ...alias, configured: configured?.configured };
   }
-  return canonical.configured !== undefined ? canonical : alias;
+  return configured ?? alias;
 }
 
 function resolveModelAuthProfileOrderMutationBaseline(
@@ -100,14 +117,21 @@ function resolveModelAuthProfileOrderMutationBaseline(
   provider: string,
   authProvider: string,
   expected: readonly string[] | null | undefined,
+  authAliasLookupParams?: ProviderAuthAliasLookupParams,
 ): ModelAuthProfileOrder {
   if (expected === undefined) {
     return {
-      ...resolveModelAuthProfileOrder(cfg, store, provider, authProvider),
+      ...resolveModelAuthProfileOrder(cfg, store, provider, authProvider, authAliasLookupParams),
       expectedMatches: true,
     };
   }
-  const authoritative = resolveModelAuthProfileOrder(cfg, store, provider, authProvider);
+  const authoritative = resolveModelAuthProfileOrder(
+    cfg,
+    store,
+    provider,
+    authProvider,
+    authAliasLookupParams,
+  );
   if (modelAuthProfileOrdersEqual(expected, authoritative.effective)) {
     return { ...authoritative, expectedMatches: true };
   }
@@ -116,14 +140,20 @@ function resolveModelAuthProfileOrderMutationBaseline(
   if (authoritative.orderProvider === authProvider && authoritative.stored !== undefined) {
     return { ...authoritative, expectedMatches: false };
   }
-  for (const candidate of listModelAuthOrderProviders(cfg, store, provider, authProvider)) {
-    const order = resolveOrderForProvider(cfg, store, candidate, authProvider);
+  for (const candidate of listModelAuthOrderProviders(provider, authProvider)) {
+    const order = resolveOrderForProvider(
+      cfg,
+      store,
+      candidate,
+      authProvider,
+      authAliasLookupParams,
+    );
     if (modelAuthProfileOrdersEqual(expected, order.effective)) {
       return { ...order, expectedMatches: true };
     }
   }
   return {
-    ...resolveOrderForProvider(cfg, store, authProvider, authProvider),
+    ...resolveOrderForProvider(cfg, store, authProvider, authProvider, authAliasLookupParams),
     expectedMatches: false,
   };
 }
@@ -133,12 +163,14 @@ function listModelAuthProfileIds(
   store: AuthProfileStore,
   authProvider: string,
   persistedOnly: boolean,
+  authAliasLookupParams?: ProviderAuthAliasLookupParams,
 ): string[] {
   const externalProfileIds = new Set(store.runtimeExternalProfileIds ?? []);
   return Object.entries(store.profiles)
     .flatMap(([profileId, credential]) =>
       (!persistedOnly || !externalProfileIds.has(profileId)) &&
-      resolveProviderIdForAuth(credential.provider, { config: cfg }) === authProvider
+      resolveProviderIdForAuth(credential.provider, authAliasLookupParams ?? { config: cfg }) ===
+        authProvider
         ? [profileId]
         : [],
     )
@@ -152,8 +184,9 @@ export async function updateModelAuthProfileOrder(params: {
   cfg: OpenClawConfig;
   expectedProfileIds: string[] | null | undefined;
   expectedProfileMembership: string[] | undefined;
-  profileIds: string[];
+  profileIds: string[] | null;
   provider: string;
+  authAliasLookupParams?: ProviderAuthAliasLookupParams;
 }): Promise<{ ok: true } | { ok: false; reason: "invalid-profiles" | "conflict" | "store" }> {
   return runModelAuthProfileMutation(params.authProvider, async () => {
     const externalCli = externalCliDiscoveryForConfigStatus({ cfg: params.cfg });
@@ -164,19 +197,29 @@ export async function updateModelAuthProfileOrder(params: {
       params.expectedProfileMembership &&
       !modelAuthProfileMembershipsEqual(
         params.expectedProfileMembership,
-        listModelAuthProfileIds(params.cfg, store, params.authProvider, false),
+        listModelAuthProfileIds(
+          params.cfg,
+          store,
+          params.authProvider,
+          false,
+          params.authAliasLookupParams,
+        ),
       )
     ) {
       return { ok: false, reason: "conflict" };
     }
-    const valid = params.profileIds.every((profileId) => {
-      const credential = store.profiles[profileId];
-      return (
-        credential !== undefined &&
-        resolveProviderIdForAuth(credential.provider, { config: params.cfg }) ===
-          params.authProvider
-      );
-    });
+    const valid =
+      params.profileIds === null ||
+      params.profileIds.every((profileId) => {
+        const credential = store.profiles[profileId];
+        return (
+          credential !== undefined &&
+          resolveProviderIdForAuth(
+            credential.provider,
+            params.authAliasLookupParams ?? { config: params.cfg },
+          ) === params.authProvider
+        );
+      });
     if (!valid) {
       return { ok: false, reason: "invalid-profiles" };
     }
@@ -186,6 +229,7 @@ export async function updateModelAuthProfileOrder(params: {
       params.provider,
       params.authProvider,
       params.expectedProfileIds,
+      params.authAliasLookupParams,
     );
     if (!orderState.expectedMatches) {
       return { ok: false, reason: "conflict" };
@@ -195,12 +239,13 @@ export async function updateModelAuthProfileOrder(params: {
       agentDir: params.agentDir,
       provider: params.authProvider,
       order: params.profileIds,
-      authAliasLookupParams: { config: params.cfg },
+      authAliasLookupParams: params.authAliasLookupParams ?? { config: params.cfg },
       expectedProviderProfileIds: listModelAuthProfileIds(
         params.cfg,
         store,
         params.authProvider,
         false,
+        params.authAliasLookupParams,
       ),
       externalCli,
       ...(expectedProfileIdsProvided

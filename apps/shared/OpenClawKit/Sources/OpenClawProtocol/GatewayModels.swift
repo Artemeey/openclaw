@@ -14627,6 +14627,78 @@ public struct ModelsAuthLogoutParams: Codable, Sendable {
     }
 }
 
+public struct ModelsAuthOrderSetParams: Codable, Sendable {
+    public let provider: String
+    public let profileids: [String]?
+    public let expectedprofileids: [String]??
+    public let expectedprofilemembership: [String]?
+    public let agentid: String?
+
+    public init(
+        provider: String,
+        profileids: [String]?,
+        expectedprofileids: [String]?? = nil,
+        expectedprofilemembership: [String]? = nil,
+        agentid: String? = nil)
+    {
+        self.provider = provider
+        self.profileids = profileids
+        self.expectedprofileids = expectedprofileids
+        self.expectedprofilemembership = expectedprofilemembership
+        self.agentid = agentid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case provider
+        case profileids = "profileIds"
+        case expectedprofileids = "expectedProfileIds"
+        case expectedprofilemembership = "expectedProfileMembership"
+        case agentid = "agentId"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.provider = try container.decode(String.self, forKey: .provider)
+        self.profileids = try container.decode([String]?.self, forKey: .profileids)
+        self.expectedprofileids = container.contains(.expectedprofileids)
+            ? .some(try container.decode([String]?.self, forKey: .expectedprofileids))
+            : nil
+        self.expectedprofilemembership = try container.decodeIfPresent([String].self, forKey: .expectedprofilemembership)
+        self.agentid = try container.decodeIfPresent(String.self, forKey: .agentid)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(provider, forKey: .provider)
+        try container.encode(profileids, forKey: .profileids)
+        try container.encodeIfPresent(expectedprofileids, forKey: .expectedprofileids)
+        try container.encodeIfPresent(expectedprofilemembership, forKey: .expectedprofilemembership)
+        try container.encodeIfPresent(agentid, forKey: .agentid)
+    }
+}
+
+public struct ModelsAuthCooldownClearParams: Codable, Sendable {
+    public let provider: String
+    public let profileid: String
+    public let agentid: String?
+
+    public init(
+        provider: String,
+        profileid: String,
+        agentid: String? = nil)
+    {
+        self.provider = provider
+        self.profileid = profileid
+        self.agentid = agentid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case provider
+        case profileid = "profileId"
+        case agentid = "agentId"
+    }
+}
+
 public struct ModelsAuthStatusParams: Codable, Sendable {
     public let refresh: Bool?
     public let agentid: String?

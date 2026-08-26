@@ -273,9 +273,9 @@ function renderQuotaGroup(group: ProviderQuotaGroup, usageHref: string) {
         ${icons.externalLink}
       </a>
     </div>
-    ${group.accountEmail
+    ${group.accountLabel
       ? html`<div class="context-usage__account" data-chat-usage-account="true">
-          ${group.accountEmail}
+          ${group.accountLabel}
         </div>`
       : nothing}
     <div class="context-usage__limits">

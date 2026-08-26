@@ -6,7 +6,7 @@ import {
   type ChatMetadataResult,
 } from "../../lib/chat/chat-metadata-store.ts";
 import { formatUiError } from "../../lib/format-error.ts";
-import { loadModelAuthStatus } from "../../lib/model-auth.ts";
+import { loadModelAuthStatus, MODEL_AUTH_USAGE_REFRESH_DELAY_MS } from "../../lib/model-auth.ts";
 import { loadModels } from "../../lib/model-catalog-store.ts";
 import { isSessionRunActive } from "../../lib/session-run-state.ts";
 import { areUiSessionKeysEquivalent } from "../../lib/sessions/session-key.ts";
@@ -154,18 +154,48 @@ export async function refreshChatModelAuthStatus(host: ChatPageHost, opts?: { re
   }
   const client = host.client;
   const connectionEpoch = host.connectionEpoch;
+  const agentId = resolveChatAgentId(host);
+  const ownsRequest = () =>
+    host.client === client &&
+    host.connected &&
+    host.connectionEpoch === connectionEpoch &&
+    resolveChatAgentId(host) === agentId;
   try {
     const result = await loadModelAuthStatus(client, {
       ...opts,
-      agentId: resolveChatAgentId(host),
+      agentId,
     });
-    if (host.client !== client || !host.connected || host.connectionEpoch !== connectionEpoch) {
+    if (!ownsRequest()) {
       return;
     }
     host.modelAuthStatusResult = result;
     host.modelAuthStatusError = null;
+    let pending = result.usageRefreshPending === true;
+    while (pending) {
+      host.requestUpdate?.();
+      await new Promise<void>((resolve) => {
+        globalThis.setTimeout(resolve, MODEL_AUTH_USAGE_REFRESH_DELAY_MS);
+      });
+      if (!ownsRequest()) {
+        return;
+      }
+      try {
+        const refreshed = await loadModelAuthStatus(client, { agentId });
+        if (!ownsRequest()) {
+          return;
+        }
+        host.modelAuthStatusResult = refreshed;
+        host.modelAuthStatusError = null;
+        pending = refreshed.usageRefreshPending === true;
+      } catch (err) {
+        if (ownsRequest()) {
+          host.modelAuthStatusError = formatUiError(err);
+        }
+        return;
+      }
+    }
   } catch (err) {
-    if (host.client !== client || !host.connected || host.connectionEpoch !== connectionEpoch) {
+    if (!ownsRequest()) {
       return;
     }
     host.modelAuthStatusResult = { ts: 0, providers: [] };

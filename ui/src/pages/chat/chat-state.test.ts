@@ -38,6 +38,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   replaceSlashCommands(buildFallbackSlashCommands());
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -2499,7 +2500,6 @@ describe("ChatStateController render lifecycle", () => {
 describe("session pull request refresh", () => {
   afterEach(() => {
     vi.clearAllTimers();
-    vi.useRealTimers();
   });
 
   function createFinalReplyState(refreshSessionPullRequests: ReturnType<typeof vi.fn>) {
@@ -2982,6 +2982,36 @@ describe("refreshChatMetadata", () => {
 });
 
 describe("refreshChatModelAuthStatus", () => {
+  it("continues reloading until account usage finishes", async () => {
+    vi.useFakeTimers();
+    let requestCount = 0;
+    const request = vi.fn(async () => {
+      requestCount += 1;
+      return requestCount <= 6
+        ? { ts: requestCount, providers: [], usageRefreshPending: true }
+        : { ts: requestCount, providers: [] };
+    });
+    const requestUpdate = vi.fn();
+    const state = {
+      client: { request },
+      connected: true,
+      connectionEpoch: 1,
+      sessionKey: "agent:work:dashboard:current",
+      assistantAgentId: "main",
+      modelAuthStatusResult: null,
+      modelAuthStatusError: null,
+      requestUpdate,
+    } as unknown as ChatPageHost;
+
+    const refresh = refreshChatModelAuthStatus(state);
+    await vi.advanceTimersByTimeAsync(6_000);
+    await refresh;
+
+    expect(request).toHaveBeenCalledTimes(7);
+    expect(state.modelAuthStatusResult).toEqual({ ts: 7, providers: [] });
+    expect(requestUpdate).toHaveBeenCalledTimes(6);
+  });
+
   it("scopes auth status to the selected session agent", async () => {
     const request = vi.fn(async () => ({ ts: 1, providers: [] }));
     const state = {

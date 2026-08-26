@@ -622,6 +622,8 @@ export function mergeAuthProfileStores(
     !override.usageStats &&
     override.runtimePersistedProfileIds === undefined &&
     override.runtimeLocalProfileIds === undefined &&
+    override.runtimeLocalOrderProviders === undefined &&
+    override.runtimeInheritedOrder === undefined &&
     override.runtimeInheritsMainState === undefined &&
     override.runtimeExternalProfileIds === undefined &&
     override.runtimeExternalProfileIdsAuthoritative !== true &&
@@ -696,6 +698,9 @@ export function mergeAuthProfileStores(
   const runtimeLocalProfileIds = override.runtimeLocalProfileIds
     ?.filter((profileId) => merged.profiles[profileId])
     .toSorted();
+  const runtimeLocalOrderProviders =
+    override.runtimeLocalOrderProviders ?? base.runtimeLocalOrderProviders;
+  const runtimeInheritedOrder = override.runtimeInheritedOrder ?? base.runtimeInheritedOrder;
   const baseRuntimeExternalProfileIds =
     override.runtimeExternalProfileIdsAuthoritative === true &&
     options?.preserveBaseRuntimeExternalProfiles !== true
@@ -737,6 +742,8 @@ export function mergeAuthProfileStores(
         ? { runtimePersistedProfileIds: [...new Set(runtimePersistedProfileIds)] }
         : {}),
       ...(runtimeLocalProfileIds ? { runtimeLocalProfileIds } : {}),
+      ...(runtimeLocalOrderProviders ? { runtimeLocalOrderProviders } : {}),
+      ...(runtimeInheritedOrder ? { runtimeInheritedOrder } : {}),
       ...(override.runtimeInheritsMainState !== undefined
         ? { runtimeInheritsMainState: override.runtimeInheritsMainState }
         : {}),

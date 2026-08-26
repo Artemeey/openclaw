@@ -277,4 +277,57 @@ struct GatewayModelsCompatibilityTests {
         #expect(decodedCleared.modelvalue?.value is NSNull)
         #expect(reencodedCleared["model"] is NSNull)
     }
+
+    @Test
+    func `provider order encodes required clear explicitly`() throws {
+        let ordered = ModelsAuthOrderSetParams(
+            provider: "openai",
+            profileids: ["openai:primary", "openai:backup"])
+        let cleared = ModelsAuthOrderSetParams(provider: "openai", profileids: nil)
+
+        let orderedJSON = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(ordered))
+                as? [String: Any])
+        let clearedJSON = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(cleared))
+                as? [String: Any])
+
+        #expect(orderedJSON["profileIds"] as? [String] == ["openai:primary", "openai:backup"])
+        #expect(clearedJSON["profileIds"] is NSNull)
+
+        let decodedExpectedClear = try JSONDecoder().decode(
+            ModelsAuthOrderSetParams.self,
+            from: Data(
+                #"{"provider":"openai","profileIds":["openai:primary"],"expectedProfileIds":null}"#.utf8))
+        let decodedNoExpectation = try JSONDecoder().decode(
+            ModelsAuthOrderSetParams.self,
+            from: Data(#"{"provider":"openai","profileIds":["openai:primary"]}"#.utf8))
+        let reencodedExpectedClear = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(decodedExpectedClear))
+                as? [String: Any])
+        let reencodedNoExpectation = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(decodedNoExpectation))
+                as? [String: Any])
+
+        #expect(reencodedExpectedClear["expectedProfileIds"] is NSNull)
+        #expect(!reencodedNoExpectation.keys.contains("expectedProfileIds"))
+    }
+
+    @Test
+    func `session patch keeps shipped nullable list source types`() {
+        let allow = AnyCodable(["read", "write"])
+        let deny = AnyCodable(NSNull())
+        let params = SessionsPatchParams(
+            key: "main",
+            inheritedtoolallow: allow,
+            inheritedtooldeny: deny)
+        let mutation = SessionsPatchMutation(
+            inheritedtoolallow: allow,
+            inheritedtooldeny: deny)
+
+        #expect(params.inheritedtoolallow?.value as? [String] == ["read", "write"])
+        #expect(params.inheritedtooldeny?.value is NSNull)
+        #expect(mutation.inheritedtoolallow?.value as? [String] == ["read", "write"])
+        #expect(mutation.inheritedtooldeny?.value is NSNull)
+    }
 }

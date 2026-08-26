@@ -170,6 +170,11 @@ export type ProviderResolveUsageAuthContext = {
   }) => Promise<ProviderUsageAuthToken | null>;
 };
 
+/** Exact saved profile being resolved for an account-scoped usage query. */
+export type ProviderResolveProfileUsageAuthContext = ProviderResolveUsageAuthContext & {
+  profileId: string;
+};
+
 export type ProviderUsageAuthToken = {
   token: string;
   accountId?: string;

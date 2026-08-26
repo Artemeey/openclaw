@@ -5,6 +5,7 @@ import type { GatewayBrowserClient } from "../api/gateway.ts";
 import type { ModelAuthStatusProvider, ModelAuthStatusResult } from "../api/types.ts";
 
 const EMPTY_AUTH_STATUS: ModelAuthStatusResult = { ts: 0, providers: [] };
+export const MODEL_AUTH_USAGE_REFRESH_DELAY_MS = 1_000;
 
 /** Map credential-runtime aliases onto the provider card/attention identity. */
 export function canonicalModelAuthProviderId(provider: string): string {

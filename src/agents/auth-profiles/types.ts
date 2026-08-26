@@ -162,6 +162,8 @@ export type RuntimeAuthProfileStore = AuthProfileStore & {
   /** Runtime-only built-in CLI winners; internal provenance, never exposed or persisted. */
   runtimeExternalCliProfileIds?: string[];
   runtimeLocalProfileIds?: string[];
+  runtimeLocalOrderProviders?: string[];
+  runtimeInheritedOrder?: Record<string, string[]>;
   runtimeInheritsMainState?: boolean;
 };
 

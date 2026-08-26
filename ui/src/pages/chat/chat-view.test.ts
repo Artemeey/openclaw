@@ -3021,10 +3021,17 @@ describe("chat loading skeleton", () => {
           providers: [
             {
               provider: "openai",
+              authProvider: "openai",
               displayName: "OpenAI",
               status: "ok",
               profiles: [{ profileId: "openai", type: "oauth", status: "ok" }],
-              usage: { providerId: "openai", windows: [{ label: "Week", usedPercent: 72 }] },
+            },
+          ],
+          providerUsage: [
+            {
+              providerId: "openai",
+              displayName: "OpenAI",
+              windows: [{ label: "Week", usedPercent: 72 }],
             },
           ],
         },

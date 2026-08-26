@@ -89,6 +89,7 @@ function authItems(agentId: string) {
       providers: [
         {
           provider: "openai",
+          authProvider: "openai",
           displayName: "OpenAI",
           status: "missing",
           profiles: [],
@@ -190,12 +191,14 @@ describe("model auth attention", () => {
         providers: [
           {
             provider: "anthropic",
+            authProvider: "anthropic",
             displayName: "Claude",
             status: "missing",
             profiles: [],
           },
           {
             provider: "claude-cli",
+            authProvider: "anthropic",
             displayName: "Claude",
             status: "expiring",
             profiles: [{ profileId: "anthropic:claude-cli", type: "oauth", status: "expiring" }],

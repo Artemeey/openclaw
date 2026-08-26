@@ -29,12 +29,16 @@ import { testing as externalAuthTesting } from "./external-auth.test-support.js"
 import { resolveApiKeyForProfile } from "./oauth.js";
 import { loadPersistedAuthProfileStore } from "./persisted.js";
 import {
+  clearAuthProfileCooldownAcrossOwnerStores,
   clearLastGoodProfileWithLock,
   markAuthProfileSuccess,
   promoteAuthProfileInOrder,
   removeAuthProfilesAcrossOwnerStores,
+  removeAuthProfilesAcrossOwnerStoresResult,
+  removeProviderAuthProfilesAcrossOwnerStores,
   removeProviderAuthProfilesWithLock,
   setAuthProfileOrder,
+  upsertAuthProfile,
   upsertAuthProfileWithLock,
 } from "./profiles.js";
 import {
@@ -99,6 +103,7 @@ type AuthProfileTestState = {
 };
 
 afterEach(() => {
+  storeTesting.resetBeforeMultiStoreCommitForTest();
   storeTesting.resetRuntimeSnapshotPublisherForTest();
   clearRuntimeAuthProfileStoreSnapshots();
 });
@@ -155,6 +160,36 @@ function expectOAuthCredentialFields(
   }
   return credential;
 }
+
+describe("upsertAuthProfile", () => {
+  it("keeps an explicit default-main credential shared with secondary agents", async () => {
+    await withAuthProfileTestState(
+      "openclaw-auth-upsert-shared-main-",
+      async ({ agentDirFor }) => {
+        const mainAgentDir = agentDirFor("main");
+        const customAgentDir = agentDirFor("custom");
+        fs.mkdirSync(mainAgentDir, { recursive: true });
+        fs.mkdirSync(customAgentDir, { recursive: true });
+        saveAuthProfileStore({ version: AUTH_STORE_VERSION, profiles: {} }, undefined, {
+          sharedStoreWrite: true,
+        });
+
+        upsertAuthProfile({
+          agentDir: mainAgentDir,
+          profileId: "openai:shared",
+          credential: { type: "api_key", provider: "openai", key: "sk-shared" },
+        });
+
+        expect(loadAuthProfileStoreForRuntime(customAgentDir).profiles["openai:shared"]).toEqual({
+          type: "api_key",
+          provider: "openai",
+          key: "sk-shared",
+        });
+      },
+      { clearOAuthDir: true },
+    );
+  });
+});
 
 describe("promoteAuthProfileInOrder", () => {
   it("refreshes inherited main selection state without advancing credential ownership", async () => {
@@ -1160,6 +1195,45 @@ describe("promoteAuthProfileInOrder", () => {
     );
   });
 
+  it("tracks local profile-order ownership separately from inherited order", async () => {
+    await withAuthProfileTestState(
+      "openclaw-auth-profile-local-order-",
+      ({ agentDir, agentDirFor }) => {
+        const profileId = "openai:default";
+        saveAuthProfileStore(
+          {
+            version: AUTH_STORE_VERSION,
+            profiles: {
+              [profileId]: { type: "api_key", provider: "openai", key: "main" },
+            },
+            order: { openai: [profileId] },
+          },
+          agentDir,
+        );
+        const secondaryAgentDir = agentDirFor("writer");
+
+        const inherited = loadAuthProfileStoreWithoutExternalProfiles(
+          secondaryAgentDir,
+        ) as RuntimeAuthProfileStore;
+        expect(inherited.order?.openai).toEqual([profileId]);
+        expect(inherited.runtimeLocalOrderProviders).toEqual([]);
+        expect(inherited.runtimeInheritedOrder).toEqual({ openai: [profileId] });
+
+        saveAuthProfileStore(
+          { version: AUTH_STORE_VERSION, profiles: {}, order: { openai: [profileId] } },
+          secondaryAgentDir,
+          { preserveOrderProfileIds: [profileId] },
+        );
+        const overridden = loadAuthProfileStoreWithoutExternalProfiles(
+          secondaryAgentDir,
+        ) as RuntimeAuthProfileStore;
+        expect(overridden.runtimeLocalOrderProviders).toEqual(["openai"]);
+        expect(overridden.runtimeInheritedOrder).toEqual({ openai: [profileId] });
+      },
+      { clearOAuthDir: true },
+    );
+  });
+
   it("persists openai oauth credentials inline", async () => {
     await withAuthProfileTestState("openclaw-auth-profile-metadata-", ({ agentDir }) => {
       fs.mkdirSync(agentDir, { recursive: true });
@@ -1706,6 +1780,200 @@ describe("promoteAuthProfileInOrder", () => {
     });
   });
 
+  it("clears shared profile cooldowns from both main and selected agent stores", async () => {
+    await withAuthProfileTestState(
+      "openclaw-auth-clear-cooldown-owner-",
+      async ({ agentDirFor }) => {
+        const mainAgentDir = agentDirFor("main");
+        const customAgentDir = agentDirFor("custom");
+        fs.mkdirSync(mainAgentDir, { recursive: true });
+        fs.mkdirSync(customAgentDir, { recursive: true });
+        const profileId = "openai:shared";
+        const credential = {
+          type: "oauth" as const,
+          provider: "openai",
+          access: "shared-access",
+          refresh: "shared-refresh",
+          expires: Date.now() + 60_000,
+        };
+        const store = (cooldownUntil: number): AuthProfileStore => ({
+          version: AUTH_STORE_VERSION,
+          profiles: { [profileId]: credential },
+          usageStats: {
+            [profileId]: { cooldownUntil, cooldownReason: "rate_limit", errorCount: 2 },
+          },
+        });
+        saveAuthProfileStore(store(Date.now() + 60_000), mainAgentDir);
+        saveAuthProfileStore(store(Date.now() + 120_000), customAgentDir);
+        const selectedStore = loadAuthProfileStoreForRuntime(customAgentDir);
+
+        const cleared = clearAuthProfileCooldownAcrossOwnerStores({
+          store: selectedStore,
+          agentDir: customAgentDir,
+          profileId,
+        });
+
+        expect(cleared).toBe(true);
+        for (const agentDir of [mainAgentDir, customAgentDir]) {
+          const stats = loadPersistedAuthProfileStore(agentDir)?.usageStats?.[profileId];
+          expect(stats?.cooldownUntil).toBeUndefined();
+          expect(stats?.cooldownReason).toBeUndefined();
+          expect(stats?.errorCount ?? 0).toBe(0);
+        }
+        expect(selectedStore.usageStats?.[profileId]?.cooldownUntil).toBeUndefined();
+      },
+    );
+  });
+
+  it("preserves an independently owned main cooldown with the same profile ID", async () => {
+    await withAuthProfileTestState("openclaw-auth-clear-shadowed-", async ({ agentDirFor }) => {
+      const mainAgentDir = agentDirFor("main");
+      const customAgentDir = agentDirFor("custom");
+      fs.mkdirSync(mainAgentDir, { recursive: true });
+      fs.mkdirSync(customAgentDir, { recursive: true });
+      const profileId = "openai:shadowed";
+      const mainCooldownUntil = Date.now() + 60_000;
+      saveAuthProfileStore(
+        {
+          version: AUTH_STORE_VERSION,
+          profiles: {
+            [profileId]: { type: "token", provider: "openai", token: "main-token" },
+          },
+          usageStats: {
+            [profileId]: {
+              cooldownUntil: mainCooldownUntil,
+              cooldownReason: "rate_limit",
+              errorCount: 2,
+            },
+          },
+        },
+        mainAgentDir,
+      );
+      saveAuthProfileStore(
+        {
+          version: AUTH_STORE_VERSION,
+          profiles: {
+            [profileId]: { type: "token", provider: "openai", token: "local-token" },
+          },
+          usageStats: {
+            [profileId]: {
+              cooldownUntil: Date.now() + 120_000,
+              cooldownReason: "rate_limit",
+              errorCount: 3,
+            },
+          },
+        },
+        customAgentDir,
+      );
+      const selectedStore = loadAuthProfileStoreForRuntime(customAgentDir);
+
+      const cleared = clearAuthProfileCooldownAcrossOwnerStores({
+        store: selectedStore,
+        agentDir: customAgentDir,
+        profileId,
+      });
+
+      expect(cleared).toBe(true);
+      expect(
+        loadPersistedAuthProfileStore(customAgentDir)?.usageStats?.[profileId]?.cooldownUntil,
+      ).toBeUndefined();
+      expect(loadPersistedAuthProfileStore(mainAgentDir)?.usageStats?.[profileId]).toMatchObject({
+        cooldownUntil: mainCooldownUntil,
+        cooldownReason: "rate_limit",
+        errorCount: 2,
+      });
+    });
+  });
+
+  it("preserves an independently owned main profile with the same ID", async () => {
+    await withAuthProfileTestState("openclaw-auth-remove-shadowed-", async ({ agentDirFor }) => {
+      const mainAgentDir = agentDirFor("main");
+      const customAgentDir = agentDirFor("custom");
+      fs.mkdirSync(mainAgentDir, { recursive: true });
+      fs.mkdirSync(customAgentDir, { recursive: true });
+      const profileId = "openai:shadowed";
+      saveAuthProfileStore(
+        {
+          version: AUTH_STORE_VERSION,
+          profiles: {
+            [profileId]: { type: "token", provider: "openai", token: "main-token" },
+          },
+        },
+        mainAgentDir,
+      );
+      saveAuthProfileStore(
+        {
+          version: AUTH_STORE_VERSION,
+          profiles: {
+            [profileId]: { type: "token", provider: "openai", token: "local-token" },
+          },
+        },
+        customAgentDir,
+      );
+
+      const removed = await removeAuthProfilesAcrossOwnerStores({
+        agentDir: customAgentDir,
+        profileIds: [profileId],
+      });
+
+      expect(removed).toBe(true);
+      expect(loadPersistedAuthProfileStore(customAgentDir)?.profiles[profileId]).toBeUndefined();
+      expect(loadPersistedAuthProfileStore(mainAgentDir)?.profiles[profileId]).toMatchObject({
+        type: "token",
+        token: "main-token",
+      });
+    });
+  });
+
+  it("keeps unrelated main profiles when a secondary agent logs out a provider", async () => {
+    await withAuthProfileTestState(
+      "openclaw-auth-remove-provider-shadowed-",
+      async ({ agentDirFor }) => {
+        const mainAgentDir = agentDirFor("main");
+        const customAgentDir = agentDirFor("custom");
+        fs.mkdirSync(mainAgentDir, { recursive: true });
+        fs.mkdirSync(customAgentDir, { recursive: true });
+        const profileId = "openai:shadowed";
+        saveAuthProfileStore(
+          {
+            version: AUTH_STORE_VERSION,
+            profiles: {
+              [profileId]: { type: "token", provider: "openai", token: "main-token" },
+              "openai:main-only": {
+                type: "token",
+                provider: "openai",
+                token: "main-only-token",
+              },
+            },
+          },
+          mainAgentDir,
+        );
+        saveAuthProfileStore(
+          {
+            version: AUTH_STORE_VERSION,
+            profiles: {
+              [profileId]: { type: "token", provider: "openai", token: "local-token" },
+            },
+          },
+          customAgentDir,
+        );
+
+        const removed = removeProviderAuthProfilesAcrossOwnerStores({
+          provider: "openai",
+          agentDir: customAgentDir,
+          profileIds: [profileId],
+        });
+
+        expect(removed).toBe(true);
+        expect(loadPersistedAuthProfileStore(customAgentDir)?.profiles[profileId]).toBeUndefined();
+        expect(loadPersistedAuthProfileStore(mainAgentDir)?.profiles).toMatchObject({
+          [profileId]: { type: "token", token: "main-token" },
+          "openai:main-only": { type: "token", token: "main-only-token" },
+        });
+      },
+    );
+  });
+
   it("holds the main owner lock before removing a secondary inherited order", async () => {
     await withAuthProfileTestState(
       "openclaw-auth-remove-owner-lock-order-",
@@ -1733,7 +2001,13 @@ describe("promoteAuthProfileInOrder", () => {
         saveAuthProfileStore(
           {
             version: AUTH_STORE_VERSION,
-            profiles: {},
+            profiles: {
+              "openai:local": {
+                type: "api_key",
+                provider: "openai",
+                key: "local-key",
+              },
+            },
             order: { openai: [profileId] },
           },
           customAgentDir,
@@ -1756,7 +2030,10 @@ describe("promoteAuthProfileInOrder", () => {
             while (!fs.existsSync(startPath)) {
               await new Promise((resolve) => setTimeout(resolve, 5));
             }
-            const removed = await removeAuthProfilesAcrossOwnerStores({ agentDir, profileIds: [profileId] });
+            const removed = await removeAuthProfilesAcrossOwnerStores({
+              agentDir,
+              profileIds: ["openai:local", profileId],
+            });
             if (!removed) process.exitCode = 2;
           `,
         );
@@ -1780,24 +2057,22 @@ describe("promoteAuthProfileInOrder", () => {
         try {
           await vi.waitFor(() => expect(fs.existsSync(readyPath)).toBe(true), { timeout: 15_000 });
 
+          const startedAt = Date.now();
           let secondaryOrderStayedLocked = false;
           runAuthProfileWriteTransaction(mainAgentDir, () => {
             fs.writeFileSync(startPath, "start");
-            const deadline = Date.now() + 2_000;
-            do {
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+            runAuthProfileWriteTransaction(customAgentDir, () => {
               secondaryOrderStayedLocked =
                 loadPersistedAuthProfileStore(customAgentDir)?.order?.openai?.includes(
                   profileId,
                 ) === true;
-              if (!secondaryOrderStayedLocked) {
-                break;
-              }
-              Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
-            } while (Date.now() < deadline);
+            });
           });
           const { code } = await childClosed;
 
           expect(code, childOutput).toBe(0);
+          expect(Date.now() - startedAt).toBeLessThan(2_000);
           expect(secondaryOrderStayedLocked).toBe(true);
           expect(loadPersistedAuthProfileStore(customAgentDir)?.order?.openai).toBeUndefined();
           expect(loadPersistedAuthProfileStore(mainAgentDir)?.profiles[profileId]).toBeUndefined();
@@ -1808,6 +2083,62 @@ describe("promoteAuthProfileInOrder", () => {
             await killed;
           }
         }
+      },
+      { clearOAuthDir: true },
+    );
+  });
+
+  it("publishes a committed local logout when the outer shared transaction fails", async () => {
+    await withAuthProfileTestState(
+      "openclaw-auth-remove-partial-commit-",
+      async ({ agentDirFor }) => {
+        const mainAgentDir = agentDirFor("main");
+        const customAgentDir = agentDirFor("custom");
+        fs.mkdirSync(mainAgentDir, { recursive: true });
+        fs.mkdirSync(customAgentDir, { recursive: true });
+        saveAuthProfileStore(
+          {
+            version: AUTH_STORE_VERSION,
+            profiles: {
+              "openai:shared": { type: "api_key", provider: "openai", key: "shared" },
+            },
+          },
+          undefined,
+          { sharedStoreWrite: true },
+        );
+        saveAuthProfileStore(
+          {
+            version: AUTH_STORE_VERSION,
+            profiles: {
+              "openai:local": { type: "api_key", provider: "openai", key: "local" },
+            },
+          },
+          customAgentDir,
+        );
+        replaceRuntimeAuthProfileStoreSnapshots([
+          { agentDir: customAgentDir, store: loadAuthProfileStoreForRuntime(customAgentDir) },
+        ]);
+        let commitCount = 0;
+        storeTesting.setBeforeMultiStoreCommitForTest(() => {
+          commitCount += 1;
+          if (commitCount === 2) {
+            throw new Error("simulated outer commit failure");
+          }
+        });
+
+        const removed = await removeAuthProfilesAcrossOwnerStoresResult({
+          agentDir: customAgentDir,
+          profileIds: ["openai:local", "openai:shared"],
+        });
+
+        expect(removed).toEqual({ ok: false, committed: true });
+        expect(
+          loadPersistedAuthProfileStore(customAgentDir)?.profiles["openai:local"],
+        ).toBeUndefined();
+        expect(loadPersistedAuthProfileStore()?.profiles["openai:shared"]).toBeDefined();
+        expect(
+          getRuntimeAuthProfileStoreSnapshot(customAgentDir)?.profiles["openai:local"],
+        ).toBeUndefined();
       },
       { clearOAuthDir: true },
     );
@@ -2234,6 +2565,40 @@ describe("setAuthProfileOrder", () => {
       }
       expect(updated.value.order).toEqual({ openai: ["openai:two", "openai:one"] });
       expect(loadPersistedAuthProfileStore(agentDir)?.order).toEqual({
+        openai: ["openai:two", "openai:one"],
+      });
+    });
+  });
+
+  it("rejects an alias baseline when a canonical order appeared before the locked update", async () => {
+    await withAuthProfileTestState("openclaw-auth-order-alias-race-", async ({ agentDir }) => {
+      fs.mkdirSync(agentDir, { recursive: true });
+      saveAuthProfileStore(
+        {
+          version: AUTH_STORE_VERSION,
+          profiles: {
+            "openai:one": { type: "api_key", provider: "openai", key: "one" },
+            "openai:two": { type: "api_key", provider: "openai", key: "two" },
+          },
+          order: {
+            "fixture-alias": ["openai:one", "openai:two"],
+            openai: ["openai:two", "openai:one"],
+          },
+        },
+        agentDir,
+      );
+
+      const updated = await setAuthProfileOrder({
+        agentDir,
+        provider: "openai",
+        order: ["openai:one", "openai:two"],
+        expectedOrder: ["openai:one", "openai:two"],
+        expectedOrderProvider: "fixture-alias",
+      });
+
+      expect(updated).toEqual({ ok: false, error: "conflict" });
+      expect(loadPersistedAuthProfileStore(agentDir)?.order).toEqual({
+        "fixture-alias": ["openai:one", "openai:two"],
         openai: ["openai:two", "openai:one"],
       });
     });

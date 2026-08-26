@@ -7,7 +7,10 @@ import {
   formatRemainingShort,
 } from "../../agents/auth-health.js";
 import { type AuthProfileStore, resolveAuthProfileMetadata } from "../../agents/auth-profiles.js";
-import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
+import {
+  type ProviderAuthAliasLookupParams,
+  resolveProviderIdForAuth,
+} from "../../agents/provider-auth-aliases.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { providerUsageLabel, resolveUsageProviderId } from "../../infra/provider-usage.shared.js";
 import { resolveModelAuthProfileOrder } from "./models-auth-order.js";
@@ -41,7 +44,10 @@ function providerDisplayName(provider: string): string {
   return (usageId ? providerUsageLabel(usageId) : undefined) ?? provider;
 }
 
-function mapUsage(providerId: ModelAuthUsage["providerId"], usage: ProviderUsageStatus) {
+export function mapModelAuthUsage(
+  providerId: ModelAuthUsage["providerId"],
+  usage: ProviderUsageStatus,
+) {
   return {
     providerId,
     windows: usage.windows,
@@ -101,32 +107,27 @@ export function aggregateRefreshableAuthStatus(
 export function mapModelAuthStatusProvider(params: {
   provider: AuthProviderHealth;
   config: OpenClawConfig;
-  usageByProvider: Map<string, ProviderUsageStatus>;
+  authAliasLookupParams: ProviderAuthAliasLookupParams;
   usageByProfile: Map<string, ProviderUsageStatus>;
   expectsOAuth: ReadonlySet<string>;
   apiKeys: ReadonlyMap<string, ModelAuthStatusProvider["apiKey"]>;
   logoutProfileIds: ReadonlySet<string>;
   configBoundProfileIds: ReadonlySet<string>;
+  configBoundProviders: ReadonlySet<string>;
   externalCliProfileIds: ReadonlySet<string>;
+  localOrderProviders?: readonly string[];
+  inheritedOrder?: Record<string, string[]>;
   store: AuthProfileStore;
 }): ModelAuthStatusProvider {
   const { provider, config, store } = params;
-  const usageProfile =
-    provider.profiles.find((profile) => profile.type === "oauth" || profile.type === "token") ??
-    provider.profiles.find((profile) => profile.type === "api_key");
-  const usageKey = resolveUsageProviderId(provider.provider, {
-    credentialType: usageProfile?.type,
-  });
-  const usage = usageKey
-    ? (params.usageByProvider.get(usageKey) ??
-      (usageProfile ? params.usageByProfile.get(usageProfile.profileId) : undefined))
-    : undefined;
+  const effectiveProfiles = provider.effectiveProfiles ?? provider.profiles;
+  // Account quota stays on exact profile rows; admin/API-key billing remains a
+  // distinct provider-wide snapshot even when OAuth accounts also exist.
   const rawRollup = aggregateRefreshableAuthStatus(
     provider,
     Date.now(),
     params.expectsOAuth.has(provider.provider),
   );
-  const effectiveProfiles = provider.effectiveProfiles ?? provider.profiles;
   const refreshableProfiles = effectiveProfiles.filter(
     (profile) => profile.type === "oauth" || profile.type === "token",
   );
@@ -146,12 +147,40 @@ export function mapModelAuthStatusProvider(params: {
   const hasRefreshableProfile = provider.profiles.some(
     (profile) => profile.type === "oauth" || profile.type === "token",
   );
-  const authProvider = resolveProviderIdForAuth(provider.provider, { config });
-  const { effective: profileOrder } = resolveModelAuthProfileOrder(
+  const authProvider = resolveProviderIdForAuth(provider.provider, params.authAliasLookupParams);
+  const order = resolveModelAuthProfileOrder(
     config,
     store,
     provider.provider,
     authProvider,
+    params.authAliasLookupParams,
+  );
+  const profileOrder = order.effective;
+  const inheritedOrder = params.inheritedOrder
+    ? resolveModelAuthProfileOrder(
+        config,
+        { ...store, order: params.inheritedOrder },
+        provider.provider,
+        authProvider,
+        params.authAliasLookupParams,
+      )
+    : undefined;
+  const storedLocally =
+    order.stored !== undefined &&
+    (params.localOrderProviders === undefined ||
+      params.localOrderProviders.some(
+        (candidate) => normalizeProviderId(candidate) === normalizeProviderId(order.orderProvider),
+      ));
+  const profileOrderFallback = storedLocally
+    ? inheritedOrder?.effective !== undefined
+      ? "inherited"
+      : order.configured !== undefined
+        ? "config"
+        : "automatic"
+    : undefined;
+  const profileOrderFallbackOrder = inheritedOrder?.effective ?? order.configured;
+  const profileOrderLocked = params.configBoundProviders.has(
+    normalizeProviderId(provider.provider),
   );
   return {
     provider: provider.provider,
@@ -174,6 +203,9 @@ export function mapModelAuthStatusProvider(params: {
         reasonCode: profile.reasonCode,
         expiry: buildExpiry(profile.remainingMs, profile.expiresAt),
       };
+      if (params.externalCliProfileIds.has(profile.profileId)) {
+        statusProfile.externallyManaged = true;
+      }
       if (metadata.displayName) {
         statusProfile.displayName = metadata.displayName;
       }
@@ -186,6 +218,7 @@ export function mapModelAuthStatusProvider(params: {
       if (usageStats?.cooldownUntil) {
         statusProfile.cooldownUntil = usageStats.cooldownUntil;
         statusProfile.cooldownReason = usageStats.cooldownReason;
+        statusProfile.cooldownModel = usageStats.cooldownModel;
       }
       if (usageStats?.disabledUntil) {
         statusProfile.disabledUntil = usageStats.disabledUntil;
@@ -194,13 +227,12 @@ export function mapModelAuthStatusProvider(params: {
       if (usageStats?.blockedUntil) {
         statusProfile.blockedUntil = usageStats.blockedUntil;
         statusProfile.blockedReason = usageStats.blockedReason;
+        statusProfile.blockedModel = usageStats.blockedModel;
+        statusProfile.blockedScope = usageStats.blockedScope;
       }
       const profileUsage = params.usageByProfile.get(profile.profileId);
-      const profileUsageProvider = resolveUsageProviderId(profile.provider, {
-        credentialType: profile.type,
-      });
-      if (profileUsage && profileUsageProvider) {
-        statusProfile.usage = mapUsage(profileUsageProvider, profileUsage);
+      if (profileUsage) {
+        statusProfile.usage = mapModelAuthUsage(profileUsage.providerId, profileUsage);
       }
       if (
         (profile.type === "oauth" || profile.type === "token") &&
@@ -211,8 +243,41 @@ export function mapModelAuthStatusProvider(params: {
       }
       return statusProfile;
     }),
-    ...(profileOrder !== undefined ? { profileOrder } : {}),
+    ...(profileOrder !== undefined
+      ? { profileOrder, profileOrderProvider: order.orderProvider }
+      : {}),
+    ...(profileOrderFallback ? { profileOrderFallback } : {}),
+    ...((profileOrderFallback === "config" || profileOrderFallback === "inherited") &&
+    profileOrderFallbackOrder
+      ? { profileOrderFallbackOrder }
+      : {}),
+    ...(profileOrderLocked ? { profileOrderLocked: true as const } : {}),
     ...(apiKey ? { apiKey } : {}),
-    usage: usage && usageKey ? mapUsage(usageKey, usage) : undefined,
   };
+}
+
+/** Move an alias-owned order onto the one visible row that carries its profiles. */
+export function attachAliasProfileOrders(providers: ModelAuthStatusProvider[]): void {
+  for (const source of providers) {
+    if (source.profiles.length > 0 || source.profileOrder === undefined) {
+      continue;
+    }
+    const targets = providers.filter(
+      (candidate) =>
+        candidate !== source &&
+        candidate.profiles.length > 0 &&
+        candidate.authProvider === source.authProvider,
+    );
+    const target = targets.length === 1 ? targets[0] : undefined;
+    if (!target || target.profileOrder !== undefined) {
+      continue;
+    }
+    target.profileOrder = [...source.profileOrder];
+    target.profileOrderProvider = source.profileOrderProvider;
+    target.profileOrderFallback = source.profileOrderFallback;
+    target.profileOrderFallbackOrder = source.profileOrderFallbackOrder
+      ? [...source.profileOrderFallbackOrder]
+      : undefined;
+    target.profileOrderLocked = source.profileOrderLocked;
+  }
 }

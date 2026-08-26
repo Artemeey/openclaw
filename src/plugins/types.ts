@@ -205,6 +205,7 @@ export type {
   ProviderPrepareRuntimeAuthContext,
   ProviderPreparedRuntimeAuth,
   ProviderResolveDynamicModelContext,
+  ProviderResolveProfileUsageAuthContext,
   ProviderResolveUsageAuthContext,
   ProviderResolvedUsageAuth,
 } from "./provider-runtime.types.js";

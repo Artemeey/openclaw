@@ -168,6 +168,21 @@ describe("fetchClaudeUsage", () => {
     ]);
   });
 
+  it("parses native SDK model-scoped usage windows", async () => {
+    const reset = "2026-01-13T00:00:00Z";
+    const mockFetch = createProviderUsageFetch(async () =>
+      makeResponse(200, {
+        model_scoped: [{ display_name: "Fable", utilization: 73, resets_at: reset }],
+      }),
+    );
+
+    const result = await fetchClaudeUsage("token", 5000, mockFetch);
+
+    expect(result.windows).toEqual([
+      { label: "Fable", usedPercent: 73, resetAt: new Date(reset).getTime() },
+    ]);
+  });
+
   it("keeps the extra usage window when credit amounts are missing", async () => {
     const mockFetch = createProviderUsageFetch(async () =>
       makeResponse(200, {
@@ -184,11 +199,12 @@ describe("fetchClaudeUsage", () => {
     expect(result.billing).toBeUndefined();
   });
 
-  it("clamps oauth usage windows and prefers sonnet over opus when both exist", async () => {
+  it("clamps oauth usage windows and keeps every named weekly window", async () => {
     const mockFetch = createProviderUsageFetch(async () =>
       makeResponse(200, {
         five_hour: { utilization: -5 },
         seven_day: { utilization: 140 },
+        seven_day_oauth_apps: { utilization: 30 },
         seven_day_sonnet: { utilization: 40 },
         seven_day_opus: { utilization: 90 },
       }),
@@ -199,7 +215,9 @@ describe("fetchClaudeUsage", () => {
     expect(result.windows).toEqual([
       { label: "5h", usedPercent: 0, resetAt: undefined },
       { label: "Week", usedPercent: 100, resetAt: undefined },
+      { label: "OAuth apps", usedPercent: 30 },
       { label: "Sonnet", usedPercent: 40 },
+      { label: "Opus", usedPercent: 90 },
     ]);
   });
 

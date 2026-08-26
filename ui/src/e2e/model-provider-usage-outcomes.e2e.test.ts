@@ -1,4 +1,4 @@
-// Control UI E2E proves provider-usage request failures remain distinct from provider data.
+// Control UI E2E proves auth-status request failures remain distinct from provider usage data.
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { expect, it } from "vitest";
@@ -14,26 +14,14 @@ const suite = createControlUiE2eSuite({
 const now = Date.now();
 const recordVisuals = process.env.OPENCLAW_UI_E2E_RECORD === "1";
 const artifactDir = path.resolve(".artifacts/control-ui-e2e/model-providers");
-const unavailableMessage =
-  "Provider usage is unavailable; the last request failed. Refresh to retry.";
+const requestFailureMessage = "gateway transport unavailable";
 
-function providerUsageResponses(usageStatus: unknown) {
+function providerUsageResponses(authStatus: unknown) {
   return {
     "config.get": { config: {}, hash: "provider-usage-outcome" },
     "models.list": { models: [] },
-    "models.authStatus": {
-      ts: now,
-      providers: [
-        {
-          provider: "openai",
-          displayName: "OpenAI",
-          status: "ok",
-          profiles: [],
-        },
-      ],
-    },
+    "models.authStatus": authStatus,
     "sessions.usage": { aggregates: { byProvider: [] } },
-    "usage.status": usageStatus,
   };
 }
 
@@ -53,13 +41,13 @@ suite.define(() => {
         });
 
         await page.goto(`${suite.server.baseUrl}settings/model-providers`);
-        await page.locator('[data-provider-id="openai"]').waitFor();
         await expect
-          .poll(async () => (await gateway.getRequests("usage.status")).length)
+          .poll(async () => (await gateway.getRequests("models.authStatus")).length)
           .toBeGreaterThan(0);
+        expect(await gateway.getRequests("usage.status")).toHaveLength(0);
         await expect
           .poll(() => page.locator(".settings-page").textContent())
-          .toContain(unavailableMessage);
+          .toContain(requestFailureMessage);
         if (recordVisuals) {
           await mkdir(artifactDir, { recursive: true });
           await page.screenshot({
@@ -82,10 +70,19 @@ suite.define(() => {
       async ({ page }) => {
         const gateway = await installMockGateway(page, {
           methodResponses: providerUsageResponses({
-            updatedAt: now,
+            ts: now,
             providers: [
               {
                 provider: "openai",
+                authProvider: "openai",
+                displayName: "OpenAI",
+                status: "ok",
+                profiles: [],
+              },
+            ],
+            providerUsage: [
+              {
+                providerId: "openai",
                 displayName: "OpenAI",
                 windows: [],
                 error: "provider API unavailable",
@@ -98,12 +95,13 @@ suite.define(() => {
         const card = page.locator('[data-provider-id="openai"]');
         await card.waitFor();
         await expect
-          .poll(async () => (await gateway.getRequests("usage.status")).length)
+          .poll(async () => (await gateway.getRequests("models.authStatus")).length)
           .toBeGreaterThan(0);
+        expect(await gateway.getRequests("usage.status")).toHaveLength(0);
         await expect.poll(() => card.textContent()).toContain("provider API unavailable");
         await expect
           .poll(() => page.locator(".settings-page").textContent())
-          .not.toContain(unavailableMessage);
+          .not.toContain(requestFailureMessage);
         if (recordVisuals) {
           await mkdir(artifactDir, { recursive: true });
           await card.screenshot({

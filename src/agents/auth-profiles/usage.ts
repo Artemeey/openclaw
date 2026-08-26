@@ -850,6 +850,17 @@ function updateUsageStatsEntry(
   store.usageStats[profileId] = updater(store.usageStats[profileId]);
 }
 
+export function clearAuthProfileCooldownFromStore(
+  store: AuthProfileStore,
+  profileId: string,
+): boolean {
+  if (!store.usageStats?.[profileId]) {
+    return false;
+  }
+  updateUsageStatsEntry(store, profileId, (existing) => resetUsageStats(existing));
+  return true;
+}
+
 function notifyAuthProfileFailureSafely(): void {
   try {
     notifyAuthProfileFailureHook();
@@ -1280,12 +1291,7 @@ export async function clearAuthProfileCooldown(params: {
   const updated = await authProfileUsageDeps.updateAuthProfileStoreWithLock({
     agentDir,
     updater: (freshStore) => {
-      if (!freshStore.usageStats?.[profileId]) {
-        return false;
-      }
-
-      updateUsageStatsEntry(freshStore, profileId, (existing) => resetUsageStats(existing));
-      return true;
+      return clearAuthProfileCooldownFromStore(freshStore, profileId);
     },
   });
   if (updated) {

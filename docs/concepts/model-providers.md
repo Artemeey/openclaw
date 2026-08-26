@@ -61,6 +61,8 @@ Open **Settings → Model Providers** in the Control UI to add, replace, or remo
 
 Use **Test connection** to run a live provider probe and see latency or a categorized authentication, rate-limit, billing, timeout, or response error. A probe makes a real provider request and may consume a small number of tokens. OAuth and token profiles can also be logged out from the provider card.
 
+When a provider has multiple saved profiles, drag the accounts into the order OpenClaw should try them. OpenClaw uses the first eligible account, then moves through the list when an account is unavailable. Accounts omitted from an existing explicit order remain visible but excluded until you choose **Include**; **Use automatic rotation** removes the explicit order. A temporarily unavailable account is skipped until its displayed reset time, and its retry button clears that temporary state so it can be tried immediately. Signing out removes that saved credential from future selection. It does not immediately stop a run that is already using the credential, so that run can fail on its next provider request.
+
 The **Default models** card manages the primary model, ordered fallbacks, and utility model from the configured model catalog. Choose the models, then save them together to the existing `agents.defaults.model` and `agents.defaults.utilityModel` settings. For the utility model, **Automatic** leaves the setting unset and **Disabled** stores an empty string to turn utility routing off.
 
 ## Plugin-owned provider behavior

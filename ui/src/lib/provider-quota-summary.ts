@@ -2,6 +2,7 @@
 import { asDateTimestampMs } from "@openclaw/normalization-core/number-coercion";
 import type { ModelAuthStatusProvider, ModelAuthStatusResult } from "../api/types.ts";
 import { t } from "../i18n/index.ts";
+import { canonicalModelAuthProviderId } from "./model-auth.ts";
 
 // Provider window labels arrive as compact data strings ("5h", "Week"); model
 // scoped labels (e.g. "Opus") pass through untranslated.
@@ -76,11 +77,14 @@ export type ProviderQuotaGroup = {
   providers: string[];
   displayName: string;
   plan?: string;
-  /** Account email the usage was fetched under, when known. */
-  accountEmail?: string;
+  /** Account identity for profile-scoped usage. */
+  accountLabel?: string;
   windows: QuotaLimitSummary[];
   budgets: QuotaBudgetSummary[];
 };
+
+type ModelAuthUsage = NonNullable<ModelAuthStatusProvider["profiles"][number]["usage"]>;
+type ModelAuthProfile = ModelAuthStatusProvider["profiles"][number];
 
 function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
@@ -97,12 +101,17 @@ export function collectProviderQuotaGroups(
   filter: (provider: ModelAuthStatusProvider) => boolean,
 ): ProviderQuotaGroup[] {
   const groups: Array<{ identity: string; group: ProviderQuotaGroup }> = [];
-  for (const provider of (status?.providers ?? []).filter(filter)) {
-    const usage = provider.usage;
-    if (!usage) {
-      continue;
-    }
-    const windows: QuotaLimitSummary[] = (usage.windows ?? []).map((limit) => {
+  const addUsage = (params: {
+    providerIds: string[];
+    displayName: string;
+    profile?: ModelAuthProfile;
+    usage: ModelAuthUsage;
+  }) => {
+    const { profile, usage } = params;
+    const accountLabel = profile
+      ? profile.email || usage.accountEmail || profile.displayName || profile.profileId
+      : usage.accountEmail;
+    const windows: QuotaLimitSummary[] = usage.windows.map((limit) => {
       const summary: QuotaLimitSummary = {
         label: (limit.label || "").trim(),
         usedPercent: clampPercent(limit.usedPercent),
@@ -133,15 +142,13 @@ export function collectProviderQuotaGroups(
       return [budget];
     });
     if (windows.length === 0 && budgets.length === 0) {
-      continue;
+      return;
     }
-    // Session rows report canonical model providers while auth rows may use
-    // CLI aliases (claude-cli vs anthropic); expose both ids for matching.
-    const providerIds = [
-      ...new Set([provider.provider, usage.providerId].filter((id): id is string => Boolean(id))),
-    ];
+    const providerIds = [...new Set([...params.providerIds, usage.providerId])];
     const identity = JSON.stringify([
-      provider.displayName,
+      params.displayName,
+      profile?.profileId ?? null,
+      usage.plan ?? null,
       usage.accountEmail ?? null,
       windows,
       budgets,
@@ -153,19 +160,50 @@ export function collectProviderQuotaGroups(
           existing.group.providers.push(id);
         }
       }
-      continue;
+      return;
     }
     groups.push({
       identity,
       group: {
         providers: providerIds,
-        displayName: provider.displayName,
+        displayName: params.displayName,
         ...(usage.plan ? { plan: usage.plan } : {}),
-        ...(usage.accountEmail ? { accountEmail: usage.accountEmail } : {}),
+        ...(accountLabel ? { accountLabel } : {}),
         windows,
         budgets,
       },
     });
+  };
+
+  const monitoredProviders = (status?.providers ?? []).filter(filter);
+  for (const usage of status?.providerUsage ?? []) {
+    const usageProviderId = canonicalModelAuthProviderId(usage.providerId);
+    const matchingProviders = monitoredProviders.filter(
+      (provider) =>
+        canonicalModelAuthProviderId(provider.authProvider) === usageProviderId ||
+        canonicalModelAuthProviderId(provider.provider) === usageProviderId,
+    );
+    if (matchingProviders.length === 0) {
+      continue;
+    }
+    addUsage({
+      providerIds: matchingProviders.map((provider) => provider.provider),
+      displayName: usage.displayName,
+      usage,
+    });
+  }
+  for (const provider of monitoredProviders) {
+    for (const profile of provider.profiles) {
+      if (!profile.usage) {
+        continue;
+      }
+      addUsage({
+        providerIds: [provider.provider],
+        displayName: provider.displayName,
+        profile,
+        usage: profile.usage,
+      });
+    }
   }
   return groups.map((entry) => entry.group);
 }

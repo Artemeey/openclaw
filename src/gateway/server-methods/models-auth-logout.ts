@@ -1,7 +1,7 @@
 import type { ChatAbortOps } from "../chat-abort.js";
 import type { GatewayRequestContext } from "./types.js";
 
-export { removeProviderAuthProfilesAcrossOwnerStores } from "../../agents/auth-profiles.js";
+export { removeProviderAuthProfilesAcrossOwnerStoresResult } from "../../agents/auth-profiles.js";
 
 type LogoutProfileSelection = { ok: true; profileIds?: string[] } | { ok: false; message: string };
 

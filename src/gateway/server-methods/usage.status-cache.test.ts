@@ -48,6 +48,7 @@ vi.mock("../../infra/provider-usage.load.js", () => ({
 
 import {
   clearModelAuthStatusUsageCache,
+  loadProfileUsageStaleWhileRevalidate,
   readProviderUsageStaleWhileRevalidate,
 } from "./models-auth-status-usage-cache.js";
 import { getProviderUsageRuntimeSnapshot } from "./provider-usage-runtime.js";
@@ -282,23 +283,6 @@ describe("usage.status provider usage cache", () => {
     expect(result.refreshing).toBeUndefined();
   });
 
-  it("keeps a failed refresh incomplete for capable clients and recovers", async () => {
-    mocks.loadProviderUsageSummary.mockRejectedValueOnce(new Error("provider stack down"));
-    await expect(runCapableUsageStatus()).resolves.toMatchObject({ refreshing: true });
-    await new Promise((resolve) => {
-      setTimeout(resolve, 0);
-    });
-
-    // A failed refresh publishes nothing, so the payload stays marked incomplete
-    // and the client's bounded retry owns reporting it. The next attempt recovers.
-    await expect(runCapableUsageStatus()).resolves.toMatchObject({ refreshing: true });
-    await vi.waitFor(async () => {
-      expect((await runCapableUsageStatus()) as { providers: unknown[] }).toMatchObject({
-        providers: [expect.any(Object)],
-      });
-    });
-  });
-
   it("reuses byte-identical results within 60s and refreshes stale data in the background", async () => {
     const first = (await runUsageStatus()) as UsageSummary;
     const repeated = await runUsageStatus();
@@ -403,20 +387,96 @@ describe("usage.status provider usage cache", () => {
     await vi.waitFor(() => expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(2));
   });
 
-  it("shares the raw snapshot with models.authStatus and invalidates on credential rotation", async () => {
+  it("keeps unscoped and provider-wide usage caches independent", async () => {
     await runUsageStatus();
     const agentId = resolveDefaultAgentId(config);
     const agentDir = resolveAgentDir(config, agentId);
-    const usage = readProviderUsageStaleWhileRevalidate({
+    const providerWide = readProviderUsageStaleWhileRevalidate({
       agentId,
       agentDir,
       configRef: config,
       credentialKey: getProviderUsageRuntimeSnapshot({ config }).credentialKey,
       providerIds: ["openai"],
+      providerWideAuthOnly: true,
       now,
     });
-    expect(usage.get("openai")?.windows[0]?.usedPercent).toBe(10);
+    expect(providerWide.usageByProvider.size).toBe(0);
+    expect(providerWide.refreshPending).toBe(true);
+    await vi.waitFor(() => expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(2));
+    expect(mocks.loadProviderUsageSummary).toHaveBeenLastCalledWith(
+      expect.objectContaining({ providerWideAuthOnly: true }),
+    );
+
+    const unscoped = (await runUsageStatus()) as UsageSummary;
+    expect(unscoped.providers[0]?.windows[0]?.usedPercent).toBe(10);
+    expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps provider usage pending while a forced refresh is in flight", async () => {
+    const agentId = resolveDefaultAgentId(config);
+    const agentDir = resolveAgentDir(config, agentId);
+    const params = {
+      agentId,
+      agentDir,
+      configRef: config,
+      credentialKey: getProviderUsageRuntimeSnapshot({ config }).credentialKey,
+      providerIds: ["openai"],
+      providerWideAuthOnly: true,
+      now,
+    };
+    readProviderUsageStaleWhileRevalidate(params);
+    await vi.waitFor(() => {
+      const warmed = readProviderUsageStaleWhileRevalidate(params);
+      expect(warmed.usageByProvider.get("openai")).toBeDefined();
+    });
+
+    let releaseRefresh: ((summary: UsageSummary) => void) | undefined;
+    const refresh = new Promise<UsageSummary>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    mocks.loadProviderUsageSummary.mockImplementationOnce(() => refresh);
+
+    const forced = readProviderUsageStaleWhileRevalidate({ ...params, forceRefresh: true });
+    const repeated = readProviderUsageStaleWhileRevalidate(params);
+
+    expect(forced.refreshPending).toBe(true);
+    expect(repeated.refreshPending).toBe(true);
+    releaseRefresh?.({ updatedAt: now, providers: [] });
+    await refresh;
+  });
+
+  it("settles a rejected provider-wide refresh until the cache expires", async () => {
+    const agentId = resolveDefaultAgentId(config);
+    const agentDir = resolveAgentDir(config, agentId);
+    const params = {
+      agentId,
+      agentDir,
+      configRef: config,
+      credentialKey: getProviderUsageRuntimeSnapshot({ config }).credentialKey,
+      providerIds: ["openai"],
+      providerWideAuthOnly: true,
+      now,
+    };
+    mocks.loadProviderUsageSummary.mockRejectedValueOnce(new Error("fetch failed"));
+
+    const initial = readProviderUsageStaleWhileRevalidate(params);
+    expect(initial.refreshPending).toBe(true);
+    await expect(mocks.loadProviderUsageSummary.mock.results[0]?.value).rejects.toThrow(
+      "fetch failed",
+    );
+
+    await vi.waitFor(() => {
+      const settled = readProviderUsageStaleWhileRevalidate(params);
+      expect(settled.refreshPending).toBe(false);
+      expect(settled.usageByProvider.get("openai")?.error).toBe("fetch failed");
+    });
     expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates unscoped usage on credential rotation", async () => {
+    await runUsageStatus();
+    const agentId = resolveDefaultAgentId(config);
+    const agentDir = resolveAgentDir(config, agentId);
 
     store = createStore("access-two");
     replaceRuntimeAuthProfileStoreSnapshots([{ agentDir, store }]);
@@ -425,5 +485,203 @@ describe("usage.status provider usage cache", () => {
     };
     expect(rotated.providers[0]?.windows[0]?.usedPercent).toBe(20);
     expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("models.authStatus profile usage cache", () => {
+  beforeEach(() => {
+    mocks.loadProviderUsageSummary.mockReset();
+    vi.clearAllMocks();
+    clearModelAuthStatusUsageCache();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each(["resolved error", "rejection"] as const)(
+    "keeps a warm account's last-good quota after a refresh %s",
+    async (failure) => {
+      const agentDir = tempDirs.make("openclaw-profile-usage-last-good-");
+      const authStore = {
+        version: 1,
+        profiles: {
+          "openai:default": {
+            type: "token" as const,
+            provider: "openai",
+            token: "stable-token",
+          },
+        },
+      };
+      const read = (forceRefresh = false) =>
+        loadProfileUsageStaleWhileRevalidate({
+          agentId: "main",
+          agentDir,
+          workspaceDir: agentDir,
+          authStore,
+          configRef: config,
+          forceRefresh,
+          targets: [{ profileId: "openai:default", providerId: "openai" }],
+          now: forceRefresh ? 61_000 : 1_000,
+        });
+
+      mocks.loadProviderUsageSummary.mockResolvedValueOnce({
+        updatedAt: 1_000,
+        providers: [
+          {
+            provider: "openai",
+            displayName: "OpenAI",
+            windows: [{ label: "Weekly", usedPercent: 25 }],
+          },
+        ],
+      });
+      const initial = await read();
+      expect(initial.usageByProfile.get("openai:default")?.windows).toEqual([
+        { label: "Weekly", usedPercent: 25 },
+      ]);
+
+      if (failure === "resolved error") {
+        mocks.loadProviderUsageSummary.mockResolvedValueOnce({
+          updatedAt: 61_000,
+          providers: [
+            {
+              provider: "openai",
+              displayName: "OpenAI",
+              windows: [],
+              error: "Timeout",
+            },
+          ],
+        });
+      } else {
+        mocks.loadProviderUsageSummary.mockRejectedValueOnce(new Error("fetch failed"));
+      }
+
+      const stale = await read(true);
+      expect(stale.usageByProfile.get("openai:default")?.windows).toEqual([
+        { label: "Weekly", usedPercent: 25 },
+      ]);
+      await vi.waitFor(async () => {
+        const retained = await read();
+        expect(retained.refreshPending).toBe(false);
+        expect(retained.usageByProfile.get("openai:default")).toMatchObject({
+          windows: [{ label: "Weekly", usedPercent: 25 }],
+        });
+        expect(retained.usageByProfile.get("openai:default")?.error).toBeUndefined();
+      });
+      expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("returns account results that finish inside the cold-read budget", async () => {
+    const agentDir = tempDirs.make("openclaw-profile-usage-cache-");
+    const authStore = {
+      version: 1,
+      profiles: {
+        "openai:fast": {
+          type: "token" as const,
+          provider: "openai",
+          token: "fast-token",
+        },
+        "openai:slow": {
+          type: "token" as const,
+          provider: "openai",
+          token: "slow-token",
+        },
+      },
+    };
+    let finishSlow: ((value: UsageSummary) => void) | undefined;
+    const slow = new Promise<UsageSummary>((resolve) => {
+      finishSlow = resolve;
+    });
+    mocks.loadProviderUsageSummary.mockImplementationOnce(async () => ({
+      updatedAt: Date.now(),
+      providers: [
+        {
+          provider: "openai",
+          displayName: "OpenAI",
+          windows: [{ label: "Weekly", usedPercent: 25 }],
+        },
+      ],
+    }));
+    mocks.loadProviderUsageSummary.mockImplementationOnce(() => slow);
+
+    const initial = await loadProfileUsageStaleWhileRevalidate({
+      agentId: "main",
+      agentDir,
+      workspaceDir: agentDir,
+      authStore,
+      configRef: config,
+      targets: [
+        { profileId: "openai:fast", providerId: "openai" },
+        { profileId: "openai:slow", providerId: "openai" },
+      ],
+      now: Date.now(),
+    });
+
+    expect(initial.refreshPending).toBe(true);
+    expect(initial.usageByProfile.get("openai:fast")?.windows).toEqual([
+      { label: "Weekly", usedPercent: 25 },
+    ]);
+    finishSlow?.({ updatedAt: Date.now(), providers: [] });
+    await slow;
+    await vi.waitFor(async () => {
+      const completed = await loadProfileUsageStaleWhileRevalidate({
+        agentId: "main",
+        agentDir,
+        workspaceDir: agentDir,
+        authStore,
+        configRef: config,
+        targets: [
+          { profileId: "openai:fast", providerId: "openai" },
+          { profileId: "openai:slow", providerId: "openai" },
+        ],
+        now: Date.now(),
+      });
+      expect(completed.refreshPending).toBe(false);
+    });
+  });
+
+  it("bounds concurrent account usage refreshes", async () => {
+    const agentDir = tempDirs.make("openclaw-profile-usage-concurrency-");
+    const profileIds = Array.from({ length: 7 }, (_, index) => `openai:${index + 1}`);
+    const authStore = {
+      version: 1,
+      profiles: Object.fromEntries(
+        profileIds.map((profileId) => [
+          profileId,
+          { type: "token" as const, provider: "openai", token: `token-${profileId}` },
+        ]),
+      ),
+    };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let active = 0;
+    let maxActive = 0;
+    mocks.loadProviderUsageSummary.mockImplementation(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await gate;
+      active -= 1;
+      return { updatedAt: Date.now(), providers: [] };
+    });
+
+    const refresh = loadProfileUsageStaleWhileRevalidate({
+      agentId: "main",
+      agentDir,
+      workspaceDir: agentDir,
+      authStore,
+      configRef: config,
+      targets: profileIds.map((profileId) => ({ profileId, providerId: "openai" })),
+      now: Date.now(),
+    });
+    await vi.waitFor(() => expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(3));
+
+    expect(maxActive).toBe(3);
+    release();
+    await refresh;
+    expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(profileIds.length);
+    expect(maxActive).toBe(3);
   });
 });

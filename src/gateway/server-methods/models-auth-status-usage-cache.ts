@@ -1,15 +1,26 @@
 // Stale-while-revalidate cache for models.authStatus provider usage enrichment.
+import { asRecord } from "@openclaw/normalization-core/record-coerce";
 import type { AuthProfileStore } from "../../agents/auth-profiles.js";
+import {
+  fingerprintAuthProfileCredential,
+  fingerprintAuthProfileOwnerShape,
+} from "../../agents/execution-auth-binding.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { formatErrorMessage } from "../../infra/errors.js";
 import { resolveProviderProfileUsageAuth } from "../../infra/provider-usage.auth.js";
 import { loadProviderUsageSummary } from "../../infra/provider-usage.load.js";
-import { PROVIDER_USAGE_TIMEOUT_MS, raceUsageTimeout } from "../../infra/provider-usage.shared.js";
+import {
+  PROVIDER_USAGE_TIMEOUT_MS,
+  providerUsageLabel,
+  raceUsageTimeout,
+} from "../../infra/provider-usage.shared.js";
 import type {
   ProviderUsageSnapshot,
   UsageProviderId,
   UsageSummary,
 } from "../../infra/provider-usage.types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import { runTasksWithConcurrency } from "../../utils/run-with-concurrency.js";
 import { formatForLog } from "../ws-log.js";
 import {
   clearProviderUsageRuntimeSnapshot,
@@ -18,11 +29,22 @@ import {
 
 const log = createSubsystemLogger("provider-usage-cache");
 const USAGE_CACHE_TTL_MS = 60_000;
+const PROFILE_USAGE_REFRESH_CONCURRENCY = 3;
 
 export type ProviderUsageStatus = Pick<
   ProviderUsageSnapshot,
   "windows" | "summary" | "plan" | "billing" | "costHistory" | "accountEmail" | "error"
->;
+> & { providerId: UsageProviderId };
+
+type ProfileUsageCacheResult = {
+  usageByProfile: Map<string, ProviderUsageStatus>;
+  refreshPending: boolean;
+};
+
+type ProviderUsageCacheResult = {
+  usageByProvider: Map<string, ProviderUsageStatus>;
+  refreshPending: boolean;
+};
 
 type ProviderUsageCacheEntry = {
   agentDir: string;
@@ -77,8 +99,32 @@ function profileUsageKey(targets: readonly ProfileUsageTarget[]): string {
     .join("\0");
 }
 
-function snapshotUsage(snapshot: ProviderUsageSnapshot): ProviderUsageStatus {
+function profileUsageCredentialKey(
+  store: AuthProfileStore,
+  targets: readonly ProfileUsageTarget[],
+): string {
+  return targets
+    .map(({ profileId }) => {
+      const credential = store.profiles[profileId];
+      const fingerprint = credential
+        ? fingerprintAuthProfileCredential({ profileId, credential })
+        : undefined;
+      return (
+        fingerprint ??
+        fingerprintAuthProfileOwnerShape({ profileId, credential }) ??
+        `${profileId}:missing`
+      );
+    })
+    .toSorted()
+    .join("\0");
+}
+
+function snapshotUsage(
+  providerId: UsageProviderId,
+  snapshot: ProviderUsageSnapshot,
+): ProviderUsageStatus {
   return {
+    providerId,
     windows: snapshot.windows,
     ...(snapshot.summary ? { summary: snapshot.summary } : {}),
     ...(snapshot.plan ? { plan: snapshot.plan } : {}),
@@ -89,6 +135,13 @@ function snapshotUsage(snapshot: ProviderUsageSnapshot): ProviderUsageStatus {
   };
 }
 
+function retainLastGoodProfileUsage(
+  fresh: ProviderUsageStatus,
+  previous: ProviderUsageStatus | undefined,
+): ProviderUsageStatus {
+  return fresh.error !== undefined && previous && previous.error === undefined ? previous : fresh;
+}
+
 /** Account-scoped quota snapshots; cold reads wait, warm reads refresh in the background. */
 export async function loadProfileUsageStaleWhileRevalidate(params: {
   agentId: string;
@@ -96,22 +149,22 @@ export async function loadProfileUsageStaleWhileRevalidate(params: {
   workspaceDir: string;
   authStore: AuthProfileStore;
   configRef: OpenClawConfig;
-  credentialKey: string;
   forceRefresh?: boolean;
   targets: ProfileUsageTarget[];
   now: number;
-}): Promise<Map<string, ProviderUsageStatus>> {
+}): Promise<ProfileUsageCacheResult> {
   if (params.targets.length === 0) {
     profileUsageCacheByAgentId.delete(params.agentId);
-    return new Map();
+    return { usageByProfile: new Map(), refreshPending: false };
   }
   const profileKey = profileUsageKey(params.targets);
+  const credentialKey = profileUsageCredentialKey(params.authStore, params.targets);
   const cached = profileUsageCacheByAgentId.get(params.agentId);
   let entry =
     cached?.agentDir === params.agentDir &&
     cached.workspaceDir === params.workspaceDir &&
     cached.configRef === params.configRef &&
-    cached.credentialKey === params.credentialKey &&
+    cached.credentialKey === credentialKey &&
     cached.profileKey === profileKey
       ? cached
       : undefined;
@@ -120,7 +173,7 @@ export async function loadProfileUsageStaleWhileRevalidate(params: {
       agentDir: params.agentDir,
       workspaceDir: params.workspaceDir,
       configRef: params.configRef,
-      credentialKey: params.credentialKey,
+      credentialKey,
       profileKey,
       refreshedAt: 0,
       usageByProfile: new Map(),
@@ -132,12 +185,18 @@ export async function loadProfileUsageStaleWhileRevalidate(params: {
     entry.refreshedAt === 0 ||
     params.now - entry.refreshedAt >= USAGE_CACHE_TTL_MS;
   if (!needsRefresh) {
-    return entry.usageByProfile;
+    return { usageByProfile: entry.usageByProfile, refreshPending: Boolean(entry.refresh) };
   }
 
   if (!entry.refresh) {
-    const refresh = Promise.all(
-      params.targets.map(async (target) => {
+    const previousUsageByProfile = entry.usageByProfile;
+    // Warm refreshes publish atomically so readers keep the complete stale snapshot
+    // until every account finishes. Cold refreshes still expose fast partial results.
+    const refreshedUsageByProfile =
+      entry.refreshedAt > 0 ? new Map(previousUsageByProfile) : previousUsageByProfile;
+    const refresh = runTasksWithConcurrency({
+      tasks: params.targets.map((target) => async () => {
+        const previous = previousUsageByProfile.get(target.profileId);
         try {
           const auth = await resolveProviderProfileUsageAuth({
             provider: target.providerId,
@@ -147,7 +206,8 @@ export async function loadProfileUsageStaleWhileRevalidate(params: {
             config: params.configRef,
           });
           if (!auth) {
-            return undefined;
+            refreshedUsageByProfile.delete(target.profileId);
+            return;
           }
           const summary = await loadProviderUsageSummary({
             auth: [auth],
@@ -158,40 +218,59 @@ export async function loadProfileUsageStaleWhileRevalidate(params: {
             timeoutMs: PROVIDER_USAGE_TIMEOUT_MS,
           });
           const snapshot = summary.providers[0];
-          return snapshot ? ([target.profileId, snapshotUsage(snapshot)] as const) : undefined;
+          if (snapshot) {
+            refreshedUsageByProfile.set(
+              target.profileId,
+              retainLastGoodProfileUsage(snapshotUsage(target.providerId, snapshot), previous),
+            );
+          } else {
+            refreshedUsageByProfile.delete(target.profileId);
+          }
         } catch (error) {
-          log.debug(
-            `profile usage refresh failed: profile=${target.profileId} error=${formatForLog(error)}`,
+          const message = formatForLog(error);
+          refreshedUsageByProfile.set(
+            target.profileId,
+            retainLastGoodProfileUsage(
+              {
+                providerId: target.providerId,
+                windows: [],
+                error: message,
+              },
+              previous,
+            ),
           );
-          return undefined;
+          log.debug(`profile usage refresh failed: profile=${target.profileId} error=${message}`);
         }
       }),
-    ).then((entries) => {
-      const usageByProfile = new Map(entry.usageByProfile);
-      for (const result of entries) {
-        if (result) {
-          usageByProfile.set(...result);
-        }
-      }
+      limit: PROFILE_USAGE_REFRESH_CONCURRENCY,
+    }).then(() => {
       if (profileUsageCacheByAgentId.get(params.agentId) === entry) {
-        entry.usageByProfile = usageByProfile;
+        entry.usageByProfile = refreshedUsageByProfile;
         entry.refreshedAt = Date.now();
         entry.refresh = undefined;
       }
-      return usageByProfile;
+      return refreshedUsageByProfile;
     });
     entry.refresh = refresh;
   }
   if (entry.refreshedAt > 0) {
-    return entry.usageByProfile;
+    return { usageByProfile: entry.usageByProfile, refreshPending: true };
   }
   // Give fast account endpoints a chance to fill the first response without
   // letting quota telemetry hold credential management hostage.
-  return await raceUsageTimeout(entry.refresh, 250, new Map());
+  return await raceUsageTimeout(
+    entry.refresh.then((usageByProfile) => ({ usageByProfile, refreshPending: false })),
+    250,
+    { usageByProfile: entry.usageByProfile, refreshPending: true },
+  );
 }
 
 function providerUsageCacheKey(providerIds: readonly UsageProviderId[]): string {
   return providerIds.toSorted().join("\0");
+}
+
+function providerUsageOwnerKey(agentId: string, providerWideAuthOnly: boolean): string {
+  return `${agentId}\0${providerWideAuthOnly ? "provider" : "all"}`;
 }
 
 function scopeProviderUsageCredentialKey(
@@ -201,20 +280,24 @@ function scopeProviderUsageCredentialKey(
   // models.authStatus fingerprints every direct provider. Scope that evidence to
   // this fetch set so usage.status can share the same credential-bound snapshot.
   try {
-    // Produced only by fingerprintProviderUsageCredentials below, which always
-    // stringifies an object with a `direct` array; a parse failure returns the input.
-    // SAFETY: in-module producer guarantees this shape, and `direct` is re-checked.
-    const parsed = JSON.parse(credentialKey) as {
-      direct?: Array<[string, string | null]>;
-      [key: string]: unknown;
-    };
+    const parsed = asRecord(JSON.parse(credentialKey));
     if (!Array.isArray(parsed.direct)) {
       return credentialKey;
     }
-    const providers = new Set(providerIds);
+    const providers = new Set<string>(providerIds);
+    const direct = parsed.direct.flatMap((entry): Array<[string, string | null]> => {
+      if (
+        !Array.isArray(entry) ||
+        typeof entry[0] !== "string" ||
+        (entry[1] !== null && typeof entry[1] !== "string")
+      ) {
+        return [];
+      }
+      return [[entry[0], entry[1]]];
+    });
     return JSON.stringify({
       ...parsed,
-      direct: parsed.direct.filter(
+      direct: direct.filter(
         ([provider, fingerprint]) => providers.has(provider) && fingerprint !== null,
       ),
     });
@@ -226,9 +309,24 @@ function scopeProviderUsageCredentialKey(
 function mapProviderUsage(usage: Awaited<ReturnType<typeof loadProviderUsageSummary>>) {
   const usageByProvider = new Map<string, ProviderUsageStatus>();
   for (const snap of usage.providers) {
-    usageByProvider.set(snap.provider, snapshotUsage(snap));
+    usageByProvider.set(snap.provider, snapshotUsage(snap.provider, snap));
   }
   return usageByProvider;
+}
+
+function providerUsageFailureSummary(
+  providerIds: readonly UsageProviderId[],
+  error: string,
+): UsageSummary {
+  return {
+    updatedAt: Date.now(),
+    providers: providerIds.map((provider) => ({
+      provider,
+      displayName: providerUsageLabel(provider) ?? provider,
+      windows: [],
+      error,
+    })),
+  };
 }
 
 function retainLastGoodOnTimeout(
@@ -265,9 +363,11 @@ function scheduleProviderUsageRefresh(params: {
   credentialKey: string;
   providerIds: UsageProviderId[];
   providerKey: string;
+  providerWideAuthOnly?: boolean;
   lastGood?: UsageSummary;
 }): Promise<UsageSummary> {
-  const active = usageRefreshByAgentId.get(params.agentId);
+  const ownerKey = providerUsageOwnerKey(params.agentId, params.providerWideAuthOnly === true);
+  const active = usageRefreshByAgentId.get(ownerKey);
   if (
     active?.agentDir === params.agentDir &&
     active.configRef === params.configRef &&
@@ -283,14 +383,24 @@ function scheduleProviderUsageRefresh(params: {
     authStore: params.authStore,
     config: params.configRef,
     timeoutMs: PROVIDER_USAGE_TIMEOUT_MS,
+    providerWideAuthOnly: params.providerWideAuthOnly === true,
   })
-    .then((freshUsage) => {
-      const usage = retainLastGoodOnTimeout(freshUsage, params.lastGood);
+    .then((freshUsage) => retainLastGoodOnTimeout(freshUsage, params.lastGood))
+    .catch((err: unknown) => {
+      // A failed auxiliary refresh must still settle the cache. Otherwise every
+      // polling read is another cold miss and retries the provider indefinitely.
+      const error = formatErrorMessage(err).trim() || "Fetch failed";
+      log.debug(
+        `usage refresh failed: providers=${params.providerIds.join(",")} error=${formatForLog(err)}`,
+      );
+      return params.lastGood ?? providerUsageFailureSummary(params.providerIds, error);
+    })
+    .then((usage) => {
       if (
         publishGeneration === cacheGeneration &&
-        usageRefreshByAgentId.get(params.agentId) === refresh
+        usageRefreshByAgentId.get(ownerKey) === refresh
       ) {
-        usageCacheByAgentId.set(params.agentId, {
+        usageCacheByAgentId.set(ownerKey, {
           agentDir: params.agentDir,
           configRef: params.configRef,
           credentialKey: params.credentialKey,
@@ -302,18 +412,9 @@ function scheduleProviderUsageRefresh(params: {
       }
       return usage;
     })
-    .catch((err: unknown) => {
-      // Usage is auxiliary and stale data remains valid. A failed refresh
-      // publishes nothing, so a capable client keeps seeing the incomplete
-      // marker and reports it once its retry budget is spent.
-      log.debug(
-        `usage refresh failed: providers=${params.providerIds.join(",")} error=${formatForLog(err)}`,
-      );
-      throw err;
-    })
     .finally(() => {
-      if (usageRefreshByAgentId.get(params.agentId) === refresh) {
-        usageRefreshByAgentId.delete(params.agentId);
+      if (usageRefreshByAgentId.get(ownerKey) === refresh) {
+        usageRefreshByAgentId.delete(ownerKey);
       }
     });
   const refresh: ProviderUsageRefresh = {
@@ -323,7 +424,7 @@ function scheduleProviderUsageRefresh(params: {
     providerKey: params.providerKey,
     promise,
   };
-  usageRefreshByAgentId.set(params.agentId, refresh);
+  usageRefreshByAgentId.set(ownerKey, refresh);
   return promise;
 }
 
@@ -336,14 +437,17 @@ type ProviderUsageCacheParams = {
   coldRead?: "refresh-marker";
   forceRefresh?: boolean;
   providerIds: UsageProviderId[];
+  providerWideAuthOnly?: boolean;
   now: number;
 };
 
 function resolveProviderUsageCacheRead(params: ProviderUsageCacheParams) {
   const providerIds = params.providerIds.toSorted();
+  const providerWideAuthOnly = params.providerWideAuthOnly === true;
+  const ownerKey = providerUsageOwnerKey(params.agentId, providerWideAuthOnly);
   const providerKey = providerUsageCacheKey(providerIds);
   const credentialKey = scopeProviderUsageCredentialKey(params.credentialKey, providerIds);
-  const cached = usageCacheByAgentId.get(params.agentId);
+  const cached = usageCacheByAgentId.get(ownerKey);
   const matching =
     cached?.agentDir === params.agentDir &&
     cached.configRef === params.configRef &&
@@ -360,10 +464,12 @@ function resolveProviderUsageCacheRead(params: ProviderUsageCacheParams) {
 
 export function readProviderUsageStaleWhileRevalidate(
   params: ProviderUsageCacheParams,
-): Map<string, ProviderUsageStatus> {
+): ProviderUsageCacheResult {
   if (params.providerIds.length === 0) {
-    usageCacheByAgentId.delete(params.agentId);
-    return new Map();
+    usageCacheByAgentId.delete(
+      providerUsageOwnerKey(params.agentId, params.providerWideAuthOnly === true),
+    );
+    return { usageByProvider: new Map(), refreshPending: false };
   }
   const { credentialKey, matching, needsRefresh, providerIds, providerKey } =
     resolveProviderUsageCacheRead(params);
@@ -378,10 +484,18 @@ export function readProviderUsageStaleWhileRevalidate(
       credentialKey,
       providerIds,
       providerKey,
+      providerWideAuthOnly: params.providerWideAuthOnly,
       lastGood: matching?.summary,
     }).catch(() => {});
   }
-  return matching?.usageByProvider ?? new Map();
+  return {
+    usageByProvider: matching?.usageByProvider ?? new Map(),
+    refreshPending:
+      needsRefresh ||
+      usageRefreshByAgentId.has(
+        providerUsageOwnerKey(params.agentId, params.providerWideAuthOnly === true),
+      ),
+  };
 }
 
 /** Returns cached provider usage while network refreshes run in the background for capable clients. */
@@ -389,7 +503,9 @@ async function loadProviderUsageSummaryStaleWhileRevalidate(
   params: ProviderUsageCacheParams,
 ): Promise<UsageSummary> {
   if (params.providerIds.length === 0) {
-    usageCacheByAgentId.delete(params.agentId);
+    usageCacheByAgentId.delete(
+      providerUsageOwnerKey(params.agentId, params.providerWideAuthOnly === true),
+    );
     return { updatedAt: params.now, providers: [] };
   }
   const { credentialKey, matching, needsRefresh, providerIds, providerKey } =
@@ -405,6 +521,7 @@ async function loadProviderUsageSummaryStaleWhileRevalidate(
     credentialKey,
     providerIds,
     providerKey,
+    providerWideAuthOnly: params.providerWideAuthOnly,
     lastGood: matching?.summary,
   });
   if (matching) {

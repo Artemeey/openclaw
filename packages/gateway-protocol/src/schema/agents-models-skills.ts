@@ -299,10 +299,10 @@ export const ModelsAuthLogoutParamsSchema = closedObject({
   agentId: Type.Optional(Type.String()),
 });
 
-/** Sets the preferred auth-profile order for one provider and agent. */
+/** Sets or clears the preferred auth-profile order for one provider and agent. */
 export const ModelsAuthOrderSetParamsSchema = closedObject({
   provider: NonEmptyString,
-  profileIds: Type.Array(NonEmptyString, { minItems: 1 }),
+  profileIds: Type.Union([Type.Null(), Type.Array(NonEmptyString, { minItems: 1 })]),
   expectedProfileIds: Type.Optional(Type.Union([Type.Null(), Type.Array(NonEmptyString)])),
   expectedProfileMembership: Type.Optional(Type.Array(NonEmptyString, { minItems: 1 })),
   agentId: Type.Optional(Type.String()),

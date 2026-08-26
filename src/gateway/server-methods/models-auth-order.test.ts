@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import type { AuthProfileStore } from "../../agents/auth-profiles.js";
 import { testing as externalAuthTesting } from "../../agents/auth-profiles/external-auth.test-support.js";
 import { loadPersistedAuthProfileStore } from "../../agents/auth-profiles/persisted.js";
 import { clearRuntimeAuthProfileStoreSnapshots } from "../../agents/auth-profiles/runtime-snapshots.js";
@@ -17,7 +18,7 @@ import {
 } from "../../state/openclaw-agent-db.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { withEnvAsync } from "../../test-utils/env.js";
-import { updateModelAuthProfileOrder } from "./models-auth-order.js";
+import { resolveModelAuthProfileOrder, updateModelAuthProfileOrder } from "./models-auth-order.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
@@ -29,6 +30,63 @@ afterEach(() => {
 });
 
 describe("updateModelAuthProfileOrder", () => {
+  it("reports an alias-configured fallback behind a canonical stored override", () => {
+    const cfg = {
+      auth: { order: { "gmi-cloud": ["gmi:one", "gmi:two"] } },
+    } satisfies OpenClawConfig;
+    const store: AuthProfileStore = {
+      version: 1,
+      profiles: {
+        "gmi:one": { type: "api_key", provider: "gmi", key: "one" },
+        "gmi:two": { type: "api_key", provider: "gmi", key: "two" },
+      },
+      order: { gmi: ["gmi:two", "gmi:one"] },
+    };
+
+    const order = resolveModelAuthProfileOrder(cfg, store, "gmi-cloud", "gmi", { config: cfg });
+
+    expect(order.effective).toEqual(["gmi:two", "gmi:one"]);
+    expect(order.configured).toEqual(["gmi:one", "gmi:two"]);
+  });
+
+  it("does not report an alias-configured order on a canonical status route", () => {
+    const cfg = {
+      auth: { order: { "gmi-cloud": ["gmi:two", "gmi:one"] } },
+    } satisfies OpenClawConfig;
+    const store: AuthProfileStore = {
+      version: 1,
+      profiles: {
+        "gmi:one": { type: "api_key", provider: "gmi", key: "one" },
+        "gmi:two": { type: "api_key", provider: "gmi", key: "two" },
+      },
+    };
+
+    const order = resolveModelAuthProfileOrder(cfg, store, "gmi", "gmi", { config: cfg });
+
+    expect(order.effective).toBeUndefined();
+    expect(order.configured).toBeUndefined();
+    expect(order.orderProvider).toBe("gmi");
+  });
+
+  it("reports an alias-configured order on that exact alias route", () => {
+    const cfg = {
+      auth: { order: { "gmi-cloud": ["gmi:two", "gmi:one"] } },
+    } satisfies OpenClawConfig;
+    const store: AuthProfileStore = {
+      version: 1,
+      profiles: {
+        "gmi:one": { type: "api_key", provider: "gmi", key: "one" },
+        "gmi:two": { type: "api_key", provider: "gmi", key: "two" },
+      },
+    };
+
+    const order = resolveModelAuthProfileOrder(cfg, store, "gmi-cloud", "gmi", { config: cfg });
+
+    expect(order.effective).toEqual(["gmi:two", "gmi:one"]);
+    expect(order.configured).toEqual(["gmi:two", "gmi:one"]);
+    expect(order.orderProvider).toBe("gmi-cloud");
+  });
+
   it("rejects a reorder when runtime-external membership changes before the locked update", async () => {
     const stateDir = tempDirs.make("openclaw-auth-order-external-cas-");
     const agentDir = path.join(stateDir, "agents", "main", "agent");
