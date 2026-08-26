@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
-import type { SessionsListResult } from "../../api/types.ts";
+import type { SessionGoal, SessionsListResult } from "../../api/types.ts";
 import { createSessionCapability } from "./index.ts";
 
 function sessionsResult(sessions: SessionsListResult["sessions"], ts: number): SessionsListResult {
@@ -23,7 +23,7 @@ function deferred<T>() {
   return { promise, reject, resolve };
 }
 
-function createSessions(client: GatewayBrowserClient, key: string) {
+function createSessions(client: GatewayBrowserClient, key: string, ownerId?: string) {
   return createSessionCapability({
     snapshot: {
       client,
@@ -31,6 +31,7 @@ function createSessions(client: GatewayBrowserClient, key: string) {
       sessionKey: key,
       assistantAgentId: "main",
       hello: null,
+      selfUser: ownerId ? { id: ownerId } : null,
     },
     subscribe: () => () => undefined,
     subscribeEvents: () => () => undefined,
@@ -133,76 +134,6 @@ describe("session list replacement options", () => {
     sessions.dispose();
   });
 
-  it("carries a newer owner through an older managed-list response", async () => {
-    const key = "agent:main:superseded-managed-owner";
-    const ada = { type: "human" as const, id: "profile-ada", label: "Ada" };
-    const bob = { type: "human" as const, id: "profile-bob", label: "Bob" };
-    const carol = { type: "human" as const, id: "profile-carol", label: "Carol" };
-    const oldOwner = { actor: bob, assignedBy: bob, assignedAt: 10 };
-    const assignedOwner = { actor: ada, assignedBy: ada, assignedAt: 20 };
-    const supersedingOwner = { actor: carol, assignedBy: carol, assignedAt: 30 };
-    const staleManagedResponse = deferred<SessionsListResult>();
-    const managedReplacement = deferred<SessionsListResult>();
-    const managedScope = { agentId: "main", search: "superseded-managed-owner" };
-    let managedCalls = 0;
-    const request = vi.fn(async (method: string, params?: unknown) => {
-      if (method === "sessions.assignOwner") {
-        return { ok: true, key, owner: assignedOwner };
-      }
-      if (method !== "sessions.list") {
-        throw new Error(`Unexpected request: ${method}`);
-      }
-      const managed =
-        typeof params === "object" &&
-        params !== null &&
-        "search" in params &&
-        params.search === managedScope.search;
-      if (!managed) {
-        return {
-          ...sessionsResult([{ key, kind: "direct", updatedAt: 30, owner: supersedingOwner }], 30),
-          owners: [carol],
-        };
-      }
-      managedCalls += 1;
-      if (managedCalls === 2) {
-        return await staleManagedResponse.promise;
-      }
-      if (managedCalls === 3) {
-        return await managedReplacement.promise;
-      }
-      return {
-        ...sessionsResult([{ key, kind: "direct", updatedAt: 10, owner: oldOwner }], 10),
-        owners: [ada, bob],
-      };
-    });
-    const sessions = createSessions({ request } as unknown as GatewayBrowserClient, key);
-    const stop = sessions.subscribeList(managedScope, () => undefined);
-
-    await sessions.refreshList({ ...managedScope, force: true });
-    const staleRefresh = sessions.refreshList({ ...managedScope, force: true });
-    await vi.waitFor(() => expect(managedCalls).toBe(2));
-    await sessions.assignOwner(key, ada, { agentId: "main" });
-
-    staleManagedResponse.resolve({
-      ...sessionsResult([{ key, kind: "direct", updatedAt: 10, owner: oldOwner }], 10),
-      owners: [ada, bob],
-    });
-    await vi.waitFor(() => expect(managedCalls).toBe(3));
-    expect(sessions.listSnapshot(managedScope).result?.sessions[0]?.owner).toEqual(
-      supersedingOwner,
-    );
-    expect(sessions.listSnapshot(managedScope).result?.owners).toBeUndefined();
-
-    managedReplacement.resolve({
-      ...sessionsResult([{ key, kind: "direct", updatedAt: 30, owner: supersedingOwner }], 30),
-      owners: [carol],
-    });
-    await staleRefresh;
-    expect(sessions.listSnapshot(managedScope).result?.owners).toEqual([carol]);
-    stop();
-    sessions.dispose();
-  });
-
   it("retains the confirmed owner through an older in-flight list response", async () => {
     const key = "agent:main:owned";
     const ada = { type: "human" as const, id: "profile-ada", label: "Ada" };
@@ -258,75 +189,28 @@ describe("session list replacement options", () => {
     sessions.dispose();
   });
 
-  it("retains the confirmed owner until the matching managed list catches up", async () => {
-    const key = "agent:main:managed-owner";
-    const ada = { type: "human" as const, id: "profile-ada", label: "Ada" };
-    const bob = { type: "human" as const, id: "profile-bob", label: "Bob" };
-    const oldOwner = { actor: bob, assignedBy: ada, assignedAt: 10 };
-    const assignedOwner = { actor: ada, assignedBy: ada, assignedAt: 20 };
-    const staleManagedResponse = deferred<SessionsListResult>();
-    const managedReplacement = deferred<SessionsListResult>();
-    const managedScope = { agentId: "main", search: "managed-owner" };
-    let managedCalls = 0;
-    let primaryCalls = 0;
-    const request = vi.fn(async (method: string, params?: unknown) => {
-      if (method === "sessions.assignOwner") {
-        return { ok: true, key, owner: assignedOwner };
+  it.each([
+    { filter: "owner", options: { ownerId: "profile-bob" } },
+    { filter: "involving me", options: { involvingMe: true } },
+    { filter: "search", options: { search: "release" } },
+  ])("keeps an explicit $filter query single-phase", async ({ options }) => {
+    const request = vi.fn(async (method: string, _params?: unknown) => {
+      if (method === "sessions.list") {
+        return sessionsResult([], 1);
       }
-      if (method !== "sessions.list") {
-        throw new Error(`Unexpected request: ${method}`);
-      }
-      const managed =
-        typeof params === "object" &&
-        params !== null &&
-        "search" in params &&
-        params.search === managedScope.search;
-      if (!managed) {
-        primaryCalls += 1;
-        return {
-          ...sessionsResult([{ key, kind: "direct", updatedAt: 30, owner: assignedOwner }], 30),
-          owners: [ada],
-        };
-      }
-      managedCalls += 1;
-      if (managedCalls === 2) {
-        return await staleManagedResponse.promise;
-      }
-      if (managedCalls === 3) {
-        return await managedReplacement.promise;
-      }
-      return {
-        ...sessionsResult([{ key, kind: "direct", updatedAt: 10, owner: oldOwner }], 10),
-        owners: [ada, bob],
-      };
+      throw new Error(`Unexpected request: ${method}`);
     });
-    const sessions = createSessions({ request } as unknown as GatewayBrowserClient, key);
-    const stop = sessions.subscribeList(managedScope, () => undefined);
-
-    await sessions.refreshList({ ...managedScope, force: true });
-    const staleRefresh = sessions.refreshList({ ...managedScope, force: true });
-    await vi.waitFor(() => expect(managedCalls).toBe(2));
-    await expect(sessions.assignOwner(key, ada, { agentId: "main" })).resolves.toEqual(
-      assignedOwner,
+    const sessions = createSessions(
+      { request } as unknown as GatewayBrowserClient,
+      "agent:main:main",
+      "profile-ada",
     );
-    await vi.waitFor(() => expect(primaryCalls).toBeGreaterThanOrEqual(1));
 
-    staleManagedResponse.resolve({
-      ...sessionsResult([{ key, kind: "direct", updatedAt: 10, owner: oldOwner }], 10),
-      owners: [ada, bob],
-    });
-    await vi.waitFor(() => expect(managedCalls).toBe(3));
-    expect(sessions.listSnapshot(managedScope).result?.sessions[0]?.owner).toEqual(assignedOwner);
-    expect(sessions.listSnapshot(managedScope).result?.owners).toBeUndefined();
+    await sessions.refresh({ agentId: "main", ...options, force: true });
 
-    managedReplacement.resolve({
-      ...sessionsResult([{ key, kind: "direct", updatedAt: 20, owner: assignedOwner }], 20),
-      owners: [ada],
-    });
-    await staleRefresh;
-    expect(sessions.listSnapshot(managedScope).result?.sessions[0]?.owner).toEqual(assignedOwner);
-    expect(sessions.listSnapshot(managedScope).result?.owners).toEqual([ada]);
-    stop();
+    const listCalls = request.mock.calls.filter(([method]) => method === "sessions.list");
+    expect(listCalls).toHaveLength(1);
+    expect(listCalls[0]?.[1]).toEqual(expect.objectContaining(options));
     sessions.dispose();
   });
 
@@ -677,6 +561,68 @@ describe("session list replacement options", () => {
       derivedTitle: "Readable planning title",
       lastMessagePreview: "Latest visible reply",
     });
+    sessions.dispose();
+  });
+
+  it("does not preserve another agent's raw-global row through background hydration", async () => {
+    const opsGoal: SessionGoal = {
+      schemaVersion: 1,
+      id: "goal-ops",
+      objective: "Ops only",
+      status: "active",
+      createdAt: 1,
+      updatedAt: 1,
+      tokenStart: 0,
+      tokensUsed: 0,
+      continuationTurns: 0,
+    };
+    let listCallCount = 0;
+    const request = vi.fn(async (method: string) => {
+      if (method !== "sessions.list") {
+        throw new Error(`Unexpected request: ${method}`);
+      }
+      listCallCount += 1;
+      return sessionsResult(
+        listCallCount === 1
+          ? [
+              {
+                key: "global",
+                kind: "global",
+                updatedAt: 1,
+                owner: { actor: { type: "agent", id: "ops", label: "Ops" } },
+                goal: opsGoal,
+                status: "running",
+              },
+            ]
+          : [],
+        listCallCount,
+      );
+    });
+    const client = { request } as unknown as GatewayBrowserClient;
+    const snapshot = {
+      client,
+      phase: "connected" as const,
+      sessionKey: "global",
+      assistantAgentId: "ops",
+      hello: null,
+    };
+    const sessions = createSessionCapability({
+      snapshot,
+      subscribe: () => () => undefined,
+      subscribeEvents: () => () => undefined,
+    });
+
+    await sessions.refresh({ agentId: "ops", force: true });
+    expect(sessions.state.result?.sessions[0]).toMatchObject({
+      key: "global",
+      goal: opsGoal,
+    });
+
+    snapshot.assistantAgentId = "research";
+    await sessions.refresh({ agentId: "research", backgroundHydrate: true, force: true });
+
+    expect(sessions.state.agentId).toBe("research");
+    expect(sessions.state.result?.sessions).toEqual([]);
     sessions.dispose();
   });
 

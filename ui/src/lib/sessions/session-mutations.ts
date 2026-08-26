@@ -1,8 +1,4 @@
-import type {
-  SessionOwner,
-  SessionsAssignOwnerParams,
-  SessionsAssignOwnerResult,
-} from "../../../../packages/gateway-protocol/src/index.js";
+import type { SessionsAssignOwnerParams } from "../../../../packages/gateway-protocol/src/index.js";
 import type {
   GatewaySessionRow,
   SessionsListResult,
@@ -17,10 +13,12 @@ import {
 } from "./create.ts";
 import type { SessionPatch, SessionPatchOptions } from "./patch.ts";
 import { requestSessionRecovery } from "./recover.ts";
+import { createSessionArchiveVisibility } from "./session-archive-visibility.ts";
 import type {
   SessionConnectionOwner,
   SessionConnectionScope,
   SessionCreateReconciliation,
+  SessionArchiveVisibility,
   SessionDeleteBatchResult,
   SessionDeleteOptions,
   SessionDeleteOutcome,
@@ -33,6 +31,7 @@ import { createSessionOwnerAssignmentOverlay } from "./session-owner-assignment-
 import {
   confirmsSessionDeletion,
   requestSessionDelete,
+  requestSessionOwnerAssignment,
   requestSessionPatch,
   requestSessionReset,
 } from "./session-requests.ts";
@@ -65,6 +64,9 @@ export function createSessionMutations(host: SessionMutationsHost) {
   >();
   const confirmedArchives = new Map<string, ConfirmedArchiveState>();
   const ownerAssignments = createSessionOwnerAssignmentOverlay();
+  const archiveVisibility = createSessionArchiveVisibility(() =>
+    host.publish({ ...host.readState() }),
+  );
   const preparedWorkSessionKeys = new Set<string>();
 
   const setModelOverride = (key: string, value: string | null | undefined) => {
@@ -100,21 +102,15 @@ export function createSessionMutations(host: SessionMutationsHost) {
   const patchRowLocal = (key: string, patch: Partial<GatewaySessionRow>) => {
     const state = host.readState();
     const normalizedKey = key.trim();
-    if (!state.result || !normalizedKey) {
+    const row = state.result?.sessions.find((candidate) => candidate.key === normalizedKey);
+    if (!state.result || !row) {
       return;
     }
-    let changed = false;
-    const sessions = state.result.sessions.map((row) => {
-      if (row.key !== normalizedKey) {
-        return row;
-      }
-      changed = true;
-      return { ...row, ...patch };
+    const sessions = state.result.sessions.map((candidate) => {
+      return candidate === row ? { ...candidate, ...patch } : candidate;
     });
-    if (changed) {
-      const owners = Object.hasOwn(patch, "owner") ? undefined : state.result.owners;
-      host.publish({ ...state, result: { ...state.result, sessions, owners } });
-    }
+    const owners = Object.hasOwn(patch, "owner") ? undefined : state.result.owners;
+    host.publish({ ...state, result: { ...state.result, sessions, owners } });
   };
 
   // The Gateway derives `pinned` from `pinnedAt` and both row comparators order
@@ -417,6 +413,7 @@ export function createSessionMutations(host: SessionMutationsHost) {
         }
       } else if (patchParams.archived === false) {
         confirmedArchives.delete(normalizedKey);
+        archiveVisibility.clear(normalizedKey);
       }
       confirmPinPatch();
       if (!options.deferListRefresh) {
@@ -469,6 +466,7 @@ export function createSessionMutations(host: SessionMutationsHost) {
       host.retirePullRequestSummary(key);
       confirmedArchives.delete(key.trim());
       ownerAssignments.retire(key.trim());
+      archiveVisibility.clear(key);
       preparedWorkSessionKeys.delete(key.trim());
       host.publish({
         ...host.readState(),
@@ -555,6 +553,7 @@ export function createSessionMutations(host: SessionMutationsHost) {
         host.retirePullRequestSummary(key);
         confirmedArchives.delete(key.trim());
         ownerAssignments.retire(key.trim());
+        archiveVisibility.clear(key);
         preparedWorkSessionKeys.delete(key.trim());
       }
       host.publish({
@@ -598,26 +597,19 @@ export function createSessionMutations(host: SessionMutationsHost) {
     key: string,
     owner: SessionsAssignOwnerParams["owner"],
     options: { agentId?: string | null } = {},
-  ): Promise<SessionOwner | null> => {
+  ) => {
     const scope = host.connection.capture();
     if (!scope) {
       return null;
     }
     try {
-      const result = await scope.client.request<SessionsAssignOwnerResult>("sessions.assignOwner", {
-        key,
-        owner,
-        ...(options.agentId ? { agentId: options.agentId } : {}),
-      });
+      const result = await requestSessionOwnerAssignment(scope.client, key, owner, options.agentId);
       if (!host.connection.isCurrent(scope)) {
         return null;
       }
-      ownerAssignments.confirm(
-        result.key,
-        result.owner,
-        host.ownerAssignmentScopeRevisions(result.key),
-        host.publishedRow(result.key)?.sessionId,
-      );
+      const scopeRevisions = host.ownerAssignmentScopeRevisions(result.key);
+      const sessionId = host.publishedRow(result.key)?.sessionId;
+      ownerAssignments.confirm(result.key, result.owner, scopeRevisions, sessionId);
       patchRowLocal(result.key, { owner: result.owner });
       host.redecorateLists();
       void host.refreshReplacement(options.agentId, result.key);
@@ -693,13 +685,9 @@ export function createSessionMutations(host: SessionMutationsHost) {
       });
       return changed ? { ...result, sessions } : result;
     },
-    applyConfirmedOwners: (result: SessionsListResult | null) => ownerAssignments.decorate(result),
-    observeCanonicalOwners: (
-      result: SessionsListResult | null,
-      requestRevision: number,
-      scope?: string,
-    ) => ownerAssignments.observeCanonical(result, requestRevision, scope),
-    retireCanonicalOwnerScope: (scope: string) => ownerAssignments.retireScope(scope),
+    applyConfirmedOwners: ownerAssignments.decorate,
+    observeCanonicalOwners: ownerAssignments.observeCanonical,
+    retireCanonicalOwnerScope: ownerAssignments.retireScope,
     observeArchiveState(key: string, archived: boolean | null, row?: GatewaySessionRow): void {
       const normalizedKey = key.trim();
       if (!normalizedKey || archived === null) {
@@ -707,6 +695,7 @@ export function createSessionMutations(host: SessionMutationsHost) {
       }
       if (!archived) {
         confirmedArchives.delete(normalizedKey);
+        archiveVisibility.clear(normalizedKey);
         return;
       }
       const previous = confirmedArchives.get(normalizedKey);
@@ -731,8 +720,12 @@ export function createSessionMutations(host: SessionMutationsHost) {
     reset,
     retireModelOverride,
     setModelOverride,
+    archiveVisibility: archiveVisibility.get,
+    setArchiveVisibility: (key: string, visibility: SessionArchiveVisibility | undefined) =>
+      archiveVisibility.set(key, visibility),
     isPreparedWorkSession: (key: string) => preparedWorkSessionKeys.has(key.trim()),
     settlePrepared(result: SessionsListResult | null) {
+      archiveVisibility.settle(result);
       for (const row of result?.sessions ?? []) {
         if (row.worktree || row.execNode) {
           preparedWorkSessionKeys.delete(row.key);
@@ -747,6 +740,7 @@ export function createSessionMutations(host: SessionMutationsHost) {
       pendingPinPatches.clear();
       confirmedArchives.clear();
       ownerAssignments.clear();
+      archiveVisibility.clearAll();
       preparedWorkSessionKeys.clear();
       const state = host.readState();
       if (Object.keys(state.modelOverrides).length > 0) {
@@ -758,6 +752,7 @@ export function createSessionMutations(host: SessionMutationsHost) {
       pendingPinPatches.clear();
       confirmedArchives.clear();
       ownerAssignments.clear();
+      archiveVisibility.clearAll();
       preparedWorkSessionKeys.clear();
     },
   };

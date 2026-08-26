@@ -49,7 +49,7 @@ export function createSessionOwnerAssignmentOverlay() {
     clear(): void {
       claims.clear();
     },
-    decorate(result: SessionsListResult | null): SessionsListResult | null {
+    decorate: (result: SessionsListResult | null): SessionsListResult | null => {
       if (!result || claims.size === 0) {
         return result;
       }
@@ -71,11 +71,11 @@ export function createSessionOwnerAssignmentOverlay() {
       });
       return changed ? { ...result, sessions, owners: undefined } : result;
     },
-    observeCanonical(
+    observeCanonical: (
       result: SessionsListResult | null,
       requestRevision: number,
       scope: string | undefined,
-    ): void {
+    ): void => {
       if (!scope) {
         return;
       }
@@ -108,7 +108,7 @@ export function createSessionOwnerAssignmentOverlay() {
         }
       }
     },
-    retireScope(scope: string): void {
+    retireScope: (scope: string): void => {
       for (const [key, claim] of claims) {
         if (claim.scopeRevisions.delete(scope) && claim.scopeRevisions.size === 0) {
           claims.delete(key);

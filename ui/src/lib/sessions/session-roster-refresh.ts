@@ -12,7 +12,6 @@ import type {
   SessionState,
 } from "./session-capability.ts";
 import {
-  areUiSessionKeysEquivalent,
   normalizeAgentId,
   parseAgentSessionKey,
   resolveUiSelectedGlobalAgentId,
@@ -48,6 +47,12 @@ type ManagedSessionListRefresh = {
   offset?: number;
   invalidated?: true;
 };
+
+type SessionRosterLoadOptions = SessionRefreshOptions & {
+  provisional?: boolean;
+};
+
+const OWNER_FIRST_SESSION_LIST_LIMIT = 60;
 
 type ManagedSessionListQuery = Readonly<Record<string, unknown>> & { readonly limit: number };
 
@@ -99,14 +104,64 @@ function isPrimarySessionListQuery(options: SessionListScope): boolean {
   );
 }
 
+function preserveCurrentSessionRow(
+  result: SessionsListResult,
+  state: SessionState,
+  snapshot: SessionGateway["snapshot"],
+  backgroundHydrate: boolean,
+): SessionsListResult {
+  const currentKey = snapshot.sessionKey?.trim();
+  if (!currentKey) {
+    return result;
+  }
+  const parsedAgentId = parseAgentSessionKey(currentKey)?.agentId;
+  const currentAgentId = normalizeAgentId(
+    parsedAgentId ?? resolveUiSelectedGlobalAgentId(snapshot),
+  );
+  if (!parsedAgentId && normalizeAgentId(state.agentId ?? "") !== currentAgentId) {
+    return result;
+  }
+  const matchesCurrent = (row: GatewaySessionRow) =>
+    uiSessionRowMatchesSelectedChat(snapshot, row.key, currentKey);
+  const previousCurrentRow = state.result?.sessions.find(matchesCurrent);
+  if (
+    previousCurrentRow &&
+    (backgroundHydrate || previousCurrentRow.archived === true) &&
+    !result.sessions.some(matchesCurrent)
+  ) {
+    const sessions = [...result.sessions, previousCurrentRow];
+    return { ...result, count: sessions.length, sessions };
+  }
+  return result;
+}
+
+function retainSessionPaginationWindow(
+  options: SessionListOptions,
+  offset: number | undefined,
+  result: SessionsListResult | null,
+  nextResult: SessionsListResult,
+  snapshot: SessionGateway["snapshot"],
+): SessionListOptions {
+  const ownerFirstPage =
+    Boolean(snapshot.selfUser?.id.trim()) && isPrimarySessionListQuery(options);
+  const retainedListLimit =
+    ownerFirstPage && result && typeof offset === "number"
+      ? offset + result.sessions.length
+      : nextResult.sessions.length;
+  // Retain the shared pagination window, excluding owner rows merged ahead of it.
+  return {
+    ...options,
+    limit: Math.max(options.limit ?? DEFAULT_SESSION_LIST_QUERY.limit, retainedListLimit),
+  };
+}
+
 export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
   let inFlight: Promise<void> | null = null;
   let queuedExplicitRefresh: SessionRefreshOptions | null = null;
   let eventRefreshQueued = false;
   let lastListOptions: SessionListOptions = {};
-  let hasForegroundListOptions = false;
-  let hasSeededListOptions = false;
   let requestRevision = 0;
+  let listOptionsSource: "none" | "seeded" | "foreground" = "none";
   const observesPageLifecycle =
     typeof document !== "undefined" && typeof globalThis.addEventListener === "function";
   let pageActive = !observesPageLifecycle || document.visibilityState !== "hidden";
@@ -248,26 +303,38 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     }
   };
 
-  const load = async (options: SessionRefreshOptions) => {
+  const load = async (
+    options: SessionRosterLoadOptions,
+    ownerFirst?: Promise<SessionsListResult | null>,
+  ): Promise<SessionsListResult | null> => {
     const scope = host.connection.capture();
     if (!scope) {
-      return;
+      return null;
     }
-    const { append = false, force: _force, backgroundHydrate = false, ...requestOptions } = options;
+    const {
+      append = false,
+      force: _force,
+      backgroundHydrate = false,
+      provisional = false,
+      ...requestOptions
+    } = options;
     // Every canonical roster replaces visible session names, so omitted title
     // enrichment must inherit the UI default instead of publishing fallback ids.
     requestOptions.includeDerivedTitles ??= true;
     const durableListOptions: SessionListOptions = { ...requestOptions };
     // Pagination is request-local; replacements retain filters but restart at page one.
     delete durableListOptions.offset;
-    if (!backgroundHydrate) {
+    if (!backgroundHydrate && !provisional) {
       lastListOptions = durableListOptions;
-      hasForegroundListOptions = true;
-    } else if (!hasForegroundListOptions && !hasSeededListOptions) {
+      listOptionsSource = "foreground";
+    } else if (!provisional && listOptionsSource === "none") {
       lastListOptions = durableListOptions;
-      hasSeededListOptions = true;
+      listOptionsSource = "seeded";
     }
-    if (!backgroundHydrate) {
+    // A provisional owner window may only paint an empty sidebar faster; once a
+    // roster is on screen it stays silent so foreign-owned rows never blink out.
+    const provisionalSilent = provisional && Boolean(host.readState().result);
+    if (!backgroundHydrate && !provisionalSilent) {
       const error = host.observerError();
       host.publish(
         { ...host.readState(), loading: true, error, deletedSessions: [] },
@@ -276,9 +343,11 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     }
     try {
       const currentRequestRevision = ++requestRevision;
-      const result = await requestSessionList(scope.client, requestOptions);
+      const request = requestSessionList(scope.client, requestOptions);
+      const ownerRows = ownerFirst ? await ownerFirst.catch(() => null) : null;
+      const result = await request;
       if (!host.connection.isCurrent(scope)) {
-        return;
+        return null;
       }
       host.observeCanonicalRows(
         result ?? null,
@@ -286,54 +355,36 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
         append ? undefined : PRIMARY_LIST_SCOPE,
       );
       const currentState = host.readState();
+      if (provisional && currentState.result) {
+        return result;
+      }
+      const merged = result && ownerRows ? appendSessionResults(ownerRows, result) : result;
+      const mergeWithCurrent = append && typeof requestOptions.offset === "number";
       let nextResult =
-        result && append && requestOptions.offset && currentState.result
-          ? appendSessionResults(currentState.result, result)
-          : reconcileRosterPresentationMetadata(result, currentState.result);
+        merged && mergeWithCurrent && currentState.result
+          ? appendSessionResults(currentState.result, merged)
+          : reconcileRosterPresentationMetadata(merged, currentState.result);
       if (append && nextResult && !backgroundHydrate) {
-        // Canonical event refreshes must retain all previously appended visible pages.
-        lastListOptions = {
-          ...durableListOptions,
-          limit: Math.max(
-            durableListOptions.limit ?? DEFAULT_SESSION_LIST_QUERY.limit,
-            nextResult.sessions.length,
-          ),
-        };
+        lastListOptions = retainSessionPaginationWindow(
+          durableListOptions,
+          requestOptions.offset,
+          result,
+          nextResult,
+          host.snapshot(),
+        );
       }
       if (nextResult) {
-        const snapshot = host.snapshot();
-        const currentKey = snapshot.sessionKey?.trim();
-        if (currentKey) {
-          const currentAgentId = normalizeAgentId(
-            parseAgentSessionKey(currentKey)?.agentId ?? resolveUiSelectedGlobalAgentId(snapshot),
-          );
-          const exactPreviousCurrentRow = currentState.result?.sessions.find((row) =>
-            areUiSessionKeysEquivalent(row.key, currentKey),
-          );
-          const previousCurrentRow =
-            exactPreviousCurrentRow ??
-            (currentState.agentId === currentAgentId
-              ? currentState.result?.sessions.find((row) =>
-                  uiSessionRowMatchesSelectedChat(snapshot, row.key, currentKey),
-                )
-              : undefined);
-          const nextContainsCurrentRow = exactPreviousCurrentRow
-            ? nextResult.sessions.some((row) => areUiSessionKeysEquivalent(row.key, currentKey))
-            : nextResult.sessions.some((row) =>
-                uiSessionRowMatchesSelectedChat(snapshot, row.key, currentKey),
-              );
-          if (
-            previousCurrentRow &&
-            (backgroundHydrate || previousCurrentRow.archived === true) &&
-            !nextContainsCurrentRow
-          ) {
-            const sessions = [...nextResult.sessions, previousCurrentRow];
-            nextResult = { ...nextResult, count: sessions.length, sessions };
-          }
-        }
+        nextResult = preserveCurrentSessionRow(
+          nextResult,
+          currentState,
+          host.snapshot(),
+          backgroundHydrate,
+        );
       }
-      host.onCanonicalList(nextResult);
       nextResult = host.decorate(nextResult);
+      if (!provisional) {
+        host.onCanonicalList(nextResult);
+      }
       const state = host.readState();
       const error = host.observerError();
       host.publish(
@@ -350,8 +401,9 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
         },
         error ? "session-observer" : undefined,
       );
+      return result;
     } catch (error) {
-      if (host.connection.isCurrent(scope)) {
+      if (host.connection.isCurrent(scope) && !(provisional && host.readState().result)) {
         const state = host.readState();
         host.publish(
           {
@@ -363,6 +415,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
           "operation",
         );
       }
+      return null;
     }
   };
 
@@ -391,6 +444,35 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     return { ...lastListOptions, force: true };
   };
 
+  const refreshPlan = (options: SessionRefreshOptions) => {
+    const ownerId = host.snapshot().selfUser?.id.trim();
+    if (!ownerId || options.append === true || !isPrimarySessionListQuery(options)) {
+      return { initial: options, shared: undefined };
+    }
+    const sharedLimit = Math.max(
+      OWNER_FIRST_SESSION_LIST_LIMIT,
+      typeof options.limit === "number" && options.limit > 0
+        ? Math.floor(options.limit)
+        : DEFAULT_SESSION_LIST_QUERY.limit,
+    );
+    // Keep owner-first and shared loads atomic in the existing refresh queue.
+    // Only the shared phase advances canonical membership and durable options;
+    // it merges the owner window from the initial load's returned rows, so the
+    // provisional phase never has to publish to be part of the final roster.
+    return {
+      initial: {
+        ...options,
+        ownerId,
+        limit: OWNER_FIRST_SESSION_LIST_LIMIT,
+        provisional: true,
+      },
+      shared: {
+        ...options,
+        limit: sharedLimit,
+      },
+    };
+  };
+
   const drainRefreshQueue = async (options: SessionRefreshOptions) => {
     const scope = host.connection.capture();
     if (!scope) {
@@ -398,7 +480,9 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     }
     let next: SessionRefreshOptions | null = options;
     while (next) {
-      await load(next);
+      const { initial, shared } = refreshPlan(next);
+      const initialLoad = load(initial);
+      await (shared ? load(shared, initialLoad) : initialLoad);
       if (!host.connection.isCurrent(scope)) {
         return;
       }
@@ -527,6 +611,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
       const entry = managedList(options);
       return refreshManagedList(entry, {
         append: options.append === true,
+        ...(options.force === true && options.append !== true ? { invalidated: true } : {}),
         ...(options.offset !== undefined ? { offset: options.offset } : {}),
       });
     },

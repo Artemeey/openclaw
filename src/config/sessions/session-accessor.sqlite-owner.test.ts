@@ -21,6 +21,39 @@ afterEach(() => {
 });
 
 describe("SQLite session owner assignment", () => {
+  it("gives consecutive assignments a monotonic timestamp", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+      const scope = {
+        agentId: "main",
+        env: state.env,
+        sessionKey: "agent:main:monotonic-owner",
+      };
+      await upsertSessionEntryCore(scope, {
+        sessionId: "session-monotonic-owner",
+        updatedAt: 1,
+      });
+
+      expect(
+        assignSessionOwner(scope, {
+          owner: { type: "human", id: "profile-ada" },
+          assignedBy: { type: "human", id: "profile-assigner" },
+          assignedAt: 100,
+        }),
+      ).toMatchObject({ actor: { id: "profile-ada" }, assignedAt: 100 });
+      expect(
+        assignSessionOwner(scope, {
+          owner: { type: "human", id: "profile-carol" },
+          assignedBy: { type: "human", id: "profile-assigner" },
+          assignedAt: 100,
+        }),
+      ).toMatchObject({ actor: { id: "profile-carol" }, assignedAt: 101 });
+      expect(loadSessionEntry(scope)?.owner).toMatchObject({
+        actor: { id: "profile-carol" },
+        assignedAt: 101,
+      });
+    });
+  });
+
   it("lazily adds bare columns and preserves the assignment across reopen", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
       const scope = {

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import type { WorkerConnectionEndpoint } from "../worker/worker-connection-endpoint.js";
+import { NodeWorkerContainerLifecycle } from "./node-worker-container-lifecycle.js";
 import { NodeWorkerLaunchStore } from "./node-worker-launch-store.js";
 import { requireNodeWorkerProcessIdentity } from "./node-worker-process-identity.js";
 import { createNodeWorkerSupervisor } from "./node-worker-supervisor.js";
@@ -55,7 +56,16 @@ const args = process.argv.slice(2);
 const command = args[0];
 const statePath = (id) => path.join(engineRoot, id + ".container.json");
 const load = (id) => JSON.parse(fs.readFileSync(statePath(id), "utf8"));
-const save = (container) => fs.writeFileSync(statePath(container.id), JSON.stringify(container));
+// Sibling shim invocations (rm/inspect/wait) read this state while another
+// writes it. A truncating write exposes a zero-length window, so a reader
+// parses partial JSON and the shim exits 1; rename is atomic, so readers
+// always see either the previous or the next complete state.
+const save = (container) => {
+  const target = statePath(container.id);
+  const pending = target + "." + process.pid + ".pending";
+  fs.writeFileSync(pending, JSON.stringify(container));
+  fs.renameSync(pending, target);
+};
 const launchIdFor = (container) =>
   Buffer.from(container.labels["openclaw.node-worker.launch"], "base64url").toString("utf8");
 const journalState = (launchId) => {
@@ -77,6 +87,22 @@ const journalState = (launchId) => {
   }
 };
 const record = (entry) => fs.appendFileSync(commandLog, JSON.stringify(entry) + "\n");
+const waitForRunningJournal = async (container) => {
+  let journal;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    journal = journalState(launchIdFor(container));
+    const persisted = journal?.container_json && JSON.parse(journal.container_json);
+    if (
+      journal?.state === "running" &&
+      persisted?.containerId === container.id &&
+      persisted?.engineTarget === expectedEngineTarget
+    ) {
+      return journal;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return journal;
+};
 const releaseAfterMarker = (marker, operation) => {
   const markerPath = path.join(engineRoot, marker);
   if (!fs.existsSync(markerPath)) {
@@ -122,7 +148,7 @@ if (command === "version") {
   }
   const entry = args.at(-1);
   const image = args.at(-2);
-  const container = { id, labels, env, mounts, image, entry, running: false, pid: null };
+  const container = { id, labels, env, mounts, image, entry, status: "created", pid: null };
   save(container);
   record({ argv: args, container, journal: journalState(launchIdFor(container)) });
   releaseAfterMarker("hold-create", () => process.stdout.write(id + "\n"));
@@ -131,7 +157,7 @@ if (command === "version") {
     let descriptor = "";
     for await (const chunk of process.stdin) descriptor += chunk;
     const container = readContainer(args.at(-1));
-    const journal = journalState(launchIdFor(container));
+    const journal = await waitForRunningJournal(container);
     record({ argv: args, journal });
     const persisted = journal?.container_json && JSON.parse(journal.container_json);
     if (
@@ -142,12 +168,15 @@ if (command === "version") {
       process.stderr.write("container worker executed before its exact identity was journaled\n");
       process.exit(67);
     }
+    // A real engine leaves the container "created" until its start request lands,
+    // so the marker lets a test hold the launch inside that startup window.
+    await new Promise((resolve) => releaseAfterMarker("hold-start", resolve));
     const child = spawn(process.execPath, [container.entry], {
       detached: process.platform !== "win32",
       env: container.env,
       stdio: ["pipe", "inherit", "inherit"],
     });
-    container.running = true;
+    container.status = "running";
     container.pid = child.pid;
     save(container);
     child.stdin.end(descriptor);
@@ -158,7 +187,7 @@ if (command === "version") {
     child.once("exit", (code, signal) => {
       if (fs.existsSync(statePath(container.id))) {
         const current = load(container.id);
-        current.running = false;
+        current.status = "exited";
         current.pid = null;
         save(current);
       }
@@ -173,7 +202,11 @@ if (command === "version") {
   record({ argv: args });
   const container = readContainer(id);
   const format = args[args.indexOf("--format") + 1];
-  const columns = [String(container.running)];
+  const columns = [container.status];
+  // Releasing the startup hold here proves the supervisor observed the container
+  // while it was still created: the launch only proceeds after that observation.
+  const startHold = path.join(engineRoot, "hold-start");
+  if (fs.existsSync(startHold)) fs.unlinkSync(startHold);
   if (format.includes("openclaw.node-worker.host")) {
     columns.push(
       container.labels["openclaw.node-worker.host"] ?? "",
@@ -185,11 +218,11 @@ if (command === "version") {
 } else if (command === "kill") {
   const container = readContainer(args.at(-1));
   record({ argv: args, journal: journalState(launchIdFor(container)) });
-  if (!container.running) {
+  if (container.status !== "running") {
     process.stderr.write("container is not running\n");
     process.exit(1);
   }
-  container.running = false;
+  container.status = "exited";
   save(container);
   if (container.pid) {
     try {
@@ -238,7 +271,7 @@ type FakeContainer = {
   mounts: string[];
   image: string;
   entry: string;
-  running: boolean;
+  status: "created" | "running" | "exited";
   pid: number | null;
 };
 
@@ -314,7 +347,12 @@ function containerFixture(
         .split("\n")
         .map((line) => JSON.parse(line) as EngineEvent);
     },
-    seed(params: { id: string; launchId: string; owner?: string; running?: boolean }) {
+    seed(params: {
+      id: string;
+      launchId: string;
+      owner?: string;
+      status?: FakeContainer["status"];
+    }) {
       const container: FakeContainer = {
         id: params.id,
         labels: {
@@ -326,7 +364,7 @@ function containerFixture(
         mounts: [],
         image: "node:22-slim",
         entry: bundleEntry,
-        running: params.running ?? true,
+        status: params.status ?? "running",
         pid: null,
       };
       fs.writeFileSync(
@@ -410,7 +448,7 @@ describe("node worker supervisor container isolation", () => {
         },
       });
       const completed = await waitForTerminal(fixture.supervisor, input.launchId);
-      expect(completed?.state).toBe("completed");
+      expect(completed).toMatchObject({ state: "completed" });
       expect(JSON.parse(completed?.resultJson ?? "null")).toEqual({
         status: "completed",
         argv: [],
@@ -455,6 +493,32 @@ describe("node worker supervisor container isolation", () => {
         container_json: JSON.stringify(running.container),
       });
     } finally {
+      await fixture.supervisor.close();
+    }
+  });
+
+  it("keeps a launch running while its container is still starting", async () => {
+    const fixture = containerFixture();
+    const input = testWorkerLaunchInput(fixture.workspaceDir, "container-startup-poll");
+    const startMarker = path.join(fixture.engineRoot, "hold-start");
+    fs.writeFileSync(startMarker, "hold");
+
+    try {
+      const running = await fixture.supervisor.launch(input, endpoint);
+
+      // The fake engine keeps the container created until this poll inspects it,
+      // so the supervisor must not read startup as an exited worker.
+      expect(await fixture.supervisor.status(input.launchId)).toMatchObject({
+        state: "running",
+        container: running.container,
+      });
+      expect(await waitForTerminal(fixture.supervisor, input.launchId)).toMatchObject({
+        state: "completed",
+      });
+    } finally {
+      if (fs.existsSync(startMarker)) {
+        fs.unlinkSync(startMarker);
+      }
       await fixture.supervisor.close();
     }
   });
@@ -642,7 +706,7 @@ describe("node worker supervisor container isolation", () => {
   it("interrupts a stale running journal after verifying its dead container identity", async () => {
     const fixture = containerFixture();
     const launchId = "container-dead-recovery";
-    const container = fixture.seed({ id: "c".repeat(64), launchId, running: false });
+    const container = fixture.seed({ id: "c".repeat(64), launchId, status: "exited" });
     claimFixtureLaunch(fixture, launchId, container.id);
 
     try {
@@ -773,6 +837,73 @@ describe("node worker supervisor container isolation", () => {
       if (fs.existsSync(failureMarker)) {
         fs.unlinkSync(failureMarker);
       }
+      await fixture.supervisor.close();
+    }
+  });
+
+  it("waits for healthy container shutdown before reporting a sibling removal failure", async () => {
+    const fixture = containerFixture({ capacity: 2 });
+    const first = testWorkerLaunchInput(fixture.workspaceDir, "container-close-failed", "wait");
+    const sibling = testWorkerLaunchInput(fixture.workspaceDir, "container-close-sibling", "wait");
+    const removalMarker = path.join(fixture.engineRoot, "hold-removal");
+    const store = new NodeWorkerLaunchStore({ env: fixture.env });
+    const removalFailure = new Error("injected first container removal failure");
+    const originalRemove = Reflect.get(
+      NodeWorkerContainerLifecycle.prototype,
+      "remove",
+    ) as NodeWorkerContainerLifecycle["remove"];
+    const remove = vi
+      .spyOn(NodeWorkerContainerLifecycle.prototype, "remove")
+      .mockImplementation(async function (this: NodeWorkerContainerLifecycle, container, owner) {
+        if (owner.launchId === first.launchId) {
+          throw removalFailure;
+        }
+        await originalRemove.call(this, container, owner);
+      });
+
+    try {
+      const failedWorker = await fixture.supervisor.launch(first, endpoint);
+      const siblingWorker = await fixture.supervisor.launch(sibling, endpoint);
+      await vi.waitFor(
+        () => expect(fixture.events().filter((event) => event.argv[0] === "start")).toHaveLength(2),
+        { timeout: 5_000 },
+      );
+      fs.writeFileSync(removalMarker, "hold");
+
+      const closing = fixture.supervisor.close();
+      const settled = vi.fn();
+      void closing.then(settled, settled);
+      await vi.waitFor(
+        () =>
+          expect(
+            fixture
+              .events()
+              .some(
+                (event) =>
+                  event.argv[0] === "rm" &&
+                  event.argv.at(-1) === siblingWorker.container!.containerId,
+              ),
+          ).toBe(true),
+        { timeout: 5_000 },
+      );
+
+      expect(settled).not.toHaveBeenCalled();
+      expect(fixture.exists(siblingWorker.container!.containerId)).toBe(true);
+
+      fs.unlinkSync(removalMarker);
+      await expect(closing).rejects.toBe(removalFailure);
+      expect(fixture.exists(siblingWorker.container!.containerId)).toBe(false);
+      expect(store.get(sibling.launchId)).toMatchObject({ state: "interrupted" });
+      expect(fixture.exists(failedWorker.container!.containerId)).toBe(true);
+      expect(store.get(first.launchId)).toMatchObject({
+        state: "running",
+        container: failedWorker.container,
+      });
+    } finally {
+      if (fs.existsSync(removalMarker)) {
+        fs.unlinkSync(removalMarker);
+      }
+      remove.mockRestore();
       await fixture.supervisor.close();
     }
   });

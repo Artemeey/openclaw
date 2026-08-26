@@ -43,6 +43,7 @@ import { chatHandlers } from "./chat.js";
 import { resolveRegisteredCatalogCreateTarget } from "./session-catalog.js";
 import { emitSessionsChanged } from "./session-change-event.js";
 import { registerCreatedSessionCategory } from "./session-create-category.js";
+import { idempotentSessionCreate } from "./session-create-idempotency.js";
 import {
   resolveSessionCreateInitialTurn,
   shouldAttachPendingMessageSeq,
@@ -424,8 +425,8 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
                 explicitSessionLabel ?? generatedTitle ?? worktreeTitle?.source ?? "",
               ),
               baseRef: requestedWorktreeBaseRef,
-              // Checkout hooks and .openclaw/worktree-setup.sh run repo code; keep them
-              // admin-only so this write-scoped path cannot execute gated repo scripts.
+              // Worktree Git always disables checkout/ref hooks; only the setup
+              // script executes repository code and therefore requires admin scope.
               runSetupScript: scopes.includes(ADMIN_SCOPE),
               ...(commitGuard ? { commitGuard } : {}),
             });
@@ -540,6 +541,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       spawnedCwd: p.worktree === true ? undefined : sessionCwd,
       sessionRoot: p.worktree === true ? undefined : sessionRoot,
       permissionMode: p.permissionMode ?? (p.worktree === true ? "workspace" : undefined),
+      ...(p.toolOverrides !== undefined ? { toolOverrides: p.toolOverrides } : {}),
       prepareLifecycle,
       onLifecycleCleanupError: (error) => {
         sessionLog.warn(
@@ -689,3 +691,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
     }
   },
 };
+
+sessionCreateHandlers["sessions.create"] = idempotentSessionCreate(
+  expectDefined(sessionCreateHandlers["sessions.create"], "sessions.create handler"),
+);

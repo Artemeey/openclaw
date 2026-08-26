@@ -1,4 +1,8 @@
-import type { SessionsDeleteResult } from "../../../../packages/gateway-protocol/src/index.js";
+import type {
+  SessionsAssignOwnerParams,
+  SessionsAssignOwnerResult,
+  SessionsDeleteResult,
+} from "../../../../packages/gateway-protocol/src/index.js";
 import { SESSION_ARCHIVE_REQUEST_OPTIONS } from "../../../../src/shared/session-archive-timeout.ts";
 import type {
   SessionBranch,
@@ -142,17 +146,36 @@ export function requestSessionPatch(
   client: SessionRequestClient,
   key: string,
   patch: SessionPatch,
-  options: { agentId?: string | null; expectedSessionId?: string | null } = {},
+  options: {
+    agentId?: string | null;
+    expectedSessionId?: string | null;
+    expectedMarkedUnreadAt?: number | null;
+  } = {},
 ): Promise<SessionsPatchResult> {
   const expectedSessionId = options.expectedSessionId?.trim();
   const params = {
     ...buildSessionRequestParams(key, options.agentId),
     ...(expectedSessionId ? { expectedSessionId } : {}),
+    ...(options.expectedMarkedUnreadAt !== undefined
+      ? { expectedMarkedUnreadAt: options.expectedMarkedUnreadAt }
+      : {}),
     ...patch,
   };
   return patch.archived === true
     ? client.request<SessionsPatchResult>("sessions.patch", params, SESSION_ARCHIVE_REQUEST_OPTIONS)
     : client.request<SessionsPatchResult>("sessions.patch", params);
+}
+
+export function requestSessionOwnerAssignment(
+  client: SessionRequestClient,
+  key: string,
+  owner: SessionsAssignOwnerParams["owner"],
+  agentId?: string | null,
+): Promise<SessionsAssignOwnerResult> {
+  return client.request("sessions.assignOwner", {
+    ...buildSessionRequestParams(key, agentId),
+    owner,
+  });
 }
 
 export function requestSessionDelete(
