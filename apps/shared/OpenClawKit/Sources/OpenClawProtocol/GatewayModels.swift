@@ -18522,6 +18522,7 @@ public struct ApprovalResolveParams: Codable, Sendable {
         case reviewer
         case grantexpiresindays = "grantExpiresInDays"
     }
+
     private enum CodingKeys: String, CodingKey {
         case id
         case instanceid = "instanceId"
@@ -19047,6 +19048,7 @@ public struct ExecApprovalGrantsRevokeResult: Codable, Sendable {
     {
         self.outcome = outcome
     }
+
     private enum CodingKeys: String, CodingKey {
         case id
         case instanceid = "instanceId"
@@ -19505,6 +19507,7 @@ public struct PluginApprovalResolveParams: Codable, Sendable {
         self.decision = decision
         self.reviewer = reviewer
     }
+
     private enum CodingKeys: String, CodingKey {
         case id
         case instanceid = "instanceId"
