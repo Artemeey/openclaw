@@ -677,7 +677,7 @@ describe("attachGatewayWsMessageHandler post-connect health refresh", () => {
       isClosed: () => closed,
       setCloseCause,
     });
-    for (let index = 0; index < MAX_QUEUED_GATEWAY_PREAUTH_FRAMES + 2; index += 1) {
+    for (let index = 0; index < MAX_QUEUED_GATEWAY_PREAUTH_FRAMES + 1; index += 1) {
       harness.sendConnect(`overflow-connect-${index}`, BACKEND_CONNECT_PARAMS);
     }
 
@@ -685,7 +685,7 @@ describe("attachGatewayWsMessageHandler post-connect health refresh", () => {
       expect(close).toHaveBeenCalledWith(1008, "too many pending handshake frames");
     });
     expect(setCloseCause).toHaveBeenCalledWith("handshake-message-overflow", {
-      queuedFrames: MAX_QUEUED_GATEWAY_PREAUTH_FRAMES,
+      queuedFrames: MAX_QUEUED_GATEWAY_PREAUTH_FRAMES - 1,
     });
     expect(harness.client).toBeNull();
     expect(harness.setClient).not.toHaveBeenCalled();

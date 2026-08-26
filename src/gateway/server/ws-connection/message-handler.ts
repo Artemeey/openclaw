@@ -534,7 +534,7 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
         queuedHandshakeFrames.length = 0;
         return;
       }
-      if (queuedHandshakeFrames.length >= MAX_QUEUED_GATEWAY_PREAUTH_FRAMES) {
+      if (queuedHandshakeFrames.length >= MAX_QUEUED_GATEWAY_PREAUTH_FRAMES - 1) {
         setHandshakeState("failed");
         setCloseCause("handshake-message-overflow", {
           queuedFrames: queuedHandshakeFrames.length,
