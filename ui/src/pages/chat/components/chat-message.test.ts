@@ -3393,6 +3393,7 @@ describe("grouped chat rendering", () => {
     expect(container.querySelector(".chat-reply-preview__label")?.textContent?.trim()).toBe(
       "Replying to current message",
     );
+    expect(container.querySelector(".chat-reply-preview .session-run-spinner")).toBeNull();
     expect(container.querySelector(".chat-text")?.textContent?.trim()).toBe("Here is the image.");
     expect(expectElement(container, ".chat-message-image", HTMLImageElement).src).toBe(
       "https://example.com/photo.png",

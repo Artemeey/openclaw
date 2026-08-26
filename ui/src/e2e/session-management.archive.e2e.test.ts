@@ -440,7 +440,34 @@ suite.define(() => {
     const archivedBy = { type: "human" as const, id: "profile-mira", label: "Mira" };
     const batchRows = [sessionRows[0]!, sessionRows[1]!, sessionRows[3]!];
     const gateway = await installMockGateway(page, {
+      featureMethods: [
+        "chat.metadata",
+        "chat.startup",
+        "progressCard.get",
+        "sessions.patch",
+        "sessions.patchMany",
+      ],
+      historyMessages: [
+        {
+          id: "archived-reply",
+          role: "assistant",
+          timestamp: baseTime - 2_000,
+          content: "Reply retained in the transcript.",
+          openclawDelivery: { replyToCurrent: true },
+        },
+      ],
       methodResponses: {
+        "progressCard.get": {
+          card: {
+            revision: 1,
+            sessionKey: selected.key,
+            steps: [
+              { step: "Inspect archive", status: "completed" },
+              { step: "Finish archive", status: "in_progress" },
+            ],
+            updatedAt: baseTime,
+          },
+        },
         "sessions.list": sessionsListResponse([
           sessionRow("agent:main:main", "Main", baseTime),
           ...sessionRows,
@@ -478,6 +505,12 @@ suite.define(() => {
       await rowFor(selected.key).locator("a").first().click();
       await assertSelectedRoute();
       await activePane.locator(".agent-chat__input textarea").waitFor({ state: "visible" });
+      const replyPreview = activePane.locator(".chat-reply-preview", {
+        hasText: "Replying to current message",
+      });
+      const progressCard = activePane.locator('[data-progress-card-placement="composer"]');
+      await replyPreview.waitFor({ state: "visible" });
+      await progressCard.waitFor({ state: "visible" });
       await page.evaluate((sessionKey) => {
         const titleHistory: string[] = [];
         const paneTitleHistory: string[] = [];
@@ -653,6 +686,8 @@ suite.define(() => {
       await archivedNotice.waitFor({ state: "visible", timeout: 10_000 });
       await expect.poll(() => archivedNotice.textContent()).toContain("This session is archived.");
       await expect.poll(() => activePane.locator(".agent-chat__input").count()).toBe(0);
+      await expect.poll(() => replyPreview.locator(".session-run-spinner").count()).toBe(0);
+      await expect.poll(() => progressCard.count()).toBe(0);
       const archiveEvent = activePane.locator(".chat-notice", { hasText: "Archived by Mira" });
       await archiveEvent.waitFor({ state: "visible", timeout: 10_000 });
       await captureUiProof(page, "archive-attribution-notice-after.png");
@@ -681,6 +716,7 @@ suite.define(() => {
       await archiveEvent.waitFor({ state: "detached", timeout: 10_000 });
       await selectedRow.waitFor({ state: "visible", timeout: 10_000 });
       await activePane.locator(".agent-chat__input textarea").waitFor({ state: "visible" });
+      await progressCard.waitFor({ state: "visible" });
       await expect
         .poll(() =>
           activePane.evaluate(
