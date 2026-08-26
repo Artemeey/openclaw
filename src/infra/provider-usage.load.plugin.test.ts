@@ -3,6 +3,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createProviderUsageFetch } from "../test-utils/provider-usage-fetch.js";
 
 const resolveProviderUsageSnapshotWithPluginMock = vi.fn();
+const resolveProviderProfileUsageAuthWithPluginMock = vi.fn();
 const { EnvHttpProxyAgent, envAgentSpy, loadUndiciRuntimeDeps, undiciFetch } = vi.hoisted(() => {
   const envAgentSpyLocal = vi.fn();
   const undiciFetchLocal = vi.fn();
@@ -42,6 +43,8 @@ vi.mock("../plugins/provider-runtime.js", async () => {
   );
   return {
     ...actual,
+    resolveProviderProfileUsageAuthWithPlugin: (...args: unknown[]) =>
+      resolveProviderProfileUsageAuthWithPluginMock(...args),
     resolveProviderUsageSnapshotWithPlugin: (...args: unknown[]) =>
       resolveProviderUsageSnapshotWithPluginMock(...args),
   };
@@ -108,6 +111,33 @@ describe("provider-usage.load plugin boundary", () => {
     EnvHttpProxyAgent.lastCreated = undefined;
     resolveProviderUsageSnapshotWithPluginMock.mockReset();
     resolveProviderUsageSnapshotWithPluginMock.mockResolvedValue(null);
+    resolveProviderProfileUsageAuthWithPluginMock.mockReset();
+    resolveProviderProfileUsageAuthWithPluginMock.mockResolvedValue(null);
+  });
+
+  it("times out exact-profile auth hooks with the rest of the usage operation", async () => {
+    vi.useFakeTimers();
+    try {
+      resolveProviderProfileUsageAuthWithPluginMock.mockImplementation(
+        async () => await new Promise(() => {}),
+      );
+      const summaryPromise = loadProviderUsageSummary({
+        authProfile: { provider: "openai", profileId: "openai:work" },
+        authStore: { version: 1, profiles: {} },
+        config: {},
+        env: {},
+        timeoutMs: 5_000,
+      });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(summaryPromise).resolves.toEqual({
+        updatedAt: expect.any(Number),
+        providers: [{ provider: "openai", displayName: "OpenAI", windows: [], error: "Timeout" }],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("prefers plugin-owned usage snapshots", async () => {

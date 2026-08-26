@@ -7,7 +7,6 @@ import {
 } from "../../agents/execution-auth-binding.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { resolveProviderProfileUsageAuth } from "../../infra/provider-usage.auth.js";
 import { loadProviderUsageSummary } from "../../infra/provider-usage.load.js";
 import {
   PROVIDER_USAGE_TIMEOUT_MS,
@@ -198,19 +197,8 @@ export async function loadProfileUsageStaleWhileRevalidate(params: {
       tasks: params.targets.map((target) => async () => {
         const previous = previousUsageByProfile.get(target.profileId);
         try {
-          const auth = await resolveProviderProfileUsageAuth({
-            provider: target.providerId,
-            profileId: target.profileId,
-            store: params.authStore,
-            agentDir: params.agentDir,
-            config: params.configRef,
-          });
-          if (!auth) {
-            refreshedUsageByProfile.delete(target.profileId);
-            return;
-          }
           const summary = await loadProviderUsageSummary({
-            auth: [auth],
+            authProfile: { provider: target.providerId, profileId: target.profileId },
             agentDir: params.agentDir,
             authStore: params.authStore,
             config: params.configRef,

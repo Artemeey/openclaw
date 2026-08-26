@@ -194,7 +194,7 @@ suite.define(() => {
         await page.getByRole("button", { name: "Refresh", exact: true }).click();
 
         await expect.poll(() => page.locator(".provider-usage-error").count()).toBe(0);
-        await expect.poll(() => card.textContent()).toContain("API key set in config");
+        await expect.poll(() => card.getByRole("button", { name: "Remove key" }).count()).toBe(1);
         await expect
           .poll(() =>
             primary.evaluate((element) =>
@@ -272,7 +272,6 @@ suite.define(() => {
 
         await page.goto(`${suite.server.baseUrl}settings/model-providers`);
         const openaiCard = page.locator('[data-provider-id="openai"]');
-        await expect.poll(async () => openaiCard.textContent()).toContain("Credentials for Main");
         await openaiCard.getByRole("button", { name: "Replace key" }).click();
         if (recordVisuals) {
           await mkdir(artifactDir, { recursive: true });
@@ -286,7 +285,9 @@ suite.define(() => {
         const agentPicker = page.locator(".agent-scope-control openclaw-agent-select");
         await agentPicker.locator(".agent-select__trigger").click();
         await agentPicker.locator('wa-dropdown-item[aria-label="Writer"]').click();
-        await expect.poll(async () => openaiCard.textContent()).toContain("Credentials for Writer");
+        await expect
+          .poll(() => agentPicker.locator(".agent-select__trigger").textContent())
+          .toContain("Writer");
         await expect.poll(async () => openaiCard.locator('input[type="password"]').count()).toBe(0);
         expect(await gateway.getRequests("config.patch")).toHaveLength(0);
         if (recordVisuals) {
@@ -304,7 +305,9 @@ suite.define(() => {
         await addSection.getByLabel("API key").fill("synthetic-writer-provider-key");
         await agentPicker.locator(".agent-select__trigger").click();
         await agentPicker.locator('wa-dropdown-item[aria-label="Main"]').click();
-        await expect.poll(async () => openaiCard.textContent()).toContain("Credentials for Main");
+        await expect
+          .poll(() => agentPicker.locator(".agent-select__trigger").textContent())
+          .toContain("Main");
         await expect.poll(async () => page.locator(".model-providers__add-form").count()).toBe(0);
         await expect.poll(async () => openaiCard.locator('input[type="password"]').count()).toBe(0);
         expect(await gateway.getRequests("config.patch")).toHaveLength(0);

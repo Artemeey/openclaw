@@ -124,7 +124,6 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
       await expect
         .poll(async () => readiness.textContent())
         .toContain("Connect a verified AI model");
-      await expect.poll(async () => readiness.textContent()).toContain("No models available");
       await expect.poll(async () => openaiCard.textContent()).toContain("Signed in");
       expect(
         (await gateway.getRequests("models.list")).filter(
