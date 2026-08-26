@@ -14,6 +14,8 @@ describe("managed ClawHub skill icon URLs", () => {
   const clawHub = "https://clawhub.ai";
   const registry = "https://registry.example.test";
   const pathRegistry = `${registry}/clawhub`;
+  const credentialRegistry = new URL(clawHub);
+  credentialRegistry.username = "user";
   const icon = (base: string, value = digest) => `${base}/api/v1/skill-icons/${value}`;
   const env = (base: string): NodeJS.ProcessEnv => ({ OPENCLAW_CLAWHUB_URL: base });
 
@@ -36,8 +38,8 @@ describe("managed ClawHub skill icon URLs", () => {
     ["with uppercase digest", {}, icon(clawHub, digest.toUpperCase())],
     ["with short digest", {}, icon(clawHub, "a".repeat(63))],
     ["on a non-icon path", {}, `${clawHub}/api/v1/packages/${digest}`],
-    ["when registry has credentials", env("https://user:secret@clawhub.ai"), icon(clawHub)],
-    ["when icon has credentials", {}, icon("https://user:secret@clawhub.ai")],
+    ["when registry has credentials", env(credentialRegistry.href), icon(clawHub)],
+    ["when icon has credentials", {}, icon(credentialRegistry.href)],
     [
       "when registry is insecure",
       env("http://registry.example.test"),
