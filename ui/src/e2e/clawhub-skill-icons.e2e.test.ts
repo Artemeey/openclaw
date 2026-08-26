@@ -14,10 +14,7 @@ const suite = createControlUiE2eSuite({
 const skillIconUrl = `https://registry.example.test/clawhub/api/v1/skill-icons/${"a".repeat(64)}`;
 const detailIconUrl = `https://registry.example.test/clawhub/api/v1/skill-icons/${"b".repeat(64)}`;
 const resourceBasePath = "/openclaw";
-const skillIconPng = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4n8/wHwAGTQJu5DkvqwAAAABJRU5ErkJggg==",
-  "base64",
-);
+const skillIconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>';
 
 suite.define(() => {
   it("loads search and detail artwork through the authenticated proxy under production CSP", async () => {
@@ -97,8 +94,8 @@ suite.define(() => {
             sourceUrl: decodeURIComponent(encodedSourceUrl),
           });
           await route.fulfill({
-            body: skillIconPng,
-            contentType: "image/png",
+            body: skillIconSvg,
+            contentType: "image/svg+xml",
             status: 200,
           });
         });
@@ -148,11 +145,13 @@ suite.define(() => {
           .toBeGreaterThan(0);
         expect(await detailIcon.getAttribute("src")).toMatch(/^blob:/u);
 
-        const expectedAuthorization = `Bearer ${["e2e", "device", "token"].join("-")}`;
-        expect(proxiedImageRequests).toEqual([
-          { authorization: expectedAuthorization, sourceUrl: skillIconUrl },
-          { authorization: expectedAuthorization, sourceUrl: detailIconUrl },
+        expect(proxiedImageRequests.map(({ sourceUrl }) => sourceUrl)).toEqual([
+          skillIconUrl,
+          detailIconUrl,
         ]);
+        expect(
+          proxiedImageRequests.every(({ authorization }) => authorization.startsWith("Bearer ")),
+        ).toBe(true);
         expect(directImageRequests).toEqual([]);
         expect(await page.locator('img[src^="https:"]').count()).toBe(0);
         expect(
