@@ -6,7 +6,7 @@ import {
 } from "discord-api-types/v10";
 // Discord tests cover message utils plugin behavior.
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Message } from "../internal/discord.js";
 import { initializeDiscordProviderEndpointForTest } from "../provider-endpoint.test-support.js";
 
@@ -51,12 +51,14 @@ vi.mock("openclaw/plugin-sdk/runtime-env", async () => {
 let resolveForwardedMediaList: typeof import("./message-media.js").resolveForwardedMediaList;
 let resolveMediaList: typeof import("./message-media.js").resolveMediaList;
 
-beforeAll(async () => {
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+beforeEach(async () => {
+  vi.resetModules();
+  vi.resetAllMocks();
   ({ resolveForwardedMediaList, resolveMediaList } = await import("./message-media.js"));
 });
-
-afterEach(() => vi.restoreAllMocks());
-beforeEach(() => vi.resetAllMocks());
 
 function asMessage(payload: Record<string, unknown>): Message {
   return payload as unknown as Message;
@@ -322,7 +324,9 @@ describe("resolveMediaList", () => {
       fetchImpl: proxyFetch,
     });
 
-    expect(result).toEqual([{ path: "/tmp/provider-image.png", contentType: "image/png" }]);
+    expect(result).toEqual([
+      { path: "/tmp/provider-image.png", contentType: "image/png", fileName: "image.png" },
+    ]);
     const call = fetchParams();
     expect(call.url).toBe(attachmentUrl);
     expect(call.fetchImpl).toBeUndefined();
