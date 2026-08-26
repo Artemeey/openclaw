@@ -195,7 +195,7 @@ function findFirstNonOptionIndex(
   return null;
 }
 
-function hasLeadingContextOption(
+function hasContextOption(
   argv: string[],
   startIdx: number,
   params: {
@@ -205,8 +205,10 @@ function hasLeadingContextOption(
     contextOptionsWithValue: ReadonlySet<string>;
     contextCaseSensitiveOptionsWithValue?: ReadonlySet<string>;
     contextFlagOptions?: ReadonlySet<string>;
+    mode: "leading" | "before-terminator";
   },
 ): boolean {
+  const { mode } = params;
   let idx = startIdx;
   while (idx < argv.length) {
     const token = argv[idx]?.trim() ?? "";
@@ -215,61 +217,16 @@ function hasLeadingContextOption(
       continue;
     }
     if (token === "--") {
+      if (mode === "before-terminator") {
+        return false;
+      }
       idx += 1;
       continue;
     }
     if (!token.startsWith("-")) {
-      return false;
-    }
-    const parsedOption = parseInlineOptionToken(token);
-    const flag = normalizeLowercaseStringOrEmpty(parsedOption.name);
-    if (
-      params.contextCaseSensitiveOptionsWithValue?.has(parsedOption.name) ||
-      params.contextOptionsWithValue.has(flag) ||
-      params.contextFlagOptions?.has(flag)
-    ) {
-      return true;
-    }
-    if (params.caseSensitiveOptionsWithValue?.has(parsedOption.name)) {
-      idx += token.includes("=") ? 1 : 2;
-      continue;
-    }
-    if (params.optionsWithValue.has(flag)) {
-      idx += token.includes("=") ? 1 : 2;
-      continue;
-    }
-    if (params.flagOptions.has(flag)) {
-      idx += 1;
-      continue;
-    }
-    return false;
-  }
-  return false;
-}
-
-function hasContextOptionBeforeTerminator(
-  argv: string[],
-  startIdx: number,
-  params: {
-    optionsWithValue: ReadonlySet<string>;
-    caseSensitiveOptionsWithValue?: ReadonlySet<string>;
-    flagOptions: ReadonlySet<string>;
-    contextOptionsWithValue: ReadonlySet<string>;
-    contextCaseSensitiveOptionsWithValue?: ReadonlySet<string>;
-    contextFlagOptions?: ReadonlySet<string>;
-  },
-): boolean {
-  let idx = startIdx;
-  while (idx < argv.length) {
-    const token = argv[idx]?.trim() ?? "";
-    if (!token) {
-      idx += 1;
-      continue;
-    }
-    if (token === "--") {
-      return false;
-    }
-    if (!token.startsWith("-")) {
+      if (mode === "leading") {
+        return false;
+      }
       idx += 1;
       continue;
     }
@@ -293,6 +250,9 @@ function hasContextOptionBeforeTerminator(
     if (params.flagOptions.has(flag)) {
       idx += 1;
       continue;
+    }
+    if (mode === "leading") {
+      return false;
     }
     idx += 1;
   }
@@ -309,36 +269,39 @@ export function hasKnownPackageManagerExecContextOptions(argv: string[]): boolea
         flagOptions: NPM_EXEC_FLAG_OPTIONS,
       };
       if (
-        hasLeadingContextOption(argv, 1, {
+        hasContextOption(argv, 1, {
           ...leadingOptions,
           contextOptionsWithValue: NPM_EXEC_CONTEXT_OPTIONS_WITH_VALUE,
           contextCaseSensitiveOptionsWithValue: new Set(["-C"]),
           contextFlagOptions: new Set(["--ws", "--workspaces"]),
+          mode: "leading",
         })
       ) {
         return true;
       }
       const subcommandIdx = findFirstNonOptionIndex(argv, 1, leadingOptions);
       return subcommandIdx !== null && NPM_EXEC_SUBCOMMANDS.has(argv[subcommandIdx] ?? "")
-        ? hasContextOptionBeforeTerminator(argv, subcommandIdx + 1, {
+        ? hasContextOption(argv, subcommandIdx + 1, {
             optionsWithValue: NPM_EXEC_OPTIONS_WITH_VALUE,
             caseSensitiveOptionsWithValue: new Set(["-C"]),
             flagOptions: NPM_EXEC_FLAG_OPTIONS,
             contextOptionsWithValue: NPM_EXEC_CONTEXT_OPTIONS_WITH_VALUE,
             contextCaseSensitiveOptionsWithValue: new Set(["-C"]),
             contextFlagOptions: new Set(["--ws", "--workspaces"]),
+            mode: "before-terminator",
           })
         : false;
     }
     case "npx":
     case "bunx":
-      return hasLeadingContextOption(argv, 1, {
+      return hasContextOption(argv, 1, {
         optionsWithValue: NPM_EXEC_OPTIONS_WITH_VALUE,
         caseSensitiveOptionsWithValue: new Set(["-C"]),
         flagOptions: NPM_EXEC_FLAG_OPTIONS,
         contextOptionsWithValue: NPM_EXEC_CONTEXT_OPTIONS_WITH_VALUE,
         contextCaseSensitiveOptionsWithValue: new Set(["-C"]),
         contextFlagOptions: new Set(["--ws", "--workspaces"]),
+        mode: "leading",
       });
     case "pnpm": {
       const leadingOptions = {
@@ -347,22 +310,24 @@ export function hasKnownPackageManagerExecContextOptions(argv: string[]): boolea
         flagOptions: PNPM_FLAG_OPTIONS,
       };
       if (
-        hasLeadingContextOption(argv, 1, {
+        hasContextOption(argv, 1, {
           ...leadingOptions,
           contextOptionsWithValue: PNPM_EXEC_CONTEXT_OPTIONS_WITH_VALUE,
           contextCaseSensitiveOptionsWithValue: new Set(["-C"]),
           contextFlagOptions: new Set(["--recursive", "--workspace-root", "-r", "-w"]),
+          mode: "leading",
         })
       ) {
         return true;
       }
       const subcommandIdx = findFirstNonOptionIndex(argv, 1, leadingOptions);
       return argv[subcommandIdx ?? -1] === "dlx"
-        ? hasLeadingContextOption(argv, (subcommandIdx ?? 0) + 1, {
+        ? hasContextOption(argv, (subcommandIdx ?? 0) + 1, {
             ...leadingOptions,
             contextOptionsWithValue: PNPM_EXEC_CONTEXT_OPTIONS_WITH_VALUE,
             contextCaseSensitiveOptionsWithValue: new Set(["-C"]),
             contextFlagOptions: new Set(["--recursive", "--workspace-root", "-r", "-w"]),
+            mode: "leading",
           })
         : false;
     }
@@ -372,19 +337,21 @@ export function hasKnownPackageManagerExecContextOptions(argv: string[]): boolea
         flagOptions: new Set([...YARN_FLAG_OPTIONS, ...YARN_DLX_FLAG_OPTIONS]),
       };
       if (
-        hasLeadingContextOption(argv, 1, {
+        hasContextOption(argv, 1, {
           ...leadingOptions,
           contextOptionsWithValue: new Set(["--cwd"]),
+          mode: "leading",
         })
       ) {
         return true;
       }
       const subcommandIdx = findFirstNonOptionIndex(argv, 1, leadingOptions);
       return argv[subcommandIdx ?? -1] === "dlx"
-        ? hasLeadingContextOption(argv, (subcommandIdx ?? 0) + 1, {
+        ? hasContextOption(argv, (subcommandIdx ?? 0) + 1, {
             optionsWithValue: YARN_DLX_OPTIONS_WITH_VALUE,
             flagOptions: YARN_DLX_FLAG_OPTIONS,
             contextOptionsWithValue: new Set(["--package", "-p"]),
+            mode: "leading",
           })
         : false;
     }
