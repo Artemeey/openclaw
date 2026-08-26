@@ -12,6 +12,28 @@ function readFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function readProviderNumber(value: unknown): number | undefined {
+  return typeof value === "string" ? parseStrictFiniteNumber(value) : readFiniteNumber(value);
+}
+
+function rateLimitReachedSummary(value: unknown): string | undefined {
+  const reachedType = asOptionalRecord(value)?.type;
+  switch (reachedType) {
+    case "rate_limit_reached":
+      return "Usage limit reached";
+    case "workspace_owner_credits_depleted":
+      return "Workspace credits depleted";
+    case "workspace_member_credits_depleted":
+      return "Account credits depleted";
+    case "workspace_owner_usage_limit_reached":
+      return "Workspace usage limit reached";
+    case "workspace_member_usage_limit_reached":
+      return "Account usage limit reached";
+    default:
+      return undefined;
+  }
+}
+
 function resolveSecondaryWindowLabel(params: {
   windowHours: number;
   secondaryResetAt?: number;
@@ -141,25 +163,57 @@ export async function fetchCodexUsage(
   }
 
   const plan = typeof data.plan_type === "string" ? data.plan_type : undefined;
-  let billing: ProviderUsageSnapshot["billing"];
+  const billing: NonNullable<ProviderUsageSnapshot["billing"]> = [];
   const balanceValue = asOptionalRecord(data.credits)?.balance;
   if (balanceValue !== undefined && balanceValue !== null) {
-    const balance =
-      typeof balanceValue === "number"
-        ? readFiniteNumber(balanceValue)
-        : typeof balanceValue === "string"
-          ? parseStrictFiniteNumber(balanceValue)
-          : undefined;
+    const balance = readProviderNumber(balanceValue);
     if (balance !== undefined && balance >= 0) {
-      billing = [{ type: "balance", amount: balance, unit: "credits" }];
+      billing.push({ type: "balance", amount: balance, unit: "credits" });
     }
   }
+
+  const spendControl = asOptionalRecord(data.spend_control);
+  const individualLimit = asOptionalRecord(spendControl?.individual_limit);
+  if (individualLimit) {
+    const reached = spendControl?.reached === true;
+    const usedPercent = readFiniteNumber(individualLimit.used_percent);
+    const remainingPercent = readFiniteNumber(individualLimit.remaining_percent);
+    const resetAtSeconds = readFiniteNumber(individualLimit.reset_at);
+    const resetAt = resetAtSeconds ? resetAtSeconds * 1000 : undefined;
+    windows.push({
+      label: "Monthly spend",
+      usedPercent: reached
+        ? 100
+        : clampPercent(
+            usedPercent ?? (remainingPercent === undefined ? 0 : 100 - remainingPercent),
+          ),
+      resetAt,
+    });
+    const used = readProviderNumber(individualLimit.used);
+    const limit = readProviderNumber(individualLimit.limit);
+    if (used !== undefined && used >= 0 && limit !== undefined && limit >= 0) {
+      billing.push({
+        type: "budget",
+        label: "Monthly spend limit",
+        used,
+        limit,
+        unit: "credits",
+        period: "monthly",
+        ...(resetAt ? { resetAt } : {}),
+      });
+    }
+  }
+
+  const summary =
+    rateLimitReachedSummary(data.rate_limit_reached_type) ??
+    (spendControl?.reached === true ? "Monthly spend limit reached" : undefined);
 
   return {
     provider: "openai",
     displayName: PROVIDER_LABELS.openai,
     windows,
     plan,
-    ...(billing ? { billing } : {}),
+    ...(billing.length ? { billing } : {}),
+    ...(summary ? { summary } : {}),
   };
 }

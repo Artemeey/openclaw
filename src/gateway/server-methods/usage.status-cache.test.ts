@@ -499,9 +499,13 @@ describe("models.authStatus profile usage cache", () => {
     vi.restoreAllMocks();
   });
 
-  it.each(["resolved error", "rejection"] as const)(
-    "keeps a warm account's last-good quota after a refresh %s",
-    async (failure) => {
+  it.each([
+    ["timeout", "resolved", "Timeout", true],
+    ["expired token", "resolved", "Token expired", false],
+    ["fetch rejection", "rejection", "fetch failed", false],
+  ] as const)(
+    "handles a warm account's %s refresh without hiding permanent failures",
+    async (_failure, failureKind, failureMessage, retainsLastGood) => {
       const agentDir = tempDirs.make("openclaw-profile-usage-last-good-");
       const authStore = {
         version: 1,
@@ -540,7 +544,7 @@ describe("models.authStatus profile usage cache", () => {
         { label: "Weekly", usedPercent: 25 },
       ]);
 
-      if (failure === "resolved error") {
+      if (failureKind === "resolved") {
         mocks.loadProviderUsageSummary.mockResolvedValueOnce({
           updatedAt: 61_000,
           providers: [
@@ -548,12 +552,12 @@ describe("models.authStatus profile usage cache", () => {
               provider: "openai",
               displayName: "OpenAI",
               windows: [],
-              error: "Timeout",
+              error: failureMessage,
             },
           ],
         });
       } else {
-        mocks.loadProviderUsageSummary.mockRejectedValueOnce(new Error("fetch failed"));
+        mocks.loadProviderUsageSummary.mockRejectedValueOnce(new Error(failureMessage));
       }
 
       const stale = await read(true);
@@ -563,10 +567,14 @@ describe("models.authStatus profile usage cache", () => {
       await vi.waitFor(async () => {
         const retained = await read();
         expect(retained.refreshPending).toBe(false);
-        expect(retained.usageByProfile.get("openai:default")).toMatchObject({
-          windows: [{ label: "Weekly", usedPercent: 25 }],
-        });
-        expect(retained.usageByProfile.get("openai:default")?.error).toBeUndefined();
+        expect(retained.usageByProfile.get("openai:default")).toMatchObject(
+          retainsLastGood
+            ? { windows: [{ label: "Weekly", usedPercent: 25 }] }
+            : {
+                windows: [],
+                error: failureKind === "rejection" ? `Error: ${failureMessage}` : failureMessage,
+              },
+        );
       });
       expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(2);
     },

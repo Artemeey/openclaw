@@ -170,6 +170,60 @@ describe("fetchCodexUsage", () => {
     ]);
   });
 
+  it("parses the account spend limit and reached state", async () => {
+    const mockFetch = createProviderUsageFetch(async () =>
+      makeResponse(200, {
+        spend_control: {
+          reached: false,
+          individual_limit: {
+            limit: "25000",
+            used: "8000",
+            used_percent: 32,
+            remaining_percent: 68,
+            reset_at: 1_700_000_789,
+          },
+        },
+        rate_limit_reached_type: { type: "workspace_member_credits_depleted" },
+      }),
+    );
+
+    const result = await fetchCodexUsage("token", undefined, 5000, mockFetch);
+
+    expect(result.windows).toEqual([
+      { label: "Monthly spend", usedPercent: 32, resetAt: 1_700_000_789_000 },
+    ]);
+    expect(result.billing).toEqual([
+      {
+        type: "budget",
+        label: "Monthly spend limit",
+        used: 8000,
+        limit: 25000,
+        unit: "credits",
+        period: "monthly",
+        resetAt: 1_700_000_789_000,
+      },
+    ]);
+    expect(result.summary).toBe("Account credits depleted");
+  });
+
+  it("shows a reached spend limit as exhausted", async () => {
+    const mockFetch = createProviderUsageFetch(async () =>
+      makeResponse(200, {
+        spend_control: {
+          reached: true,
+          individual_limit: { used_percent: 91, reset_at: 1_700_000_789 },
+        },
+      }),
+    );
+
+    const result = await fetchCodexUsage("token", undefined, 5000, mockFetch);
+
+    expect(result.windows).toEqual([
+      { label: "Monthly spend", usedPercent: 100, resetAt: 1_700_000_789_000 },
+    ]);
+    expect(result.summary).toBe("Monthly spend limit reached");
+  });
+
   it("ignores malformed successful fields without throwing", async () => {
     const mockFetch = createProviderUsageFetch(async () =>
       makeResponse(200, {

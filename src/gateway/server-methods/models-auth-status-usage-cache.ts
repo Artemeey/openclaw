@@ -139,7 +139,7 @@ function retainLastGoodProfileUsage(
   fresh: ProviderUsageStatus,
   previous: ProviderUsageStatus | undefined,
 ): ProviderUsageStatus {
-  return fresh.error !== undefined && previous && previous.error === undefined ? previous : fresh;
+  return fresh.error === "Timeout" && previous && previous.error === undefined ? previous : fresh;
 }
 
 /** Account-scoped quota snapshots; cold reads wait, warm reads refresh in the background. */
