@@ -7,9 +7,6 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 const resolveProviderUsageAuthWithPluginMock = vi.fn(
   async (..._args: unknown[]): Promise<unknown> => null,
 );
-const resolveProviderProfileUsageAuthWithPluginMock = vi.fn(
-  async (..._args: unknown[]): Promise<unknown> => null,
-);
 const hasAnyAuthProfileStoreSourceMock = vi.fn(() => false);
 const ensureAuthProfileStoreMock = vi.fn(() => ({
   profiles: {},
@@ -39,7 +36,6 @@ vi.mock("../plugins/provider-runtime.js", async () => {
   );
   return {
     ...actual,
-    resolveProviderProfileUsageAuthWithPlugin: resolveProviderProfileUsageAuthWithPluginMock,
     resolveProviderUsageAuthWithPlugin: resolveProviderUsageAuthWithPluginMock,
   };
 });
@@ -140,49 +136,6 @@ describe("resolveProviderAuths plugin boundary", () => {
     resolveApiKeyForProfileMock.mockResolvedValue(null);
     resolveProviderUsageAuthWithPluginMock.mockReset();
     resolveProviderUsageAuthWithPluginMock.mockResolvedValue(null);
-    resolveProviderProfileUsageAuthWithPluginMock.mockReset();
-    resolveProviderProfileUsageAuthWithPluginMock.mockResolvedValue(null);
-  });
-
-  it("lets a provider own usage auth for one exact native profile", async () => {
-    resolveProviderProfileUsageAuthWithPluginMock.mockResolvedValueOnce({
-      token: "native-usage-marker",
-      subscriptionType: "max",
-      email: "native@example.com",
-    });
-
-    await expect(
-      resolveProviderProfileUsageAuth({
-        provider: "anthropic",
-        profileId: "anthropic:claude-cli",
-        store: {
-          version: 1,
-          profiles: {
-            "anthropic:claude-cli": {
-              type: "oauth",
-              provider: "claude-cli",
-              access: "retired-access",
-              refresh: "retired-refresh",
-              expires: 1,
-            },
-          },
-        },
-        config: {},
-      }),
-    ).resolves.toEqual({
-      provider: "anthropic",
-      token: "native-usage-marker",
-      subscriptionType: "max",
-      email: "native@example.com",
-      authProfileId: "anthropic:claude-cli",
-    });
-    expect(resolveApiKeyForProfileMock).not.toHaveBeenCalled();
-    expect(resolveProviderProfileUsageAuthWithPluginMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "anthropic",
-        context: expect.objectContaining({ profileId: "anthropic:claude-cli" }),
-      }),
-    );
   });
 
   it("prefers plugin-owned usage auth when available", async () => {

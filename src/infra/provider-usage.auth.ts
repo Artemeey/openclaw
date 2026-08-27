@@ -24,10 +24,7 @@ import {
   passesManifestOwnerBasePolicy,
 } from "../plugins/manifest-owner-policy.js";
 import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
-import {
-  resolveProviderProfileUsageAuthWithPlugin,
-  resolveProviderUsageAuthWithPlugin,
-} from "../plugins/provider-runtime.js";
+import { resolveProviderUsageAuthWithPlugin } from "../plugins/provider-runtime.js";
 import { resolveProviderAuthEnvVarCandidates } from "../secrets/provider-env-vars.js";
 import { normalizeSecretInput } from "../utils/normalize-secret-input.js";
 import { isOAuthOnlyUsageProvider } from "./provider-usage.shared.js";
@@ -468,34 +465,6 @@ export async function resolveProviderProfileUsageAuth(params: {
     allowAuthProfileStore: true,
     store: params.store,
   };
-  const pluginAuth = await resolveProviderProfileUsageAuthWithPlugin({
-    provider: params.provider,
-    config: params.config,
-    workspaceDir: params.workspaceDir,
-    env: state.env,
-    context: {
-      config: params.config,
-      agentDir: params.agentDir,
-      workspaceDir: params.workspaceDir,
-      env: state.env,
-      provider: params.provider,
-      profileId: params.profileId,
-      resolveOAuthToken: async (options) =>
-        await resolveOAuthToken({
-          state,
-          provider: options?.provider ?? params.provider,
-          profileIds: [params.profileId],
-          excludeProfileIds: options?.excludeProfileIds,
-          allowProfileFallback: false,
-        }),
-    },
-  });
-  if (pluginAuth && "handled" in pluginAuth) {
-    return null;
-  }
-  if (pluginAuth) {
-    return { provider: params.provider, ...pluginAuth, authProfileId: params.profileId };
-  }
   const auth = await resolveOAuthToken({
     state,
     provider: params.provider,

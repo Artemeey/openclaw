@@ -116,7 +116,6 @@ export type {
   ProviderReplaySessionEntry,
   ProviderReplaySessionState,
   ProviderResolveDynamicModelContext,
-  ProviderResolveProfileUsageAuthContext,
   ProviderResolveTransportTurnStateContext,
   ProviderResolveWebSocketSessionPolicyContext,
   ProviderResolvedUsageAuth,

@@ -75,11 +75,7 @@ import {
   registerClaudeSessionDiscovery,
 } from "./session-catalog-registration.js";
 import { isAnthropicOAuthApiKey, wrapAnthropicProviderStream } from "./stream-wrappers.js";
-import {
-  fetchAnthropicUsage,
-  resolveAnthropicProfileUsageAuth,
-  resolveAnthropicUsageAuth,
-} from "./usage.js";
+import { fetchAnthropicUsage, resolveAnthropicUsageAuth } from "./usage.js";
 
 type ProviderAuthMethodNonInteractiveValidationContext = Parameters<
   NonNullable<ProviderAuthMethod["validateNonInteractive"]>
@@ -1210,7 +1206,6 @@ export function buildAnthropicProvider(): ProviderPlugin {
     },
     wrapStreamFn: wrapAnthropicProviderStream,
     resolveUsageAuth: resolveAnthropicUsageAuth,
-    resolveProfileUsageAuth: resolveAnthropicProfileUsageAuth,
     fetchUsageSnapshot: fetchAnthropicUsage,
     isCacheTtlEligible: () => true,
     buildAuthDoctorHint: (ctx) =>

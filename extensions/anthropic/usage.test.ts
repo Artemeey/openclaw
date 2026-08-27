@@ -1,25 +1,7 @@
 import { CLAUDE_CLI_PROFILE_ID as SDK_CLAUDE_CLI_PROFILE_ID } from "openclaw/plugin-sdk/provider-auth";
 import { describe, expect, it, vi } from "vitest";
-import { CLAUDE_CLI_NATIVE_AUTH_MARKER, CLAUDE_CLI_PROFILE_ID } from "./cli-constants.js";
-import {
-  fetchAnthropicUsage,
-  resolveAnthropicProfileUsageAuth,
-  resolveAnthropicUsageAuth,
-} from "./usage.js";
-
-const nativeQuery = vi.hoisted(() => ({
-  accountInfo: vi.fn(),
-  close: vi.fn(),
-  usage: vi.fn(),
-}));
-
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
-  query: vi.fn(() => ({
-    accountInfo: nativeQuery.accountInfo,
-    close: nativeQuery.close,
-    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: nativeQuery.usage,
-  })),
-}));
+import { CLAUDE_CLI_PROFILE_ID } from "./cli-constants.js";
+import { fetchAnthropicUsage, resolveAnthropicUsageAuth } from "./usage.js";
 
 function requestUrl(input: string | URL | Request): URL {
   return new URL(input instanceof Request ? input.url : input);
@@ -30,46 +12,6 @@ function oauthFixtureToken(): string {
 }
 
 describe("Anthropic provider usage", () => {
-  it("routes the canonical native Claude profile through the Agent SDK", async () => {
-    expect(resolveAnthropicProfileUsageAuth({ profileId: "anthropic:claude-cli" })).toEqual({
-      token: CLAUDE_CLI_NATIVE_AUTH_MARKER,
-    });
-    expect(resolveAnthropicProfileUsageAuth({ profileId: "anthropic:other" })).toBeUndefined();
-
-    nativeQuery.usage.mockResolvedValueOnce({
-      subscription_type: "max",
-      rate_limits: {
-        five_hour: { utilization: 18, resets_at: "2026-08-27T01:00:00Z" },
-        seven_day: { utilization: 44, resets_at: "2026-09-02T01:00:00Z" },
-      },
-    });
-    nativeQuery.accountInfo.mockResolvedValueOnce({
-      email: "native@example.com",
-      subscriptionType: "max",
-    });
-    const fetchFn = vi.fn();
-
-    await expect(
-      fetchAnthropicUsage({
-        config: {},
-        env: {},
-        provider: "anthropic",
-        token: CLAUDE_CLI_NATIVE_AUTH_MARKER,
-        timeoutMs: 5_000,
-        fetchFn,
-      }),
-    ).resolves.toMatchObject({
-      provider: "anthropic",
-      plan: "Max",
-      accountEmail: "native@example.com",
-      windows: [
-        { label: "5h", usedPercent: 18 },
-        { label: "Week", usedPercent: 44 },
-      ],
-    });
-    expect(fetchFn).not.toHaveBeenCalled();
-    expect(nativeQuery.close).toHaveBeenCalledOnce();
-  });
   it("aggregates provider-reported costs, cache tokens, models, and categories", async () => {
     const fetchFn = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       const url = requestUrl(input);

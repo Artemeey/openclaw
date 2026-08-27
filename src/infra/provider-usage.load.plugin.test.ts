@@ -3,7 +3,6 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createProviderUsageFetch } from "../test-utils/provider-usage-fetch.js";
 
 const resolveProviderUsageSnapshotWithPluginMock = vi.fn();
-const resolveProviderProfileUsageAuthWithPluginMock = vi.fn();
 const { EnvHttpProxyAgent, envAgentSpy, loadUndiciRuntimeDeps, undiciFetch } = vi.hoisted(() => {
   const envAgentSpyLocal = vi.fn();
   const undiciFetchLocal = vi.fn();
@@ -43,8 +42,6 @@ vi.mock("../plugins/provider-runtime.js", async () => {
   );
   return {
     ...actual,
-    resolveProviderProfileUsageAuthWithPlugin: (...args: unknown[]) =>
-      resolveProviderProfileUsageAuthWithPluginMock(...args),
     resolveProviderUsageSnapshotWithPlugin: (...args: unknown[]) =>
       resolveProviderUsageSnapshotWithPluginMock(...args),
   };
@@ -111,60 +108,6 @@ describe("provider-usage.load plugin boundary", () => {
     EnvHttpProxyAgent.lastCreated = undefined;
     resolveProviderUsageSnapshotWithPluginMock.mockReset();
     resolveProviderUsageSnapshotWithPluginMock.mockResolvedValue(null);
-    resolveProviderProfileUsageAuthWithPluginMock.mockReset();
-    resolveProviderProfileUsageAuthWithPluginMock.mockResolvedValue(null);
-  });
-
-  it("times out exact-profile auth hooks with the rest of the usage operation", async () => {
-    vi.useFakeTimers();
-    try {
-      resolveProviderProfileUsageAuthWithPluginMock.mockImplementation(
-        async () => await new Promise(() => {}),
-      );
-      const summaryPromise = loadProviderUsageSummary({
-        authProfile: { provider: "openai", profileId: "openai:work" },
-        authStore: { version: 1, profiles: {} },
-        config: {},
-        env: {},
-        timeoutMs: 5_000,
-      });
-
-      await vi.advanceTimersByTimeAsync(5_000);
-
-      await expect(summaryPromise).resolves.toEqual({
-        updatedAt: expect.any(Number),
-        providers: [{ provider: "openai", displayName: "OpenAI", windows: [], error: "Timeout" }],
-      });
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("preserves caller context while resolving one exact profile", async () => {
-    const env = { OPENCLAW_TEST_PROFILE_USAGE: "enabled" };
-    const workspaceDir = "/tmp/openclaw-profile-usage-workspace";
-    resolveProviderProfileUsageAuthWithPluginMock.mockResolvedValueOnce({ token: "profile-token" });
-    resolveProviderUsageSnapshotWithPluginMock.mockResolvedValueOnce({
-      provider: "openai",
-      displayName: "OpenAI",
-      windows: [{ label: "Weekly", usedPercent: 4 }],
-    });
-
-    await loadProviderUsageSummary({
-      authProfile: { provider: "openai", profileId: "openai:work" },
-      authStore: { version: 1, profiles: {} },
-      config: {},
-      env,
-      workspaceDir,
-    });
-
-    expect(resolveProviderProfileUsageAuthWithPluginMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        env,
-        workspaceDir,
-        context: expect.objectContaining({ env, workspaceDir }),
-      }),
-    );
   });
 
   it("prefers plugin-owned usage snapshots", async () => {

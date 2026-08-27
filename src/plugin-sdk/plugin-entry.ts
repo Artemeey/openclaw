@@ -113,7 +113,6 @@ export type {
   ProviderReplaySessionState,
   ProviderResolveConfigApiKeyContext,
   ProviderResolveDynamicModelContext,
-  ProviderResolveProfileUsageAuthContext,
   ProviderResolveTransportTurnStateContext,
   ProviderResolveUsageAuthContext,
   ProviderResolveWebSocketSessionPolicyContext,

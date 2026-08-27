@@ -322,8 +322,7 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: identifier authentication input type for external channel plugins.
       // +1: shared channel-account logout config cleanup.
       // +1: descriptor-based allowFrom authentication classifier for channel security audits.
-      // +2: exact-profile usage-auth context on plugin-entry and core.
-      4350,
+      4348,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(

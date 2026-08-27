@@ -1,6 +1,5 @@
 import type {
   ProviderFetchUsageSnapshotContext,
-  ProviderResolveProfileUsageAuthContext,
   ProviderResolveUsageAuthContext,
   ProviderResolvedUsageAuth,
 } from "openclaw/plugin-sdk/plugin-entry";
@@ -16,18 +15,13 @@ import {
   encodeProviderUsageAdminToken,
   fetchProviderUsagePages,
   fetchClaudeUsage,
-  parseClaudeUsageSnapshot,
   parseProviderUsageNonNegativeInteger,
   parseProviderUsageNumber,
   resolveProviderUsageDailyPeriod,
   resolveProviderUsageDisplayName,
   type ProviderUsageSnapshot,
 } from "openclaw/plugin-sdk/provider-usage";
-import {
-  CLAUDE_CLI_CLEAR_ENV,
-  CLAUDE_CLI_NATIVE_AUTH_MARKER,
-  CLAUDE_CLI_PROFILE_ID,
-} from "./cli-constants.js";
+import { CLAUDE_CLI_PROFILE_ID } from "./cli-constants.js";
 
 const ANTHROPIC_COST_URL = "https://api.anthropic.com/v1/organizations/cost_report";
 const ANTHROPIC_MESSAGES_USAGE_URL =
@@ -277,12 +271,6 @@ export async function resolveAnthropicUsageAuth(
   return { handled: true };
 }
 
-export function resolveAnthropicProfileUsageAuth(ctx: ProviderResolveProfileUsageAuthContext) {
-  return ctx.profileId === CLAUDE_CLI_PROFILE_ID
-    ? { token: CLAUDE_CLI_NATIVE_AUTH_MARKER }
-    : undefined;
-}
-
 /** Formats keychain plan metadata like ("max", "default_max_20x") as "Max (20x)". */
 function formatClaudePlanLabel(
   subscriptionType?: string,
@@ -301,55 +289,9 @@ function resolveClaudePlanLabel(ctx: ProviderFetchUsageSnapshotContext): string 
   return formatClaudePlanLabel(ctx.subscriptionType, ctx.rateLimitTier);
 }
 
-async function fetchNativeClaudeUsage(
-  ctx: ProviderFetchUsageSnapshotContext,
-): Promise<ProviderUsageSnapshot> {
-  const { query } = await import("@anthropic-ai/claude-agent-sdk");
-  const controller = new AbortController();
-  const env = { ...ctx.env };
-  for (const name of CLAUDE_CLI_CLEAR_ENV) {
-    delete env[name];
-  }
-  async function* emptyPrompt() {}
-  const nativeQuery = query({
-    prompt: emptyPrompt(),
-    options: {
-      abortController: controller,
-      cwd: ctx.workspaceDir ?? ctx.agentDir ?? process.cwd(),
-      env,
-      mcpServers: {},
-      permissionMode: "default",
-      settingSources: [],
-      strictMcpConfig: true,
-      systemPrompt: "",
-      tools: [],
-    },
-  });
-  const timeout = setTimeout(() => controller.abort(), ctx.timeoutMs);
-  try {
-    const [usage, account] = await Promise.all([
-      nativeQuery.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
-      nativeQuery.accountInfo(),
-    ]);
-    const snapshot = parseClaudeUsageSnapshot(usage.rate_limits);
-    const plan = usage.subscription_type ?? account.subscriptionType;
-    return {
-      ...snapshot,
-      ...(plan ? { plan: formatClaudePlanLabel(plan) } : {}),
-      ...(account.email ? { accountEmail: account.email } : {}),
-    };
-  } finally {
-    clearTimeout(timeout);
-    nativeQuery.close();
-  }
-}
-
 export async function fetchAnthropicUsage(
   ctx: ProviderFetchUsageSnapshotContext,
 ): Promise<ProviderUsageSnapshot> {
-  if (ctx.token === CLAUDE_CLI_NATIVE_AUTH_MARKER) {
-    return await fetchNativeClaudeUsage(ctx);
-  }
   const adminKey = decodeAdminToken(ctx.token);
   if (adminKey) {
     return await fetchAnthropicAdminUsage({

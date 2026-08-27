@@ -82,7 +82,6 @@ import type {
   ProviderPreferRuntimeResolvedModelContext,
   ProviderPlugin,
   ProviderResolveExternalAuthProfilesContext,
-  ProviderResolveProfileUsageAuthContext,
   ProviderPrepareRuntimeAuthContext,
   ProviderResolveConfigApiKeyContext,
   ProviderSanitizeReplayHistoryContext,
@@ -644,16 +643,6 @@ export async function resolveProviderUsageAuthWithPlugin(params: {
     return undefined;
   }
   return result;
-}
-
-export async function resolveProviderProfileUsageAuthWithPlugin(params: {
-  provider: string;
-  config?: OpenClawConfig;
-  workspaceDir?: string;
-  env?: NodeJS.ProcessEnv;
-  context: ProviderResolveProfileUsageAuthContext;
-}) {
-  return await resolveProviderRuntimePlugin(params)?.resolveProfileUsageAuth?.(params.context);
 }
 
 export async function resolveProviderUsageSnapshotWithPlugin(params: {
