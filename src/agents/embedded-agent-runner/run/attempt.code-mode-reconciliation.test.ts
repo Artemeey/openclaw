@@ -87,7 +87,7 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
     await cleanupTempPaths(tempPaths);
   });
 
-  it("settles a real partial bridge mutation before exposing only core read", async () => {
+  it("settles a partial bridge mutation, fences its replay, and allows different work", async () => {
     const appliedChanges: string[] = [];
     const read = fakeTool("read", "Inspect current file contents");
     const applyPatch = pluginToolWithExecute("apply_patch", "Apply a patch", async () => {
@@ -134,21 +134,33 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
           if (assistantTurn++ > 0) {
             return streamAssistant([{ type: "text", text: "first hunk applied" }]);
           }
-          return streamAssistant([
+          return streamAssistant(
             attemptPhase === "reconciliation"
-              ? { type: "toolCall", id: "observe", name: "read", arguments: { value: "file" } }
-              : {
-                  type: "toolCall" as const,
-                  id: attemptPhase === "continuation" ? "continue" : "mutate",
-                  name: "exec",
-                  arguments: {
-                    code:
-                      attemptPhase === "continuation"
-                        ? "return await write({});"
-                        : "return await apply_patch({});",
-                  },
-                },
-          ]);
+              ? [{ type: "toolCall", id: "observe", name: "read", arguments: { value: "file" } }]
+              : attemptPhase === "continuation"
+                ? [
+                    {
+                      type: "toolCall",
+                      id: "replay",
+                      name: "exec",
+                      arguments: { code: "return await apply_patch({});" },
+                    },
+                    {
+                      type: "toolCall",
+                      id: "continue",
+                      name: "exec",
+                      arguments: { code: "return await write({});" },
+                    },
+                  ]
+                : [
+                    {
+                      type: "toolCall",
+                      id: "mutate",
+                      name: "exec",
+                      arguments: { code: "return await apply_patch({});" },
+                    },
+                  ],
+          );
         },
       });
       session.agent = agent as typeof session.agent;
@@ -182,7 +194,9 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
       },
     });
 
-    expect(firstAttempt.codeModeReconciliationCandidate).toBe(true);
+    expect(firstAttempt.codeModeReconciliationCandidate).toEqual({
+      code: "return await apply_patch({});",
+    });
     expect(appliedChanges).toEqual(["first hunk applied"]);
     expect(applyPatch.execute).toHaveBeenCalledOnce();
 
@@ -252,6 +266,7 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
         disableMessageTool: false,
         disableTools: false,
         forceCodeModeReconciliationTools: retryState.forceCodeModeReconciliationTools,
+        codeModeReconciliationReplayFence: retryState.codeModeReconciliationReplayFence,
         model,
         prompt: continuationPrompt,
       },

@@ -25,12 +25,12 @@ function createOutcome(
     type: "toolCall" as const,
     id: "call-1",
     name: options.toolName ?? "exec",
-    arguments: {},
+    arguments: { code: "return await apply_patch({});" },
   };
   return {
     assistantMessage: { role: "assistant", content: [toolCall], timestamp: 1 },
     toolCall,
-    args: {},
+    args: { code: "return await apply_patch({});" },
     result: {
       content: [{ type: "text", text: JSON.stringify(details) }],
       details,
@@ -79,7 +79,9 @@ describe("Code Mode outcome safety", () => {
     await expect(
       agent.afterToolOutcome?.(createOutcome({ bridgeStarted: true })),
     ).resolves.toMatchObject({ isError: true, terminate: true });
-    expect(onReconciliationCandidate).toHaveBeenCalledOnce();
+    expect(onReconciliationCandidate).toHaveBeenCalledWith({
+      code: "return await apply_patch({});",
+    });
   });
 
   it("cannot grant reconciliation from a wait failure", async () => {

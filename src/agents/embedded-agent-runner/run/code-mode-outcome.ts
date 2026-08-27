@@ -1,15 +1,63 @@
 import {
   CODE_MODE_EXEC_TOOL_NAME,
   CODE_MODE_WAIT_TOOL_NAME,
+  isCodeModeExecTool,
 } from "../../code-mode-control-tools.js";
 import { consumeRepairableCodeModeFailure } from "../../code-mode-repair-provenance.js";
+import { readCode } from "../../code-mode-runtime.js";
 import type { AfterToolCallResult, Agent } from "../../runtime/index.js";
 import { readToolResultDetails } from "../../tool-result-error.js";
+
+export type CodeModeReconciliationReplayFence = {
+  code: string;
+};
+
+function readCodeModeReconciliationReplayFence(
+  args: unknown,
+): CodeModeReconciliationReplayFence | undefined {
+  try {
+    const input = readCode(args);
+    return { code: input.code };
+  } catch {
+    return undefined;
+  }
+}
+
+function matchesCodeModeReconciliationReplayFence(
+  args: unknown,
+  fence: CodeModeReconciliationReplayFence,
+): boolean {
+  const input = readCodeModeReconciliationReplayFence(args);
+  return input?.code === fence.code;
+}
+
+/** Reject the exact uncertain exec before it can reach the Code Mode bridge again. */
+export function installCodeModeReconciliationReplayFence(params: {
+  agent: Agent;
+  fence: CodeModeReconciliationReplayFence;
+}): void {
+  const previousBeforeToolCall = params.agent.beforeToolCall?.bind(params.agent);
+  params.agent.beforeToolCall = async (context, signal) => {
+    const tool = params.agent.state.tools.find((entry) => entry.name === context.toolCall.name);
+    if (
+      tool &&
+      isCodeModeExecTool(tool) &&
+      matchesCodeModeReconciliationReplayFence(context.args, params.fence)
+    ) {
+      return {
+        block: true,
+        reason:
+          "Blocked an exact replay of the Code Mode mutation with an uncertain outcome. Continue only with work that readback proved did not happen.",
+      };
+    }
+    return await previousBeforeToolCall?.(context, signal);
+  };
+}
 
 /** Preserve the model's ordinary error recovery without replaying uncertain mutations. */
 export function installCodeModeOutcomeHook(params: {
   agent: Agent;
-  onReconciliationCandidate?: () => void;
+  onReconciliationCandidate?: (fence: CodeModeReconciliationReplayFence) => void;
 }): void {
   const previousAfterToolOutcome = params.agent.afterToolOutcome?.bind(params.agent);
 
@@ -64,7 +112,10 @@ export function installCodeModeOutcomeHook(params: {
       isCodeModeExec &&
       context.assistantMessage.content.filter((entry) => entry.type === "toolCall").length === 1
     ) {
-      params.onReconciliationCandidate?.();
+      const fence = readCodeModeReconciliationReplayFence(context.args);
+      if (fence) {
+        params.onReconciliationCandidate?.(fence);
+      }
     }
 
     // Agent core owns ordinary continuation; only uncertain side effects need a restricted retry.

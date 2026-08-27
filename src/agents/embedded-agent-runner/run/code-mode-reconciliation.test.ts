@@ -11,7 +11,9 @@ import { createEmbeddedRunTerminalRetryState } from "./terminal-retry-state.js";
 
 function eligibleAttempt() {
   return makeEmbeddedRunnerAttempt({
-    codeModeReconciliationCandidate: true,
+    codeModeReconciliationCandidate: {
+      code: "return await apply_patch({});",
+    },
     itemLifecycle: { startedCount: 2, completedCount: 2, activeCount: 0 },
   });
 }

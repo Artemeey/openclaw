@@ -44,7 +44,7 @@ function shouldRetryCodeModeReconciliation(
   params: Parameters<typeof isQuiescentCodeModeRecoveryAttempt>[0],
 ): boolean {
   return (
-    params.attempt.codeModeReconciliationCandidate === true &&
+    params.attempt.codeModeReconciliationCandidate !== undefined &&
     isQuiescentCodeModeRecoveryAttempt(params)
   );
 }
@@ -110,6 +110,8 @@ export function activateCodeModeReconciliation(params: {
     return false;
   }
   params.retryState.codeModeReconciliationAttempts += 1;
+  params.retryState.codeModeReconciliationReplayFence =
+    params.attempt.codeModeReconciliationCandidate;
   params.retryState.forceCodeModeReconciliationTools = true;
   params.activateInternalPrompt(CODE_MODE_RECONCILIATION_PROMPT);
   return true;

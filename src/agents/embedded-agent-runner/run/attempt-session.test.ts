@@ -12,6 +12,7 @@ const hoisted = vi.hoisted(() => ({
   createPreparedEmbeddedAgentSettingsManager: vi.fn(),
   getGlobalHookRunner: vi.fn(),
   installCodeModeOutcomeHook: vi.fn(),
+  installCodeModeReconciliationReplayFence: vi.fn(),
   installMessageToolOnlyTerminalHook: vi.fn(),
   prepareEmbeddedAttemptClientTools: vi.fn(),
   resolveEffectiveCompactionMode: vi.fn(),
@@ -61,6 +62,7 @@ vi.mock("./attempt-client-tools.js", () => ({
 }));
 vi.mock("./code-mode-outcome.js", () => ({
   installCodeModeOutcomeHook: hoisted.installCodeModeOutcomeHook,
+  installCodeModeReconciliationReplayFence: hoisted.installCodeModeReconciliationReplayFence,
 }));
 vi.mock("./message-tool-terminal.js", () => ({
   installMessageToolOnlyTerminalHook: hoisted.installMessageToolOnlyTerminalHook,
@@ -126,7 +128,7 @@ function createInput(options?: {
     replaySafeTools: new Set(allCustomTools),
   };
   let onDeliveredSourceReply: (() => void) | undefined;
-  let onReconciliationCandidate: (() => void) | undefined;
+  let onReconciliationCandidate: ((fence: { code: string }) => void) | undefined;
 
   hoisted.createPreparedEmbeddedAgentSettingsManager.mockReturnValue(settingsManager);
   hoisted.resolveEffectiveCompactionMode.mockReturnValue("safeguard");
@@ -153,7 +155,7 @@ function createInput(options?: {
     },
   );
   hoisted.installCodeModeOutcomeHook.mockImplementation(
-    (input: { onReconciliationCandidate?: () => void }) => {
+    (input: { onReconciliationCandidate?: typeof onReconciliationCandidate }) => {
       onReconciliationCandidate = input.onReconciliationCandidate;
       events.push("install-code-mode-outcome");
     },
@@ -190,7 +192,10 @@ function createInput(options?: {
       transcriptLifecycle: transcriptLifecycle as never,
       sessionManager: sessionManager as never,
     },
-    markCodeModeReconciliationCandidate: () => onReconciliationCandidate?.(),
+    markCodeModeReconciliationCandidate: () =>
+      onReconciliationCandidate?.({
+        code: "return await apply_patch({});",
+      }),
     onDeliveredSourceReply: () => onDeliveredSourceReply?.(),
     resourceLoader,
     setActiveToolsByName,
@@ -246,10 +251,12 @@ describe("prepareEmbeddedAttemptAgentSession", () => {
     expect(result.hasDeliveredSourceReply()).toBe(false);
     fixture.onDeliveredSourceReply();
     expect(result.hasDeliveredSourceReply()).toBe(true);
-    expect(result.getCodeModeReconciliationCandidate()).toBe(false);
+    expect(result.getCodeModeReconciliationCandidate()).toBeUndefined();
     result.setCodeModeReconciliationReadAuthorized(true);
     fixture.markCodeModeReconciliationCandidate();
-    expect(result.getCodeModeReconciliationCandidate()).toBe(true);
+    expect(result.getCodeModeReconciliationCandidate()).toEqual({
+      code: "return await apply_patch({});",
+    });
   });
 
   it("does not install Code Mode outcome handling when the run kept direct tools", async () => {
@@ -275,7 +282,7 @@ describe("prepareEmbeddedAttemptAgentSession", () => {
     });
     result.setCodeModeReconciliationReadAuthorized(finalReadAllowed);
     fixture.markCodeModeReconciliationCandidate();
-    expect(result.getCodeModeReconciliationCandidate()).toBe(false);
+    expect(result.getCodeModeReconciliationCandidate()).toBeUndefined();
   });
 
   it("leaves overflow recovery with the session when no model budget was resolved", async () => {

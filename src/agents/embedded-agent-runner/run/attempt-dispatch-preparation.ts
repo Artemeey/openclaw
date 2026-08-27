@@ -55,9 +55,21 @@ export async function prepareAndDispatchEmbeddedRunAttempt(input: {
     provider,
     modelId,
   } = input;
-  const params = input.terminalRetryState.forceCodeModeReconciliationTools
-    ? { ...runInput.runParams, forceCodeModeReconciliationTools: true }
-    : runInput.runParams;
+  const reconciliationState = {
+    ...(input.terminalRetryState.forceCodeModeReconciliationTools
+      ? { forceCodeModeReconciliationTools: true }
+      : {}),
+    ...(input.terminalRetryState.codeModeReconciliationReplayFence
+      ? {
+          codeModeReconciliationReplayFence:
+            input.terminalRetryState.codeModeReconciliationReplayFence,
+        }
+      : {}),
+  };
+  const params =
+    Object.keys(reconciliationState).length > 0
+      ? { ...runInput.runParams, ...reconciliationState }
+      : runInput.runParams;
   const {
     workspaceResolution,
     workspaceDir,

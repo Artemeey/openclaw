@@ -496,6 +496,7 @@ export async function dispatchEmbeddedRunAttempt(input: {
     swarmOutputSchema: params.swarmOutputSchema,
     forceRestartSafeTools: params.forceRestartSafeTools,
     forceCodeModeReconciliationTools: params.forceCodeModeReconciliationTools,
+    codeModeReconciliationReplayFence: params.codeModeReconciliationReplayFence,
     forceCodeModeTools: params.forceCodeModeTools,
     forceMessageTool: params.forceMessageTool,
     enableHeartbeatTool: params.enableHeartbeatTool,

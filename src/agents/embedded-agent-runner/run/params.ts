@@ -184,6 +184,8 @@ export type RunEmbeddedAgentParams = {
   forceRestartSafeTools?: boolean;
   /** Restrict one internal post-mutation recovery attempt to audited core reads. */
   forceCodeModeReconciliationTools?: boolean;
+  /** Exact uncertain Code Mode exec that resumed attempts must reject before execution. */
+  codeModeReconciliationReplayFence?: import("./code-mode-outcome.js").CodeModeReconciliationReplayFence;
   /** Preserve Code Mode controls for a replay-safe restart recovery turn. */
   forceCodeModeTools?: boolean;
   /** Internal one-shot model probe mode: no tools, no workspace/chat prompt policy. */

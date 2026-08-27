@@ -1,3 +1,5 @@
+import type { CodeModeReconciliationReplayFence } from "./code-mode-outcome.js";
+
 export const MAX_BEFORE_AGENT_FINALIZE_REVISIONS = 3;
 
 export type EmbeddedRunTerminalRetryState = {
@@ -9,6 +11,7 @@ export type EmbeddedRunTerminalRetryState = {
   beforeFinalizeRevisionAttempts: number;
   codeModeReconciliationAttempts: number;
   forceCodeModeReconciliationTools: boolean;
+  codeModeReconciliationReplayFence?: CodeModeReconciliationReplayFence;
 };
 
 export function createEmbeddedRunTerminalRetryState(): EmbeddedRunTerminalRetryState {

@@ -354,8 +354,8 @@ export type EmbeddedRunAttemptResult = {
    * how config-enabled code mode stays visible as a no-op on harness routes.
    */
   codeModeEngaged?: boolean;
-  /** Host-authenticated request for one bounded post-mutation inspection attempt. */
-  codeModeReconciliationCandidate?: boolean;
+  /** Host-authenticated request and exact replay fence for post-mutation inspection. */
+  codeModeReconciliationCandidate?: import("./code-mode-outcome.js").CodeModeReconciliationReplayFence;
   /** Completed assistant round trips observed during this attempt. */
   assistantTurns?: number;
   /** Inner bridge call counts from this attempt's tool-search/code-mode catalog. */

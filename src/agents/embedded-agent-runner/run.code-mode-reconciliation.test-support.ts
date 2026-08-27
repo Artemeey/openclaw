@@ -42,7 +42,9 @@ describe("runEmbeddedAgent Code Mode reconciliation", () => {
           lastAssistant: mutationAssistant,
           currentAttemptAssistant: mutationAssistant,
           currentAttemptCompletedAssistant: mutationAssistant,
-          codeModeReconciliationCandidate: true,
+          codeModeReconciliationCandidate: {
+            code: "return await apply_patch({});",
+          },
           itemLifecycle: { startedCount: 1, completedCount: 1, activeCount: 0 },
         }),
       )
@@ -83,6 +85,9 @@ describe("runEmbeddedAgent Code Mode reconciliation", () => {
     });
     expect(mockedRunEmbeddedAttempt.mock.calls[2]?.[0]).toMatchObject({
       forceCodeModeReconciliationTools: undefined,
+      codeModeReconciliationReplayFence: {
+        code: "return await apply_patch({});",
+      },
       prompt: expect.stringContaining("Continue the original task from the reconciled state"),
     });
   });
