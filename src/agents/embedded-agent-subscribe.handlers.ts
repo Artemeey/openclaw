@@ -105,6 +105,11 @@ export function createEmbeddedAgentSessionEventHandler(ctx: EmbeddedAgentSubscri
             evt.message as Extract<AgentMessage, { role: "assistant" }>,
             ctx.state.pendingAssistantUsage,
           );
+          // Session persistence normalizes this message after listeners return.
+          // Queued delivery must retain the same model output as immediate delivery.
+          if (ctx.state.pendingEventChain) {
+            evt = { ...evt, message: structuredClone(evt.message) };
+          }
         }
         void scheduleEvent(evt, () => {
           return handleMessageEnd(ctx, evt as never);
