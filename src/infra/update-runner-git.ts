@@ -391,7 +391,7 @@ export async function updateGitCheckout(params: {
   }
 
   const manager = await resolveUpdateBuildManager(
-    (argv, options) => runCommand(argv, { timeoutMs: options.timeoutMs, env: options.env }),
+    runCommand,
     gitRoot,
     timeoutMs,
     defaultCommandEnv,
