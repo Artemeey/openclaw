@@ -51,7 +51,10 @@ import {
   resolveActiveMemoryBackendConfig,
 } from "../plugins/memory-runtime.js";
 import { loadPluginManifestRegistryForPluginRegistry } from "../plugins/plugin-registry.js";
-import { resolveTrustedExternalProviderPolicyArtifacts } from "../plugins/provider-public-artifacts.js";
+import {
+  listTrustedExternalProviderPolicyOwners,
+  loadTrustedExternalProviderPolicyArtifacts,
+} from "../plugins/provider-public-artifacts.js";
 import { defaultSlotIdForKey } from "../plugins/slots.js";
 import { getProviderEnvVars } from "../secrets/provider-env-vars.js";
 import { resolveUserPath } from "../utils.js";
@@ -105,8 +108,8 @@ function formatLocalRuntimeDoctorNote(facts: DoctorMemoryEmbeddingRuntimePayload
 }
 
 function resolveLocalProviderPolicyBlockGuidance(
-  pluginId: string,
   reason: ManifestOwnerBasePolicyBlockReason,
+  pluginId: string,
 ): { message: string; fix: string } {
   switch (reason) {
     case "plugins-disabled":
@@ -554,15 +557,14 @@ async function noteMemorySearchHealthForAgent(
 ): Promise<void> {
   const { agentId, agentDir } = scope;
   const noteFn = opts.noteFn ?? note;
-  const recallHealth = noteRememberAcrossConversationsHealth({
-    cfg,
-    agentId,
-    noteFn,
-  });
   const resolved = resolveMemorySearchConfig(cfg, agentId);
-  const hasRemoteApiKey = hasConfiguredMemorySecretInput(resolved?.remote?.apiKey);
 
   if (!resolved) {
+    const recallHealth = noteRememberAcrossConversationsHealth({
+      cfg,
+      agentId,
+      noteFn,
+    });
     noteFn(
       recallHealth.enabled
         ? `Remember across conversations is effectively enabled for agent "${agentId}", but memory search is disabled. Enable memory search or set memory.search.rememberAcrossConversations to false.`
@@ -572,6 +574,28 @@ async function noteMemorySearchHealthForAgent(
     return;
   }
   const provider = resolved.provider;
+  const normalizedPlugins = normalizePluginsConfig(cfg.plugins);
+
+  if (provider === "local" && !normalizedPlugins.enabled) {
+    const policyBlock = resolveLocalProviderPolicyBlockGuidance("plugins-disabled", provider);
+    noteFn(
+      [
+        policyBlock.message,
+        "",
+        policyBlock.fix,
+        "",
+        `Verify: ${formatCliCommand("openclaw memory status --deep")}`,
+      ].join("\n"),
+      "Memory search",
+    );
+    return;
+  }
+  noteRememberAcrossConversationsHealth({
+    cfg,
+    agentId,
+    noteFn,
+  });
+  const hasRemoteApiKey = hasConfiguredMemorySecretInput(resolved.remote?.apiKey);
 
   const backendConfig = resolveActiveMemoryBackendConfig({ cfg, agentId });
   if (!backendConfig) {
@@ -610,19 +634,37 @@ async function noteMemorySearchHealthForAgent(
       env,
       includeDisabled: true,
     });
-    const policyArtifacts = resolveTrustedExternalProviderPolicyArtifacts(
-      provider,
-      manifestRegistry,
-    );
-    if (!policyArtifacts) {
+    const installedOwners = listTrustedExternalProviderPolicyOwners(provider, manifestRegistry);
+    if (installedOwners.length === 0) {
       noteFn(getMissingLocalMemoryEmbeddingProviderMessage(), "Memory search");
       return;
     }
-    const { owner: installedOwner, surface: providerPolicy } = policyArtifacts;
-    const ownerPolicyBlock = resolveManifestOwnerBasePolicyBlock({
-      plugin: installedOwner,
-      normalizedConfig: normalizePluginsConfig(cfg.plugins),
-    });
+    const ownerPolicies = installedOwners.map((owner) => ({
+      owner,
+      policyBlock: resolveManifestOwnerBasePolicyBlock({
+        plugin: owner,
+        normalizedConfig: normalizedPlugins,
+      }),
+    }));
+    const eligibleOwners = ownerPolicies
+      .filter(({ policyBlock }) => !policyBlock)
+      .map(({ owner }) => owner);
+    const policyArtifacts =
+      eligibleOwners.length > 0 ? loadTrustedExternalProviderPolicyArtifacts(eligibleOwners) : null;
+    let installedOwner: (typeof installedOwners)[number];
+    let ownerPolicyBlock: ManifestOwnerBasePolicyBlockReason | null;
+    if (policyArtifacts) {
+      installedOwner = policyArtifacts.owner;
+      ownerPolicyBlock = null;
+    } else {
+      const blockedOwner = ownerPolicies.find(({ policyBlock }) => policyBlock);
+      if (!blockedOwner) {
+        throw new Error(`Unable to resolve the installed provider owner for "${provider}".`);
+      }
+      installedOwner = blockedOwner.owner;
+      ownerPolicyBlock = blockedOwner.policyBlock;
+    }
+    const providerPolicy = policyArtifacts?.surface;
     const inspectSetup = ownerPolicyBlock
       ? undefined
       : providerPolicy?.inspectEmbeddingProviderSetup;
@@ -634,7 +676,7 @@ async function noteMemorySearchHealthForAgent(
         ? `Fix: Update the installed plugin: ${formatCliCommand(`openclaw plugins update ${installedOwner.id}`)}`
         : null;
     const policyBlock = ownerPolicyBlock
-      ? resolveLocalProviderPolicyBlockGuidance(installedOwner.id, ownerPolicyBlock)
+      ? resolveLocalProviderPolicyBlockGuidance(ownerPolicyBlock, installedOwner.id)
       : null;
     const hasRuntimeFailureDetail = Boolean(gatewayDetail || runtimeFacts?.loadError);
     noteFn(

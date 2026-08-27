@@ -33,24 +33,19 @@ const inspectConfiguredEmbeddingProviderSetup = vi.hoisted(() => vi.fn());
 const loadPluginManifestRegistryForPluginRegistry = vi.hoisted(() =>
   vi.fn(() => ({ plugins: [], diagnostics: [] })),
 );
-const resolveTrustedExternalProviderPolicyArtifacts = vi.hoisted(() =>
-  vi.fn(
-    (): {
-      owner: { id: string };
-      surface: {
-        inspectEmbeddingProviderSetup: typeof inspectConfiguredEmbeddingProviderSetup;
-      } | null;
-    } | null => ({
-      owner: { id: "llama-cpp" },
-      surface: { inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup },
-    }),
-  ),
+const listTrustedExternalProviderPolicyOwners = vi.hoisted(() =>
+  vi.fn((): Array<{ id: string }> => [{ id: "llama-cpp" }]),
 );
-const resolveProviderPolicySurface = vi.hoisted(() =>
-  vi.fn(() => ({ inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup })),
-);
-const resolveTrustedExternalProviderPolicyOwner = vi.hoisted(() =>
-  vi.fn((): { id: string } | null => ({ id: "llama-cpp" })),
+const loadTrustedExternalProviderPolicyArtifacts = vi.hoisted(() =>
+  vi.fn((owners: Array<{ id: string }>) => {
+    const owner = owners[0];
+    return owner
+      ? {
+          owner,
+          surface: { inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup },
+        }
+      : null;
+  }),
 );
 const resolveManifestOwnerBasePolicyBlock = vi.hoisted(() =>
   vi.fn(
@@ -115,9 +110,8 @@ vi.mock("../plugins/manifest-owner-policy.js", () => ({
 }));
 
 vi.mock("../plugins/provider-public-artifacts.js", () => ({
-  resolveProviderPolicySurface,
-  resolveTrustedExternalProviderPolicyOwner,
-  resolveTrustedExternalProviderPolicyArtifacts,
+  listTrustedExternalProviderPolicyOwners,
+  loadTrustedExternalProviderPolicyArtifacts,
 }));
 
 vi.mock("../plugin-sdk/memory-core-bundled-runtime.js", () => ({
@@ -347,17 +341,18 @@ describe("noteMemorySearchHealth", () => {
     getMissingLocalMemoryEmbeddingProviderMessage.mockClear();
     inspectConfiguredEmbeddingProviderSetup.mockReset();
     inspectConfiguredEmbeddingProviderSetup.mockResolvedValue(null);
-    resolveTrustedExternalProviderPolicyArtifacts.mockReset();
-    resolveTrustedExternalProviderPolicyArtifacts.mockReturnValue({
-      owner: { id: "llama-cpp" },
-      surface: { inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup },
+    listTrustedExternalProviderPolicyOwners.mockReset();
+    listTrustedExternalProviderPolicyOwners.mockReturnValue([{ id: "llama-cpp" }]);
+    loadTrustedExternalProviderPolicyArtifacts.mockReset();
+    loadTrustedExternalProviderPolicyArtifacts.mockImplementation((owners) => {
+      const owner = owners[0];
+      return owner
+        ? {
+            owner,
+            surface: { inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup },
+          }
+        : null;
     });
-    resolveProviderPolicySurface.mockReset();
-    resolveProviderPolicySurface.mockReturnValue({
-      inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup,
-    });
-    resolveTrustedExternalProviderPolicyOwner.mockReset();
-    resolveTrustedExternalProviderPolicyOwner.mockReturnValue({ id: "llama-cpp" });
     resolveManifestOwnerBasePolicyBlock.mockReset();
     resolveManifestOwnerBasePolicyBlock.mockReturnValue(null);
     resolveActiveMemoryBackendConfig.mockReset();
@@ -372,7 +367,7 @@ describe("noteMemorySearchHealth", () => {
   });
 
   it("uses the memory-core recovery message when the local provider plugin is missing", async () => {
-    resolveTrustedExternalProviderPolicyArtifacts.mockReturnValueOnce(null);
+    listTrustedExternalProviderPolicyOwners.mockReturnValueOnce([]);
     await runMemorySearchHealth("local", {});
 
     expect(note).toHaveBeenCalledTimes(1);
@@ -385,7 +380,7 @@ describe("noteMemorySearchHealth", () => {
   });
 
   it("updates a legacy installed provider that has no setup policy artifact", async () => {
-    resolveTrustedExternalProviderPolicyArtifacts.mockReturnValueOnce({
+    loadTrustedExternalProviderPolicyArtifacts.mockReturnValueOnce({
       owner: { id: "llama-cpp" },
       surface: null,
     });
@@ -404,11 +399,6 @@ describe("noteMemorySearchHealth", () => {
   });
 
   it.each([
-    [
-      "plugins-disabled",
-      "Plugin loading is disabled for this config",
-      "openclaw config set plugins.enabled true --strict-json",
-    ],
     [
       "blocked-by-denylist",
       'Installed plugin "llama-cpp" is blocked by plugins.deny',
@@ -434,22 +424,41 @@ describe("noteMemorySearchHealth", () => {
       "openclaw plugins install @openclaw/llama-cpp-provider",
       "openclaw plugins update llama-cpp",
     );
+    expect(loadTrustedExternalProviderPolicyArtifacts).not.toHaveBeenCalled();
+  });
+
+  it("reports global plugin disablement before the inactive memory-runtime gate", async () => {
+    resolveActiveMemoryBackendConfig.mockReturnValueOnce(null);
+
+    await runMemorySearchHealth(
+      "local",
+      failedGatewayOptions("local provider is blocked"),
+      undefined,
+      { plugins: { enabled: false } },
+    );
+
+    expectFirstNoteContains(
+      "Plugin loading is disabled for this config",
+      "openclaw config set plugins.enabled true --strict-json",
+    );
+    expectFirstNoteExcludes("No active memory plugin is registered");
+    expect(resolveActiveMemoryBackendConfig).not.toHaveBeenCalled();
+    expect(loadTrustedExternalProviderPolicyArtifacts).not.toHaveBeenCalled();
   });
 
   it("uses the policy owner selected after an earlier disabled owner", async () => {
     const earlierOwner = { id: "a-disabled" };
     const selectedOwner = { id: "b-policy" };
-    loadPluginManifestRegistryForPluginRegistry.mockReturnValueOnce({
-      plugins: [earlierOwner, selectedOwner],
-      diagnostics: [],
-    });
-    resolveTrustedExternalProviderPolicyArtifacts.mockReturnValueOnce({
-      owner: selectedOwner,
-      surface: { inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup },
-    });
-    resolveTrustedExternalProviderPolicyOwner.mockReturnValueOnce(earlierOwner);
-    resolveProviderPolicySurface.mockReturnValueOnce({
-      inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup,
+    listTrustedExternalProviderPolicyOwners.mockReturnValueOnce([earlierOwner, selectedOwner]);
+    loadTrustedExternalProviderPolicyArtifacts.mockImplementationOnce((owners) => {
+      const owner = owners[0];
+      if (!owner) {
+        throw new Error("missing selected provider owner");
+      }
+      return {
+        owner,
+        surface: { inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup },
+      };
     });
     resolveManifestOwnerBasePolicyBlock.mockImplementationOnce((params) =>
       params?.plugin.id === earlierOwner.id ? "plugin-disabled" : null,
@@ -466,6 +475,7 @@ describe("noteMemorySearchHealth", () => {
     expect(resolveManifestOwnerBasePolicyBlock).toHaveBeenCalledWith(
       expect.objectContaining({ plugin: selectedOwner }),
     );
+    expect(loadTrustedExternalProviderPolicyArtifacts).toHaveBeenCalledWith([selectedOwner]);
     expectFirstNoteContains("Selected provider needs setup", "Configure the selected provider");
     expectFirstNoteExcludes("openclaw plugins enable a-disabled");
   });

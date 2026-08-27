@@ -7,9 +7,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelProviderConfig } from "../config/types.models.js";
 import { resolveDirectBundledProviderPolicySurface } from "./provider-policy-surface.js";
 import {
+  listTrustedExternalProviderPolicyOwners,
+  loadTrustedExternalProviderPolicyArtifacts,
   resolveBundledProviderPolicySurface,
   resolveProviderPolicySurface,
-  resolveTrustedExternalProviderPolicyArtifacts,
 } from "./provider-public-artifacts.js";
 
 function writeExternalPolicyFixture(): string {
@@ -259,7 +260,8 @@ describe("provider public artifacts", () => {
       } as never;
       const manifestRegistry = { plugins: [plugin] };
 
-      expect(resolveTrustedExternalProviderPolicyArtifacts("local", manifestRegistry)).toEqual({
+      const owners = listTrustedExternalProviderPolicyOwners("local", manifestRegistry);
+      expect(loadTrustedExternalProviderPolicyArtifacts(owners)).toEqual({
         owner: plugin,
         surface: null,
       });
@@ -289,10 +291,8 @@ describe("provider public artifacts", () => {
         plugins: [owner("a-missing-policy", missingPolicyRoot), owner("b-policy", policyRoot)],
       };
 
-      const artifacts = resolveTrustedExternalProviderPolicyArtifacts(
-        "fixture-embedding",
-        manifestRegistry,
-      );
+      const owners = listTrustedExternalProviderPolicyOwners("fixture-embedding", manifestRegistry);
+      const artifacts = loadTrustedExternalProviderPolicyArtifacts(owners);
 
       expect(artifacts?.owner.id).toBe("b-policy");
       expect(artifacts?.surface?.inspectEmbeddingProviderSetup).toBeTypeOf("function");

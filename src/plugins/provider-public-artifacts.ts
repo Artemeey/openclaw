@@ -107,17 +107,16 @@ export function resolveProviderPolicySurface(
     return null;
   }
   return (
-    resolveTrustedExternalProviderPolicyArtifacts(providerId, options.manifestRegistry)?.surface ??
-    null
+    loadTrustedExternalProviderPolicyArtifacts(
+      listTrustedExternalProviderPolicyOwners(providerId, options.manifestRegistry),
+    )?.surface ?? null
   );
 }
 
-/** Resolves a trusted installed provider owner together with its usable policy surface. */
-export function resolveTrustedExternalProviderPolicyArtifacts(
-  providerId: string,
-  manifestRegistry: Pick<PluginManifestRegistry, "plugins">,
+/** Loads the first usable policy surface from caller-selected trusted owners. */
+export function loadTrustedExternalProviderPolicyArtifacts(
+  owners: PluginManifestRegistry["plugins"],
 ) {
-  const owners = listTrustedExternalProviderPolicyOwners(providerId, manifestRegistry);
   for (const owner of owners) {
     const surface = resolveTrustedExternalProviderPolicySurface({
       pluginId: owner.id,
@@ -132,10 +131,11 @@ export function resolveTrustedExternalProviderPolicyArtifacts(
   return owner ? { owner, surface: null } : null;
 }
 
-function listTrustedExternalProviderPolicyOwners(
+/** Lists trusted installed plugins that own a provider policy reference. */
+export function listTrustedExternalProviderPolicyOwners(
   providerId: string,
   manifestRegistry: Pick<PluginManifestRegistry, "plugins">,
-): PluginManifestRegistry["plugins"] {
+) {
   const normalizedProviderId = normalizeProviderId(providerId);
   return manifestRegistry.plugins
     .toSorted((left, right) => left.id.localeCompare(right.id))
