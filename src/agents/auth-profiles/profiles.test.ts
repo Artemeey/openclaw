@@ -1836,6 +1836,126 @@ describe("promoteAuthProfileInOrder", () => {
     );
   });
 
+  it("rechecks cooldown ownership after waiting for the local store lock", async () => {
+    await withAuthProfileTestState(
+      "openclaw-auth-clear-cooldown-owner-race-",
+      async ({ agentDirFor, stateDir }) => {
+        const mainAgentDir = agentDirFor("main");
+        const customAgentDir = agentDirFor("custom");
+        fs.mkdirSync(mainAgentDir, { recursive: true });
+        fs.mkdirSync(customAgentDir, { recursive: true });
+        const profileId = "openai:shared";
+        const mainExpires = Date.now() + 60_000;
+        const credential = (expires: number) => ({
+          type: "oauth" as const,
+          provider: "openai",
+          access: "shared-access",
+          refresh: "shared-refresh",
+          expires,
+        });
+        const store = (expires: number): AuthProfileStore => ({
+          version: AUTH_STORE_VERSION,
+          profiles: { [profileId]: credential(expires) },
+          usageStats: {
+            [profileId]: {
+              cooldownUntil: Date.now() + 120_000,
+              cooldownReason: "rate_limit",
+              errorCount: 2,
+            },
+          },
+        });
+        saveAuthProfileStore(store(mainExpires), mainAgentDir);
+        saveAuthProfileStore(store(mainExpires + 60_000), customAgentDir);
+
+        const readyPath = path.join(stateDir, "cooldown-child-ready");
+        const startPath = path.join(stateDir, "cooldown-child-start");
+        const attemptPath = path.join(stateDir, "cooldown-child-attempt");
+        const childScript = path.join(stateDir, "cooldown-child.mts");
+        const profilesModuleUrl = pathToFileURL(
+          path.resolve("src/agents/auth-profiles/profiles.ts"),
+        ).href;
+        const storeModuleUrl = pathToFileURL(
+          path.resolve("src/agents/auth-profiles/store.ts"),
+        ).href;
+        fs.writeFileSync(
+          childScript,
+          `
+            import fs from "node:fs";
+            import { clearAuthProfileCooldownAcrossOwnerStores } from ${JSON.stringify(profilesModuleUrl)};
+            import { loadAuthProfileStoreForRuntime } from ${JSON.stringify(storeModuleUrl)};
+            const [agentDir, profileId, readyPath, startPath, attemptPath] = process.argv.slice(2);
+            fs.writeFileSync(readyPath, "ready");
+            while (!fs.existsSync(startPath)) {
+              await new Promise((resolve) => setTimeout(resolve, 5));
+            }
+            const store = loadAuthProfileStoreForRuntime(agentDir);
+            fs.writeFileSync(attemptPath, "attempt");
+            const cleared = clearAuthProfileCooldownAcrossOwnerStores({
+              agentDir,
+              profileId,
+              store,
+            });
+            if (!cleared) process.exitCode = 2;
+          `,
+        );
+        const child = spawn(
+          process.execPath,
+          [
+            "--import",
+            "tsx",
+            childScript,
+            customAgentDir,
+            profileId,
+            readyPath,
+            startPath,
+            attemptPath,
+          ],
+          {
+            env: { ...process.env, OPENCLAW_STATE_DIR: stateDir },
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
+        const childClosed = Promise.race([
+          waitForChildClose(child, 15_000),
+          new Promise<never>((_resolve, reject) => child.once("error", reject)),
+        ]);
+        let childOutput = "";
+        child.stdout.on("data", (chunk) => (childOutput += chunk));
+        child.stderr.on("data", (chunk) => (childOutput += chunk));
+        try {
+          await vi.waitFor(() => expect(fs.existsSync(readyPath)).toBe(true), { timeout: 15_000 });
+
+          runAuthProfileWriteTransaction(customAgentDir, (database) => {
+            fs.writeFileSync(startPath, "start");
+            const deadline = Date.now() + 2_000;
+            while (!fs.existsSync(attemptPath) && Date.now() < deadline) {
+              Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+            }
+            expect(fs.existsSync(attemptPath)).toBe(true);
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+            writePersistedAuthProfileStoreRaw(store(mainExpires - 1), customAgentDir, database);
+          });
+          const { code } = await childClosed;
+
+          expect(code, childOutput).toBe(0);
+          expect(
+            loadPersistedAuthProfileStore(mainAgentDir)?.usageStats?.[profileId]?.cooldownUntil,
+          ).toBeUndefined();
+          expect(
+            loadPersistedAuthProfileStore(customAgentDir)?.usageStats?.[profileId]?.cooldownUntil,
+          ).toBeUndefined();
+        } finally {
+          if (child.exitCode === null && child.signalCode === null) {
+            const killed = waitForChildClose(child, 1_000).catch(() => undefined);
+            child.kill();
+            await killed;
+          }
+        }
+      },
+      { clearOAuthDir: true },
+    );
+  });
+
   it("preserves an independently owned main cooldown with the same profile ID", async () => {
     await withAuthProfileTestState("openclaw-auth-clear-shadowed-", async ({ agentDirFor }) => {
       const mainAgentDir = agentDirFor("main");

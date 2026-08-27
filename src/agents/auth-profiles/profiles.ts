@@ -26,6 +26,7 @@ import { notifyRuntimeAuthProfileSelectionMutation } from "./runtime-snapshots.j
 import {
   ensureAuthProfileStoreForLocalUpdate,
   resolvePersistedAuthProfileOwnerAgentDirs,
+  resolveRuntimeAuthProfileAgentDir,
   saveAuthProfileStore,
   type AuthProfileStoresUpdateResult,
   updateAuthProfileStoresWithLocks,
@@ -410,6 +411,51 @@ export async function removeAuthProfilesWithLock(params: {
   });
 }
 
+function updateAuthProfileOwnerStoresWithLocks(params: {
+  agentDir?: string;
+  profileIds: readonly string[];
+  includeLocalStore?: boolean;
+  updater: (store: AuthProfileStore, ownedProfileIds: ReadonlySet<string>) => boolean;
+}): {
+  result: AuthProfileStoresUpdateResult;
+  ownerAgentDirs: ReadonlySet<string | undefined>;
+} {
+  const localAgentDir = resolveRuntimeAuthProfileAgentDir(params.agentDir);
+  const mainAgentDir = resolveRuntimeAuthProfileAgentDir();
+  const candidateAgentDirs =
+    localAgentDir && localAgentDir !== mainAgentDir ? [undefined, localAgentDir] : [undefined];
+  const ownerAgentDirs = new Set<string | undefined>();
+  const result = updateAuthProfileStoresWithLocks({
+    updates: candidateAgentDirs.map((agentDir) => ({
+      agentDir,
+      updater: (store, lockedStores) => {
+        const ownedProfileIds = new Set<string>();
+        for (const profileId of params.profileIds) {
+          const owners = resolvePersistedAuthProfileOwnerAgentDirs({
+            agentDir: localAgentDir,
+            profileId,
+            lockedStores,
+          });
+          for (const owner of owners) {
+            ownerAgentDirs.add(owner);
+          }
+          if (owners.includes(agentDir)) {
+            ownedProfileIds.add(profileId);
+          }
+        }
+        if (
+          ownedProfileIds.size === 0 &&
+          (!params.includeLocalStore || agentDir !== localAgentDir)
+        ) {
+          return false;
+        }
+        return params.updater(store, ownedProfileIds);
+      },
+    })),
+  });
+  return { result, ownerAgentDirs };
+}
+
 /**
  * Removes profiles from every store that owns them. Auth profiles can be
  * adopted by a provider-specific owner agent dir, so removing only the caller's
@@ -419,24 +465,12 @@ export async function removeAuthProfilesAcrossOwnerStoresResult(params: {
   agentDir?: string;
   profileIds: readonly string[];
 }): Promise<AuthProfileStoresUpdateResult> {
-  const profilesByOwner = new Map<string | undefined, Set<string>>();
-  for (const profileId of params.profileIds) {
-    const ownerAgentDirs = resolvePersistedAuthProfileOwnerAgentDirs({
-      agentDir: params.agentDir,
-      profileId,
-    });
-    for (const ownerAgentDir of ownerAgentDirs) {
-      const ownerProfiles = profilesByOwner.get(ownerAgentDir) ?? new Set<string>();
-      ownerProfiles.add(profileId);
-      profilesByOwner.set(ownerAgentDir, ownerProfiles);
-    }
-  }
-  return updateAuthProfileStoresWithLocks({
-    updates: [...profilesByOwner].map(([agentDir, profileIds]) => ({
-      agentDir,
-      updater: (store) => removeAuthProfilesFromStore(store, profileIds),
-    })),
-  });
+  const profileIds = dedupeProfileIds([...params.profileIds]);
+  return updateAuthProfileOwnerStoresWithLocks({
+    agentDir: params.agentDir,
+    profileIds,
+    updater: removeAuthProfilesFromStore,
+  }).result;
 }
 
 export async function removeAuthProfilesAcrossOwnerStores(
@@ -452,28 +486,23 @@ export function clearAuthProfileCooldownAcrossOwnerStoresResult(params: {
   profileId: string;
 }): AuthProfileStoresUpdateResult {
   let cleared = false;
-  const ownerAgentDirs = resolvePersistedAuthProfileOwnerAgentDirs({
+  const { result, ownerAgentDirs } = updateAuthProfileOwnerStoresWithLocks({
     agentDir: params.agentDir,
-    profileId: params.profileId,
+    profileIds: [params.profileId],
+    updater: (store) => {
+      const changed = clearAuthProfileCooldownFromStore(store, params.profileId);
+      cleared ||= changed;
+      return changed;
+    },
   });
-  const updated = updateAuthProfileStoresWithLocks({
-    updates: ownerAgentDirs.map((agentDir) => ({
-      agentDir,
-      updater: (store: AuthProfileStore) => {
-        const changed = clearAuthProfileCooldownFromStore(store, params.profileId);
-        cleared ||= changed;
-        return changed;
-      },
-    })),
-  });
-  if (updated.committed) {
-    notifyRuntimeAuthProfileSelectionMutation(ownerAgentDirs);
+  if (result.committed) {
+    notifyRuntimeAuthProfileSelectionMutation([...ownerAgentDirs]);
   }
-  if (!updated.ok || !cleared) {
-    return { ok: false, committed: updated.committed };
+  if (!result.ok || !cleared) {
+    return { ok: false, committed: result.committed };
   }
   clearAuthProfileCooldownFromStore(params.store, params.profileId);
-  return updated;
+  return result;
 }
 
 export function clearAuthProfileCooldownAcrossOwnerStores(
@@ -489,22 +518,13 @@ export function removeProviderAuthProfilesAcrossOwnerStoresResult(params: {
   profileIds: readonly string[];
   authAliasLookupParams?: ProviderAuthAliasLookupParams;
 }): AuthProfileStoresUpdateResult {
-  const ownerAgentDirs = new Set<string | undefined>([params.agentDir]);
-  for (const profileId of params.profileIds) {
-    for (const ownerAgentDir of resolvePersistedAuthProfileOwnerAgentDirs({
-      agentDir: params.agentDir,
-      profileId,
-    })) {
-      ownerAgentDirs.add(ownerAgentDir);
-    }
-  }
-  return updateAuthProfileStoresWithLocks({
-    updates: [...ownerAgentDirs].map((agentDir) => ({
-      agentDir,
-      updater: (store) =>
-        removeProviderAuthProfilesFromStore(store, params.provider, params.authAliasLookupParams),
-    })),
-  });
+  return updateAuthProfileOwnerStoresWithLocks({
+    agentDir: params.agentDir,
+    profileIds: params.profileIds,
+    includeLocalStore: true,
+    updater: (store) =>
+      removeProviderAuthProfilesFromStore(store, params.provider, params.authAliasLookupParams),
+  }).result;
 }
 
 export function removeProviderAuthProfilesAcrossOwnerStores(

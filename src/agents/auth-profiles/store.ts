@@ -1129,19 +1129,20 @@ export async function updateAuthProfileStoreWithLock(params: {
 
 /** Reports both the overall result and whether any independently committed store changed. */
 export type AuthProfileStoresUpdateResult = Readonly<{ ok: boolean; committed: boolean }>;
+export type LockedAuthProfileStores = ReadonlyMap<string, AuthProfileStore>;
 
 /** Apply related updates while every participating auth store is locked. */
 export function updateAuthProfileStoresWithLocks(params: {
   updates: Array<{
     agentDir?: string;
-    updater: (store: AuthProfileStore) => boolean;
+    updater: (store: AuthProfileStore, lockedStores: LockedAuthProfileStores) => boolean;
   }>;
 }): AuthProfileStoresUpdateResult {
   const updatesByPath = new Map<
     string,
     {
       agentDir: string | undefined;
-      updaters: Array<(store: AuthProfileStore) => boolean>;
+      updaters: Array<(store: AuthProfileStore, lockedStores: LockedAuthProfileStores) => boolean>;
     }
   >();
   for (const update of params.updates) {
@@ -1177,24 +1178,35 @@ export function updateAuthProfileStoresWithLocks(params: {
   });
 
   const databases = new Map<string, AuthProfileDatabase>();
-  const pendingPublications = new Map<string, () => void>();
-  const committedPublications: Array<() => void> = [];
+  const pendingPublications = new Map<string, RuntimeSnapshotPublication>();
+  const committedPublications: RuntimeSnapshotPublication[] = [];
   const acquire = (index: number): void => {
     const entry = stores[index];
     if (!entry) {
+      const lockedStores = new Map<string, AuthProfileStore>();
       for (const storeEntry of stores) {
         const database = databases.get(storeEntry.storePath);
         if (!database) {
           throw new Error(`auth profile store lock missing for ${storeEntry.storePath}`);
         }
-        const store = loadAuthProfileStoreForAgent(storeEntry.agentDir, {
-          database,
-          readOnly: true,
-          syncExternalCli: false,
-        });
+        lockedStores.set(
+          storeEntry.storePath,
+          loadAuthProfileStoreForAgent(storeEntry.agentDir, {
+            database,
+            readOnly: true,
+            syncExternalCli: false,
+          }),
+        );
+      }
+      for (const storeEntry of stores) {
+        const database = databases.get(storeEntry.storePath);
+        const store = lockedStores.get(storeEntry.storePath);
+        if (!database || !store) {
+          throw new Error(`auth profile store lock missing for ${storeEntry.storePath}`);
+        }
         let changed = false;
         for (const updater of storeEntry.updaters) {
-          changed = updater(store) || changed;
+          changed = updater(store, lockedStores) || changed;
         }
         if (changed) {
           pendingPublications.set(
@@ -1531,6 +1543,7 @@ export function findPersistedAuthProfileCredential(params: {
 export function resolvePersistedAuthProfileOwnerAgentDirs(params: {
   agentDir?: string;
   profileId: string;
+  lockedStores?: LockedAuthProfileStores;
 }): Array<string | undefined> {
   if (isEnvOnlyAuthProfileRuntime()) {
     return [undefined];
@@ -1539,7 +1552,9 @@ export function resolvePersistedAuthProfileOwnerAgentDirs(params: {
   if (!agentDir) {
     return [undefined];
   }
-  const requestedStore = loadPersistedAuthProfileStore(agentDir);
+  const requestedStore = params.lockedStores
+    ? params.lockedStores.get(resolveAuthStorePath(agentDir))
+    : loadPersistedAuthProfileStore(agentDir);
   const requestedPath = resolveAgentAuthPath(agentDir);
   const mainAgentDir = resolveRuntimeAuthProfileAgentDir();
   const mainPath = mainAgentDir ? resolveAgentAuthPath(mainAgentDir) : resolveSharedAuthPath();
@@ -1547,7 +1562,9 @@ export function resolvePersistedAuthProfileOwnerAgentDirs(params: {
     return [undefined];
   }
 
-  const mainStore = loadPersistedAuthProfileStore(mainAgentDir);
+  const mainStore = params.lockedStores
+    ? params.lockedStores.get(resolveAuthStorePath(mainAgentDir))
+    : loadPersistedAuthProfileStore(mainAgentDir);
   const requestedProfile = requestedStore?.profiles[params.profileId];
   if (requestedProfile) {
     return shouldUseMainOwnerForLocalOAuthCredential({
@@ -1696,6 +1713,7 @@ function saveAuthProfileStoreInTransaction(
     ? setRuntimeLocalProfileMetadata(
         markRuntimePersistedProfiles(localStore),
         listRuntimeLocalProfileIds(localStore),
+        Object.keys(localStore.order ?? {}),
       )
     : undefined;
   const publishRuntimeSnapshots = () => {
