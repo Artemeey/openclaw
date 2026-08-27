@@ -39,6 +39,49 @@ function createSessions(client: GatewayBrowserClient, key: string) {
 }
 
 describe("session owner assignment list reconciliation", () => {
+  it("refreshes an active owner filter that gains the assigned session", async () => {
+    const key = "agent:main:new-owner-filter";
+    const ada = { type: "human" as const, id: "profile-ada", label: "Ada" };
+    const assignedOwner = { actor: ada, assignedBy: ada, assignedAt: 20 };
+    const managedScope = { agentId: "main", ownerId: ada.id };
+    let managedCalls = 0;
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      if (method === "sessions.assignOwner") {
+        return { ok: true, key, owner: assignedOwner };
+      }
+      if (method !== "sessions.list") {
+        throw new Error(`Unexpected request: ${method}`);
+      }
+      const managed =
+        typeof params === "object" &&
+        params !== null &&
+        "ownerId" in params &&
+        params.ownerId === ada.id;
+      if (!managed) {
+        return sessionsResult([{ key, kind: "direct", updatedAt: 20, owner: assignedOwner }], 20);
+      }
+      managedCalls += 1;
+      return managedCalls === 1
+        ? { ...sessionsResult([], 10), owners: [ada] }
+        : {
+            ...sessionsResult([{ key, kind: "direct", updatedAt: 20, owner: assignedOwner }], 20),
+            owners: [ada],
+          };
+    });
+    const sessions = createSessions({ request } as unknown as GatewayBrowserClient, key);
+    const stop = sessions.subscribeList(managedScope, () => undefined);
+
+    await sessions.refreshList({ ...managedScope, force: true });
+    expect(sessions.listSnapshot(managedScope).result?.sessions).toHaveLength(0);
+
+    await sessions.assignOwner(key, ada, { agentId: "main" });
+
+    await vi.waitFor(() => expect(managedCalls).toBe(2));
+    expect(sessions.listSnapshot(managedScope).result?.sessions[0]?.owner).toEqual(assignedOwner);
+    stop();
+    sessions.dispose();
+  });
+
   it("carries a newer owner through an older managed-list response", async () => {
     const key = "agent:main:superseded-managed-owner";
     const ada = { type: "human" as const, id: "profile-ada", label: "Ada" };

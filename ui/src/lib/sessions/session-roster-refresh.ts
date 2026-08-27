@@ -197,6 +197,17 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     return entry;
   };
 
+  const ownerAssignmentManagedLists = (key: string): ManagedSessionList[] => {
+    const targetAgentId = parseAgentSessionKey(key)?.agentId;
+    return [...managedLists.values()].filter((entry) => {
+      const queryAgentId = managedSessionListAgentId(entry);
+      return (
+        entry.listeners.size > 0 &&
+        (!targetAgentId || !queryAgentId || normalizeAgentId(queryAgentId) === targetAgentId)
+      );
+    });
+  };
+
   const refreshManagedList = (
     entry: ManagedSessionList,
     refresh: ManagedSessionListRefresh,
@@ -612,19 +623,15 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     refreshReplacement,
     async refreshOwnerAssignmentScopes(key: string, agentId?: string | null): Promise<void> {
       const refreshes = [refreshReplacement(agentId)];
-      for (const entry of managedLists.values()) {
-        if (entry.snapshot.result?.sessions.some((row) => row.key === key)) {
-          refreshes.push(refreshManagedList(entry, { append: false, invalidated: true }));
-        }
+      for (const entry of ownerAssignmentManagedLists(key)) {
+        refreshes.push(refreshManagedList(entry, { append: false, invalidated: true }));
       }
       await Promise.all(refreshes);
     },
     ownerAssignmentScopeRevisions(key: string): ReadonlyMap<string, number> {
       const scopes = [PRIMARY_LIST_SCOPE];
-      for (const entry of managedLists.values()) {
-        if (entry.snapshot.result?.sessions.some((row) => row.key === key)) {
-          scopes.push(managedSessionListScope(entry));
-        }
+      for (const entry of ownerAssignmentManagedLists(key)) {
+        scopes.push(managedSessionListScope(entry));
       }
       return new Map(scopes.map((scope) => [scope, requestRevision]));
     },
