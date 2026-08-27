@@ -57,4 +57,41 @@ describe("Code Mode reconciliation", () => {
       ].filter((name) => isCodeModeReconciliationTool({ name })),
     ).toEqual(["read"]);
   });
+
+  it("releases the read-only restriction after a clean reconciliation report", () => {
+    const retryState = createEmbeddedRunTerminalRetryState();
+    retryState.forceCodeModeReconciliationTools = true;
+    let prompt = "";
+
+    expect(
+      activateCodeModeReconciliation({
+        attempt: { ...eligibleAttempt(), assistantTexts: ["Only the first hunk applied."] },
+        hostOwnsToolSurface: true,
+        retryState,
+        activateInternalPrompt: (value) => {
+          prompt = value;
+        },
+      }),
+    ).toBe(true);
+    expect(retryState.forceCodeModeReconciliationTools).toBe(false);
+    expect(prompt).toContain("Continue the original task from the reconciled state");
+  });
+
+  it.each([
+    ["failed read", { lastToolError: { toolName: "read", message: "read failed" } }],
+    ["terminal tool", { toolMetas: [{ toolName: "read", terminate: true }] }],
+    ["empty report", { assistantTexts: [] }],
+  ])("keeps reconciliation restricted after a %s", (_label, overrides) => {
+    const retryState = createEmbeddedRunTerminalRetryState();
+    retryState.forceCodeModeReconciliationTools = true;
+    expect(
+      activateCodeModeReconciliation({
+        attempt: { ...eligibleAttempt(), assistantTexts: ["Observed state."], ...overrides },
+        hostOwnsToolSurface: true,
+        retryState,
+        activateInternalPrompt: () => undefined,
+      }),
+    ).toBe(false);
+    expect(retryState.forceCodeModeReconciliationTools).toBe(true);
+  });
 });

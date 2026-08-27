@@ -102,7 +102,7 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
     ]);
 
     const providerContexts: Context[] = [];
-    let reconciliationAttempt = false;
+    let attemptPhase: "mutation" | "reconciliation" | "continuation" = "mutation";
     const createSession = () => {
       const session = createDefaultEmbeddedSession();
       const options = hoisted.createAgentSessionMock.mock.calls.at(-1)?.[0] as {
@@ -118,13 +118,18 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
             return streamAssistant([{ type: "text", text: "first hunk applied" }]);
           }
           return streamAssistant([
-            reconciliationAttempt
+            attemptPhase === "reconciliation"
               ? { type: "toolCall", id: "observe", name: "read", arguments: { value: "file" } }
               : {
-                  type: "toolCall",
-                  id: "mutate",
+                  type: "toolCall" as const,
+                  id: attemptPhase === "continuation" ? "continue" : "mutate",
                   name: "exec",
-                  arguments: { code: "return await apply_patch({});" },
+                  arguments: {
+                    code:
+                      attemptPhase === "continuation"
+                        ? "return await write({});"
+                        : "return await apply_patch({});",
+                  },
                 },
           ]);
         },
@@ -178,8 +183,8 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
     ).toBe(true);
     expect(recoveryPrompt).toContain("may have partially applied");
 
-    reconciliationAttempt = true;
-    await createContextEngineAttemptRunner({
+    attemptPhase = "reconciliation";
+    const reconciliationAttempt = await createContextEngineAttemptRunner({
       contextEngine: createContextEngineBootstrapAndAssemble(),
       createSession,
       sessionKey: "agent:main:main",
@@ -202,5 +207,38 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
     expect(message.execute).not.toHaveBeenCalled();
     expect(shell.execute).not.toHaveBeenCalled();
     expect(appliedChanges).toEqual(["first hunk applied"]);
+
+    let continuationPrompt: string | undefined;
+    expect(
+      activateCodeModeReconciliation({
+        attempt: reconciliationAttempt,
+        hostOwnsToolSurface: true,
+        retryState,
+        activateInternalPrompt: (prompt) => {
+          continuationPrompt = prompt;
+        },
+      }),
+    ).toBe(true);
+    expect(retryState.forceCodeModeReconciliationTools).toBe(false);
+
+    attemptPhase = "continuation";
+    await createContextEngineAttemptRunner({
+      contextEngine: createContextEngineBootstrapAndAssemble(),
+      createSession,
+      sessionKey: "agent:main:main",
+      tempPaths,
+      attemptOverrides: {
+        config: { tools: { codeMode: true } },
+        disableMessageTool: false,
+        disableTools: false,
+        forceCodeModeReconciliationTools: retryState.forceCodeModeReconciliationTools,
+        model,
+        prompt: continuationPrompt,
+      },
+    });
+
+    expect(providerContexts).toHaveLength(5);
+    expect(write.execute).toHaveBeenCalledOnce();
+    expect(applyPatch.execute).toHaveBeenCalledOnce();
   });
 });

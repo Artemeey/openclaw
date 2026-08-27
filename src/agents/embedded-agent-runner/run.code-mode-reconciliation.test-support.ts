@@ -23,7 +23,7 @@ describe("runEmbeddedAgent Code Mode reconciliation", () => {
     useOpenAIPlatformAuthFixture();
   });
 
-  it("continues a settled partial mutation with one read-only attempt", async () => {
+  it("resumes ordinary work after one settled read-only reconciliation", async () => {
     const mutationAssistant = buildEmbeddedRunnerAssistant({
       stopReason: "toolUse",
       content: [
@@ -46,7 +46,10 @@ describe("runEmbeddedAgent Code Mode reconciliation", () => {
           itemLifecycle: { startedCount: 1, completedCount: 1, activeCount: 0 },
         }),
       )
-      .mockResolvedValueOnce(makeAttemptResult({ assistantTexts: ["The first hunk applied."] }));
+      .mockResolvedValueOnce(makeAttemptResult({ assistantTexts: ["The first hunk applied."] }))
+      .mockResolvedValueOnce(
+        makeAttemptResult({ assistantTexts: ["Finished the remaining work."] }),
+      );
 
     await runEmbeddedAgent({
       ...overflowBaseRunParams,
@@ -62,13 +65,17 @@ describe("runEmbeddedAgent Code Mode reconciliation", () => {
       runId: "run-code-mode-reconciliation",
     });
 
-    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(2);
+    expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(3);
     expect(
       mockedRunEmbeddedAttempt.mock.calls[0]?.[0].forceCodeModeReconciliationTools,
     ).toBeFalsy();
     expect(mockedRunEmbeddedAttempt.mock.calls[1]?.[0]).toMatchObject({
       forceCodeModeReconciliationTools: true,
       prompt: expect.stringContaining("may have partially applied"),
+    });
+    expect(mockedRunEmbeddedAttempt.mock.calls[2]?.[0]).toMatchObject({
+      forceCodeModeReconciliationTools: undefined,
+      prompt: expect.stringContaining("Continue the original task from the reconciled state"),
     });
   });
 });
