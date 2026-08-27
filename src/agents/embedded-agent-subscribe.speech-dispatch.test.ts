@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 import {
   createDispatcher,
   emptyConfig,
@@ -41,8 +42,8 @@ it("keeps the explicit final reply target when captioned TTS defers queued block
   ttsMocks.state.synthesizeFinalAudio = true;
   const rawText =
     "[[reply_to:message-42]]Report ready. [[tts:text]]The report is ready.[[/tts:text]]";
-  const pendingMedia = Promise.withResolvers<void>();
-  const mediaStarted = Promise.withResolvers<void>();
+  const pendingMedia = createDeferred<void>();
+  const mediaStarted = createDeferred<void>();
   replyMediaPathMocks.createReplyMediaPathNormalizer.mockReturnValue(async (payload) => {
     if (payload.mediaUrls?.includes("https://example.com/report.png")) {
       mediaStarted.resolve();

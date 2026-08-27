@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 import { getReplyPayloadMetadata, type ReplyPayload } from "../auto-reply/reply-payload.js";
 import type { TtsStatusEntry } from "../tts/tts-runtime-types.js";
 import {
@@ -94,7 +95,7 @@ describe("assistant speech facts through session settlement", () => {
           },
         ],
       });
-      const pending = Promise.withResolvers<void>();
+      const pending = createDeferred<void>();
       const deliveredBlocks: ReplyPayload[] = [];
       const subscription = subscribeEmbeddedAgentSession({
         session,
