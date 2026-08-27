@@ -628,7 +628,11 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
     if (created.postCommit.status === "failed") {
       runError = errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(created.postCommit.error));
     }
-    registerCreatedSessionCategory(normalizeOptionalString(p.category), context);
+    const createdCategory =
+      p.category === undefined && sessionCreation.via === "spawn"
+        ? created.entry.category
+        : p.category;
+    registerCreatedSessionCategory(normalizeOptionalString(createdCategory), context);
     const createdWorktree = sessionWorktree
       ? {
           id: sessionWorktree.id,
