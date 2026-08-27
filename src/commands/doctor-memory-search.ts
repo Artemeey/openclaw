@@ -42,6 +42,7 @@ import {
   type ShortTermAuditSummary,
 } from "../plugin-sdk/memory-core-bundled-runtime.js";
 import { normalizePluginsConfig } from "../plugins/config-state.js";
+import { resolveManifestOwnerBasePolicyBlock } from "../plugins/manifest-owner-policy.js";
 import {
   getActiveMemorySearchManagerCore,
   resolveActiveMemoryBackendConfig,
@@ -575,22 +576,35 @@ async function noteMemorySearchHealthForAgent(
     const detail = opts?.gatewayMemoryProbe?.error?.trim();
     const gatewayDetail = detail && detail !== runtimeFacts?.loadError ? detail : null;
     const env = opts.env ?? process.env;
-    const manifestRegistry = loadPluginManifestRegistryForPluginRegistry({ config: cfg, env });
+    const manifestRegistry = loadPluginManifestRegistryForPluginRegistry({
+      config: cfg,
+      env,
+      includeDisabled: true,
+    });
     const installedOwner = resolveTrustedExternalProviderPolicyOwner(provider, manifestRegistry);
-    const inspectSetup = resolveProviderPolicySurface(provider, {
-      manifestRegistry,
-    })?.inspectEmbeddingProviderSetup;
-    if (!inspectSetup && !installedOwner) {
+    if (!installedOwner) {
       noteFn(getMissingLocalMemoryEmbeddingProviderMessage(), "Memory search");
       return;
     }
+    const ownerPolicyBlock = resolveManifestOwnerBasePolicyBlock({
+      plugin: installedOwner,
+      normalizedConfig: normalizePluginsConfig(cfg.plugins),
+    });
+    const inspectSetup = ownerPolicyBlock
+      ? undefined
+      : resolveProviderPolicySurface(provider, {
+          manifestRegistry,
+        })?.inspectEmbeddingProviderSetup;
     const setup = inspectSetup ? await inspectSetup({ config: cfg, env, agentId, provider }) : null;
     const setupReason = setup?.reason.trim();
     const setupFix = setup?.fixHint?.trim();
     const updateFix =
-      !inspectSetup && installedOwner
+      !ownerPolicyBlock && !inspectSetup
         ? `Fix: Update the installed plugin: ${formatCliCommand(`openclaw plugins update ${installedOwner.id}`)}`
         : null;
+    const enableFix = ownerPolicyBlock
+      ? `Fix: Enable the installed plugin: ${formatCliCommand(`openclaw plugins enable ${installedOwner.id} --accept-capabilities`)}, or select another memory provider.`
+      : null;
     const hasRuntimeFailureDetail = Boolean(gatewayDetail || runtimeFacts?.loadError);
     noteFn(
       [
@@ -600,12 +614,14 @@ async function noteMemorySearchHealthForAgent(
           ? 'Memory search provider is set to "local" and a local model path is configured, but local embeddings are not confirmed ready.'
           : 'Memory search provider is set to "local", but local embeddings are not confirmed ready.',
         setupReason ? `Setup: ${setupReason}` : null,
+        enableFix ? `Installed plugin "${installedOwner.id}" is disabled for this config.` : null,
         updateFix
-          ? `Installed plugin "${installedOwner?.id}" does not provide current local-memory setup diagnostics.`
+          ? `Installed plugin "${installedOwner.id}" does not provide current local-memory setup diagnostics.`
           : null,
         gatewayDetail && gatewayDetail !== setupReason ? `Gateway probe: ${gatewayDetail}` : null,
         "",
-        updateFix ??
+        enableFix ??
+          updateFix ??
           (setupFix
             ? `Fix: ${setupFix}`
             : hasUnavailableConfiguredLocalModel

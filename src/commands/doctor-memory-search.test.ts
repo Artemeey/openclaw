@@ -43,6 +43,9 @@ const resolveProviderPolicySurface = vi.hoisted(() =>
 const resolveTrustedExternalProviderPolicyOwner = vi.hoisted(() =>
   vi.fn((): { id: string } | null => ({ id: "llama-cpp" })),
 );
+const resolveManifestOwnerBasePolicyBlock = vi.hoisted(() =>
+  vi.fn((): "plugin-disabled" | null => null),
+);
 const getMissingLocalMemoryEmbeddingProviderMessage = vi.hoisted(() =>
   vi.fn(
     () =>
@@ -87,6 +90,10 @@ vi.mock("../plugins/memory-runtime.js", () => ({
 
 vi.mock("../plugins/plugin-registry.js", () => ({
   loadPluginManifestRegistryForPluginRegistry,
+}));
+
+vi.mock("../plugins/manifest-owner-policy.js", () => ({
+  resolveManifestOwnerBasePolicyBlock,
 }));
 
 vi.mock("../plugins/provider-public-artifacts.js", () => ({
@@ -327,6 +334,8 @@ describe("noteMemorySearchHealth", () => {
     });
     resolveTrustedExternalProviderPolicyOwner.mockReset();
     resolveTrustedExternalProviderPolicyOwner.mockReturnValue({ id: "llama-cpp" });
+    resolveManifestOwnerBasePolicyBlock.mockReset();
+    resolveManifestOwnerBasePolicyBlock.mockReturnValue(null);
     resolveActiveMemoryBackendConfig.mockReset();
     resolveActiveMemoryBackendConfig.mockReturnValue({ backend: "builtin" });
     getActiveMemorySearchManagerCore.mockResolvedValue({
@@ -366,6 +375,22 @@ describe("noteMemorySearchHealth", () => {
       "openclaw plugins update llama-cpp",
     );
     expectFirstNoteExcludes("openclaw plugins install @openclaw/llama-cpp-provider");
+  });
+
+  it("enables an installed provider that is disabled for the current config", async () => {
+    resolveManifestOwnerBasePolicyBlock.mockReturnValueOnce("plugin-disabled");
+
+    await runMemorySearchHealth("local", failedGatewayOptions("local provider is disabled"));
+
+    expectFirstNoteContains(
+      'Installed plugin "llama-cpp" is disabled for this config',
+      "local provider is disabled",
+      "openclaw plugins enable llama-cpp --accept-capabilities",
+    );
+    expectFirstNoteExcludes(
+      "openclaw plugins install @openclaw/llama-cpp-provider",
+      "openclaw plugins update llama-cpp",
+    );
   });
 
   it("uses installed provider setup guidance instead of reinstalling the plugin", async () => {
