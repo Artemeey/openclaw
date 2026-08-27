@@ -92,6 +92,8 @@ export async function prepareDirectCompactionAttempt(
     modelId,
   } = resolveCompactionRuntimeSelection({
     ...params,
+    workspaceDir: resolvedWorkspace,
+    pluginMetadataSnapshot: params.preparedModelRuntime.metadataSnapshot,
     modelId: params.model,
     boundHarnessRuntime: params.agentHarnessId,
     preparedRuntimePlan: params.runtimePlan,

@@ -34,7 +34,7 @@ function setPreparedPluginRuntimeLoadContext(
 export function prepareOwnedPluginLoadContext(
   input: PreparedModelRuntimeInput,
   env: NodeJS.ProcessEnv,
-  registry: PluginRegistry | undefined,
+  registry?: PluginRegistry,
   preparedMetadataSnapshot?: PluginMetadataSnapshot,
   preferBuiltPluginArtifacts = false,
 ): PluginMetadataSnapshot {

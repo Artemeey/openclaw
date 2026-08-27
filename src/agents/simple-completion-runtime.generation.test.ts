@@ -1,5 +1,18 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  createPluginMetadataSnapshot,
+  makeRegistry,
+} from "../config/plugin-auto-enable.test-helpers.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { Model } from "../llm/types.js";
+import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
+import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
+import {
+  getActivePluginRegistry,
+  resetPluginRuntimeStateForTest,
+  setActivePluginRegistry,
+} from "../plugins/runtime.js";
+import { getPluginRuntimeGenerationRegistry } from "../plugins/runtime/generation-scope.js";
 import type { resolveModelAsync } from "./embedded-agent-runner/model.js";
 import { AuthStorage, ModelRegistry } from "./sessions/index.js";
 
@@ -8,8 +21,6 @@ const mocks = vi.hoisted(() => ({
   getApiKeyForModel: vi.fn(),
   prepareProviderRuntimeAuth: vi.fn(),
   resolvePluginMetadataSnapshot: vi.fn(),
-  publishedGeneration: "A",
-  readGeneration: (() => "unscoped") as () => string,
 }));
 
 vi.mock("./prepared-model-runtime.js", () => ({
@@ -20,16 +31,6 @@ vi.mock("../plugins/plugin-metadata-snapshot.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../plugins/plugin-metadata-snapshot.js")>()),
   resolvePluginMetadataSnapshot: mocks.resolvePluginMetadataSnapshot,
 }));
-
-vi.mock("../plugins/runtime/generation-scope.js", async () => {
-  const { AsyncLocalStorage } = await import("node:async_hooks");
-  const generation = new AsyncLocalStorage<string>();
-  mocks.readGeneration = () => generation.getStore() ?? mocks.publishedGeneration;
-  return {
-    withPluginRuntimeGenerationScope: (snapshot: { testGeneration?: string }, run: () => unknown) =>
-      generation.run(snapshot.testGeneration ?? "unknown", run),
-  };
-});
 
 vi.mock("./model-auth.js", () => ({
   applySecretRefHeaderSentinels: (model: Model) => model,
@@ -53,6 +54,14 @@ import {
   prepareSimpleCompletionModelForAgent,
 } from "./simple-completion-runtime.js";
 
+let generationA = createEmptyPluginRegistry();
+let generationB = createEmptyPluginRegistry();
+
+function readGeneration(): string {
+  const registry = getPluginRuntimeGenerationRegistry() ?? getActivePluginRegistry();
+  return registry === generationA ? "A" : registry === generationB ? "B" : "unscoped";
+}
+
 function createOllamaModelResolver(): typeof resolveModelAsync {
   return vi.fn(async (provider, modelId, _agentDir, _cfg, options) => ({
     model: {
@@ -73,33 +82,54 @@ function createOllamaModelResolver(): typeof resolveModelAsync {
 }
 
 beforeEach(() => {
-  mocks.publishedGeneration = "A";
+  resetPluginRuntimeStateForTest();
+  generationA = createEmptyPluginRegistry();
+  generationB = createEmptyPluginRegistry();
+  setActivePluginRegistry(generationA);
   mocks.acquireRuntimeLease.mockReset();
   mocks.getApiKeyForModel.mockReset();
   mocks.prepareProviderRuntimeAuth.mockReset();
-  mocks.resolvePluginMetadataSnapshot.mockReset().mockReturnValue({
-    plugins: [],
-    index: { plugins: [] },
-  });
+  mocks.resolvePluginMetadataSnapshot.mockReset().mockImplementation((params) =>
+    createPluginMetadataSnapshot({
+      config: params.config,
+      workspaceDir: params.workspaceDir,
+      manifestRegistry: { plugins: [], diagnostics: [] },
+    }),
+  );
   const authStorage = AuthStorage.inMemory({});
   const modelRegistry = ModelRegistry.inMemory(authStorage);
-  mocks.acquireRuntimeLease.mockResolvedValue({
-    snapshot: {
-      testGeneration: "A",
-      agentDir: "/tmp/openclaw-agent",
-      workspaceDir: "/tmp/runtime-workspace",
-      config: {},
-      authModes: {},
-      metadataSnapshot: { plugins: [], index: { plugins: [] } },
-      allowGatewaySubagentBinding: false,
-      modelCatalog: { entries: [] },
-      configuredRuntimeModels: [],
-      inlineProviderModels: [],
-      activeProjectKeys: [],
-      createStores: () => ({ authStorage, modelRegistry }),
-    },
-    release: vi.fn(),
-  });
+  mocks.acquireRuntimeLease.mockImplementation(
+    async (
+      { config }: { config: OpenClawConfig },
+      options?: { pluginMetadataSnapshot?: PluginMetadataSnapshot },
+    ) => ({
+      snapshot: {
+        agentDir: "/tmp/openclaw-agent",
+        workspaceDir: "/tmp/runtime-workspace",
+        config,
+        authModes: {},
+        metadataSnapshot:
+          options?.pluginMetadataSnapshot ??
+          createPluginMetadataSnapshot({
+            config,
+            workspaceDir: "/tmp/runtime-workspace",
+            manifestRegistry: { plugins: [], diagnostics: [] },
+          }),
+        pluginRegistry: generationA,
+        allowGatewaySubagentBinding: false,
+        modelCatalog: { entries: [] },
+        configuredRuntimeModels: [],
+        inlineProviderModels: [],
+        activeProjectKeys: [],
+        createStores: () => ({ authStorage, modelRegistry }),
+      },
+      release: vi.fn(),
+    }),
+  );
+});
+
+afterEach(() => {
+  resetPluginRuntimeStateForTest();
 });
 
 it("keeps route rematerialization and runtime auth on the acquired generation", async () => {
@@ -110,7 +140,7 @@ it("keeps route rematerialization and runtime auth on the acquired generation", 
       if (!options?.authStorage || !options.modelRegistry) {
         throw new Error("prepared stores were not bound");
       }
-      const generation = mocks.readGeneration();
+      const generation = readGeneration();
       observedModelGenerations.push(generation);
       const configured = cfg?.models?.providers?.openai;
       return {
@@ -134,7 +164,7 @@ it("keeps route rematerialization and runtime auth on the acquired generation", 
   );
   mocks.getApiKeyForModel.mockImplementation(async () => {
     await Promise.resolve();
-    mocks.publishedGeneration = "B";
+    setActivePluginRegistry(generationB);
     return {
       apiKey: "sk-platform",
       profileId: "openai:platform",
@@ -143,7 +173,7 @@ it("keeps route rematerialization and runtime auth on the acquired generation", 
     };
   });
   mocks.prepareProviderRuntimeAuth.mockImplementation(async () => {
-    observedRuntimeAuthGenerations.push(mocks.readGeneration());
+    observedRuntimeAuthGenerations.push(readGeneration());
     return undefined;
   });
 
@@ -163,6 +193,7 @@ it("keeps route rematerialization and runtime auth on the acquired generation", 
   expect(result.model.params).toMatchObject({ generation: "A" });
   expect(observedModelGenerations).toEqual(["A", "A"]);
   expect(observedRuntimeAuthGenerations).toEqual(["A"]);
+  expect(readGeneration()).toBe("B");
 });
 
 it("acquires direct completion runtime for the exact selected model", async () => {
@@ -224,22 +255,18 @@ it("selects an explicit agent completion model before runtime acquisition", asyn
 });
 
 it("acquires the canonical manifest-derived utility model selection", async () => {
-  const metadataSnapshot = {
-    plugins: [
-      {
-        id: "selected-provider",
-        modelCatalog: {
-          providers: {
-            "selected-provider": {
-              defaultUtilityModel: "utility-model",
-              models: [{ id: "primary-model" }, { id: "utility-model" }],
-            },
-          },
-        },
+  const manifestRegistry = makeRegistry([
+    { id: "selected-provider", channels: [], providers: ["selected-provider"] },
+  ]);
+  manifestRegistry.plugins[0]!.modelCatalog = {
+    providers: {
+      "selected-provider": {
+        defaultUtilityModel: "utility-model",
+        models: [{ id: "primary-model" }, { id: "utility-model" }],
       },
-    ],
-    index: { plugins: [] },
+    },
   };
+  const metadataSnapshot = createPluginMetadataSnapshot({ manifestRegistry });
   mocks.resolvePluginMetadataSnapshot.mockReturnValue(metadataSnapshot);
 
   const result = await prepareSimpleCompletionModelForAgent({

@@ -33,6 +33,8 @@ import {
   acquireAgentRunPreparedModelRuntime,
   type PreparedModelRuntimeSnapshot,
 } from "../prepared-model-runtime.js";
+import { prepareOwnedPluginLoadContext } from "../prepared-model-runtime.plugin-context.js";
+import type { PreparedModelRuntimeInput } from "../prepared-model-runtime.types.js";
 import { resolveAgentRunSessionTarget } from "../run-session-target.js";
 import { materializePreparedRuntimeModel } from "../runtime-plan/materialize-model.js";
 import type { SandboxContext } from "../sandbox/types.js";
@@ -355,8 +357,20 @@ async function compactEmbeddedAgentSessionImpl(
         })
       : null;
   const preparedParams = placementSandbox ? { ...params, sandbox: placementSandbox } : params;
+  const runtimeInput: PreparedModelRuntimeInput = {
+    config: params.config ?? {},
+    agentId: agentIds.sessionAgentId,
+    agentDir,
+    workspaceDir: resolvedWorkspaceDir,
+    ...(params.allowGatewaySubagentBinding ? { allowGatewaySubagentBinding: true } : {}),
+  };
+  const pluginMetadataSnapshot = prepareOwnedPluginLoadContext(runtimeInput, process.env);
   const runtimeSelection = resolveCompactionRuntimeSelection({
     ...preparedParams,
+    workspaceDir: resolvedWorkspaceDir,
+    pluginMetadataSnapshot,
+    manifestPlugins: pluginMetadataSnapshot.plugins,
+    allowPluginNormalization: false,
     modelId: preparedParams.model,
     boundHarnessRuntime: preparedParams.agentHarnessId,
     preparedRuntimePlan: preparedParams.runtimePlan,
@@ -366,7 +380,7 @@ async function compactEmbeddedAgentSessionImpl(
         : undefined,
   });
   // Native control operations reuse the backend's existing authenticated session.
-  // Run them before generic model preparation so subscription-only CLI sessions do
+  // Run them before generic model/auth acquisition so subscription-only CLI sessions do
   // not incorrectly require an OpenClaw model API credential.
   const nativeCliResult = await compactNativeCliSession({
     runtime: runtimeSelection.selectedHarnessRuntime,
@@ -380,11 +394,7 @@ async function compactEmbeddedAgentSessionImpl(
     return nativeCliResult;
   }
   const lease = await acquireAgentRunPreparedModelRuntime({
-    config: params.config ?? {},
-    agentId: agentIds.sessionAgentId,
-    agentDir,
-    workspaceDir: resolvedWorkspaceDir,
-    ...(params.allowGatewaySubagentBinding ? { allowGatewaySubagentBinding: true } : {}),
+    ...runtimeInput,
     runtimePluginSelections: [
       {
         provider: runtimeSelection.provider,
@@ -467,6 +477,8 @@ async function compactResolvedContextEngine(
     modelId: ceModelId,
   } = resolveCompactionRuntimeSelection({
     ...params,
+    workspaceDir: preparedModelRuntime.workspaceDir ?? resolvedWorkspaceDir,
+    pluginMetadataSnapshot: preparedModelRuntime.metadataSnapshot,
     modelId: params.model,
     boundHarnessRuntime: params.agentHarnessId,
     preparedRuntimePlan: params.runtimePlan,
@@ -590,6 +602,7 @@ async function compactResolvedContextEngine(
   });
   const contextEngineRuntimeContext = buildCompactionContextEngineRuntimeContext({
     params: preparedParams,
+    pluginMetadataSnapshot: preparedModelRuntime.metadataSnapshot,
     agentDir,
     harnessRuntime: preparedHarnessRuntime,
     contextEngineSessionKey,
@@ -967,6 +980,7 @@ function shouldAttemptNativeHarnessCompaction(params: {
 
 function buildCompactionContextEngineRuntimeContext(params: {
   params: CompactEmbeddedAgentSessionParams;
+  pluginMetadataSnapshot: PreparedModelRuntimeSnapshot["metadataSnapshot"];
   agentDir: string;
   contextEngineSessionKey?: string;
   harnessRuntime?: string;
@@ -979,6 +993,7 @@ function buildCompactionContextEngineRuntimeContext(params: {
     sessionTarget: buildContextEngineCompactionSessionTarget(params.params),
     ...buildEmbeddedCompactionRuntimeContext({
       ...params.params,
+      pluginMetadataSnapshot: params.pluginMetadataSnapshot,
       agentDir: params.agentDir,
       modelId: params.params.model,
       harnessRuntime: params.harnessRuntime,

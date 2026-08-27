@@ -10,6 +10,7 @@ import { resolveSessionWorkStartError } from "../../config/sessions/lifecycle.js
 import type { AgentDefaultsConfig } from "../../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { SourceDeliveryPlan } from "../../infra/outbound/source-delivery-plan.js";
+import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import type { PluginRegistry } from "../../plugins/registry-types.js";
 import { isCronSessionKey, parseAgentSessionKey } from "../../routing/session-key.js";
 import {
@@ -131,6 +132,8 @@ export type PreparedCronRunContext = {
    */
   runTimeoutOverrideMs?: number;
   pluginRegistry?: PluginRegistry;
+  // Final accounting retains static pricing facts after the runtime lease is released.
+  metadataSnapshot?: PluginMetadataSnapshot;
 };
 
 type CronPreparationResult =
@@ -715,6 +718,7 @@ export async function prepareCronRunContext(params: {
         timeoutMs,
         preflightDiagnostics,
         runTimeoutOverrideMs,
+        metadataSnapshot: modelOwner.metadataSnapshot,
         ...(pluginRegistry ? { pluginRegistry } : {}),
       },
     };

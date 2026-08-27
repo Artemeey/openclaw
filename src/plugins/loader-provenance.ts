@@ -10,7 +10,7 @@ import {
 } from "./candidate-install-owner.js";
 import { isBundledPluginInsideDevSourceRoot } from "./dev-source-root.js";
 import type { PluginCandidate } from "./discovery.js";
-import { loadInstalledPluginIndexInstallRecordsSync } from "./installed-plugin-index-records.js";
+import { loadInstalledPluginIndexInstallRecordsSync } from "./installed-plugin-index-record-reader.js";
 import type { PluginManifestRecord } from "./manifest-registry.js";
 import { isPathInside, safeRealpathSync, safeStatSync } from "./path-safety.js";
 import type { PluginRecord, PluginRegistry } from "./registry.js";

@@ -59,7 +59,8 @@ const preparedModelRuntimeMocks = vi.hoisted(() => ({
     agentDir: "/tmp/agent",
     wrote: false,
   })),
-  loadAgentRuntimePluginRegistryHandle: vi.fn(),
+  loadAgentRuntimePluginRegistryHandle:
+    vi.fn<typeof import("./runtime-plugins.js").loadAgentRuntimePluginRegistryHandle>(),
   loadStaticCatalog: vi.fn<LoadStaticCatalog>(async () => []),
   planOpenClawModelsJsonSource: vi.fn(async (...args: unknown[]) => ({
     agentDir: String(args[1]),
@@ -332,8 +333,8 @@ vi.mock("./models-config.providers.implicit.js", () => ({
 }));
 
 vi.mock("./runtime-plugins.js", () => ({
-  loadAgentRuntimePluginRegistryHandle: (...args: unknown[]) =>
-    preparedModelRuntimeMocks.loadAgentRuntimePluginRegistryHandle(...args),
+  loadAgentRuntimePluginRegistryHandle:
+    preparedModelRuntimeMocks.loadAgentRuntimePluginRegistryHandle,
 }));
 
 vi.mock("./embedded-agent-runner/model.static-catalog.js", () => ({

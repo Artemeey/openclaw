@@ -12,6 +12,7 @@ import { patchSessionEntryCore } from "../../config/sessions/session-accessor.js
 import { projectSessionSnapshotChanges } from "../../config/sessions/session-snapshot-merge.js";
 import { resolveMaintenanceConfigFromInput } from "../../config/sessions/store-maintenance.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { PluginMetadataRegistryView } from "../../plugins/plugin-metadata-snapshot.types.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import {
   clearAllCliSessions,
@@ -49,7 +50,10 @@ export function normalizeSessionTokenCount(value: number | undefined): number | 
 /** Applies run result metadata, usage, and CLI bindings to a session entry. */
 export async function updateSessionStoreAfterAgentRun(params: {
   cfg: OpenClawConfig;
+  agentId?: string;
   agentDir: string;
+  workspaceDir?: string;
+  pluginMetadataSnapshot?: PluginMetadataRegistryView;
   sessionId: string;
   sessionKey: string;
   storePath: string;
@@ -202,7 +206,6 @@ export async function updateSessionStoreAfterAgentRun(params: {
     }
   }
   if (hasNonzeroUsage(usage) && !preserveUserFacingRunState) {
-    const { estimateUsageCost, resolveModelCostConfig } = await getUsageFormatModule();
     const input = usage.input ?? 0;
     const output = usage.output ?? 0;
     const totalTokens = deriveSessionTotalTokens({
@@ -210,17 +213,24 @@ export async function updateSessionStoreAfterAgentRun(params: {
       contextTokens,
       promptTokens,
     });
-    const runEstimatedCostUsd = asNonNegativeFiniteNumber(
-      estimateUsageCost({
-        usage,
-        cost: resolveModelCostConfig({
-          provider: providerUsed,
-          model: modelUsed,
-          config: cfg,
-          agentDir: params.agentDir,
+    let runEstimatedCostUsd = asNonNegativeFiniteNumber(result.meta.agentMeta?.costUsd);
+    if (runEstimatedCostUsd === undefined) {
+      const { estimateUsageCost, resolveModelCostConfig } = await getUsageFormatModule();
+      runEstimatedCostUsd = asNonNegativeFiniteNumber(
+        estimateUsageCost({
+          usage,
+          cost: resolveModelCostConfig({
+            provider: providerUsed,
+            model: modelUsed,
+            config: cfg,
+            agentId: params.agentId,
+            agentDir: params.agentDir,
+            workspaceDir: params.workspaceDir,
+            pluginMetadataSnapshot: params.pluginMetadataSnapshot,
+          }),
         }),
-      }),
-    );
+      );
+    }
     next.inputTokens = input;
     next.outputTokens = output;
     const hasUsageTotalTokens =

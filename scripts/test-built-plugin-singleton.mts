@@ -73,6 +73,7 @@ fs.writeFileSync(
   JSON.stringify(
     {
       id: pluginId,
+      providers: [pluginId],
       configSchema: {
         type: "object",
         additionalProperties: false,
@@ -93,6 +94,12 @@ fs.writeFileSync(
     `  id: ${JSON.stringify(pluginId)},`,
     "  configSchema: emptyPluginConfigSchema(),",
     "  register(api) {",
+    "    api.registerProvider({",
+    `      id: ${JSON.stringify(pluginId)},`,
+    "      label: 'Build smoke provider',",
+    "      auth: [],",
+    "      normalizeModelId: ({ modelId }) => `normalized-${modelId}`,",
+    "    });",
     "    api.registerCommand({",
     "      name: 'pair',",
     "      description: 'Pair a device',",
@@ -179,6 +186,15 @@ assert.equal(
 
 clearPluginCommands();
 
+const config = {
+  plugins: {
+    enabled: true,
+    allow: [pluginId],
+    entries: {
+      [pluginId]: { enabled: true },
+    },
+  },
+};
 const registry = loadOpenClawPlugins({
   cache: false,
   workspaceDir: tempRoot,
@@ -186,15 +202,7 @@ const registry = loadOpenClawPlugins({
     ...process.env,
     OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(repoRoot, "dist-runtime", "extensions"),
   },
-  config: {
-    plugins: {
-      enabled: true,
-      allow: [pluginId],
-      entries: {
-        [pluginId]: { enabled: true },
-      },
-    },
-  },
+  config,
 });
 
 const record = registry.plugins.find((entry: { id: string }) => entry.id === pluginId);
@@ -211,5 +219,47 @@ assert.ok(match, "canonical built command registry did not receive the command")
 assert.equal(match.args, "now");
 const result = await match.command.handler({ args: match.args });
 assert.deepEqual(result, { text: "paired:now" });
+
+const { parseModelRef } = await import(
+  pathToFileURL(path.join(repoRoot, "dist", "plugin-sdk", "model-ref-parse.js")).href
+);
+const normalizationOptions = {
+  config,
+  workspaceDir: tempRoot,
+  allowManifestNormalization: false,
+};
+assert.deepEqual(
+  parseModelRef("first", pluginId, {
+    ...normalizationOptions,
+    allowPluginNormalization: false,
+  }),
+  { provider: pluginId, model: "first" },
+);
+const normalizationStatsBefore = getPluginModuleLoaderStats();
+assert.deepEqual(parseModelRef("first", pluginId, normalizationOptions), {
+  provider: pluginId,
+  model: "normalized-first",
+});
+const normalizationStatsAfter = getPluginModuleLoaderStats();
+for (const counter of [
+  "nativeMisses",
+  "sourceTransformForced",
+  "sourceTransformFallbacks",
+] as const) {
+  assert.equal(
+    normalizationStatsAfter[counter],
+    normalizationStatsBefore[counter],
+    `built model normalization changed ${counter}`,
+  );
+}
+assert.deepEqual(parseModelRef("second", pluginId, normalizationOptions), {
+  provider: pluginId,
+  model: "normalized-second",
+});
+assert.equal(
+  getPluginModuleLoaderStats().calls,
+  normalizationStatsAfter.calls,
+  "warm model normalization reloaded the provider runtime",
+);
 
 process.stdout.write("[build-smoke] built plugin singleton smoke passed\n");

@@ -3617,7 +3617,7 @@ src/plugins/registry-runtime.ts	5
 src/plugins/registry.ts	4
 src/plugins/runtime-channel-state.ts	1
 src/plugins/runtime-state.ts	1
-src/plugins/runtime-workspace-state.ts	2
+src/plugins/runtime-workspace-state.ts	1
 src/plugins/runtime.ts	2
 src/plugins/runtime/channel-runtime-contexts.ts	1
 src/plugins/runtime/index.ts	1

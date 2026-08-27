@@ -235,7 +235,6 @@ describe("listSessionsFromStore resolver cache", () => {
             [missingKey]: missingEntry,
             [markerKey]: markerEntry,
           },
-          lightweightListRows: true,
           opts: { limit: 3 },
         });
         expect(result.sessions).toHaveLength(3);
@@ -295,7 +294,6 @@ describe("listSessionsFromStore resolver cache", () => {
           cfg,
           storePath,
           store,
-          lightweightListRows: true,
           ownerFirstActorId: ownerId,
           opts: { includeDerivedTitles: true, includeLastMessage: true, limit: scenario.limit },
         });
@@ -318,7 +316,6 @@ describe("listSessionsFromStore resolver cache", () => {
           cfg,
           storePath,
           store,
-          lightweightListRows: true,
           ownerFirstActorId: ownerId,
           opts: { includeDerivedTitles: false, includeLastMessage: false, limit: scenario.limit },
         });

@@ -400,7 +400,6 @@ export async function resolveSessionKeyFromResolveParams(params: {
     ...(entryFilter ? { entryFilter } : {}),
     storePath,
     store,
-    lightweightListRows: true,
     opts: {
       includeGlobal: p.includeGlobal === true,
       includeUnknown: p.includeUnknown === true,

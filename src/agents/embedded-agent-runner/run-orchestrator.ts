@@ -20,7 +20,6 @@ import {
   buildAgentHookContextIdentityFields,
 } from "../../plugins/hook-agent-context.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
-import { loadPluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
 import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
 import { resolveUserPath } from "../../utils.js";
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
@@ -39,6 +38,7 @@ import {
   acquireAgentRunPreparedModelRuntime,
   acquireReadOnlyPreparedModelRuntime,
 } from "../prepared-model-runtime.js";
+import { prepareOwnedPluginLoadContext } from "../prepared-model-runtime.plugin-context.js";
 import { resolveProjectKey } from "../project-memory-scope.js";
 import {
   applyAgentRunSessionTargetIdentity,
@@ -244,17 +244,31 @@ async function runEmbeddedAgentInternal(
           agentId: requestedWorkspaceResolution.agentId,
           sessionKey: params.sessionKey,
         });
+      const preparedInput = {
+        config,
+        agentId: requestedWorkspaceResolution.agentId,
+        agentDir: requestedAgentDir,
+        // Shared credential inheritance stays anchored to its compatibility owner;
+        // the selected session agent already owns this prepared runtime.
+        inheritedAuthDir: resolveLegacyInheritedAuthDir(config),
+        workspaceDir: requestedWorkspaceResolution.workspaceDir,
+        preserveWorkspaceDirOnRefresh: !requestedWorkspaceResolution.isCanonicalWorkspace,
+        ...(params.allowGatewaySubagentBinding ? { allowGatewaySubagentBinding: true } : {}),
+        ...(params.preparedModelRuntimeMode === "isolated-read-only"
+          ? { loadRuntimePlugins: true }
+          : {}),
+      };
       const pluginMetadataSnapshot =
         params.pluginGeneration?.pluginMetadataSnapshot ??
-        loadPluginMetadataSnapshot({
-          config,
-          workspaceDir: requestedWorkspaceResolution.workspaceDir,
-          env: process.env,
-        });
+        prepareOwnedPluginLoadContext(preparedInput, process.env);
       const runtimePluginSelections = resolveModelCandidateChain({
         cfg: config,
         agentId: requestedWorkspaceResolution.agentId,
+        workspaceDir: requestedWorkspaceResolution.workspaceDir,
+        pluginMetadataSnapshot,
         manifestPlugins: pluginMetadataSnapshot.plugins,
+        // Planning consumes captured policy; executable normalization belongs to the acquired runtime.
+        allowPluginNormalization: false,
         provider: requestedRuntimeSelection.provider,
         model: requestedRuntimeSelection.modelId,
         requestedRouteResolution: "resolved",
@@ -275,21 +289,6 @@ async function runEmbeddedAgentInternal(
               agentId: requestedWorkspaceResolution.agentId,
             },
       );
-      const preparedInput = {
-        config,
-        agentId: requestedWorkspaceResolution.agentId,
-        agentDir: requestedAgentDir,
-        // Shared credential inheritance stays anchored to its compatibility owner;
-        // the selected session agent already owns this prepared runtime.
-        inheritedAuthDir: resolveLegacyInheritedAuthDir(config),
-        workspaceDir: requestedWorkspaceResolution.workspaceDir,
-        preserveWorkspaceDirOnRefresh: !requestedWorkspaceResolution.isCanonicalWorkspace,
-        ...(params.allowGatewaySubagentBinding ? { allowGatewaySubagentBinding: true } : {}),
-        ...(params.preparedModelRuntimeMode === "isolated-read-only"
-          ? { loadRuntimePlugins: true }
-          : {}),
-        runtimePluginSelections,
-      };
       startupStages.mark("harness-selection");
       // Configless direct hosts reuse one idle generation. The prepared-runtime lifecycle keeps
       // gateway run generations in its own bounded cache so one-off paths cannot accumulate.
@@ -299,14 +298,17 @@ async function runEmbeddedAgentInternal(
         noteLaneTaskProgress,
         () =>
           params.preparedModelRuntimeMode === "isolated-read-only"
-            ? acquireReadOnlyPreparedModelRuntime(preparedInput)
-            : acquireAgentRunPreparedModelRuntime(preparedInput, {
-                retainIdleRunOwner,
-                // Turns need only configured admission facts. Full live model inventory remains
-                // available through the snapshot's lazy control-plane loader.
-                catalogMode: "static",
-                ...(params.pluginGeneration ? { pluginGeneration: params.pluginGeneration } : {}),
-              }),
+            ? acquireReadOnlyPreparedModelRuntime({ ...preparedInput, runtimePluginSelections })
+            : acquireAgentRunPreparedModelRuntime(
+                { ...preparedInput, runtimePluginSelections },
+                {
+                  retainIdleRunOwner,
+                  // Turns need only configured admission facts. Full live model inventory remains
+                  // available through the snapshot's lazy control-plane loader.
+                  catalogMode: "static",
+                  ...(params.pluginGeneration ? { pluginGeneration: params.pluginGeneration } : {}),
+                },
+              ),
       );
       startupStages.mark("prepared-runtime");
       const preparedModelRuntimeOwnerSnapshot = preparedModelRuntimeLease.snapshot;

@@ -7,6 +7,8 @@ import {
   installPluginMetadataOwner,
 } from "../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
+import { projectPluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
+import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
 import {
   createColdPluginConfig,
   createColdPluginFixture,
@@ -17,56 +19,81 @@ import {
   resolveAllowedModelRefCore,
   resolveConfiguredModelRef,
 } from "./model-selection-resolve.js";
+import { prepareOwnedPluginLoadContext } from "./prepared-model-runtime.plugin-context.js";
 
 describe("model-selection-resolve OpenRouter compat aliases", () => {
-  it("uses prepared load-path policy when selecting a model without configured aliases", async () => {
-    await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
-      const pluginDir = state.path("normalizer");
-      await fs.mkdir(pluginDir);
-      const fixture = createColdPluginFixture({
-        rootDir: pluginDir,
-        pluginId: "model-selection-normalizer",
-        manifest: {
-          providers: ["custom"],
-          channels: [],
-          channelConfigs: {},
-          providerAuthChoices: [],
-          modelIdNormalization: {
-            providers: { custom: { aliases: { legacy: "current" } } },
+  it.each(["configured", "auxiliary"] as const)(
+    "uses prepared load-path policy in a %s workspace without configured aliases",
+    async (workspaceKind) => {
+      await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+        const pluginDir = state.path("normalizer");
+        await fs.mkdir(pluginDir);
+        const fixture = createColdPluginFixture({
+          rootDir: pluginDir,
+          pluginId: "model-selection-normalizer",
+          manifest: {
+            providers: ["custom"],
+            channels: [],
+            channelConfigs: {},
+            providerAuthChoices: [],
+            modelIdNormalization: {
+              providers: { custom: { aliases: { legacy: "current" } } },
+            },
           },
-        },
-      });
-      const cfg: OpenClawConfig = {
-        ...createColdPluginConfig(pluginDir, fixture.pluginId),
-        agents: {
-          ownership: "explicit",
-          defaults: { systemAgent: { agentId: "main" } },
-          entries: {
-            main: { workspace: state.workspaceDir },
-            work: { workspace: state.path("work") },
+        });
+        const cfg: OpenClawConfig = {
+          ...createColdPluginConfig(pluginDir, fixture.pluginId),
+          agents: {
+            ownership: "explicit",
+            defaults: { systemAgent: { agentId: "main" } },
+            entries: {
+              main: { workspace: state.workspaceDir },
+              work: { workspace: state.path("work") },
+            },
           },
-        },
-      };
-      const owner = createPluginMetadataOwner();
-      const dispose = installPluginMetadataOwner(owner);
-      try {
-        owner.publish(owner.prepare({ config: cfg }), { config: cfg });
-        expect(
-          resolveAllowedModelRefCore({
+        };
+        const owner = createPluginMetadataOwner();
+        const dispose = installPluginMetadataOwner(owner);
+        try {
+          const metadata = owner.prepare({ config: cfg });
+          owner.publish(metadata, { config: cfg });
+          const workspaceDir = state.path(workspaceKind === "configured" ? "work" : "auxiliary");
+          const pluginMetadataSnapshot = prepareOwnedPluginLoadContext(
+            { config: cfg, agentId: "work", agentDir: state.path("agent"), workspaceDir },
+            process.env,
+          );
+          const selection = {
             cfg,
             catalog: [{ provider: "custom", id: "current", name: "Current" }],
             raw: "custom/legacy",
             defaultProvider: "openai",
             agentId: "work",
-          }),
-        ).toEqual({ key: "custom/current", ref: { provider: "custom", model: "current" } });
-        expect(isColdPluginRuntimeLoaded(fixture)).toBe(false);
-      } finally {
-        dispose();
-        clearPluginMetadataLifecycleCaches();
-      }
-    });
-  });
+            workspaceDir,
+            pluginMetadataSnapshot,
+          };
+          expect(resolveAllowedModelRefCore(selection)).toEqual({
+            key: "custom/current",
+            ref: { provider: "custom", model: "current" },
+          });
+          expect(
+            withPluginRuntimeGenerationScope(
+              {
+                config: cfg,
+                metadataSnapshot: projectPluginMetadataSnapshot(metadata.selectedSnapshot, {
+                  pluginIds: [],
+                }),
+              },
+              () => resolveAllowedModelRefCore(selection),
+            ),
+          ).toEqual({ key: "custom/legacy", ref: { provider: "custom", model: "legacy" } });
+          expect(isColdPluginRuntimeLoaded(fixture)).toBe(false);
+        } finally {
+          dispose();
+          clearPluginMetadataLifecycleCaches();
+        }
+      });
+    },
+  );
 
   it("keeps inherited policy aliases bound to default metadata for per-agent selection", () => {
     const cfg = {
@@ -212,6 +239,7 @@ describe("model-selection-resolve OpenRouter compat aliases", () => {
         cfg,
         defaultProvider: "anthropic",
         defaultModel: "claude-sonnet-4-6",
+        allowPluginNormalization: false,
       }),
     ).toEqual({ provider: "openrouter", model: "openrouter/auto" });
   });

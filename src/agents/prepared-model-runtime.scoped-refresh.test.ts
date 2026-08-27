@@ -4,23 +4,279 @@ import {
   getPreparedModelRuntimeMocks,
   resetPreparedModelRuntimeHarness,
 } from "./prepared-model-runtime.test-harness.js";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
-import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
+import {
+  withPluginMetadataCollectionScope,
+  type PreparedPluginMetadata,
+} from "../plugins/plugin-metadata-collection.js";
 import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
+import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import { getPreparedModelRuntimeAuthStore } from "./prepared-model-runtime-auth.js";
 import {
   getPreparedModelRuntimeSnapshot,
   refreshPreparedModelRuntimeSnapshots,
 } from "./prepared-model-runtime.js";
+import * as providerModelNormalization from "./provider-model-normalization.runtime.js";
 
 const mocks = getPreparedModelRuntimeMocks();
 
+function createNormalizerSnapshot(
+  config: OpenClawConfig,
+  workspaceDir: string,
+  normalizedModel: string,
+): PluginMetadataSnapshot {
+  return createPluginMetadataSnapshot({
+    config,
+    workspaceDir,
+    manifestRegistry: {
+      diagnostics: [],
+      plugins: [
+        {
+          id: "fixture-normalizer",
+          channels: [],
+          providers: ["fixture"],
+          cliBackends: [],
+          skills: [],
+          hooks: [],
+          origin: "workspace",
+          rootDir: workspaceDir,
+          source: `${workspaceDir}/index.js`,
+          manifestPath: `${workspaceDir}/openclaw.plugin.json`,
+          modelIdNormalization: {
+            providers: { fixture: { aliases: { latest: normalizedModel } } },
+          },
+        },
+      ],
+    },
+  });
+}
+
+function createPreparedMetadataFixture(
+  selectedSnapshot: PluginMetadataSnapshot,
+  agentSnapshots: ReadonlyMap<string, PluginMetadataSnapshot>,
+): PreparedPluginMetadata {
+  const snapshots = [...agentSnapshots.values()];
+  return {
+    workspaces: new Map(snapshots.map((snapshot) => [snapshot.workspaceDir, snapshot])),
+    configWorkspaceDirs: snapshots.map((snapshot) => snapshot.workspaceDir),
+    agentWorkspaceDirs: new Map(
+      [...agentSnapshots].flatMap(([agentId, snapshot]) =>
+        snapshot.workspaceDir ? [[agentId, snapshot.workspaceDir] as const] : [],
+      ),
+    ),
+    installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
+    envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
+    selectedSnapshot,
+    manifestRegistry: selectedSnapshot.manifestRegistry,
+    plugins: selectedSnapshot.plugins,
+    byPluginId: selectedSnapshot.byPluginId,
+    owners: selectedSnapshot.owners,
+    diagnostics: selectedSnapshot.diagnostics,
+    channelCatalog: { read: () => [] },
+  };
+}
+
 describe("prepared model runtime scoped refresh", () => {
   beforeEach(() => resetPreparedModelRuntimeHarness());
+
+  it.each([
+    { mode: "direct", selectionSource: "primary" },
+    { mode: "async candidate", selectionSource: "primary" },
+    { mode: "direct", selectionSource: "fallback only" },
+    { mode: "async candidate", selectionSource: "fallback only" },
+  ] as const)(
+    "plans a $mode refresh with a $selectionSource model from its supplied metadata",
+    async ({ mode, selectionSource }) => {
+      mocks.configuredAgentIds = ["pro"];
+      const workspaceDir = "/tmp/candidate-workspace";
+      mocks.configuredWorkspaces.set("pro", workspaceDir);
+      const model =
+        selectionSource === "primary" ? "fixture/latest" : { fallbacks: ["fixture/latest"] };
+      const config = {
+        agents: {
+          defaults: { model },
+          entries: { pro: { workspace: workspaceDir } },
+        },
+      } satisfies OpenClawConfig;
+      const ambientConfig = {
+        agents: {
+          defaults: { model },
+          entries: { pro: { workspace: "/tmp/ambient-workspace" } },
+        },
+      } satisfies OpenClawConfig;
+      const metadata = (
+        fixtureConfig: OpenClawConfig,
+        fixtureWorkspaceDir: string,
+        normalizedModel: string,
+      ): PreparedPluginMetadata => {
+        const snapshot = createNormalizerSnapshot(
+          fixtureConfig,
+          fixtureWorkspaceDir,
+          normalizedModel,
+        );
+        return createPreparedMetadataFixture(snapshot, new Map([["pro", snapshot]]));
+      };
+      const ambient = metadata(ambientConfig, "/tmp/ambient-workspace", "ambient-model");
+      const candidate = metadata(config, workspaceDir, "candidate-model");
+
+      await withPluginMetadataCollectionScope(
+        ambient,
+        () =>
+          mode === "direct"
+            ? refreshPreparedModelRuntimeSnapshots(config, {
+                gatewayLifecycle: true,
+                agentIds: new Set(["pro"]),
+                pluginMetadata: candidate,
+              })
+            : refreshPreparedModelRuntimeSnapshots(
+                async () => ({ config, pluginMetadata: candidate }),
+                { gatewayLifecycle: true },
+              ),
+        { config: ambientConfig },
+      );
+
+      const plannedRegistries = mocks.loadAgentRuntimePluginRegistryHandle.mock.calls.map(
+        ([{ workspaceDir: plannedWorkspaceDir, metadataSnapshot, selections }]) => ({
+          workspaceDir: plannedWorkspaceDir,
+          metadataSnapshot,
+          selections: selections?.map(({ provider, modelId }) => ({ provider, modelId })),
+        }),
+      );
+      expect(plannedRegistries).toContainEqual(
+        expect.objectContaining({
+          workspaceDir,
+          metadataSnapshot: candidate.selectedSnapshot,
+          selections: [
+            { provider: "fixture", modelId: "candidate-model" },
+            ...(selectionSource === "fallback only"
+              ? [{ provider: DEFAULT_PROVIDER, modelId: DEFAULT_MODEL }]
+              : []),
+          ],
+        }),
+      );
+      expect(
+        getPreparedModelRuntimeSnapshot({
+          config,
+          agentId: "pro",
+          agentDir: "/tmp/configured-pro",
+          inheritedAuthDir: "/tmp/unused-agent",
+          workspaceDir,
+        })?.metadataSnapshot,
+      ).toBe(candidate.selectedSnapshot);
+    },
+  );
+
+  it("plans manifest aliases without provider hooks before registry construction", async () => {
+    mocks.configuredAgentIds = ["pro"];
+    const workspaceDir = "/tmp/manifest-planning-workspace";
+    mocks.configuredWorkspaces.set("pro", workspaceDir);
+    const config = {
+      agents: {
+        defaults: {
+          model: { primary: "fixture/latest", fallbacks: ["standby"] },
+          models: { "fixture/backup": { alias: "standby" } },
+        },
+        entries: { pro: { workspace: workspaceDir } },
+      },
+    } satisfies OpenClawConfig;
+    const snapshot = createNormalizerSnapshot(config, workspaceDir, "prepared-model");
+    const normalization = vi
+      .spyOn(providerModelNormalization, "normalizeProviderModelIdWithRuntime")
+      .mockReturnValue(undefined);
+    try {
+      await refreshPreparedModelRuntimeSnapshots(config, {
+        gatewayLifecycle: true,
+        catalogMode: "static",
+        pluginMetadata: createPreparedMetadataFixture(snapshot, new Map([["pro", snapshot]])),
+      });
+
+      expect(
+        mocks.loadAgentRuntimePluginRegistryHandle.mock.calls.flatMap(([{ selections }]) =>
+          (selections ?? []).map(({ provider, modelId }) => ({ provider, modelId })),
+        ),
+      ).toEqual([
+        { provider: "fixture", modelId: "backup" },
+        { provider: "fixture", modelId: "prepared-model" },
+      ]);
+      const firstRegistryLoad =
+        mocks.loadAgentRuntimePluginRegistryHandle.mock.invocationCallOrder[0];
+      expect(firstRegistryLoad).toBeDefined();
+      expect(
+        normalization.mock.invocationCallOrder.filter((order) => order < firstRegistryLoad!),
+      ).toEqual([]);
+    } finally {
+      normalization.mockRestore();
+    }
+  });
+
+  it("normalizes refreshed model selections in the retained startup workspace", async () => {
+    mocks.configuredAgentIds = ["default"];
+    const configuredWorkspaceDir = "/tmp/configured-alias-workspace";
+    const startupWorkspaceDir = "/tmp/startup-alias-workspace";
+    mocks.configuredWorkspaces.set("default", configuredWorkspaceDir);
+    const config = retainLegacyDefaultAgentId(
+      {
+        agents: {
+          defaults: { model: "fixture/latest" },
+          entries: { default: { workspace: configuredWorkspaceDir } },
+        },
+      },
+      "default",
+    );
+    const configuredSnapshot = createNormalizerSnapshot(
+      config,
+      configuredWorkspaceDir,
+      "configured-model",
+    );
+    const startupSnapshot = createNormalizerSnapshot(config, startupWorkspaceDir, "startup-model");
+    const pluginMetadata: PreparedPluginMetadata = {
+      ...createPreparedMetadataFixture(
+        configuredSnapshot,
+        new Map([["default", configuredSnapshot]]),
+      ),
+      selectedSnapshot: startupSnapshot,
+      workspaces: new Map([
+        [configuredWorkspaceDir, configuredSnapshot],
+        [startupWorkspaceDir, startupSnapshot],
+      ]),
+    };
+    await refreshPreparedModelRuntimeSnapshots(config, {
+      gatewayLifecycle: true,
+      defaultWorkspaceDir: startupWorkspaceDir,
+      pluginMetadata,
+    });
+    mocks.loadAgentRuntimePluginRegistryHandle.mockClear();
+
+    await refreshPreparedModelRuntimeSnapshots(config, { gatewayLifecycle: true, pluginMetadata });
+
+    expect(
+      mocks.loadAgentRuntimePluginRegistryHandle.mock.calls
+        .filter(([{ selections }]) => selections !== undefined)
+        .map(([{ workspaceDir, selections }]) => ({
+          workspaceDir,
+          selections: selections?.map(({ provider, modelId }) => ({ provider, modelId })),
+        })),
+    ).toEqual([
+      {
+        workspaceDir: startupWorkspaceDir,
+        selections: [{ provider: "fixture", modelId: "startup-model" }],
+      },
+    ]);
+    expect(
+      getPreparedModelRuntimeSnapshot({
+        config,
+        agentId: "default",
+        agentDir: "/tmp/unused-agent",
+        inheritedAuthDir: "/tmp/unused-agent",
+        workspaceDir: startupWorkspaceDir,
+      })?.metadataSnapshot,
+    ).toBe(startupSnapshot);
+  });
 
   it.each([
     { metadataState: "unchanged", replaceMetadata: false, refreshedAgents: 1 },
@@ -70,26 +326,14 @@ describe("prepared model runtime scoped refresh", () => {
             manifestRegistry: { plugins: [], diagnostics: [] },
           })
         : freeMetadata;
-      const metadata = (freeSnapshot: PluginMetadataSnapshot): PreparedPluginMetadata => ({
-        workspaces: new Map([
-          [proMetadata.workspaceDir, proMetadata],
-          [freeSnapshot.workspaceDir, freeSnapshot],
-        ]),
-        configWorkspaceDirs: [proMetadata.workspaceDir, freeSnapshot.workspaceDir],
-        agentWorkspaceDirs: new Map([
-          ["pro", "/tmp/workspace-pro"],
-          ["free", freeInput.workspaceDir],
-        ]),
-        installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
-        envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
-        selectedSnapshot: proMetadata,
-        manifestRegistry: proMetadata.manifestRegistry,
-        plugins: proMetadata.plugins,
-        byPluginId: proMetadata.byPluginId,
-        owners: proMetadata.owners,
-        diagnostics: proMetadata.diagnostics,
-        channelCatalog: { read: () => [] },
-      });
+      const metadata = (freeSnapshot: PluginMetadataSnapshot) =>
+        createPreparedMetadataFixture(
+          proMetadata,
+          new Map([
+            ["pro", proMetadata],
+            ["free", freeSnapshot],
+          ]),
+        );
 
       await refreshPreparedModelRuntimeSnapshots(initialConfig, {
         gatewayLifecycle: true,

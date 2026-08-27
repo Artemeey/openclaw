@@ -154,6 +154,17 @@ function resolveModelManifestNormalizationContext(
       pluginMetadataSnapshot: current,
     };
   }
+  if (params.pluginMetadataSnapshot && !runtimeGeneration) {
+    // Operation preparation may own an auxiliary workspace outside the published
+    // collection. A retained runtime generation above still owns its exact graph.
+    const snapshot = params.pluginMetadataSnapshot;
+    return {
+      config: params.cfg,
+      workspaceDir: snapshot.workspaceDir ?? params.workspaceDir,
+      manifestPlugins: params.manifestPlugins ?? snapshot.manifestRegistry.plugins,
+      pluginMetadataSnapshot: snapshot,
+    };
+  }
   const prepared = scoped
     ? current && [...scoped.workspaces.values()].includes(current)
       ? scoped
@@ -224,7 +235,10 @@ export function createModelManifestPluginContext(
   let context: ModelManifestNormalizationContext | undefined;
   const getContext = () => (context ??= resolveModelManifestNormalizationContext(params));
   return {
-    peek: () => context?.manifestPlugins ?? params.manifestPlugins,
+    peek: () =>
+      context?.manifestPlugins ??
+      params.manifestPlugins ??
+      params.pluginMetadataSnapshot?.manifestRegistry.plugins,
     // Empty/default model paths never resolve metadata; parsing and hooks share
     // the same prepared config, workspace, and manifest facts once needed.
     getContext,
@@ -1109,7 +1123,9 @@ export function buildAllowedModelSet(
     agentId?: string;
   } & ModelSelectionNormalizationContext,
 ): AllowedModelSet {
-  return buildAllowedModelSetFromPrepared(params, prepareModelPolicy(params));
+  // Model authorization reads metadata; it must not activate provider runtime.
+  const policyParams = { ...params, allowPluginNormalization: false };
+  return buildAllowedModelSetFromPrepared(policyParams, prepareModelPolicy(policyParams));
 }
 
 function prepareModelPolicy(params: ModelPolicyPreparationParams) {
@@ -1450,6 +1466,7 @@ export function buildConfiguredModelCatalog(
   const normalization =
     params.manifestPluginContext?.getContext() ??
     (params.manifestPlugins ||
+    params.pluginMetadataSnapshot ||
     params.workspaceDir ||
     getActivePluginRegistryWorkspaceDirFromState() ||
     getCurrentPluginMetadataOwner() ||

@@ -653,7 +653,7 @@ async function agentCommandFromIngressInternal(
   const generation = runtimeContext?.pluginGeneration;
   const executeIngress = () =>
     withAgentRunLifecycleGeneration(lifecycleGeneration, async () => {
-      let preparedAgentDir: string | undefined;
+      let preparedPricing: Parameters<typeof emitIngressModelUsageDiagnostic>[2] | undefined;
       const result = await runWithAgentCommandRecoveryOwner({
         lifecycleGeneration,
         mode: "claim",
@@ -666,7 +666,7 @@ async function agentCommandFromIngressInternal(
           await prepareAgentCommandExecution(preparedOpts, runtime, runtimeContext),
         restoreAdmittedRecovery: recovery?.restoreAdmittedRecovery,
         run: async (prepared) => {
-          preparedAgentDir = prepared.agentDir;
+          preparedPricing = prepared;
           const run = async () =>
             await agentCommandInternal(
               prepared,
@@ -686,8 +686,8 @@ async function agentCommandFromIngressInternal(
         },
       });
 
-      if (result && preparedAgentDir) {
-        emitIngressModelUsageDiagnostic(result, opts, preparedAgentDir);
+      if (result && preparedPricing) {
+        emitIngressModelUsageDiagnostic(result, opts, preparedPricing);
       }
 
       return result;

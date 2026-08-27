@@ -1,46 +1,31 @@
-/**
- * Runtime bridge for provider-owned model id normalization hooks. Source and
- * built artifacts can resolve different extensions, so this module probes both
- * once and caches the result.
- */
+/** Keeps executable provider hooks off the static model-reference import graph. */
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
 import type { PluginMetadataRegistryView } from "../plugins/plugin-metadata-snapshot.types.js";
 
-type ProviderRuntimeModule = Pick<
-  typeof import("../plugins/provider-runtime.js"),
-  "normalizeProviderModelIdWithPlugin"
->;
+type ProviderRuntimeModule = typeof import("../plugins/provider-model-normalization.runtime.js");
 
 const require = createRequire(import.meta.url);
-// Built code loads .js while source/test paths may still resolve .ts. Try both
-// once, then cache the absence to avoid repeated require work on hot paths.
-const PROVIDER_RUNTIME_CANDIDATES = [
-  "../plugins/provider-runtime.js",
-  "../plugins/provider-runtime.ts",
-] as const;
-
 let providerRuntimeModule: ProviderRuntimeModule | undefined;
-let providerRuntimeLoadAttempted = false;
 
-function loadProviderRuntime(): ProviderRuntimeModule | null {
-  if (providerRuntimeModule) {
-    return providerRuntimeModule;
+function loadProviderRuntime(): ProviderRuntimeModule {
+  if (!providerRuntimeModule) {
+    // Source execution needs TS/tsconfig resolution; bundled chunks live at the
+    // dist root and load the stable facade declared by tsdown, without source fallback.
+    const filename = fileURLToPath(import.meta.url);
+    const runtime = filename.endsWith(".ts")
+      ? // SAFETY: tsx declares its synchronous require API at this CJS export.
+        (require("tsx/cjs/api") as typeof import("tsx/cjs/api")).require(
+          "../plugins/provider-model-normalization.runtime.ts",
+          filename,
+        )
+      : require("./plugins/provider-model-normalization.runtime.js");
+    // SAFETY: Both paths load the same core facade; tsdown declares its built entry.
+    providerRuntimeModule = runtime as ProviderRuntimeModule;
   }
-  if (providerRuntimeLoadAttempted) {
-    return null;
-  }
-  providerRuntimeLoadAttempted = true;
-  for (const candidate of PROVIDER_RUNTIME_CANDIDATES) {
-    try {
-      providerRuntimeModule = require(candidate) as ProviderRuntimeModule;
-      return providerRuntimeModule;
-    } catch {
-      // Try source/runtime candidates in order.
-    }
-  }
-  return null;
+  return providerRuntimeModule;
 }
 
 /** Normalizes provider model ids through plugin runtime hooks when available. */
@@ -55,5 +40,5 @@ export function normalizeProviderModelIdWithRuntime(params: {
     modelId: string;
   };
 }): string | undefined {
-  return loadProviderRuntime()?.normalizeProviderModelIdWithPlugin(params);
+  return loadProviderRuntime().normalizeProviderModelIdWithPlugin(params);
 }

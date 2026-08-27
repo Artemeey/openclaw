@@ -426,9 +426,7 @@ async function handleChatHistoryRequest({
   if (Object.hasOwn(historyPage, "activeLeafEntryId")) {
     sessionInfo.activeLeafEntryId = historyPage.activeLeafEntryId ?? null;
   }
-  const defaults = getSessionDefaults(cfg, defaultModelCatalog, {
-    allowPluginNormalization: false,
-  });
+  const defaults = getSessionDefaults(cfg, defaultModelCatalog);
   const thinkingLevel = sessionInfo.thinkingLevel ?? sessionInfo.thinkingDefault;
   const verboseLevel = entry?.verboseLevel ?? cfg.agents?.defaults?.verboseDefault;
   sessionInfo.verboseLevel = verboseLevel;

@@ -131,7 +131,7 @@ function isPluginSdkAliasSpecifier(specifier: string): boolean {
   return PLUGIN_SDK_PACKAGE_PREFIXES.some((prefix) => specifier.startsWith(`${prefix}/`));
 }
 
-function isNativeLoadableSdkTarget(targetPath: string): boolean {
+function isNativeLoadableAliasTarget(targetPath: string): boolean {
   switch (path.extname(targetPath)) {
     case ".cjs":
     case ".js":
@@ -292,7 +292,7 @@ function listPluginSdkNativeAliases(
   }
   const aliases = Object.entries(aliasMap)
     .filter(([specifier]) => isPluginSdkAliasSpecifier(specifier))
-    .filter(([, target]) => isNativeLoadableSdkTarget(target))
+    .filter(([, target]) => isNativeLoadableAliasTarget(target))
     .flatMap(([specifier, target]) => {
       if (specifier.endsWith(".js")) {
         return [[specifier, target]] as Array<readonly [string, string]>;
@@ -366,7 +366,9 @@ function installResolver(): void {
   moduleWithResolver.registerHooks?.({
     resolve(specifier, context, nextResolve) {
       const aliasTarget = resolveAliasTargetForParentUrl(specifier, context.parentURL);
-      if (aliasTarget) {
+      // Source aliases belong to the CJS transform loader. Native ESM must use
+      // package exports; type stripping cannot resolve their relative .js imports.
+      if (aliasTarget && isNativeLoadableAliasTarget(aliasTarget)) {
         return {
           shortCircuit: true,
           url: pathToFileURL(aliasTarget).href,

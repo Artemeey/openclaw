@@ -4,7 +4,7 @@
 // which is exactly how a startup stall shipped green while hanging every
 // ui-e2e suite that boots a minimal test gateway.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resetConfigRuntimeState } from "../config/runtime-snapshot.js";
+import { getRuntimeConfigSnapshot, resetConfigRuntimeState } from "../config/runtime-snapshot.js";
 import { readLoggingConfig } from "../logging/config.js";
 import { resetLogger } from "../logging/logger.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -108,6 +108,103 @@ describe("gateway minimal boot smoke", () => {
       await state.cleanup();
     }
   });
+
+  it(
+    "carries auto-enabled plugin metadata through legacy maintenance and startup model selection",
+    { timeout: BOOT_BUDGET_MS },
+    async () => {
+      const state = await createOpenClawTestState({
+        label: "gateway-startup-metadata-handoff",
+        layout: "home",
+        env: {
+          OPENCLAW_DISABLE_BUNDLED_PLUGINS: undefined,
+          OPENCLAW_GATEWAY_PASSWORD: undefined,
+          OPENCLAW_GATEWAY_TOKEN: undefined,
+          OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: "1",
+          OPENCLAW_SKIP_CANVAS_HOST: "1",
+          OPENCLAW_SKIP_CHANNELS: "1",
+          OPENCLAW_SKIP_CRON: "1",
+          OPENCLAW_SKIP_GMAIL_WATCHER: "1",
+          OPENCLAW_SKIP_PROVIDERS: "1",
+          OPENCLAW_TEST_MINIMAL_GATEWAY: undefined,
+          VITEST: "1",
+        },
+      });
+      const token = "gateway-startup-metadata-handoff-token";
+      await state.writeConfig({
+        agents: {
+          defaults: { model: { primary: "openai/gpt-5.5" } },
+          entries: { main: { default: true } },
+        },
+        gateway: { auth: { mode: "token", token }, controlUi: { enabled: false } },
+        models: {
+          providers: {
+            openai: {
+              api: "openai-responses",
+              apiKey: "fixture-key",
+              baseUrl: "http://127.0.0.1:9/v1",
+              models: [{ id: "gpt-5.5", name: "GPT-5.5" }],
+            },
+          },
+        },
+        plugins: { enabled: true },
+      });
+      await state.writeJson("agents/main/sessions/sessions.json", {
+        main: {
+          sessionId: "legacy-startup",
+          sessionFile: "legacy-startup.jsonl",
+          updatedAt: Date.now(),
+        },
+      });
+      await state.writeText(
+        "agents/main/sessions/legacy-startup.jsonl",
+        `${JSON.stringify({ type: "session", sessionId: "legacy-startup" })}\n`,
+      );
+      state.applyEnv();
+      const pluginMetadataOwner = createPluginMetadataOwner();
+      const disposePluginMetadataOwner = installPluginMetadataOwner(pluginMetadataOwner);
+      const log = createSubsystemLogger("gateway/startup-metadata-test");
+      const info = vi.spyOn(log, "info");
+      try {
+        const { prepareGatewayServerBootstrap } = await import("./server-startup-bootstrap.js");
+        const bootstrap = await prepareGatewayServerBootstrap({
+          port: await getFreePort(),
+          opts: {
+            auth: { mode: "token", token },
+            bind: "loopback",
+            controlUiEnabled: false,
+            sidecarStartup: "defer",
+          },
+          log,
+          logSecrets: log,
+          loadWorkerEnvironmentStartupModule: async () =>
+            await import("./server-worker-environment-startup.js"),
+          formatRuntimeGatewayAuthTokenWarning: () => "unused",
+          pluginMetadataOwner,
+          disposePluginMetadataOwner,
+        });
+
+        expect
+          .soft(info)
+          .toHaveBeenCalledWith(
+            expect.stringContaining("session: canonicalized orphaned session keys:"),
+          );
+        expect(getRuntimeConfigSnapshot()).toBe(bootstrap.cfgAtStart);
+        const { resolveConfiguredModelRef } = await import("../agents/model-selection.js");
+        expect(
+          resolveConfiguredModelRef({
+            cfg: bootstrap.cfgAtStart,
+            defaultProvider: "openai",
+            defaultModel: "fallback",
+          }),
+        ).toEqual({ provider: "openai", model: "gpt-5.5" });
+      } finally {
+        info.mockRestore();
+        disposePluginMetadataOwner();
+        await state.cleanup();
+      }
+    },
+  );
 
   it("boots a minimal test gateway within budget", { timeout: BOOT_BUDGET_MS }, async () => {
     const port = await getFreePort();

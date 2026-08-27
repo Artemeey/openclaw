@@ -172,6 +172,9 @@ async function runWithModelFallbackInternal<T>(
     model: params.model,
     fallbacksOverride: params.fallbacksOverride,
     requestedRouteResolution: params.requestedRouteResolution,
+    config: params.config,
+    workspaceDir: params.workspaceDir,
+    pluginMetadataSnapshot: params.pluginMetadataSnapshot,
     manifestPlugins: params.manifestPlugins,
   });
   await params.prepareCandidateChain?.(candidates);

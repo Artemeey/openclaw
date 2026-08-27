@@ -473,9 +473,6 @@ describe("resolveSessionKeyFromResolveParams", () => {
     expect(hoisted.loadCombinedSessionStoreForGatewayMock).toHaveBeenCalledWith(cfg, {
       agentId: "main",
     });
-    expect(hoisted.listSessionsFromStoreMock).toHaveBeenCalledWith(
-      expect.objectContaining({ lightweightListRows: true }),
-    );
     expect(result).toEqual({
       ok: false,
       error: {

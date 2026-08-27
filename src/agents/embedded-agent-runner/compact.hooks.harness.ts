@@ -2,8 +2,8 @@
  * Test harness mocks for embedded-agent compaction hook coverage.
  */
 import { vi, type Mock } from "vitest";
+import { createPluginMetadataSnapshot } from "../../config/plugin-auto-enable.test-helpers.js";
 import type { CompactResult } from "../../context-engine/types.js";
-import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
 import type { createOpenClawCodingTools } from "../agent-tools.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
 import { clearAgentHarnesses } from "../harness/registry.js";
@@ -401,53 +401,22 @@ export const buildAgentRuntimePlanMock = vi.fn((params: BuildAgentRuntimePlanPar
   createCompactHooksRuntimePlan(params),
 );
 
-const emptyPluginMetadataSnapshot: PluginMetadataSnapshot = {
-  policyHash: "",
-  index: {
-    version: 1,
-    hostContractVersion: "test",
-    compatRegistryVersion: "test",
-    migrationVersion: 1,
-    policyHash: "",
-    generatedAtMs: 1,
-    installRecords: {},
-    plugins: [],
-    diagnostics: [],
-  },
-  registryDiagnostics: [],
-  manifestRegistry: { plugins: [], diagnostics: [] },
-  plugins: [],
-  diagnostics: [],
-  byPluginId: new Map(),
-  normalizePluginId: (pluginId: string) => pluginId,
-  owners: {
-    channels: new Map(),
-    channelConfigs: new Map(),
-    providers: new Map(),
-    modelCatalogProviders: new Map(),
-    cliBackends: new Map(),
-    setupProviders: new Map(),
-    commandAliases: new Map(),
-    contracts: new Map(),
-  },
-  metrics: {
-    registrySnapshotMs: 0,
-    manifestRegistryMs: 0,
-    ownerMapsMs: 0,
-    totalMs: 0,
-    indexPluginCount: 0,
-    manifestPluginCount: 0,
-  },
-};
-
 export const acquireAgentRunPreparedModelRuntimeMock = vi.fn(
-  async (input: Record<string, unknown>) => ({
+  async (
+    input: Parameters<
+      typeof import("../prepared-model-runtime.js").acquireAgentRunPreparedModelRuntime
+    >[0],
+  ) => ({
     snapshot: {
       agentId: input.agentId,
       agentDir: input.agentDir,
       config: input.config,
       workspaceDir: input.workspaceDir,
-      metadataSnapshot: { ...emptyPluginMetadataSnapshot, workspaceDir: input.workspaceDir },
+      metadataSnapshot: createPluginMetadataSnapshot({
+        config: input.config,
+        workspaceDir: input.workspaceDir,
+        manifestRegistry: { plugins: [], diagnostics: [] },
+      }),
       configuredRuntimeModels: [],
       inlineProviderModels: [],
       createStores: () => ({ authStorage: {}, modelRegistry: {} }),
@@ -455,9 +424,6 @@ export const acquireAgentRunPreparedModelRuntimeMock = vi.fn(
     release: vi.fn(),
   }),
 );
-export const getCurrentPluginMetadataSnapshotMock: Mock<
-  typeof import("../../plugins/current-plugin-metadata-snapshot.js").getCurrentPluginMetadataSnapshot
-> = vi.fn(() => emptyPluginMetadataSnapshot);
 
 export function resetCompactSessionStateMocks(): void {
   sanitizeSessionHistoryMock.mockReset();
@@ -585,8 +551,6 @@ export function resetCompactHooksHarnessMocks(): void {
   acquireAgentRunPreparedModelRuntimeMock.mockClear();
   resolveDefaultAgentDirMock.mockReset();
   resolveDefaultAgentDirMock.mockReturnValue("/tmp/agents/main/agent");
-  getCurrentPluginMetadataSnapshotMock.mockReset();
-  getCurrentPluginMetadataSnapshotMock.mockReturnValue(emptyPluginMetadataSnapshot);
 
   resolveContextEngineMock.mockReset();
   resolveContextEngineMock.mockResolvedValue({
@@ -675,13 +639,6 @@ export async function loadCompactHooksHarness(): Promise<{
     initializeGlobalHookRunner: vi.fn(),
     resetGlobalHookRunner: vi.fn(),
     runGlobalGatewayStopSafely: vi.fn(async () => undefined),
-  }));
-
-  vi.doMock("../../plugins/current-plugin-metadata-snapshot.js", () => ({
-    getCurrentPluginMetadataSnapshot: getCurrentPluginMetadataSnapshotMock,
-    resolvePluginMetadataControlPlaneFingerprint: vi.fn(() => "test-plugin-fingerprint"),
-    setCurrentPluginMetadataSnapshot: vi.fn(),
-    withPluginMetadataSnapshotScope: (_snapshot: unknown, run: () => unknown) => run(),
   }));
 
   vi.doMock("../../plugins/command-registry-state.js", () => {

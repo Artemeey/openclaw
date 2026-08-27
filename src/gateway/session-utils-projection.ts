@@ -192,6 +192,7 @@ export function resolveTranscriptUsageFallback(params: {
   const model = snapshot.model ?? params.fallbackModel;
   const estimatedCostUsd = resolveEstimatedSessionCostUsd({
     cfg: params.cfg,
+    agentId,
     provider: modelProvider,
     model,
     explicitCostUsd: snapshot.costUsd,

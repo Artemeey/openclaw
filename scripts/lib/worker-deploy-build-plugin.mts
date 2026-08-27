@@ -11,6 +11,8 @@ const PLAYWRIGHT_BROWSER_REGISTRY_INIT =
   '    registry = new Registry(require(import_path20.default.join(packageRoot, "browsers.json")));';
 const WORKER_BROWSER_RUNTIME_COMPOSITION = `import { createAttachedBrowserToolRuntime } from "../../extensions/browser/runtime-api.js";
 export default { createAttachedBrowserToolRuntime };`;
+const WORKER_MODEL_NORMALIZATION_COMPOSITION =
+  'export { normalizeProviderModelIdWithPlugin as normalizeProviderModelIdWithRuntime } from "../plugins/provider-runtime.js";';
 const WORKER_PLAYWRIGHT_RUNTIME = `import * as playwrightCore from "playwright-core";
 import { getUserAgent } from "playwright-core/lib/coreBundle";
 export function getPlaywrightCore() { return playwrightCore; }
@@ -28,6 +30,9 @@ export function createWorkerDeployBuildPlugin(rootDir = process.cwd()) {
   const coreBundlePath = fs.realpathSync(path.join(playwrightRoot, "lib/coreBundle.js"));
   const browserRuntimeBridgePath = fs.realpathSync(
     path.resolve("src/worker/worker-deploy-browser-runtime.ts"),
+  );
+  const modelNormalizationBridgePath = fs.realpathSync(
+    path.resolve("src/agents/provider-model-normalization.runtime.ts"),
   );
   const playwrightRuntimePath = fs.realpathSync(
     path.resolve("extensions/browser/src/browser/playwright-core.runtime.ts"),
@@ -61,6 +66,9 @@ export function createWorkerDeployBuildPlugin(rootDir = process.cwd()) {
       }
       if (resolvedId === browserRuntimeBridgePath) {
         return WORKER_BROWSER_RUNTIME_COMPOSITION;
+      }
+      if (resolvedId === modelNormalizationBridgePath) {
+        return WORKER_MODEL_NORMALIZATION_COMPOSITION;
       }
       if (resolvedId === playwrightRuntimePath) {
         return WORKER_PLAYWRIGHT_RUNTIME;

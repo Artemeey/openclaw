@@ -344,7 +344,11 @@ export function listAgentsForGateway(
   const agents = roster.map((entry) => {
     const { id } = entry;
     const meta = configuredById.get(id);
-    const resolvedModel = resolveDefaultModelForAgent({ cfg, agentId: id });
+    const resolvedModel = resolveDefaultModelForAgent({
+      cfg,
+      agentId: id,
+      allowPluginNormalization: false,
+    });
     const model = resolveGatewayAgentModel(cfg, id, resolvedModel);
     const sessionKey = resolveAgentMainSessionKey({ cfg, agentId: id });
     const agentRuntime = projectWorkerPlacementAgentRuntime(

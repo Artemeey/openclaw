@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterAll, beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
 import { writeAcpSessionMetaForMigration } from "../acp/runtime/session-meta.js";
 import { resolveLegacyInheritedAuthAgentId } from "../agents/legacy-inherited-auth-dir.js";
+import * as providerModelNormalizationRuntime from "../agents/provider-model-normalization.runtime.js";
 import { resetConfigRuntimeState, setRuntimeConfigSnapshot } from "../config/config.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
@@ -36,6 +37,7 @@ import {
   getSessionDefaults,
   projectSessionPatchResult,
   resolveGatewayModelSupportsImages,
+  resolveSessionDisplayModelIdentityRefCached,
 } from "./session-utils-model.js";
 import {
   buildSessionListRowContext,
@@ -3956,6 +3958,46 @@ describe("gateway session utils", () => {
   });
 
   describe("listAgentsForGateway resolved model projection", () => {
+    test("resolves inventory aliases without executing provider model normalizers", async () => {
+      const normalizeModel = vi
+        .spyOn(providerModelNormalizationRuntime, "normalizeProviderModelIdWithRuntime")
+        .mockReturnValue("runtime-only-model");
+      onTestFinished(() => normalizeModel.mockRestore());
+      await withStateDirEnv("openclaw-agent-inventory-model-", async ({ tempRoot }) => {
+        const cfg: OpenClawConfig = {
+          agents: {
+            ownership: "explicit",
+            defaults: {
+              model: { primary: "inventory-alias" },
+              models: {
+                "fixture-inventory/canonical-model": {
+                  alias: "inventory-alias",
+                  agentRuntime: { id: "openclaw" },
+                },
+              },
+            },
+            entries: { main: { workspace: path.join(tempRoot, "workspace") } },
+          },
+        };
+        const agent = listAgentsForGateway(cfg, [
+          {
+            provider: "fixture-inventory",
+            id: "canonical-model",
+            name: "Inventory model",
+            reasoning: false,
+          },
+        ]).agents[0];
+
+        expect(agent).toMatchObject({
+          model: { primary: "fixture-inventory/canonical-model" },
+          agentRuntime: { id: "openclaw", source: "model" },
+          thinkingDefault: "off",
+        });
+        expect(agent?.thinkingLevels?.map((level) => level.id)).toEqual(["off"]);
+        expect(normalizeModel).not.toHaveBeenCalled();
+      });
+    });
+
     test("publishes one resolved identity for model, runtime, and thinking capabilities", () => {
       const cfg = {
         agents: {
@@ -4006,6 +4048,27 @@ describe("gateway session utils", () => {
 });
 
 describe("listSessionsFromStore selected model display", () => {
+  test.each(["selected-model", "fixture-display/selected-model"])(
+    "projects CLI display model %s without executing provider model normalizers",
+    (model) => {
+      const normalizeModel = vi
+        .spyOn(providerModelNormalizationRuntime, "normalizeProviderModelIdWithRuntime")
+        .mockReturnValue("runtime-only-model");
+      onTestFinished(() => normalizeModel.mockRestore());
+      const cfg = createModelDefaultsConfig({ primary: "fixture-display/default-model" });
+
+      expect(
+        resolveSessionDisplayModelIdentityRefCached({
+          cfg,
+          agentId: "main",
+          provider: "claude-cli",
+          model,
+        }),
+      ).toEqual({ provider: "fixture-display", model: "selected-model" });
+      expect(normalizeModel).not.toHaveBeenCalled();
+    },
+  );
+
   test("async list yields during bulk transcript title and last-message hydration", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-sessions-list-yield-"));
     try {

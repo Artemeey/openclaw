@@ -80,7 +80,6 @@ type ListSessionsFromStoreParams = {
   storePath: string;
   store: Record<string, SessionEntry>;
   modelCatalog?: SessionListModelCatalog | ModelCatalogEntry[];
-  lightweightListRows?: boolean;
   opts: SessionsListParams;
   involvingActorId?: string;
   ownerFirstActorId?: string;
@@ -527,8 +526,7 @@ function buildSessionsListResult(params: {
     hasMore: list.hasMore,
     owners: list.ownerFacet,
     defaults: getSessionDefaults(params.cfg, defaultsCatalog, {
-      ...(params.agentId ? { agentId: params.agentId } : {}),
-      allowPluginNormalization: false,
+      agentId: params.agentId,
     }),
     sessions,
   };
@@ -576,8 +574,8 @@ export function listSessionsFromStore(params: ListSessionsFromStoreParams): Sess
       storeChildSessionsByKey,
       rowContext: list.rowContext,
       configuredAgentIds: list.configuredAgentIds,
-      skipTranscriptUsageFallback: params.lightweightListRows === true,
-      lightweightListRow: params.lightweightListRows === true,
+      skipTranscriptUsageFallback: true,
+      lightweightListRow: true,
     });
   });
   return buildSessionsListResult({

@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   createPluginMetadataOwner,
@@ -11,7 +11,6 @@ import {
 } from "../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { projectPluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
-import { normalizeProviderModelIdWithPlugin } from "../plugins/provider-runtime.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import {
   captureActivePluginRegistrySnapshot,
@@ -28,11 +27,12 @@ import {
 } from "../plugins/test-helpers/cold-plugin-fixtures.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { buildAllowedModelSet, buildModelAliasIndex } from "./model-selection.js";
-import * as providerModelNormalizationRuntime from "./provider-model-normalization.runtime.js";
 import { resolveSessionModelIdentityRef, resolveSessionModelRef } from "./session-model-ref.js";
 
 function modelConfig(primary: string, models?: Record<string, object>): OpenClawConfig {
   return {
+    // Precedence-only fixtures do not need executable bundled providers.
+    plugins: { enabled: false },
     agents: {
       defaults: { model: { primary }, ...(models ? { models } : {}) },
       list: [{ id: "main", default: true }],
@@ -262,11 +262,6 @@ describe("resolveSessionModelRef", () => {
   ])(
     "keeps $scope model hooks within their owner after removing the system agent",
     async ({ scope, model }) => {
-      // Native require bypasses Vitest's module graph; only bridge module loading,
-      // leaving the real provider normalizer and registry selection under test.
-      const bridge = vi
-        .spyOn(providerModelNormalizationRuntime, "normalizeProviderModelIdWithRuntime")
-        .mockImplementation(normalizeProviderModelIdWithPlugin);
       const previousRegistry = captureActivePluginRegistrySnapshot();
       try {
         await withPreparedSessionMetadata((config, metadata, owner) => {
@@ -318,7 +313,6 @@ describe("resolveSessionModelRef", () => {
         }, true);
       } finally {
         restoreActivePluginRegistrySnapshot(previousRegistry);
-        bridge.mockRestore();
       }
     },
   );

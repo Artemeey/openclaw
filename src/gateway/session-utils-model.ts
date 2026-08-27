@@ -297,7 +297,7 @@ export function resolveGatewaySessionThinkingProjectionInternal(
 export function getSessionDefaults(
   cfg: OpenClawConfig,
   modelCatalog?: ModelCatalogEntry[],
-  options?: { agentId?: string; allowPluginNormalization?: boolean },
+  options?: { agentId?: string },
 ): GatewaySessionsDefaults {
   const agentId = normalizeAgentId(
     options?.agentId ?? tryResolveLegacyCompatibilityAgentId(cfg) ?? LEGACY_IMPLICIT_AGENT_ID,
@@ -306,13 +306,13 @@ export function getSessionDefaults(
     ? resolveDefaultModelForAgent({
         cfg,
         agentId,
-        allowPluginNormalization: options.allowPluginNormalization,
+        allowPluginNormalization: false,
       })
     : resolveConfiguredModelRef({
         cfg,
         defaultProvider: DEFAULT_PROVIDER,
         defaultModel: DEFAULT_MODEL,
-        allowPluginNormalization: options?.allowPluginNormalization,
+        allowPluginNormalization: false,
       });
   const catalogEntry = modelCatalog
     ? findModelCatalogEntry(modelCatalog, {
@@ -611,10 +611,19 @@ function resolveSessionDisplayModelIdentityRef(params: {
     return { provider, model };
   }
 
-  const defaultRef = resolveDefaultModelForAgent({ cfg: params.cfg, agentId: params.agentId });
-  const manifestContext = createModelManifestPluginContext(params);
+  const manifestPluginContext = createModelManifestPluginContext(params);
+  const normalization = {
+    ...manifestPluginContext.getContext(),
+    allowPluginNormalization: false,
+  };
+  const defaultRef = resolveDefaultModelForAgent({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    manifestPluginContext,
+    ...normalization,
+  });
   if (model.includes("/")) {
-    const parsedModel = parseModelRef(model, defaultRef.provider, manifestContext.getContext());
+    const parsedModel = parseModelRef(model, defaultRef.provider, normalization);
     if (parsedModel && !isCliProvider(parsedModel.provider, params.cfg)) {
       return parsedModel;
     }
@@ -624,12 +633,13 @@ function resolveSessionDisplayModelIdentityRef(params: {
     cfg: params.cfg,
     model,
     agentId: params.agentId,
+    manifestPluginContext,
   });
   if (inferredProvider && !isCliProvider(inferredProvider, params.cfg)) {
     return { provider: inferredProvider, model };
   }
 
-  const parsedModel = parseModelRef(model, defaultRef.provider, manifestContext.getContext());
+  const parsedModel = parseModelRef(model, defaultRef.provider, normalization);
   if (parsedModel && !isCliProvider(parsedModel.provider, params.cfg)) {
     return parsedModel;
   }

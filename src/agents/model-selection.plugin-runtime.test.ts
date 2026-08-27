@@ -96,6 +96,33 @@ describe("model-selection plugin runtime normalization", () => {
     expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
   });
 
+  it("keeps allowed model selection on manifest policy without executable hooks", async () => {
+    normalizeProviderModelIdWithPluginMock.mockReturnValue("runtime-only-model");
+    const { resolveAllowedModelRefCore } = await import("./model-selection-resolve.js");
+
+    expect(
+      resolveAllowedModelRefCore({
+        cfg: {
+          agents: {
+            defaults: {
+              modelPolicy: { allow: ["google/gemini-3.1-pro"] },
+              models: { "google/gemini-3.1-pro": { alias: "approved" } },
+            },
+          },
+        },
+        catalog: [
+          { provider: "google", id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
+        ],
+        raw: "google/gemini-3.1-pro",
+        defaultProvider: "google",
+      }),
+    ).toEqual({
+      key: "google/gemini-3.1-pro-preview",
+      ref: { provider: "google", model: "gemini-3.1-pro-preview" },
+    });
+    expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
+  });
+
   it("keeps provider plugin normalization when inferring provider for bare defaults", async () => {
     normalizeProviderModelIdWithPluginMock.mockImplementation(({ provider, context }) => {
       if (

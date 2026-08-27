@@ -86,6 +86,9 @@ type WorkerInferenceSessionTarget = Pick<
 
 type WorkerInferenceUsageParams = {
   config: OpenClawConfig;
+  agentDir: string;
+  workspaceDir: string;
+  pluginMetadataSnapshot: PreparedModelRuntimeSnapshot["metadataSnapshot"];
   target: WorkerInferenceSessionTarget;
   request: WorkerInferenceStartParams;
   model: Model;
@@ -283,6 +286,10 @@ function emitWorkerInferenceUsage(params: WorkerInferenceUsageParams): void {
       provider: params.model.provider,
       model: params.model.id,
       config: params.config,
+      agentId: params.target.agentId,
+      agentDir: params.agentDir,
+      workspaceDir: params.workspaceDir,
+      pluginMetadataSnapshot: params.pluginMetadataSnapshot,
     }),
   });
   emitTrustedDiagnosticEvent({
@@ -662,6 +669,9 @@ export function createWorkerInferenceExecutor(
           usageRecorded = true;
           dependencies.recordUsage({
             config: approved.config,
+            agentDir: approved.agentDir,
+            workspaceDir: approved.workspaceDir,
+            pluginMetadataSnapshot: approved.runtimeSnapshot.metadataSnapshot,
             target,
             request,
             model,

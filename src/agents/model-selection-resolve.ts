@@ -55,19 +55,22 @@ export function resolveAllowedModelRefCore(
   | {
       error: string;
     } {
+  // Candidate refs and their allowlist must use the same static policy; runtime
+  // hooks normalize the selected ref later, inside its acquired generation.
+  const policyParams = { ...params, allowPluginNormalization: false };
   const manifestPluginContext =
-    params.manifestPluginContext ?? createModelManifestPluginContext(params);
+    params.manifestPluginContext ?? createModelManifestPluginContext(policyParams);
   const aliasIndex = buildModelAliasIndex({
-    ...params,
+    ...policyParams,
     manifestPluginContext,
   });
   return resolveAllowedModelRefFromAliasIndex({
-    ...params,
+    ...policyParams,
     manifestPluginContext,
     aliasIndex,
     getStatus: (ref) =>
       getModelRefStatus({
-        ...params,
+        ...policyParams,
         manifestPluginContext,
         ref,
       }),

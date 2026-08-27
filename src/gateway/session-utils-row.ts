@@ -359,6 +359,7 @@ export function buildGatewaySessionRow(params: {
     !skipTranscriptUsage &&
     resolveEstimatedSessionCostUsd({
       cfg,
+      agentId: sessionAgentId,
       provider: resolvedModel.provider,
       model: resolvedModel.model ?? DEFAULT_MODEL,
       entry,
@@ -434,6 +435,7 @@ export function buildGatewaySessionRow(params: {
     ? asNonNegativeFiniteNumber(entry?.estimatedCostUsd)
     : (resolveEstimatedSessionCostUsd({
         cfg,
+        agentId: sessionAgentId,
         provider: rowModelProvider,
         model: rowModel,
         entry,

@@ -1,10 +1,21 @@
 // Coverage for building compaction runtime context from active runner state.
+import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { formatSqliteSessionFileMarker } from "../../config/sessions/legacy-sqlite-marker.js";
 import * as manifestModelIdNormalization from "../../plugins/manifest-model-id-normalization.js";
+import {
+  createPluginMetadataOwner,
+  installPluginMetadataOwner,
+} from "../../plugins/plugin-metadata-collection.js";
+import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadata-lifecycle.js";
+import {
+  createColdPluginFixture,
+  isColdPluginRuntimeLoaded,
+} from "../../plugins/test-helpers/cold-plugin-fixtures.js";
+import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
 import { addSession, deleteSession } from "../bash-process-registry.js";
 import { createProcessSessionFixture } from "../bash-process-registry.test-helpers.js";
 import * as providerModelNormalizationRuntime from "../provider-model-normalization.runtime.js";
@@ -705,6 +716,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
 
   it("resolves a mixed-case compaction model alias with a trailing profile on its provider", () => {
     const result = resolveEmbeddedCompactionTarget({
+      allowPluginNormalization: false,
       config: {
         agents: {
           defaults: {
@@ -731,6 +743,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
 
   it("resolves compaction.model alias to canonical model ref on different provider", () => {
     const result = resolveEmbeddedCompactionTarget({
+      allowPluginNormalization: false,
       config: {
         agents: {
           defaults: {
@@ -753,6 +766,82 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
     expect(result.model).toBe("claude-opus-4-6");
     // Auth profile must be dropped when provider changes
     expect(result.authProfileId).toBeUndefined();
+  });
+
+  it("uses the requested published workspace for compaction aliases", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+      const workspaces = new Map([
+        ["main", state.workspaceDir],
+        ["work", state.path("work")],
+      ]);
+      const fixtures = [];
+      for (const [agentId, workspaceDir] of workspaces) {
+        const rootDir = path.join(workspaceDir, ".openclaw", "extensions", `${agentId}-normalizer`);
+        await fs.mkdir(rootDir, { recursive: true });
+        fixtures.push(
+          createColdPluginFixture({
+            rootDir,
+            pluginId: `${agentId}-normalizer`,
+            manifest: {
+              providers: ["workspace-custom"],
+              channels: [],
+              channelConfigs: {},
+              providerAuthChoices: [],
+              modelIdNormalization: {
+                providers: {
+                  "workspace-custom": { aliases: { legacy: `${agentId}-current` } },
+                },
+              },
+            },
+          }),
+        );
+      }
+      const config: OpenClawConfig = {
+        plugins: {
+          allow: fixtures.map(({ pluginId }) => pluginId),
+          entries: Object.fromEntries(
+            fixtures.map(({ pluginId }) => [pluginId, { enabled: true }]),
+          ),
+        },
+        agents: {
+          ownership: "explicit",
+          defaults: {
+            systemAgent: { agentId: "main" },
+            models: { "workspace-custom/legacy": { alias: "summary" } },
+            compaction: { model: "summary" },
+          },
+          entries: Object.fromEntries(
+            [...workspaces].map(([agentId, workspace]) => [agentId, { workspace }]),
+          ),
+        },
+      };
+      const owner = createPluginMetadataOwner();
+      const dispose = installPluginMetadataOwner(owner);
+      const normalizeProviderModelId = vi
+        .spyOn(providerModelNormalizationRuntime, "normalizeProviderModelIdWithRuntime")
+        .mockReturnValue(undefined);
+      try {
+        const metadata = owner.prepare({ config });
+        owner.publish(metadata, { config });
+        expect(metadata.selectedSnapshot.workspaceDir).toBe(state.workspaceDir);
+
+        const resolved = ["work", "main"].map((agentId) =>
+          buildEmbeddedCompactionRuntimeContext({
+            config,
+            workspaceDir: workspaces.get(agentId)!,
+            provider: "workspace-custom",
+            modelId: "session-model",
+          }),
+        );
+
+        expect(resolved.map(({ model }) => model)).toEqual(["work-current", "main-current"]);
+        expect(fixtures.some(isColdPluginRuntimeLoaded)).toBe(false);
+      } finally {
+        normalizeProviderModelId.mockRestore();
+        dispose();
+        clearPluginMetadataLifecycleCaches();
+      }
+    });
   });
 
   it("preserves the full literal model and profile when no configured alias matches", () => {
@@ -782,6 +871,7 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
 
   it("preserves auth when an omitted provider uses the effective default", () => {
     const result = resolveEmbeddedCompactionTarget({
+      allowPluginNormalization: false,
       config: {
         agents: {
           defaults: {
