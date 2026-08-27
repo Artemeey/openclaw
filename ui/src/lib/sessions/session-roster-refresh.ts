@@ -47,7 +47,12 @@ type SessionRosterRefreshHost = {
     scope?: string,
   ) => void;
   retireCanonicalScope: (scope: string) => void;
-  onCanonicalList: (result: SessionsListResult | null) => void;
+  onCanonicalList: (
+    result: SessionsListResult | null,
+    requestRevision: number,
+    agentId?: string,
+    observed?: SessionsListResult | null,
+  ) => void;
 };
 
 const PRIMARY_LIST_SCOPE = "primary";
@@ -85,9 +90,7 @@ function managedSessionListAgentId(entry: ManagedSessionList): string | undefine
   return typeof entry.query.agentId === "string" ? entry.query.agentId : undefined;
 }
 
-function managedSessionListScope(entry: ManagedSessionList): string {
-  return `managed:${entry.key}`;
-}
+const managedSessionListScope = (entry: ManagedSessionList): string => `managed:${entry.key}`;
 
 function isPrimarySessionListQuery(options: SessionListScope): boolean {
   if (options.includeDerivedTitles === false || options.includeLastMessage === false) {
@@ -160,11 +163,11 @@ function retainSessionPaginationWindow(
 }
 
 export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
+  let requestRevision = 0;
   let inFlight: Promise<void> | null = null;
   let queuedExplicitRefresh: SessionRefreshOptions | null = null;
   let eventRefreshQueued = false;
   let lastListOptions: SessionListOptions = {};
-  let requestRevision = 0;
   let listOptionsSource: "none" | "seeded" | "foreground" = "none";
   const observesPageLifecycle =
     typeof document !== "undefined" && typeof globalThis.addEventListener === "function";
@@ -317,6 +320,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     if (!scope) {
       return null;
     }
+    const issuedRevision = ++requestRevision;
     const { append = false, force: _force, backgroundHydrate = false, ...requestOptions } = options;
     // Every canonical roster replaces visible session names, so omitted title
     // enrichment must inherit the UI default instead of publishing fallback ids.
@@ -339,7 +343,6 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
       );
     }
     try {
-      const currentRequestRevision = ++requestRevision;
       const listParams = buildSessionListParams(requestOptions);
       let result = bootstrap ? await host.bootstrap(scope, listParams) : null;
       if (bootstrap && !host.connection.isCurrent(scope)) {
@@ -349,11 +352,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
       if (!host.connection.isCurrent(scope)) {
         return null;
       }
-      host.observeCanonicalRows(
-        result,
-        currentRequestRevision,
-        append ? undefined : PRIMARY_LIST_SCOPE,
-      );
+      host.observeCanonicalRows(result, issuedRevision, append ? undefined : PRIMARY_LIST_SCOPE);
       const currentState = host.readState();
       const mergeWithCurrent = append && typeof requestOptions.offset === "number";
       let nextResult =
@@ -380,9 +379,9 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
       nextResult = host.decorate(
         nextResult,
         append ? undefined : PRIMARY_LIST_SCOPE,
-        currentRequestRevision,
+        issuedRevision,
       );
-      host.onCanonicalList(nextResult);
+      host.onCanonicalList(nextResult, issuedRevision, requestOptions.agentId, result);
       const state = host.readState();
       const error = host.observerError();
       host.publish(
@@ -559,6 +558,9 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
   };
 
   return {
+    get requestRevision() {
+      return requestRevision;
+    },
     list,
     listSnapshot(scope: SessionListScope): SessionListSnapshot {
       if (isPrimarySessionListQuery(scope)) {
@@ -714,6 +716,7 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
         entry.pending = entry.queued = null;
         if (entry.listeners.size === 0) {
           entry.coordinator.dispose();
+          host.retireCanonicalScope(managedSessionListScope(entry));
           managedLists.delete(entry.key);
           continue;
         }

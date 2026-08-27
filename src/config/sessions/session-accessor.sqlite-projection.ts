@@ -282,8 +282,7 @@ export async function applySessionEntryLifecycleMutation(params: {
   let materializedRemovalPlans: MaterializedSessionStateDeletePlan[] = [];
   let removalArchiveMaterializationFailed = false;
   const committed = await runPreparedSqliteSessionWrite(resolved, async () => {
-    const database = openOpenClawAgentDatabase(toDatabaseOptions(resolved));
-    projected = await projectSessionEntryLifecycleMutation(database, {
+    projected = await projectSessionEntryLifecycleMutation(toDatabaseOptions(resolved), {
       ...(params.allowCanonicalRepair ? { allowCanonicalRepair: true } : {}),
       archiveDirectory: resolveSqliteTranscriptArchiveDirectory(resolved),
       removals,
@@ -374,7 +373,7 @@ export async function applySessionEntryLifecycleMutation(params: {
         entry,
         expectedEntry,
         routeContext,
-        resetBoundaryReason,
+        resetBoundary,
       } of projected.upsertedEntries) {
         const sameKeyRemoval = validatedRemovals.find(
           (removal) => removal.sessionKey === sessionKey,
@@ -401,10 +400,10 @@ export async function applySessionEntryLifecycleMutation(params: {
         if (sameKeyRemoval && !shouldRemoveSessionEntry(currentEntry, sameKeyRemoval.removal)) {
           throw new Error(`SQLite session entry has stale lifecycle state for ${sessionKey}`);
         }
-        if (resetBoundaryReason && expectedEntry?.sessionId) {
+        if (resetBoundary && expectedEntry?.sessionId) {
           const event = buildSessionResetBoundaryEvent({
             events: loadTranscriptEventsFromDatabase(transactionDb, expectedEntry.sessionId),
-            reason: resetBoundaryReason,
+            ...resetBoundary,
           });
           const appended = appendTranscriptEventsInTransaction(
             transactionDb,
