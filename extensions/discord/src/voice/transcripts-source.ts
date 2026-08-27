@@ -12,11 +12,24 @@ import { listEnabledDiscordAccounts, resolveDiscordAccount } from "../accounts.j
 import { authorizeDiscordVoiceIngress } from "./access.js";
 import { resolveDiscordVoiceEnabled } from "./config.js";
 import { resolveDiscordVoiceAccess } from "./owner-access.js";
-import type { VoiceSessionEntry } from "./session.js";
-import type { DiscordVoiceManager } from "./voice-runtime.js";
+import type { VoiceOperationResult, VoiceSessionEntry } from "./session.js";
 
-const managersByAccountId = new Map<string, DiscordVoiceManager>();
 type CaptureSource = { accountId: string; guildId: string; channelId: string };
+type CaptureTarget = Pick<CaptureSource, "guildId" | "channelId">;
+type DiscordTranscriptsManager = {
+  resolveAccessTarget: (
+    target: CaptureTarget,
+  ) => Promise<
+    | Pick<
+        Parameters<typeof authorizeDiscordVoiceIngress>[0],
+        "guild" | "channelName" | "channelSlug" | "parentId" | "parentName" | "parentSlug" | "scope"
+      >
+    | undefined
+  >;
+  startTranscriptsCapture: (target: CaptureTarget) => Promise<VoiceOperationResult>;
+  stopTranscriptsCapture: (target: CaptureTarget) => Promise<void>;
+};
+const managersByAccountId = new Map<string, DiscordTranscriptsManager>();
 type CaptureRegistration = NonNullable<VoiceSessionEntry["transcripts"]> & {
   source: CaptureSource;
   started: boolean;
@@ -30,7 +43,7 @@ function captureKey(source: CaptureSource): string {
 
 export function resolveDiscordTranscriptsCapture(
   source: CaptureSource,
-  manager: DiscordVoiceManager,
+  manager: DiscordTranscriptsManager,
 ): CaptureRegistration | undefined {
   return managersByAccountId.get(source.accountId) === manager
     ? captures.get(captureKey(source))
@@ -57,8 +70,8 @@ function summarizeAccountIdsForError(accountIds: readonly string[]): string {
 
 export function setDiscordTranscriptsVoiceManager(
   params: { accountId: string } & (
-    | { manager: DiscordVoiceManager }
-    | { manager: null; expectedManager: DiscordVoiceManager }
+    | { manager: DiscordTranscriptsManager }
+    | { manager: null; expectedManager: DiscordTranscriptsManager }
   ),
 ): void {
   if (managersByAccountId.get(params.accountId) === params.manager) {
@@ -163,7 +176,7 @@ const resolveDiscordTranscriptsAccountId: NonNullable<
 async function waitForManager(
   request: TranscriptStartRequest,
 ): Promise<
-  | { ok: true; value: { accountId: string; manager: DiscordVoiceManager } | undefined }
+  | { ok: true; value: { accountId: string; manager: DiscordTranscriptsManager } | undefined }
   | { ok: false; error: string }
 > {
   const accountResolution = resolveDiscordTranscriptsAccountId({

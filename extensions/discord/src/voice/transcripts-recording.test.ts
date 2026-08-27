@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { PassThrough } from "node:stream";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { createDeferred } from "../../../../test/helpers/promise.js";
 import { defineDiscordVoiceTests } from "./voice-test-harness.test-support.js";
 
 defineDiscordVoiceTests(
@@ -357,27 +358,56 @@ defineDiscordVoiceTests(
 
     it("flushes bounded contiguous long speech with ingress timestamps", async () => {
       const f = await fixture();
+      const packetCount = 130;
+      const processed = createDeferred();
+      decodeOpusStreamChunksMock.mockImplementationOnce(async (input, params) => {
+        let decodedPackets = 0;
+        try {
+          for await (const packet of input) {
+            await params.onChunk(packet, packet);
+            decodedPackets += 1;
+            if (decodedPackets === packetCount) {
+              processed.resolve();
+            }
+          }
+          if (decodedPackets < packetCount) {
+            processed.reject(new Error("Voice input ended before all test packets were processed"));
+          }
+        } catch (error) {
+          processed.reject(error);
+          params.onError?.(error);
+        }
+      });
       await startTranscripts(f.manager, f.sink);
       const startedBefore = Date.now();
       const receiving = f.begin("guest");
       await vi.waitFor(() => expect(f.streams.has("guest")).toBe(true));
       const stream = f.streams.get("guest")!;
       const frame = Buffer.alloc(192_000, 7);
-      const clock = vi.spyOn(Date, "now");
-      for (let second = 0; second < 130; second++) {
-        clock.mockReturnValue(startedBefore + second * 1_000);
-        stream.write(frame);
+      try {
+        const clock = vi.spyOn(Date, "now");
+        try {
+          for (let second = 0; second < packetCount; second++) {
+            clock.mockReturnValue(startedBefore + second * 1_000);
+            stream.write(frame);
+          }
+        } finally {
+          clock.mockRestore();
+        }
+        // Observe the real WAV write/queue work, not a one-second disk deadline.
+        await processed.promise;
+        await f.entry.processingQueue;
+        expect(transcribeAudioFileMock).toHaveBeenCalled();
+      } finally {
+        stream.end();
+        await receiving;
+        await f.entry.processingQueue;
       }
-      clock.mockRestore();
-      await vi.waitFor(() => expect(transcribeAudioFileMock).toHaveBeenCalled());
-      stream.end();
-      await receiving;
-      await f.entry.processingQueue;
       const utterances = f.sink.mock.calls.map(([u]) => u);
       expect(utterances.length).toBeGreaterThan(1);
       expect(utterances.every((u) => u.speaker.id === "guest")).toBe(true);
       expect(utterances.reduce((bytes, u) => bytes + Number(u.text.split("-")[2]), 0)).toBe(
-        130 * frame.length,
+        packetCount * frame.length,
       );
       expect(Date.parse(utterances[0].startedAt)).toBeGreaterThanOrEqual(startedBefore);
       expect(

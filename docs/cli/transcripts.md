@@ -186,6 +186,12 @@ account routing. Use that agent to inspect or summarize its notes; native
 account access checks still apply. Existing notes are not reassigned when
 bindings change.
 
+Run the `transcripts` tool with `action: "status"` to discover active capture IDs
+and their sources, then pass the full `sessionId` to `summarize` or `stop`.
+The visible listing shows up to five sessions within 2,000 characters and reports
+omissions. IDs are never shortened; structured `details.active` retains all
+sessions the caller can access.
+
 Discord `voice.autoJoin` alone does not record. An explicit `transcripts` tool
 start or the `autoStart` entry above subscribes to the selected account, guild,
 and channel. When that source matches the account's configured voice auto-join

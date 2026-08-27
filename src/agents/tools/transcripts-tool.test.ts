@@ -820,7 +820,6 @@ describe("transcripts tool", () => {
               accountId,
               guildId: "guild-a",
               channelId: "room-a",
-              sessionId: "routed-notes",
             },
           ],
         },
@@ -855,23 +854,30 @@ describe("transcripts tool", () => {
       service.start();
       try {
         await vi.waitFor(() => expect(start).toHaveBeenCalledOnce());
-        await expect(storeFor(stateDir).readSession("routed-notes")).resolves.toMatchObject({
+        const sessionId = start.mock.calls[0]![0].session.sessionId;
+        await expect(storeFor(stateDir).readSession(sessionId)).resolves.toMatchObject({
           metadata: { agentId: "research" },
           source: { agentId: "research", accountId: "account-a" },
         });
-        await expect(
-          ownerTool.execute("routed-status", { action: "status" }),
-        ).resolves.toMatchObject({
-          details: { active: [expect.objectContaining({ sessionId: "routed-notes" })] },
+        const statusResult = await ownerTool.execute("routed-status", { action: "status" });
+        expect(statusResult).toMatchObject({
+          content: [{ type: "text", text: expect.stringContaining(sessionId) }],
+          details: { active: [expect.objectContaining({ sessionId })] },
         });
+        for (const identity of ["room-audio", "account-a", "guild-a", "room-a"]) {
+          expect(statusResult.content).toEqual([
+            { type: "text", text: expect.stringContaining(identity) },
+          ]);
+        }
         await expect(
           otherTool.execute("other-status", { action: "status" }),
         ).resolves.toMatchObject({
+          content: [{ type: "text", text: expect.not.stringContaining(sessionId) }],
           details: { active: [] },
         });
         await expect(
-          ownerTool.execute("routed-summary", { action: "summarize", sessionId: "routed-notes" }),
-        ).resolves.toMatchObject({ details: { sessionId: "routed-notes" } });
+          ownerTool.execute("routed-summary", { action: "summarize", sessionId }),
+        ).resolves.toMatchObject({ details: { sessionId } });
       } finally {
         await service.stop();
       }
