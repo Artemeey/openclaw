@@ -8,6 +8,7 @@ import type { OpenClawPackageManifest } from "./manifest.js";
 import type { PluginMetadataSnapshot } from "./plugin-metadata-snapshot.types.js";
 import type { PluginRegistrySnapshot } from "./plugin-registry.js";
 import { createEmptyPluginRegistry } from "./registry-empty.js";
+import { createPluginRecord } from "./status.test-helpers.js";
 import type { ProviderPlugin } from "./types.js";
 
 type ResolveRuntimePluginRegistry = typeof import("./loader.js").resolveRuntimePluginRegistry;
@@ -100,6 +101,29 @@ function setManifestPlugin(params: ManifestProviderPluginFixture) {
   const plugin = createManifestProviderPlugin(params);
   setManifestPlugins([plugin]);
   return plugin;
+}
+
+function createProviderRuntimeRegistryFixture(
+  manifest: PluginManifestRecord,
+  provider: ProviderPlugin,
+) {
+  const registry = createEmptyPluginRegistry();
+  registry.plugins.push(
+    createPluginRecord({
+      id: manifest.id,
+      origin: manifest.origin,
+      rootDir: manifest.rootDir,
+      source: manifest.source,
+      providerIds: [provider.id],
+    }),
+  );
+  registry.providers.push({
+    pluginId: manifest.id,
+    provider,
+    source: manifest.source,
+    rootDir: manifest.rootDir,
+  });
+  return registry;
 }
 
 function createOwningProviderManifestPlugins() {
@@ -487,6 +511,7 @@ describe("resolvePluginProviders", () => {
       const loadSnapshot = (params: Parameters<LoadPluginMetadataSnapshot>[0]) => {
         loadPluginMetadataSnapshotMock(params);
         return {
+          workspaceDir: params?.workspaceDir,
           manifestRegistry: loadPluginManifestRegistryMock(),
           index: createProviderRegistrySnapshotFixture(),
         };
@@ -766,8 +791,12 @@ describe("resolvePluginProviders", () => {
       label: "Demo Provider",
       auth: [],
     };
-    const registry = createEmptyPluginRegistry();
-    registry.providers.push({ pluginId: "google", provider, source: "bundled" });
+    const google = createManifestProviderPlugin({
+      id: "google",
+      providerIds: ["google"],
+      enabledByDefault: true,
+    });
+    const registry = createProviderRuntimeRegistryFixture(google, provider);
     resolveRuntimePluginRegistryMock.mockReturnValue(registry);
     getRuntimePluginRegistryForLoadOptionsMock.mockImplementation((...args) =>
       resolveRuntimePluginRegistryMock(...args),
@@ -783,11 +812,7 @@ describe("resolvePluginProviders", () => {
       }),
     );
     setManifestPlugins([
-      createManifestProviderPlugin({
-        id: "google",
-        providerIds: ["google"],
-        enabledByDefault: true,
-      }),
+      google,
       createManifestProviderPlugin({ id: "browser", providerIds: [] }),
       createManifestProviderPlugin({
         id: "kilocode",
@@ -1648,7 +1673,7 @@ describe("resolvePluginProviders", () => {
   });
 
   it("preserves LM Studio @iq* quant suffixes when resolving model-owned provider plugins", () => {
-    setManifestPlugin({
+    const manifest = setManifestPlugin({
       id: "lmstudio",
       providerIds: ["lmstudio"],
       modelSupport: {
@@ -1660,8 +1685,7 @@ describe("resolvePluginProviders", () => {
       label: "LM Studio",
       auth: [],
     };
-    const registry = createEmptyPluginRegistry();
-    registry.providers.push({ pluginId: "lmstudio", provider, source: "bundled" });
+    const registry = createProviderRuntimeRegistryFixture(manifest, provider);
     resolveRuntimePluginRegistryMock.mockReturnValue(registry);
 
     expectModelOwningPluginIds("qwen3.6-27b@iq3_xxs", ["lmstudio"]);
@@ -1687,7 +1711,7 @@ describe("resolvePluginProviders", () => {
   });
 
   it("auto-loads a model-owned provider plugin from shorthand model refs", () => {
-    setManifestPlugin({
+    const manifest = setManifestPlugin({
       id: "openai",
       providerIds: ["openai", "openai"],
       modelSupport: {
@@ -1699,8 +1723,7 @@ describe("resolvePluginProviders", () => {
       label: "OpenAI",
       auth: [],
     };
-    const registry = createEmptyPluginRegistry();
-    registry.providers.push({ pluginId: "openai", provider, source: "bundled" });
+    const registry = createProviderRuntimeRegistryFixture(manifest, provider);
     resolveRuntimePluginRegistryMock.mockReturnValue(registry);
 
     const providers = resolvePluginProviders({

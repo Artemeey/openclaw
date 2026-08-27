@@ -4,10 +4,13 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { setCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-snapshot.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
 import type { InstalledPluginIndex } from "./installed-plugin-index.js";
+import * as pluginLoader from "./loader.js";
 import type { PluginManifestRecord, PluginManifestRegistry } from "./manifest-registry.js";
 import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
 import { loadPluginMetadataSnapshot } from "./plugin-metadata-snapshot.js";
-import { resetPluginRuntimeStateForTest } from "./runtime.js";
+import { createEmptyPluginRegistry } from "./registry-empty.js";
+import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "./runtime.js";
+import { createPluginRecord } from "./status.test-helpers.js";
 
 // Mock the persisted-registry loaders so direct metadata loads are observable.
 // Provider hot paths should reuse a compatible current snapshot and only fall
@@ -123,6 +126,7 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     clearPluginMetadataLifecycleCaches();
     resetPluginRuntimeStateForTest();
   });
@@ -174,6 +178,56 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
   });
 
   describe("resolvePluginProvidersCore", () => {
+    it.each([
+      { source: "active", expectedLabels: ["Prepared demo"] },
+      { source: "cached", expectedLabels: [] },
+    ])(
+      "rejects a same-ID provider from another source in the $source registry",
+      ({ source, expectedLabels }) => {
+        const config: OpenClawConfig = { plugins: { entries: { demo: { enabled: true } } } };
+        const snapshot = registerCurrentSnapshot(config);
+        const createRegistry = (rootDir: string, label: string) => {
+          const registry = createEmptyPluginRegistry();
+          registry.plugins.push(
+            createPluginRecord({
+              id: "demo",
+              origin: "global",
+              rootDir,
+              source: `${rootDir}/index.js`,
+              providerIds: ["demo"],
+            }),
+          );
+          registry.providers.push({
+            pluginId: "demo",
+            rootDir,
+            source: `${rootDir}/index.js`,
+            provider: { id: "demo", label, auth: [] },
+          });
+          return registry;
+        };
+        const staleRegistry = createRegistry("/plugins/old-demo", "Stale demo");
+        if (source === "active") {
+          setActivePluginRegistry(staleRegistry, undefined, "default", WORKSPACE);
+        }
+        vi.spyOn(pluginLoader, "getRuntimePluginRegistryForLoadOptions").mockReturnValue(
+          source === "active" ? createRegistry("/plugins/demo", "Prepared demo") : staleRegistry,
+        );
+
+        const providers = resolvePluginProvidersCore({
+          config,
+          env: {},
+          workspaceDir: WORKSPACE,
+          mode: "runtime",
+          onlyPluginIds: ["demo"],
+          pluginMetadataSnapshot: snapshot,
+        });
+
+        expect(providers.map((provider) => provider.label)).toEqual(expectedLabels);
+        expect(loadPluginRegistrySnapshotWithMetadata).not.toHaveBeenCalled();
+        expect(loadPluginManifestRegistryForInstalledIndex).not.toHaveBeenCalled();
+      },
+    );
+
     it("reuses a compatible current snapshot without a direct disk load", () => {
       const config: OpenClawConfig = {};
       registerCurrentSnapshot(config);

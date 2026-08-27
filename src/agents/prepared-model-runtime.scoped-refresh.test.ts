@@ -7,6 +7,7 @@ import {
 import { beforeEach, describe, expect, it } from "vitest";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
 import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
@@ -75,6 +76,11 @@ describe("prepared model runtime scoped refresh", () => {
           [freeSnapshot.workspaceDir, freeSnapshot],
         ]),
         configWorkspaceDirs: [proMetadata.workspaceDir, freeSnapshot.workspaceDir],
+        agentWorkspaceDirs: new Map([
+          ["pro", "/tmp/workspace-pro"],
+          ["free", freeInput.workspaceDir],
+        ]),
+        installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
         envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
         selectedSnapshot: proMetadata,
         manifestRegistry: proMetadata.manifestRegistry,

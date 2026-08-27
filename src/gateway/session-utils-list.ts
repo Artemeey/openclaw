@@ -15,7 +15,6 @@ import { shouldKeepSubagentRunChildLink } from "../agents/subagents/registry/sub
 import { tryResolveLegacyCompatibilityAgentId } from "../config/legacy.default-agent-owner.js";
 import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { withPinnedActivePluginRegistryWorkspaceDir } from "../plugins/runtime-workspace-state.js";
 import {
   isIncognitoSessionKey,
   LEGACY_IMPLICIT_AGENT_ID,
@@ -603,102 +602,95 @@ export function listSessionsFromStore(params: ListSessionsFromStoreParams): Sess
 export async function listSessionsFromStoreAsync(
   params: ListSessionsFromStoreParams,
 ): Promise<SessionsListResult> {
-  // Pin the active plugin-registry workspace dir for the duration of this
-  // call so per-row metadata lookups use a stable memo key. Without this pin,
-  // concurrent agent turns / crons mutate the process-global workspace dir
-  // between rows, the memo never hits, and each row triggers a full
-  // loadPluginMetadataSnapshot scan (~100 ms).
-  return withPinnedActivePluginRegistryWorkspaceDir(async () => {
-    const { cfg, store, opts } = params;
-    const list = prepareSessionList(params);
-    const sessions: GatewaySessionRow[] = [];
-    const transcriptScopes = list.entries
-      .slice(0, list.transcriptFieldRows)
-      .flatMap(([key, entry]) => {
-        if (!entry.sessionId || (!list.includeDerivedTitles && !list.includeLastMessage)) {
-          return [];
-        }
-        const parsed = parseAgentSessionKey(key);
-        const agentId = normalizeAgentId(
-          parsed?.agentId ?? opts.agentId ?? resolveSessionStoreAgentId(cfg, key),
-        );
-        return [
-          {
-            agentId,
-            sessionEntry: entry,
-            sessionId: entry.sessionId,
-            sessionKey: key,
-            storePath: list.storePath,
-          },
-        ];
-      });
-    const transcriptFields = readScopedSessionTitleFieldsFromTranscriptBatch(transcriptScopes);
-    let transcriptFieldIndex = 0;
-    for (let i = 0; i < list.entries.length; i++) {
-      const [key, entry] = expectDefined(list.entries[i], "entries entry at i");
-      const includeTranscriptFields = i < list.transcriptFieldRows;
-      const rowAgentId =
-        !parseAgentSessionKey(key) && typeof opts.agentId === "string"
-          ? normalizeAgentId(opts.agentId)
-          : undefined;
-      const storeChildSessionsByKey =
-        list.storeChildSessionsByKey ??
-        buildSingleRowStoreChildSessionsByKey({
-          store,
-          storePath: list.storePath,
-          key,
-          now: list.now,
-        });
-      const row = buildGatewaySessionRow({
-        cfg,
-        storePath: list.storePath,
-        store,
-        key,
-        entry,
-        agentId: rowAgentId,
-        modelCatalog: params.modelCatalog,
-        now: list.now,
-        includeDerivedTitles: false,
-        includeLastMessage: false,
-        transcriptUsageMaxBytes: SESSIONS_LIST_TRANSCRIPT_USAGE_MAX_BYTES,
-        storeChildSessionsByKey,
-        rowContext: list.rowContext,
-        skipTranscriptUsageFallback: true,
-        lightweightListRow: true,
-      });
-      if (
-        entry?.sessionId &&
-        includeTranscriptFields &&
-        (list.includeDerivedTitles || list.includeLastMessage)
-      ) {
-        const fields = expectDefined(
-          transcriptFields[transcriptFieldIndex],
-          "batched transcript fields at transcriptFieldIndex",
-        );
-        transcriptFieldIndex += 1;
-        if (list.includeDerivedTitles) {
-          row.derivedTitle = deriveSessionTitle(entry, fields.firstUserMessage, row.displayName);
-        }
-        if (list.includeLastMessage && fields.lastMessagePreview) {
-          row.lastMessagePreview = fields.lastMessagePreview;
-        }
+  const { cfg, store, opts } = params;
+  const list = prepareSessionList(params);
+  const sessions: GatewaySessionRow[] = [];
+  const transcriptScopes = list.entries
+    .slice(0, list.transcriptFieldRows)
+    .flatMap(([key, entry]) => {
+      if (!entry.sessionId || (!list.includeDerivedTitles && !list.includeLastMessage)) {
+        return [];
       }
-      sessions.push(row);
-      // Yield to the event loop between batches so WebSocket heartbeats,
-      // channel I/O, and concurrent RPC calls are not starved.
-      if ((i + 1) % SESSIONS_LIST_YIELD_BATCH_SIZE === 0 && i + 1 < list.entries.length) {
-        await new Promise<void>((resolve) => {
-          setImmediate(resolve);
-        });
+      const parsed = parseAgentSessionKey(key);
+      const agentId = normalizeAgentId(
+        parsed?.agentId ?? opts.agentId ?? resolveSessionStoreAgentId(cfg, key),
+      );
+      return [
+        {
+          agentId,
+          sessionEntry: entry,
+          sessionId: entry.sessionId,
+          sessionKey: key,
+          storePath: list.storePath,
+        },
+      ];
+    });
+  const transcriptFields = readScopedSessionTitleFieldsFromTranscriptBatch(transcriptScopes);
+  let transcriptFieldIndex = 0;
+  for (let i = 0; i < list.entries.length; i++) {
+    const [key, entry] = expectDefined(list.entries[i], "entries entry at i");
+    const includeTranscriptFields = i < list.transcriptFieldRows;
+    const rowAgentId =
+      !parseAgentSessionKey(key) && typeof opts.agentId === "string"
+        ? normalizeAgentId(opts.agentId)
+        : undefined;
+    const storeChildSessionsByKey =
+      list.storeChildSessionsByKey ??
+      buildSingleRowStoreChildSessionsByKey({
+        store,
+        storePath: list.storePath,
+        key,
+        now: list.now,
+      });
+    const row = buildGatewaySessionRow({
+      cfg,
+      storePath: list.storePath,
+      store,
+      key,
+      entry,
+      agentId: rowAgentId,
+      modelCatalog: params.modelCatalog,
+      now: list.now,
+      includeDerivedTitles: false,
+      includeLastMessage: false,
+      transcriptUsageMaxBytes: SESSIONS_LIST_TRANSCRIPT_USAGE_MAX_BYTES,
+      storeChildSessionsByKey,
+      rowContext: list.rowContext,
+      skipTranscriptUsageFallback: true,
+      lightweightListRow: true,
+    });
+    if (
+      entry?.sessionId &&
+      includeTranscriptFields &&
+      (list.includeDerivedTitles || list.includeLastMessage)
+    ) {
+      const fields = expectDefined(
+        transcriptFields[transcriptFieldIndex],
+        "batched transcript fields at transcriptFieldIndex",
+      );
+      transcriptFieldIndex += 1;
+      if (list.includeDerivedTitles) {
+        row.derivedTitle = deriveSessionTitle(entry, fields.firstUserMessage, row.displayName);
+      }
+      if (list.includeLastMessage && fields.lastMessagePreview) {
+        row.lastMessagePreview = fields.lastMessagePreview;
       }
     }
+    sessions.push(row);
+    // Yield to the event loop between batches so WebSocket heartbeats,
+    // channel I/O, and concurrent RPC calls are not starved.
+    if ((i + 1) % SESSIONS_LIST_YIELD_BATCH_SIZE === 0 && i + 1 < list.entries.length) {
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+    }
+  }
 
-    return buildSessionsListResult({
-      cfg,
-      list,
-      modelCatalog: params.modelCatalog,
-      sessions,
-      agentId: opts.agentId,
-    });
+  return buildSessionsListResult({
+    cfg,
+    list,
+    modelCatalog: params.modelCatalog,
+    sessions,
+    agentId: opts.agentId,
   });
 }

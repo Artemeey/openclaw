@@ -4,7 +4,7 @@ import {
   tryResolveAmbientOwnerAgentId,
   tryResolveLegacyCompatibilityAgentId,
 } from "../agents/agent-scope-config.js";
-import { listAgentWorkspaceDirs } from "../agents/workspace-dirs.js";
+import { resolveAgentWorkspaceDirsById } from "../agents/workspace-dirs.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { readBundledDiscoveryMode } from "./bundled-discovery-state.js";
@@ -21,6 +21,7 @@ import {
 } from "./current-plugin-metadata-state.js";
 import { hashJson } from "./installed-plugin-index-hash.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "./installed-plugin-index-record-cache.js";
 import { resolveInstalledPluginIndexStorePath } from "./installed-plugin-index-store-path.js";
 import type { PluginManifestRegistry } from "./manifest-registry.types.js";
 import { preparePluginChannelCatalogs } from "./plugin-metadata-catalog.js";
@@ -189,6 +190,12 @@ type RetainedMetadata = {
   configIdentities: WeakSet<OpenClawConfig>;
 };
 
+function hasCurrentInstallRecordsGeneration(metadata: PreparedPluginMetadata): boolean {
+  return (
+    metadata.installRecordsGeneration === getInstalledPluginIndexInstallRecordsCacheGeneration()
+  );
+}
+
 /** Owns active metadata and one observed candidate, independently of config acceptance. */
 export function createPluginMetadataOwner(): PluginMetadataOwner {
   let active: RetainedMetadata | undefined;
@@ -197,6 +204,10 @@ export function createPluginMetadataOwner(): PluginMetadataOwner {
   let epoch = 0;
   let disposed = false;
   const preparedEpochs = new WeakMap<PreparedPluginMetadata, number>();
+  const isPreparedCurrent = (metadata: PreparedPluginMetadata) =>
+    !disposed &&
+    preparedEpochs.get(metadata) === epoch &&
+    hasCurrentInstallRecordsGeneration(metadata);
 
   // Compare authored inputs before resolving paths: even resolving a default
   // state directory probes the filesystem and belongs to preparation only.
@@ -215,7 +226,8 @@ export function createPluginMetadataOwner(): PluginMetadataOwner {
 
   const resolveInputs = (params: PreparePluginMetadataParams) => {
     const env = params.env ?? process.env;
-    const configured = listAgentWorkspaceDirs(params.config, env);
+    const agentWorkspaceDirs = resolveAgentWorkspaceDirsById(params.config, env);
+    const configured = [...new Set(agentWorkspaceDirs.values())];
     const workspaceDirs: Array<string | undefined> = configured.length ? configured : [undefined];
     const selectedWorkspace = resolvePluginControlPlaneWorkspace({
       config: params.config,
@@ -234,7 +246,7 @@ export function createPluginMetadataOwner(): PluginMetadataOwner {
         workspaceDirs.push(workspaceDir);
       }
     }
-    return { env, workspaceDirs, configWorkspaceDirs, selectedWorkspace, key };
+    return { env, workspaceDirs, agentWorkspaceDirs, configWorkspaceDirs, selectedWorkspace, key };
   };
 
   const findPrepared = (params: PreparePluginMetadataParams): RetainedMetadata | undefined => {
@@ -246,11 +258,34 @@ export function createPluginMetadataOwner(): PluginMetadataOwner {
       (entry) =>
         entry?.key === key &&
         entry.epoch === epoch &&
+        hasCurrentInstallRecordsGeneration(entry.metadata) &&
         (params.additionalWorkspaceDirs ?? []).every((workspaceDir) =>
           entry.metadata.workspaces.has(workspaceDir),
         ),
     );
   };
+
+  function readConfigWide(
+    params: PreparePluginMetadataParams & { pluginIds?: undefined; pluginIdScope?: undefined },
+  ): PreparedPluginMetadata | undefined;
+  function readConfigWide(
+    params: PreparePluginMetadataParams & PluginMetadataScope,
+  ): ConfigWidePluginMetadataView | undefined;
+  function readConfigWide(
+    params: PreparePluginMetadataParams & PluginMetadataScope,
+  ): ConfigWidePluginMetadataView | undefined {
+    if (params.allowCurrent === false || params.stateDir !== undefined) {
+      return undefined;
+    }
+    const entry =
+      active &&
+      active.metadata.envFingerprint ===
+        resolvePluginMetadataEnvFingerprint(params.env ?? process.env) &&
+      (active.configIdentities.has(params.config) || active.key === resolveKey(params))
+        ? active
+        : findPrepared(params);
+    return entry ? projectConfigWidePluginMetadata(entry.metadata, params) : undefined;
+  }
 
   return {
     prepare(params) {
@@ -258,20 +293,34 @@ export function createPluginMetadataOwner(): PluginMetadataOwner {
         throw new Error("Plugin metadata owner has been disposed");
       }
       const preparationEpoch = epoch;
+      const installRecordsGeneration = getInstalledPluginIndexInstallRecordsCacheGeneration();
       const previous = findPrepared(params);
       if (previous) {
         return previous.metadata;
       }
-      const { env, workspaceDirs, configWorkspaceDirs, selectedWorkspace, key } =
-        resolveInputs(params);
+      const {
+        env,
+        workspaceDirs,
+        agentWorkspaceDirs,
+        configWorkspaceDirs,
+        selectedWorkspace,
+        key,
+      } = resolveInputs(params);
       const envFingerprint = resolvePluginMetadataEnvFingerprint(env);
       const canReuse = params.allowCurrent !== false && params.stateDir === undefined;
       const seed =
-        canReuse && params.seed?.envFingerprint === envFingerprint ? params.seed : undefined;
+        canReuse &&
+        params.seed?.envFingerprint === envFingerprint &&
+        hasCurrentInstallRecordsGeneration(params.seed)
+          ? params.seed
+          : undefined;
       const reusable = !canReuse
         ? []
         : [active, observed].filter(
-            (entry) => entry?.epoch === epoch && entry.metadata.envFingerprint === envFingerprint,
+            (entry) =>
+              entry?.epoch === epoch &&
+              hasCurrentInstallRecordsGeneration(entry.metadata) &&
+              entry.metadata.envFingerprint === envFingerprint,
           );
       const workspaces = new Map<string | undefined, PluginMetadataSnapshot>();
       for (const workspaceDir of workspaceDirs) {
@@ -321,8 +370,10 @@ export function createPluginMetadataOwner(): PluginMetadataOwner {
           configWorkspaceDirs.map((workspaceDir) => workspaces.get(workspaceDir)!.manifestRegistry),
         ),
         workspaces,
+        agentWorkspaceDirs,
         configWorkspaceDirs,
         envFingerprint,
+        installRecordsGeneration,
         bundledDiscoveryMode: readBundledDiscoveryMode({
           env,
           path: resolveInstalledPluginIndexStorePath({ env, stateDir: params.stateDir }),
@@ -330,7 +381,7 @@ export function createPluginMetadataOwner(): PluginMetadataOwner {
         selectedSnapshot,
         channelCatalog: catalog,
       });
-      if (disposed || preparationEpoch !== epoch) {
+      if (disposed || preparationEpoch !== epoch || !hasCurrentInstallRecordsGeneration(metadata)) {
         throw new Error("Plugin metadata preparation was superseded");
       }
       preparedEpochs.set(metadata, epoch);
@@ -343,7 +394,7 @@ export function createPluginMetadataOwner(): PluginMetadataOwner {
       return metadata;
     },
     publish(metadata, params) {
-      if (disposed || preparedEpochs.get(metadata) !== epoch) {
+      if (!isPreparedCurrent(metadata)) {
         throw new Error("Plugin metadata preparation was superseded before publication");
       }
       const sourceConfig = params.sourceConfig ?? params.config;
@@ -366,7 +417,7 @@ export function createPluginMetadataOwner(): PluginMetadataOwner {
       publicationRevision = getCurrentPluginMetadataSnapshotState().revision;
     },
     getActive: () => active?.metadata,
-    isPreparedCurrent: (metadata) => !disposed && preparedEpochs.get(metadata) === epoch,
+    isPreparedCurrent,
     readSnapshot(params) {
       if (
         params.allowCurrent === false ||
@@ -375,9 +426,12 @@ export function createPluginMetadataOwner(): PluginMetadataOwner {
       ) {
         return undefined;
       }
+      // Source invalidation fences candidates; accepted readers keep their graph
+      // until a replacement is explicitly published.
       for (const entry of [active, observed]) {
         if (
           !entry ||
+          (entry !== active && !isPreparedCurrent(entry.metadata)) ||
           entry.metadata.envFingerprint !==
             resolvePluginMetadataEnvFingerprint(params.env ?? process.env)
         ) {
@@ -407,19 +461,7 @@ export function createPluginMetadataOwner(): PluginMetadataOwner {
       }
       return undefined;
     },
-    readConfigWide(params) {
-      if (params.allowCurrent === false || params.stateDir !== undefined) {
-        return undefined;
-      }
-      const entry =
-        active &&
-        active.metadata.envFingerprint ===
-          resolvePluginMetadataEnvFingerprint(params.env ?? process.env) &&
-        (active.configIdentities.has(params.config) || active.key === resolveKey(params))
-          ? active
-          : findPrepared(params);
-      return entry ? projectConfigWidePluginMetadata(entry.metadata, params) : undefined;
-    },
+    readConfigWide,
     invalidatePreparation() {
       epoch += 1;
       observed = undefined;

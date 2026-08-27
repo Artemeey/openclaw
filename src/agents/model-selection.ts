@@ -90,15 +90,17 @@ function normalizePersistedDefaultProvider(value: unknown): string {
  * Runtime-first resolver for persisted model metadata.
  * Use this when callers intentionally want the last executed model identity.
  */
-export function resolvePersistedModelRef(params: {
-  defaultProvider?: unknown;
-  runtimeProvider?: unknown;
-  runtimeModel?: unknown;
-  overrideProvider?: unknown;
-  overrideModel?: unknown;
-  allowManifestNormalization?: boolean;
-  allowPluginNormalization?: boolean;
-}): ModelRef | null {
+export function resolvePersistedModelRef(
+  params: {
+    defaultProvider?: unknown;
+    runtimeProvider?: unknown;
+    runtimeModel?: unknown;
+    overrideProvider?: unknown;
+    overrideModel?: unknown;
+    allowManifestNormalization?: boolean;
+    allowPluginNormalization?: boolean;
+  } & ModelManifestNormalizationContext,
+): ModelRef | null {
   const defaultProvider = normalizePersistedDefaultProvider(params.defaultProvider);
   const runtimeProvider = normalizeOptionalString(params.runtimeProvider);
   const runtimeModel = normalizeOptionalString(params.runtimeModel);
@@ -107,21 +109,15 @@ export function resolvePersistedModelRef(params: {
       return { provider: runtimeProvider, model: runtimeModel };
     }
     return (
-      parseModelRef(runtimeModel, defaultProvider, {
-        allowManifestNormalization: params.allowManifestNormalization,
-        allowPluginNormalization: params.allowPluginNormalization,
-      }) ?? {
+      parseModelRef(runtimeModel, defaultProvider, params) ?? {
         provider: defaultProvider,
         model: runtimeModel,
       }
     );
   }
   return resolvePersistedOverrideModelRef({
+    ...params,
     defaultProvider,
-    overrideProvider: params.overrideProvider,
-    overrideModel: params.overrideModel,
-    allowManifestNormalization: params.allowManifestNormalization,
-    allowPluginNormalization: params.allowPluginNormalization,
   });
 }
 
@@ -130,32 +126,22 @@ export function resolvePersistedModelRef(params: {
  * Use this for control/status/UI surfaces that should honor explicit session
  * overrides before falling back to runtime identity.
  */
-export function resolvePersistedSelectedModelRef(params: {
-  defaultProvider?: unknown;
-  runtimeProvider?: unknown;
-  runtimeModel?: unknown;
-  overrideProvider?: unknown;
-  overrideModel?: unknown;
-  allowManifestNormalization?: boolean;
-  allowPluginNormalization?: boolean;
-}): ModelRef | null {
-  const override = resolvePersistedOverrideModelRef({
-    defaultProvider: params.defaultProvider,
-    overrideProvider: params.overrideProvider,
-    overrideModel: params.overrideModel,
-    allowManifestNormalization: params.allowManifestNormalization,
-    allowPluginNormalization: params.allowPluginNormalization,
-  });
+export function resolvePersistedSelectedModelRef(
+  params: {
+    defaultProvider?: unknown;
+    runtimeProvider?: unknown;
+    runtimeModel?: unknown;
+    overrideProvider?: unknown;
+    overrideModel?: unknown;
+    allowManifestNormalization?: boolean;
+    allowPluginNormalization?: boolean;
+  } & ModelManifestNormalizationContext,
+): ModelRef | null {
+  const override = resolvePersistedOverrideModelRef(params);
   if (override) {
     return override;
   }
-  return resolvePersistedModelRef({
-    defaultProvider: params.defaultProvider,
-    runtimeProvider: params.runtimeProvider,
-    runtimeModel: params.runtimeModel,
-    allowManifestNormalization: params.allowManifestNormalization,
-    allowPluginNormalization: params.allowPluginNormalization,
-  });
+  return resolvePersistedModelRef(params);
 }
 
 export async function canonicalizeCaseOnlyCatalogModelRef(params: {

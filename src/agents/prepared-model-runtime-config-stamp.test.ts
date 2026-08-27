@@ -7,6 +7,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
 import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import {
@@ -85,6 +86,8 @@ describe("prepared model runtime config stamps", () => {
       return {
         workspaces: new Map([[snapshot.workspaceDir, snapshot]]),
         configWorkspaceDirs: [snapshot.workspaceDir],
+        agentWorkspaceDirs: new Map([["default", `/tmp/queued-metadata-workspace-${index}`]]),
+        installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
         envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
         selectedSnapshot: snapshot,
         plugins: snapshot.plugins,

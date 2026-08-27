@@ -17,6 +17,7 @@ import {
   modelSupportsInput,
 } from "../agents/model-catalog.js";
 import { resolveModelContextWindowProfile } from "../agents/model-context-window.js";
+import { createModelManifestPluginContext } from "../agents/model-selection-shared.js";
 import {
   findNormalizedProviderValue,
   inferUniqueProviderFromConfiguredModels,
@@ -611,8 +612,9 @@ function resolveSessionDisplayModelIdentityRef(params: {
   }
 
   const defaultRef = resolveDefaultModelForAgent({ cfg: params.cfg, agentId: params.agentId });
+  const manifestContext = createModelManifestPluginContext(params);
   if (model.includes("/")) {
-    const parsedModel = parseModelRef(model, defaultRef.provider);
+    const parsedModel = parseModelRef(model, defaultRef.provider, manifestContext.getContext());
     if (parsedModel && !isCliProvider(parsedModel.provider, params.cfg)) {
       return parsedModel;
     }
@@ -627,7 +629,7 @@ function resolveSessionDisplayModelIdentityRef(params: {
     return { provider: inferredProvider, model };
   }
 
-  const parsedModel = parseModelRef(model, defaultRef.provider);
+  const parsedModel = parseModelRef(model, defaultRef.provider, manifestContext.getContext());
   if (parsedModel && !isCliProvider(parsedModel.provider, params.cfg)) {
     return parsedModel;
   }

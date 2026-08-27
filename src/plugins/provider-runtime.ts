@@ -161,10 +161,9 @@ function resolveProviderPluginsForCatalogHooks(params: {
   env?: NodeJS.ProcessEnv;
   metadataSnapshot?: PluginMetadataSnapshot;
 }): ProviderPlugin[] {
-  const workspaceDir =
-    params.workspaceDir ??
-    params.metadataSnapshot?.workspaceDir ??
-    getActivePluginRegistryWorkspaceDirFromState();
+  const workspaceDir = params.metadataSnapshot
+    ? params.metadataSnapshot.workspaceDir
+    : (params.workspaceDir ?? getActivePluginRegistryWorkspaceDirFromState());
   const env = params.env ?? process.env;
   const onlyPluginIds = resolveCatalogHookProviderPluginIds({
     config: params.config,
@@ -382,13 +381,17 @@ export function normalizeProviderModelIdWithPlugin(params: {
   config?: OpenClawConfig;
   workspaceDir?: string;
   env?: NodeJS.ProcessEnv;
+  pluginMetadataSnapshot?: PluginMetadataRegistryView;
   plugins?: readonly Pick<PluginManifestRecord, "modelIdNormalization">[];
   context: ProviderNormalizeModelIdContext;
 }): string | undefined {
   const plugin = resolveProviderHookPlugin(params);
   return (
     normalizeOptionalString(plugin?.normalizeModelId?.(params.context)) ??
-    normalizeProviderModelIdWithManifest(params)
+    normalizeProviderModelIdWithManifest({
+      ...params,
+      plugins: params.pluginMetadataSnapshot?.manifestRegistry.plugins ?? params.plugins,
+    })
   );
 }
 

@@ -26,6 +26,11 @@ read stored conversation state. A provider can reconnect and show healthy channe
 status before any new session row is materialized. Use the channel status and
 health commands above for live connectivity checks.
 
+Status displays up to ten recent sessions per agent; health displays up to five.
+Both count visible sessions using lightweight row metadata instead of copying
+the full session history. Opening a cold store still validates its canonical
+session data, so the first inspection of a large store can take longer.
+
 ## Deep diagnostics
 
 - Creds on disk: `ls -l ~/.openclaw/credentials/whatsapp/<accountId>/creds.json` (mtime should be recent).

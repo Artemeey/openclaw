@@ -36,9 +36,7 @@ export async function restartGatewayChannels(options: {
   skipChannelRestartLogMessage: string;
   pluginReloadAborted: boolean;
   isLifecycleReloadAborted: () => boolean;
-  getChannelAutostartSuppression: () => unknown;
   channelReloadTargets: () => Set<ChannelKind>;
-  logSuppressedChannelRestart: (channels: ReadonlySet<ChannelKind>, action: string) => void;
   scheduleRecoveryRestart: (surface: string, err?: unknown) => void;
 }): Promise<void> {
   const {
@@ -54,9 +52,7 @@ export async function restartGatewayChannels(options: {
     skipChannelRestartLogMessage,
     pluginReloadAborted,
     isLifecycleReloadAborted,
-    getChannelAutostartSuppression,
     channelReloadTargets,
-    logSuppressedChannelRestart,
     scheduleRecoveryRestart,
   } = options;
   const wasStoppedBeforePluginReload = (channel: ChannelKind, accountId: string) =>
@@ -105,7 +101,7 @@ export async function restartGatewayChannels(options: {
   if (channelsToRestart.size > 0 || restartChannelAccounts.size > 0) {
     if (shouldSkipChannelRestart) {
       params.logChannels.info(skipChannelRestartLogMessage);
-    } else if (getChannelAutostartSuppression()) {
+    } else if (params.getChannelAutostartSuppression?.()) {
       const cancelledByRestart = pluginReloadAborted;
       if (cancelledByRestart) {
         params.logChannels.info("channel restart cancelled by in-process restart");
@@ -151,7 +147,12 @@ export async function restartGatewayChannels(options: {
         if (allStopFailures.length > 0) {
           scheduleRecoveryRestart(`channel stop (${allStopFailures.join(", ")})`);
         }
-        logSuppressedChannelRestart(channelReloadTargets(), "channel restart during hot reload");
+        // Suppression can clear while the channel stops are awaiting completion.
+        if (params.getChannelAutostartSuppression?.()) {
+          params.logChannels.info(
+            `channel restart during hot reload suppressed by crash-loop breaker for channels: ${[...channelReloadTargets()].join(", ")}`,
+          );
+        }
       }
     } else {
       const cancelledByRestart = pluginReloadAborted;

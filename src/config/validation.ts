@@ -153,6 +153,11 @@ function validateConfigObjectWithPluginMode(
   }
   // Carry the migration sidecar across Zod's fresh object.
   const validatedConfig = inheritLegacyDefaultAgentId(migrated, result.config);
+  // Core-only trust reads retain roster migration facts without discovering
+  // ambient channel owners before the caller's state migration boundary.
+  if (params?.pluginValidation === "core-only") {
+    return { ...result, config: validatedConfig };
+  }
   const materialized = materializeLegacyAgentOwnershipForActiveChannelsResult(
     validatedConfig,
     legacyDefaultAgentId,

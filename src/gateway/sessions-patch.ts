@@ -90,6 +90,7 @@ function invalid(message: string): { ok: false; error: ErrorShape } {
 
 export function resolveSessionPatchModelSelection(params: {
   cfg: OpenClawConfig;
+  agentId?: string;
   catalog: ModelCatalogEntry[];
   raw: string;
   defaultProvider: string;
@@ -101,6 +102,7 @@ export function resolveSessionPatchModelSelection(params: {
   const { model: modelWithoutProfile, profile } = splitTrailingAuthProfile(params.raw);
   const resolved = resolveAllowedModelRef({
     cfg: params.cfg,
+    agentId: params.agentId,
     catalog: params.catalog,
     raw: modelWithoutProfile,
     defaultProvider: params.defaultProvider,
@@ -628,6 +630,7 @@ export async function projectSessionsPatchEntry(params: {
       }
       const resolved = resolveSessionPatchModelSelection({
         cfg,
+        agentId: sessionAgentId,
         catalog,
         raw: trimmed,
         defaultProvider: resolvedDefault.provider,
@@ -663,12 +666,11 @@ export async function projectSessionsPatchEntry(params: {
     const effectiveProvider = next.providerOverride ?? resolvedDefault.provider;
     const effectiveModel = next.modelOverride ?? resolvedDefault.model;
     const thinkingLevel = normalizeThinkLevel(next.thinkingLevel);
-    let thinkingRuntime: string | undefined;
     if (!thinkingLevel) {
       delete next.thinkingLevel;
     } else {
       const thinkingCatalog = await loadPreparedModelCatalogForPatch();
-      thinkingRuntime = resolveThinkingRuntime(effectiveProvider, effectiveModel, next);
+      const thinkingRuntime = resolveThinkingRuntime(effectiveProvider, effectiveModel, next);
       if (
         !isThinkingLevelSupported({
           provider: effectiveProvider,

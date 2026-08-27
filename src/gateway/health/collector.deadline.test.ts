@@ -58,7 +58,7 @@ describe("gateway health collection deadline", () => {
       resolveSessionStorePathCore: () => "/tmp/sessions.json",
     }));
     vi.doMock("../../config/sessions/session-accessor.js", () => ({
-      listSessionEntriesReadOnly: () => [],
+      readSessionStoreSummaryReadOnly: () => ({ count: 0, recent: [] }),
     }));
     vi.doMock("../../channels/plugins/read-only.js", () => ({
       listReadOnlyChannelPluginsForConfig: () => healthPluginsForTest,

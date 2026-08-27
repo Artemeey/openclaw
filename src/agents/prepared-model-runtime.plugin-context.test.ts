@@ -4,6 +4,7 @@ import {
   makeRegistry,
 } from "../config/plugin-auto-enable.test-helpers.js";
 import * as currentPluginMetadata from "../plugins/current-plugin-metadata-snapshot.js";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import * as pluginMetadata from "../plugins/plugin-metadata-collection.js";
 import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
@@ -21,6 +22,8 @@ function operationMetadata(
   return {
     workspaces: new Map([[snapshot.workspaceDir, snapshot]]),
     configWorkspaceDirs: [snapshot.workspaceDir],
+    agentWorkspaceDirs: new Map(snapshot.workspaceDir ? [["main", snapshot.workspaceDir]] : []),
+    installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
     envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
     selectedSnapshot: snapshot,
     manifestRegistry: snapshot.manifestRegistry,

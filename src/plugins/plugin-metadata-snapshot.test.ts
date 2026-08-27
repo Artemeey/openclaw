@@ -1,12 +1,19 @@
 // Verifies lifecycle snapshot loading, ownership facts, and immutable boundaries.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
+import { createTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { resolveConfigWidePluginManifestRegistry } from "../config/io.plugin-metadata.js";
+import {
+  closeOpenClawStateDatabaseByPath,
+  openOpenClawStateDatabase,
+} from "../state/openclaw-state-db.js";
 import {
   getCurrentPluginMetadataSnapshot,
   setCurrentPluginMetadataSnapshot,
 } from "./current-plugin-metadata-snapshot.js";
 import type { PluginDiscoveryResult } from "./discovery.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
+import { clearLoadInstalledPluginIndexInstallRecordsCache } from "./installed-plugin-index-record-cache.js";
 import type { InstalledPluginIndex } from "./installed-plugin-index.js";
 import type { PluginManifestRecord, PluginManifestRegistry } from "./manifest-registry.js";
 import {
@@ -116,6 +123,11 @@ function makeManifestRegistry(pluginId = "demo"): PluginManifestRegistry {
 
 describe("plugin metadata snapshot", () => {
   const ownerDisposers: Array<() => void> = [];
+  const tempDirs = createTempDirTracker();
+  const databasePaths = new Set<string>();
+  const openTestStateDatabase = (env: NodeJS.ProcessEnv) => {
+    databasePaths.add(openOpenClawStateDatabase({ env }).path);
+  };
   beforeEach(() => {
     loadPluginRegistrySnapshotWithMetadata.mockReset();
     loadPluginManifestRegistryForInstalledIndex.mockReset();
@@ -126,7 +138,13 @@ describe("plugin metadata snapshot", () => {
     for (const dispose of ownerDisposers.splice(0)) {
       dispose();
     }
+    for (const databasePath of databasePaths) {
+      closeOpenClawStateDatabaseByPath(databasePath);
+    }
+    databasePaths.clear();
     clearPluginMetadataLifecycleCaches();
+    clearLoadInstalledPluginIndexInstallRecordsCache();
+    tempDirs.cleanup();
   });
 
   it("keeps explicit control-plane loads fresh", () => {
@@ -619,58 +637,140 @@ describe("plugin metadata snapshot", () => {
     },
   );
 
-  it("keeps accepted metadata readable while invalidating an unpublished candidate", () => {
+  it.each(["plugin lifecycle invalidation", "database initialization"] as const)(
+    "keeps accepted metadata readable while %s supersedes an unpublished candidate",
+    async (invalidation) => {
+      const config = {};
+      const env = { OPENCLAW_STATE_DIR: tempDirs.make("openclaw-plugin-metadata-") };
+      const index = makeIndex();
+      index.policyHash = resolveInstalledPluginIndexPolicyHash(config);
+      loadPluginRegistrySnapshotWithMetadata.mockReturnValue({
+        source: "provided",
+        snapshot: index,
+        diagnostics: [],
+      });
+      const owner = createPluginMetadataOwner();
+      ownerDisposers.push(installPluginMetadataOwner(owner));
+      const active = owner.prepare({ config, env });
+      owner.publish(active, { config, env });
+      const candidateConfig = { plugins: { allow: ["replacement"] } };
+      const candidateIndex = makeIndex("replacement");
+      candidateIndex.policyHash = resolveInstalledPluginIndexPolicyHash(candidateConfig);
+      loadPluginRegistrySnapshotWithMetadata.mockReturnValue({
+        source: "provided",
+        snapshot: candidateIndex,
+        diagnostics: [],
+      });
+      loadPluginManifestRegistryForInstalledIndex.mockReturnValue(
+        makeManifestRegistry("replacement"),
+      );
+      const candidate = owner.prepare({ config: candidateConfig, env });
+      const candidateLookup = {
+        config: candidateConfig,
+        env,
+        allowWorkspaceScopedCurrent: true,
+      };
+      expect(owner.readSnapshot(candidateLookup)).toBe(candidate.selectedSnapshot);
+      const readyToPublish = createDeferred();
+      const publication = readyToPublish.promise.then(() =>
+        owner.publish(candidate, { config: candidateConfig, env }),
+      );
+
+      if (invalidation === "database initialization") {
+        openTestStateDatabase(env);
+      } else {
+        clearPluginMetadataLifecycleCaches(owner);
+      }
+      readyToPublish.resolve();
+      await expect(publication).rejects.toThrow("superseded");
+      expect(owner.isPreparedCurrent(candidate)).toBe(false);
+      expect(owner.readSnapshot(candidateLookup)).toBeUndefined();
+      expect(owner.getActive()).toBe(active);
+      expect(owner.readConfigWide({ config: structuredClone(config), env })).toBe(active);
+      expect(
+        resolvePluginMetadataSnapshot({ config, env, allowWorkspaceScopedCurrent: true }),
+      ).toBe(active.selectedSnapshot);
+      expect(() =>
+        getPluginMetadataWorkspaceSnapshot(active, { workspaceDir: "/unprepared" }),
+      ).toThrow("not prepared");
+
+      loadPluginManifestRegistryForInstalledIndex.mockImplementation(() => {
+        throw new Error("unreadable manifest");
+      });
+      expect(() => owner.prepare({ config: candidateConfig, env })).toThrow("unreadable manifest");
+      expect(owner.getActive()).toBe(active);
+      loadPluginManifestRegistryForInstalledIndex.mockReturnValue(
+        makeManifestRegistry("replacement"),
+      );
+      const replacement = owner.prepare({ config: candidateConfig, env });
+      owner.publish(replacement, { config: candidateConfig, env });
+      expect(owner.getActive()?.plugins.map((plugin) => plugin.id)).toEqual(["replacement"]);
+    },
+  );
+
+  it.each(["same owner", "foreign seed", "workspace reuse"] as const)(
+    "rebuilds %s metadata prepared before database initialization",
+    (reuse) => {
+      const config = {};
+      const env = { OPENCLAW_STATE_DIR: tempDirs.make("openclaw-plugin-metadata-") };
+      const initialIndex = makeIndex();
+      initialIndex.policyHash = resolveInstalledPluginIndexPolicyHash(config);
+      loadPluginRegistrySnapshotWithMetadata.mockReturnValue({
+        source: "provided",
+        snapshot: initialIndex,
+        diagnostics: [],
+      });
+      const owner = createPluginMetadataOwner();
+      ownerDisposers.push(() => owner.dispose());
+      const initial = owner.prepare({ config, env });
+      const lookup = { config, env, allowWorkspaceScopedCurrent: true };
+      expect(owner.readSnapshot(lookup)).toBe(initial.selectedSnapshot);
+      openTestStateDatabase(env);
+      const replacementIndex = makeIndex("replacement");
+      replacementIndex.policyHash = resolveInstalledPluginIndexPolicyHash(config);
+      loadPluginRegistrySnapshotWithMetadata.mockReturnValue({
+        source: "provided",
+        snapshot: replacementIndex,
+        diagnostics: [],
+      });
+      loadPluginManifestRegistryForInstalledIndex.mockReturnValue(
+        makeManifestRegistry("replacement"),
+      );
+      const nextOwner = reuse === "foreign seed" ? createPluginMetadataOwner() : owner;
+      if (nextOwner !== owner) {
+        ownerDisposers.push(() => nextOwner.dispose());
+      }
+
+      const replacement = nextOwner.prepare({
+        config,
+        env,
+        ...(reuse === "foreign seed" ? { seed: initial } : {}),
+        ...(reuse === "workspace reuse"
+          ? { additionalWorkspaceDirs: [`${env.OPENCLAW_STATE_DIR}/workspace`] }
+          : {}),
+      });
+
+      expect(replacement.plugins.map((plugin) => plugin.id)).toEqual(["replacement"]);
+      expect(owner.readSnapshot(lookup)).toBe(
+        reuse === "foreign seed" ? undefined : replacement.selectedSnapshot,
+      );
+    },
+  );
+
+  it("rejects metadata assembled across database initialization", () => {
     const config = {};
+    const env = { OPENCLAW_STATE_DIR: tempDirs.make("openclaw-plugin-metadata-") };
     const index = makeIndex();
     index.policyHash = resolveInstalledPluginIndexPolicyHash(config);
-    loadPluginRegistrySnapshotWithMetadata.mockReturnValue({
-      source: "provided",
-      snapshot: index,
-      diagnostics: [],
+    loadPluginRegistrySnapshotWithMetadata.mockImplementation(() => {
+      openTestStateDatabase(env);
+      return { source: "provided", snapshot: index, diagnostics: [] };
     });
     const owner = createPluginMetadataOwner();
-    ownerDisposers.push(installPluginMetadataOwner(owner));
-    const active = owner.prepare({ config, env: {} });
-    owner.publish(active, { config, env: {} });
-    const candidateConfig = { plugins: { allow: ["replacement"] } };
-    const candidateIndex = makeIndex("replacement");
-    candidateIndex.policyHash = resolveInstalledPluginIndexPolicyHash(candidateConfig);
-    loadPluginRegistrySnapshotWithMetadata.mockReturnValue({
-      source: "provided",
-      snapshot: candidateIndex,
-      diagnostics: [],
-    });
-    loadPluginManifestRegistryForInstalledIndex.mockReturnValue(
-      makeManifestRegistry("replacement"),
-    );
-    const candidate = owner.prepare({ config: candidateConfig, env: {} });
+    ownerDisposers.push(() => owner.dispose());
 
-    clearPluginMetadataLifecycleCaches(owner);
-    expect(() => owner.publish(candidate, { config: candidateConfig, env: {} })).toThrow(
-      "superseded",
-    );
-    expect(owner.getActive()).toBe(active);
-    expect(owner.readConfigWide({ config: structuredClone(config), env: {} })).toBe(active);
-    expect(
-      resolvePluginMetadataSnapshot({ config, env: {}, allowWorkspaceScopedCurrent: true }),
-    ).toBe(active.selectedSnapshot);
-    expect(() =>
-      getPluginMetadataWorkspaceSnapshot(active, { workspaceDir: "/unprepared" }),
-    ).toThrow("not prepared");
-
-    loadPluginManifestRegistryForInstalledIndex.mockImplementation(() => {
-      throw new Error("unreadable manifest");
-    });
-    expect(() => owner.prepare({ config: candidateConfig, env: {} })).toThrow(
-      "unreadable manifest",
-    );
-    expect(owner.getActive()).toBe(active);
-    loadPluginManifestRegistryForInstalledIndex.mockReturnValue(
-      makeManifestRegistry("replacement"),
-    );
-    const replacement = owner.prepare({ config: candidateConfig, env: {} });
-    owner.publish(replacement, { config: candidateConfig, env: {} });
-    expect(owner.getActive()?.plugins.map((plugin) => plugin.id)).toEqual(["replacement"]);
+    expect(() => owner.prepare({ config, env })).toThrow("superseded");
+    expect(owner.readSnapshot({ config, env, allowWorkspaceScopedCurrent: true })).toBeUndefined();
   });
 
   it.each(["process owner", "scoped collection", "owner reuse"] as const)(

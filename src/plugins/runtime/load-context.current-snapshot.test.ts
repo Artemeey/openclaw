@@ -5,6 +5,7 @@ import {
   setCurrentPluginMetadataSnapshot,
 } from "../current-plugin-metadata-snapshot.js";
 import { resolveInstalledPluginIndexPolicyHash } from "../installed-plugin-index-policy.js";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../installed-plugin-index-record-cache.js";
 import * as pluginMetadata from "../plugin-metadata-collection.js";
 import { resolvePluginMetadataEnvFingerprint } from "../plugin-metadata-env.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugin-metadata-lifecycle.js";
@@ -84,6 +85,8 @@ describe("plugin runtime load context current snapshot ownership", () => {
     vi.spyOn(pluginMetadata, "preparePluginMetadata").mockReturnValue({
       workspaces: new Map([[operationWorkspace, operationSnapshot]]),
       configWorkspaceDirs: [operationWorkspace],
+      agentWorkspaceDirs: new Map([["main", operationWorkspace]]),
+      installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
       envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
       selectedSnapshot: operationSnapshot,
       manifestRegistry: operationSnapshot.manifestRegistry,

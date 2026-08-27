@@ -3,6 +3,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
 import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
@@ -86,6 +87,8 @@ const pluginMetadataSnapshot = vi.hoisted(
 const pluginMetadata: PreparedPluginMetadata = {
   workspaces: new Map([["/workspace", pluginMetadataSnapshot]]),
   configWorkspaceDirs: ["/workspace"],
+  agentWorkspaceDirs: new Map([["main", "/workspace"]]),
+  installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
   envFingerprint: resolvePluginMetadataEnvFingerprint(),
   selectedSnapshot: pluginMetadataSnapshot,
   manifestRegistry: pluginMetadataSnapshot.manifestRegistry,
@@ -468,6 +471,10 @@ describe("prepareGatewayPluginBootstrap startup plugins", () => {
         selectedSnapshot,
         workspaces: new Map([[workspaceDir, selectedSnapshot]]),
         configWorkspaceDirs: [workspaceDir],
+        agentWorkspaceDirs: new Map(
+          systemAgentId && workspaceDir ? [[systemAgentId, workspaceDir]] : [],
+        ),
+        installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
       };
       const result = await prepareBootstrapWithRuntimeConfig(
         {

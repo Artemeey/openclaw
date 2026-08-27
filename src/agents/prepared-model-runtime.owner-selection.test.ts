@@ -14,6 +14,7 @@ import {
   createPluginMetadataSnapshot,
   makeRegistry,
 } from "../config/plugin-auto-enable.test-helpers.js";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
 import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
@@ -655,6 +656,8 @@ describe("prepared model runtime owner selection", () => {
         [distinctMetadata.workspaceDir, distinctMetadata],
       ]),
       configWorkspaceDirs: [sharedMetadata.workspaceDir, distinctMetadata.workspaceDir],
+      agentWorkspaceDirs: new Map(mocks.configuredWorkspaces),
+      installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
       envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
       selectedSnapshot: sharedMetadata,
       plugins: [...sharedMetadata.plugins, ...distinctMetadata.plugins],

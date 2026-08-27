@@ -72,9 +72,24 @@ async function loadFreshHealthModulesForTest() {
     resolveSessionStorePathCore: () => "/tmp/sessions.json",
   }));
   vi.doMock("../config/sessions/session-accessor.js", () => ({
-    listSessionEntriesReadOnly: (scope?: { agentId?: string; storePath?: string }) => {
-      listHealthSessionEntriesCalls.push(scope ?? {});
-      return Object.entries(testStore).map(([sessionKey, entry]) => ({ sessionKey, entry }));
+    readSessionStoreSummaryReadOnly: (
+      ...[scope, options]: Parameters<
+        typeof import("../config/sessions/session-accessor.js").readSessionStoreSummaryReadOnly
+      >
+    ) => {
+      listHealthSessionEntriesCalls.push(scope);
+      const entries = Object.entries(testStore)
+        .filter(([sessionKey]) => !options.excludeSessionKeys?.includes(sessionKey))
+        .map(([sessionKey, entry]) => ({
+          sessionKey,
+          entry: { sessionId: sessionKey, updatedAt: 0, ...entry },
+        }));
+      return {
+        count: entries.length,
+        recent: entries
+          .toSorted((left, right) => right.entry.updatedAt - left.entry.updatedAt)
+          .slice(0, options.recentLimit),
+      };
     },
   }));
   vi.doMock("../plugins/runtime/runtime-web-channel-plugin.js", () => ({
@@ -1033,8 +1048,8 @@ describe("collectGatewayHealthSnapshot", () => {
     await getHealthSnapshot({ timeoutMs: 10, probe: false });
 
     expect(listHealthSessionEntriesCalls).toEqual([
-      { agentId: "main", clone: false, projection: "list", storePath: "/tmp/sessions.json" },
-      { agentId: "ops", clone: false, projection: "list", storePath: "/tmp/sessions.json" },
+      { agentId: "main", storePath: "/tmp/sessions.json" },
+      { agentId: "ops", storePath: "/tmp/sessions.json" },
     ]);
   });
 });

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import type { ConfigFileSnapshot } from "../config/types.js";
 import type { StartupMigrationLease } from "../infra/startup-migration-checkpoint.js";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import type { DoctorConfigPreflightPluginSnapshotRead } from "./doctor-config-preflight-plugin-index.js";
@@ -29,6 +30,8 @@ function snapshotRead(
       selectedSnapshot: snapshot,
       workspaces: new Map([[undefined, snapshot]]),
       configWorkspaceDirs: [undefined],
+      agentWorkspaceDirs: new Map(),
+      installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
       envFingerprint: resolvePluginMetadataEnvFingerprint(),
       channelCatalog: { read: () => [] },
     },

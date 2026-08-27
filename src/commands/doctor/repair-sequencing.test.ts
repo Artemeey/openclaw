@@ -5,6 +5,7 @@ import {
   createPluginMetadataSnapshot,
   makeRegistry,
 } from "../../config/plugin-auto-enable.test-helpers.js";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../../plugins/installed-plugin-index-record-cache.js";
 import type { PreparedPluginMetadata } from "../../plugins/plugin-metadata-collection.js";
 import { resolvePluginMetadataEnvFingerprint } from "../../plugins/plugin-metadata-snapshot.js";
 import { runDoctorRepairSequence } from "./repair-sequencing.js";
@@ -1031,6 +1032,8 @@ describe("doctor repair sequencing", () => {
       selectedSnapshot: staleSnapshot,
       workspaces: new Map([[workspaceDir, staleSnapshot]]),
       configWorkspaceDirs: [workspaceDir],
+      agentWorkspaceDirs: new Map([["main", workspaceDir]]),
+      installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
       envFingerprint: resolvePluginMetadataEnvFingerprint(),
       channelCatalog: { read: () => [] },
     };

@@ -120,6 +120,14 @@ collection and one observed candidate. Installs, manifest edits, and load-path
 changes become visible through explicit preparation and replacement; rejected
 reloads retain the accepted collection. Cold operations outside an owner prepare
 their own metadata and do not publish it globally.
+
+Observing config reads initialize shared state after core validation and before
+preparing plugin metadata. Early read-only startup guards defer plugin validation
+until the guarded migration boundary; speculative recovery backups remain
+read-only. Database initialization advances the install-record generation, so
+earlier candidates and seeds cannot publish stale metadata. The accepted
+collection remains available until its replacement is accepted.
+
 The manifest file parser keeps a bounded file-signature cache keyed by the
 opened manifest path plus device/inode, size, and mtime/ctime; that cache only
 avoids re-parsing unchanged bytes and must not cache discovery, registry,
@@ -133,6 +141,12 @@ only the selected workspace's inventory. CLI and Doctor scopes retain their
 collections through asynchronous consumers. Derived schemas, descriptors, and
 media defaults follow immutable manifest identity, while account state,
 environment triggers, and active runtime registry selection remain live.
+Model normalization carries the prepared config, workspace, and manifest policy
+together. The collection records each configured agent's workspace once; session
+rows for removed agents use the accepted control-plane view without discovering
+another workspace. Provider hooks use that same inventory, including a shared
+view with no workspace; a loaded plugin from an older workspace cannot supply
+its hook merely because the provider or plugin ID matches.
 Retained runtime generations keep their exact finite metadata view. A newly
 prepared config operation may enter its own scope without widening that retained
 view after the operation returns.
@@ -153,19 +167,11 @@ Those caches are data-plane implementation details. They must not answer
 control-plane questions such as "which plugin owns this provider?" unless the
 caller deliberately asked for runtime loading.
 
-Do not add persistent or wall-clock caches for:
-
-- discovery results
-- direct manifest registries
-- manifest registries reconstructed from the installed plugin index
-- provider owner lookup, model suppression, provider policy, or public-artifact
-  metadata
-- any other manifest-derived answer where a changed manifest, installed index,
-  or load path should be visible on the next metadata read
-
-Callers that rebuild manifest metadata from the persisted installed plugin
-index reconstruct that registry on demand. The installed index is durable
-source-plane state; it is not a hidden in-process metadata cache.
+Do not add independent persistent or wall-clock caches for discovery, manifest
+registries, provider ownership, model policy, or public-artifact metadata. Those
+answers belong to the accepted collection and its explicit replacement lifecycle.
+Cold operations reconstruct their own collection from the installed plugin index;
+the index remains durable source-plane state, not a second runtime authority.
 
 ## Registry model
 

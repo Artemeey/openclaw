@@ -9,6 +9,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   getLoadedRuntimePluginRegistry,
   registryContainsRuntimePluginIds,
+  registryMatchesManifestPluginIds,
 } from "./active-runtime-registry.js";
 import {
   PluginLruCache,
@@ -50,6 +51,17 @@ type ProviderRuntimePluginLookupParams = {
   applyAutoEnable?: boolean;
   pluginMetadataSnapshot?: PluginMetadataRegistryView;
 };
+
+function resolveProviderRuntimeWorkspaceDir(params: {
+  workspaceDir?: string;
+  pluginMetadataSnapshot?: PluginMetadataRegistryView;
+}): string | undefined {
+  // A prepared shared-root snapshot owns undefined; it must not inherit the
+  // previously active agent workspace after control-plane ownership changes.
+  return params.pluginMetadataSnapshot
+    ? params.pluginMetadataSnapshot.workspaceDir
+    : (params.workspaceDir ?? getActivePluginRegistryWorkspaceDirFromState());
+}
 
 export type ProviderRuntimePluginHandle = ProviderRuntimePluginLookupParams & {
   plugin?: ProviderPlugin;
@@ -102,10 +114,6 @@ function resolveProviderRuntimePluginCacheKey(
     models: params.config?.models?.providers,
     workspaceDir: params.workspaceDir ?? "",
     applyAutoEnable: params.applyAutoEnable ?? null,
-    pluginMetadata:
-      params.pluginMetadataSnapshot?.manifestRegistry.plugins
-        .map((plugin) => plugin.id)
-        .join(",") ?? null,
     pluginRegistryKey: registryState?.key ?? null,
     pluginRegistryVersion: registryState?.activeVersion ?? null,
   });
@@ -165,6 +173,7 @@ function findProviderRuntimePluginInLoadedRegistries(params: {
         registry: scopedRegistry,
         provider: params.lookup.provider,
         ownerRefs: params.ownerRefs,
+        metadataSnapshot: params.lookup.pluginMetadataSnapshot,
       })
     : undefined;
   if (scopedPlugin) {
@@ -179,6 +188,7 @@ function findProviderRuntimePluginInLoadedRegistries(params: {
         registry: activeRegistry,
         provider: params.lookup.provider,
         ownerRefs: params.ownerRefs,
+        metadataSnapshot: params.lookup.pluginMetadataSnapshot,
       })
     : undefined;
   if (activePlugin) {
@@ -191,15 +201,23 @@ function findProviderRuntimePluginInRegistry(params: {
   registry: PluginRegistry;
   provider: string;
   ownerRefs: readonly string[];
+  metadataSnapshot?: PluginMetadataRegistryView;
 }): ProviderPlugin | undefined {
   return listProviderRuntimePluginsInRegistry(params.registry).find((plugin) => {
-    if (params.ownerRefs.length > 0) {
-      return (
-        matchesProviderLiteralId(plugin, params.provider) ||
-        params.ownerRefs.some((ownerRef) => matchesProviderPluginRef(plugin, ownerRef))
-      );
-    }
-    return matchesProviderPluginRef(plugin, params.provider);
+    const matchesProvider =
+      params.ownerRefs.length > 0
+        ? matchesProviderLiteralId(plugin, params.provider) ||
+          params.ownerRefs.some((ownerRef) => matchesProviderPluginRef(plugin, ownerRef))
+        : matchesProviderPluginRef(plugin, params.provider);
+    return (
+      matchesProvider &&
+      (!params.metadataSnapshot ||
+        registryMatchesManifestPluginIds(
+          params.registry,
+          params.metadataSnapshot.manifestRegistry.plugins,
+          [plugin.pluginId],
+        ))
+    );
   });
 }
 
@@ -230,21 +248,30 @@ export function resolveProviderPluginsForHooks(params: {
   applyAutoEnable?: boolean;
   pluginMetadataSnapshot?: PluginMetadataRegistryView;
 }): ProviderPlugin[] {
-  const filterRegistryPlugins = (registry: PluginRegistry) => {
+  const filterRegistryPlugins = (
+    registry: PluginRegistry,
+    metadataSnapshot: PluginMetadataRegistryView | undefined,
+  ) => {
     const onlyPluginIds = params.onlyPluginIds ? new Set(params.onlyPluginIds) : undefined;
     return listProviderRuntimePluginsInRegistry(registry).filter(
       (plugin) =>
         (!onlyPluginIds || onlyPluginIds.has(plugin.pluginId)) &&
         (!params.providerRefs?.length ||
-          params.providerRefs.some((providerRef) => matchesProviderPluginRef(plugin, providerRef))),
+          params.providerRefs.some((providerRef) =>
+            matchesProviderPluginRef(plugin, providerRef),
+          )) &&
+        (!metadataSnapshot ||
+          registryMatchesManifestPluginIds(registry, metadataSnapshot.manifestRegistry.plugins, [
+            plugin.pluginId,
+          ])),
     );
   };
   const generationRegistry = getPluginRuntimeGenerationRegistry();
   if (generationRegistry) {
-    return filterRegistryPlugins(generationRegistry);
+    return filterRegistryPlugins(generationRegistry, undefined);
   }
   const env = params.env ?? process.env;
-  const workspaceDir = params.workspaceDir ?? getActivePluginRegistryWorkspaceDirFromState();
+  const workspaceDir = resolveProviderRuntimeWorkspaceDir(params);
   // Request/lifecycle scopes and the active process registry already own loaded plugin runtime.
   // Reuse them like findProviderRuntimePluginInLoadedRegistries does: a scoped load here rebuilds
   // plugin runtime from source on the request path and stalls the gateway event loop for seconds.
@@ -259,7 +286,9 @@ export function resolveProviderPluginsForHooks(params: {
           workspaceDir,
           requiredPluginIds: params.onlyPluginIds,
         });
-  const preparedPlugins = preparedRegistry ? filterRegistryPlugins(preparedRegistry) : [];
+  const preparedPlugins = preparedRegistry
+    ? filterRegistryPlugins(preparedRegistry, params.pluginMetadataSnapshot)
+    : [];
   if (preparedPlugins.length > 0) {
     return preparedPlugins;
   }
@@ -276,7 +305,7 @@ export function resolveProviderPluginsForHooks(params: {
 export function resolveProviderRuntimePlugin(
   params: ProviderRuntimePluginLookupParams,
 ): ProviderPlugin | undefined {
-  const workspaceDir = params.workspaceDir ?? getActivePluginRegistryWorkspaceDirFromState();
+  const workspaceDir = resolveProviderRuntimeWorkspaceDir(params);
   const env = params.env ?? process.env;
   const lookup = { ...params, workspaceDir, env };
   const apiOwnerHint = resolveProviderConfigApiOwnerHint({
@@ -307,9 +336,6 @@ export function resolveProviderRuntimePlugin(
   ) {
     return undefined;
   }
-  const cacheConfig = params.env && params.env !== process.env ? undefined : params.config;
-  const registryState = getPluginRegistryState();
-  const cacheKey = resolveProviderRuntimePluginCacheKey(lookup, registryState);
   const load = () => {
     const lookupScope = resolveProviderRuntimeLookupScope(params, ownerRefs);
     return (
@@ -332,6 +358,14 @@ export function resolveProviderRuntimePlugin(
       }) ?? null
     );
   };
+  // The supplied snapshot already owns reuse. A provider cached only by ids can
+  // belong to another physical owner after metadata changes without a runtime reload.
+  if (params.pluginMetadataSnapshot) {
+    return load() ?? undefined;
+  }
+  const cacheConfig = params.env && params.env !== process.env ? undefined : params.config;
+  const registryState = getPluginRegistryState();
+  const cacheKey = resolveProviderRuntimePluginCacheKey(lookup, registryState);
   const plugin = cacheConfig
     ? resolveConfigScopedRuntimeCacheValue({
         cache: providerRuntimePluginCache,
@@ -362,7 +396,7 @@ export function resolveLoadedProviderRuntimePlugin(
   });
   const ownerRefs = [...new Set([params.providerOwner, apiOwnerHint].filter(Boolean))] as string[];
   return findProviderRuntimePluginInLoadedRegistries({
-    lookup: params,
+    lookup: { ...params, workspaceDir: resolveProviderRuntimeWorkspaceDir(params) },
     ownerRefs,
   });
 }
@@ -373,6 +407,7 @@ export function resolveProviderHookPlugin(params: {
   config?: OpenClawConfig;
   workspaceDir?: string;
   env?: NodeJS.ProcessEnv;
+  pluginMetadataSnapshot?: PluginMetadataRegistryView;
 }): ProviderPlugin | undefined {
   const runtimePlugin = resolveProviderRuntimePlugin(params);
   if (runtimePlugin) {
@@ -381,17 +416,15 @@ export function resolveProviderHookPlugin(params: {
   if (hasConfiguredModelProvider(params)) {
     return undefined;
   }
-  return resolveProviderPluginsForHooks({
-    config: params.config,
-    workspaceDir: params.workspaceDir,
-    env: params.env,
-  }).find((candidate) => matchesProviderPluginRef(candidate, params.provider));
+  return resolveProviderPluginsForHooks(params).find((candidate) =>
+    matchesProviderPluginRef(candidate, params.provider),
+  );
 }
 
 export function resolveProviderRuntimePluginHandle(
   params: ProviderRuntimePluginLookupParams,
 ): ProviderRuntimePluginHandle {
-  const workspaceDir = params.workspaceDir ?? getActivePluginRegistryWorkspaceDirFromState();
+  const workspaceDir = resolveProviderRuntimeWorkspaceDir(params);
   const env = params.env;
   const runtimePlugin = resolveProviderRuntimePlugin({
     ...params,

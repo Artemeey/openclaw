@@ -5,7 +5,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vites
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { clearRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
-import { upsertSessionEntryCore } from "../config/sessions/session-accessor.js";
+import {
+  replaceSessionEntrySync,
+  upsertSessionEntryCore,
+} from "../config/sessions/session-accessor.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import { getActivePluginRegistry, setActivePluginRegistry } from "../plugins/runtime.js";
 import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
@@ -160,5 +163,48 @@ describe("getStatusSummary read-only session access", () => {
         }
       },
     );
+  });
+
+  it("bounds session payload hydration to the recent status window", async () => {
+    await withOpenClawTestState({ prefix: "openclaw-status-recent-window-" }, async (state) => {
+      const config = {
+        agents: { defaults: { heartbeat: { every: "0m" } }, entries: { main: {} } },
+      };
+      const storePath = resolveSessionStorePathCore(undefined, {
+        agentId: "main",
+        env: state.env,
+      });
+      for (let index = 1; index <= 24; index += 1) {
+        replaceSessionEntrySync(
+          { agentId: "main", storePath, sessionKey: `agent:main:history-${index}` },
+          {
+            sessionId: `status-history-${index}`,
+            updatedAt: index,
+            pluginExtensions: {
+              fixture: { history: Array.from({ length: 64 }, () => "x".repeat(128)) },
+            },
+          },
+        );
+      }
+      await getStatusSummary({ config, includeChannelSummary: false });
+      const clone = vi.spyOn(globalThis, "structuredClone");
+      try {
+        const summary = await getStatusSummary({ config, includeChannelSummary: false });
+
+        expect(summary.sessions.count).toBe(24);
+        expect(summary.sessions.byAgent[0]?.count).toBe(24);
+        expect(summary.sessions.recent.map(({ key }) => key)).toEqual(
+          Array.from({ length: 10 }, (_, index) => `agent:main:history-${24 - index}`),
+        );
+        expect(
+          clone.mock.calls.filter(([value]) => {
+            const sessionId = (value as { sessionId?: unknown })?.sessionId;
+            return typeof sessionId === "string" && sessionId.startsWith("status-history-");
+          }),
+        ).toHaveLength(0);
+      } finally {
+        clone.mockRestore();
+      }
+    });
   });
 });

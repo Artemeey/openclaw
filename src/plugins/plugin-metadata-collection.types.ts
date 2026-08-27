@@ -14,8 +14,10 @@ export type ConfigWidePluginMetadataView = Pick<
 /** Config-wide metadata has no single executable index or workspace identity. */
 export type PreparedPluginMetadata = ConfigWidePluginMetadataView & {
   readonly workspaces: ReadonlyMap<string | undefined, PluginMetadataSnapshot>;
+  readonly agentWorkspaceDirs: ReadonlyMap<string, string>;
   readonly configWorkspaceDirs: readonly (string | undefined)[];
   readonly envFingerprint: string;
+  readonly installRecordsGeneration: number;
   readonly bundledDiscoveryMode?: "compat" | "allowlist";
   readonly selectedSnapshot: PluginMetadataSnapshot;
   readonly channelCatalog: PreparedPluginChannelCatalog;
@@ -45,9 +47,17 @@ export type PluginMetadataOwner = {
   getActive: () => PreparedPluginMetadata | undefined;
   isPreparedCurrent: (metadata: PreparedPluginMetadata) => boolean;
   readSnapshot: (params: ResolvePluginMetadataSnapshotParams) => PluginMetadataSnapshot | undefined;
-  readConfigWide: (
-    params: PreparePluginMetadataParams & PluginMetadataScope,
-  ) => ConfigWidePluginMetadataView | undefined;
+  readConfigWide: {
+    (
+      params: PreparePluginMetadataParams & {
+        pluginIds?: undefined;
+        pluginIdScope?: undefined;
+      },
+    ): PreparedPluginMetadata | undefined;
+    (
+      params: PreparePluginMetadataParams & PluginMetadataScope,
+    ): ConfigWidePluginMetadataView | undefined;
+  };
   invalidatePreparation: () => void;
   dispose: () => void;
 };

@@ -12,6 +12,7 @@ import {
   buildPluginCapabilityConsentReview,
   type PluginCapabilityConsentHandler,
 } from "../plugins/capability-consent.js";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
 import {
   resolvePluginMetadataEnvFingerprint,
@@ -2154,6 +2155,8 @@ describe("doctor config flow", () => {
       selectedSnapshot: refreshedSnapshot,
       workspaces: new Map([[undefined, refreshedSnapshot]]),
       configWorkspaceDirs: [undefined],
+      agentWorkspaceDirs: new Map(),
+      installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
       envFingerprint: resolvePluginMetadataEnvFingerprint(),
       channelCatalog: { read: () => [] },
     };

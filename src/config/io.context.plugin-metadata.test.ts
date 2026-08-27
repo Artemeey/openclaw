@@ -1,8 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveReadOnlyChannelPluginsForConfig } from "../channels/plugins/read-only.js";
 import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
+import { clearLoadInstalledPluginIndexInstallRecordsCache } from "../plugins/installed-plugin-index-record-cache.js";
+import {
+  readPersistedInstalledPluginIndexSync,
+  refreshPersistedInstalledPluginIndexSync,
+} from "../plugins/installed-plugin-index-store.js";
 import {
   createPluginMetadataOwner,
   getPluginMetadataWorkspaceSnapshot,
@@ -15,8 +21,13 @@ import {
   makeTrackedTempDir,
   mkdirSafeDir,
 } from "../plugins/test-helpers/fs-fixtures.js";
-import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import {
+  closeOpenClawStateDatabaseForTest,
+  openOpenClawStateDatabase,
+} from "../state/openclaw-state-db.js";
+import { STATE_SCHEMA_13_TO_12_DOWNGRADE_SQL } from "../state/openclaw-state-schema-v13-widerow.test-support.js";
 import { createConfigIoContext } from "./io.context.js";
+import { createConfigIO } from "./io.factory.js";
 import { resolveConfigWidePluginManifestRegistry } from "./io.plugin-metadata.js";
 import type { OpenClawConfig } from "./types.openclaw.js";
 
@@ -88,6 +99,149 @@ describe("config IO plugin metadata snapshots", () => {
     };
     return { config, plugins, workspaceDirs };
   }
+
+  it.each(["first read", "read-only owner", "read-only seed after external open"])(
+    "prepares complete metadata after state initialization: %s",
+    async (preparation) => {
+      const pluginDir = path.join(root, "custom-memory");
+      mkdirSafeDir(pluginDir);
+      const plugin = createColdPluginFixture({
+        rootDir: pluginDir,
+        pluginId: "custom-memory",
+        manifest: {
+          kind: "memory",
+          configSchema: {
+            type: "object",
+            properties: { mode: { enum: ["valid"] } },
+            required: ["mode"],
+            additionalProperties: false,
+          },
+        },
+      });
+      const workspaceDir = path.join(root, "workspace");
+      const config: OpenClawConfig = {
+        gateway: { mode: "local" },
+        agents: { ownership: "explicit", entries: { worker: { workspace: workspaceDir } } },
+        plugins: {
+          slots: { memory: plugin.pluginId },
+          entries: { [plugin.pluginId]: { enabled: true, config: { mode: "valid" } } },
+        },
+      };
+      const index = refreshPersistedInstalledPluginIndexSync({
+        config,
+        env,
+        workspaceDir,
+        reason: "manual",
+        installRecords: {
+          [plugin.pluginId]: {
+            source: "path",
+            sourcePath: pluginDir,
+            installPath: pluginDir,
+            version: "1.0.0",
+          },
+        },
+      });
+      const databasePath = openOpenClawStateDatabase({ env }).path;
+      closeOpenClawStateDatabaseForTest();
+      const legacy = new DatabaseSync(databasePath);
+      legacy.exec(STATE_SCHEMA_13_TO_12_DOWNGRADE_SQL);
+      legacy.close();
+      clearPluginMetadataLifecycleCaches();
+      clearLoadInstalledPluginIndexInstallRecordsCache();
+      fs.writeFileSync(env.OPENCLAW_CONFIG_PATH!, JSON.stringify(config));
+
+      const owner = createPluginMetadataOwner();
+      const readonlyIO = createConfigIO({ env, observe: false, pluginMetadataOwner: owner });
+      let seed: ReturnType<typeof owner.prepare> | undefined;
+      if (preparation !== "first read") {
+        await readonlyIO.readConfigFileSnapshot();
+        seed = owner.prepare({ config, env });
+        const unchanged = new DatabaseSync(databasePath, { readOnly: true });
+        expect(unchanged.prepare("PRAGMA user_version").get()?.user_version).toBe(12);
+        unchanged.close();
+        if (preparation === "read-only seed after external open") {
+          openOpenClawStateDatabase({ env });
+        }
+      }
+
+      const observingIO = createConfigIO({ env, pluginMetadataOwner: owner });
+      const read = () => observingIO.readConfigFileSnapshotWithPluginMetadata();
+      const result = seed
+        ? await withPluginMetadataCollectionScope(seed, read, { config, env })
+        : await read();
+      expect(result.snapshot.valid, JSON.stringify(result.snapshot.issues)).toBe(true);
+      expect(result.pluginMetadata?.byPluginId.has(plugin.pluginId)).toBe(true);
+      expect(result.pluginMetadata?.selectedSnapshot.index.installRecords).toEqual(
+        index.installRecords,
+      );
+      expect(readPersistedInstalledPluginIndexSync({ env })?.installRecords).toEqual(
+        index.installRecords,
+      );
+      expect(
+        openOpenClawStateDatabase({ env }).db.prepare("PRAGMA user_version").get()?.user_version,
+      ).toBe(13);
+      expect(
+        owner.prepare({ config, env, seed: result.pluginMetadata }).byPluginId.has(plugin.pluginId),
+      ).toBe(true);
+
+      fs.writeFileSync(
+        env.OPENCLAW_CONFIG_PATH!,
+        JSON.stringify({
+          ...config,
+          plugins: {
+            ...config.plugins,
+            entries: { [plugin.pluginId]: { enabled: true, config: { mode: "invalid" } } },
+          },
+        }),
+      );
+      const rejected = await observingIO.readConfigFileSnapshot();
+      expect(rejected.valid).toBe(false);
+      expect(
+        rejected.issues.some((issue) =>
+          issue.path.startsWith(`plugins.entries.${plugin.pluginId}`),
+        ),
+      ).toBe(true);
+      expect(fs.existsSync(plugin.runtimeMarker)).toBe(false);
+      owner.dispose();
+    },
+  );
+
+  it("does not initialize state while validating an unaccepted recovery backup", () => {
+    const plugin = writePlugin(path.join(root, "backup-plugin"), "backup-plugin");
+    const config = { plugins: { load: { paths: [plugin.rootDir] } } };
+    const context = createConfigIoContext({ env });
+    const result = context.prepareRecoveryBackupCandidate({
+      parsed: config,
+      raw: JSON.stringify(config),
+    });
+    expect(result.ok).toBe(true);
+    expect(fs.existsSync(path.join(env.OPENCLAW_STATE_DIR!, "state", "openclaw.sqlite"))).toBe(
+      false,
+    );
+    expect(fs.existsSync(plugin.runtimeMarker)).toBe(false);
+  });
+
+  it("keeps config inspection available when state initialization fails", async () => {
+    const stateDatabase = await import("../state/openclaw-state-db.js");
+    const openState = vi
+      .spyOn(stateDatabase, "openOpenClawStateDatabase")
+      .mockImplementation(() => {
+        throw new Error("test state database unavailable");
+      });
+    mkdirSafeDir(path.dirname(env.OPENCLAW_CONFIG_PATH!));
+    fs.writeFileSync(
+      env.OPENCLAW_CONFIG_PATH!,
+      JSON.stringify({ gateway: { mode: "local" }, plugins: { enabled: false } }),
+    );
+
+    const snapshot = await createConfigIO({
+      env,
+      logger: { error: vi.fn(), warn: vi.fn() },
+    }).readConfigFileSnapshot();
+
+    expect(snapshot.valid, JSON.stringify(snapshot.issues)).toBe(true);
+    expect(openState).toHaveBeenCalled();
+  });
 
   it.each([
     { sharedWorkspace: false, defaultStatePaths: false },

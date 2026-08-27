@@ -2,6 +2,7 @@
 // auto-enable behavior, model defaults, and recovery diagnostics.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConfigFileSnapshot, ModelDefinitionConfig, OpenClawConfig } from "../config/types.js";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import type {
   PluginMetadataOwner,
   PreparedPluginMetadata,
@@ -66,6 +67,8 @@ const pluginMetadataSnapshot = vi.hoisted((): PluginMetadataSnapshot => {
 const pluginMetadata: PreparedPluginMetadata = {
   workspaces: new Map([[undefined, pluginMetadataSnapshot]]),
   configWorkspaceDirs: [undefined],
+  agentWorkspaceDirs: new Map(),
+  installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
   envFingerprint: resolvePluginMetadataEnvFingerprint(),
   selectedSnapshot: pluginMetadataSnapshot,
   manifestRegistry: pluginMetadataSnapshot.manifestRegistry,

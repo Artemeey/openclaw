@@ -175,19 +175,6 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
       isTruthyEnvValue(candidateEnv.OPENCLAW_SKIP_PROVIDERS);
     const channelReloadTargets = () =>
       new Set<ChannelKind>([...channelsToRestart, ...restartChannelAccounts.keys()]);
-    const getChannelAutostartSuppression = () => params.getChannelAutostartSuppression?.() ?? null;
-    const logSuppressedChannelRestart = (
-      channels: ReadonlySet<ChannelKind>,
-      action: string,
-    ): void => {
-      const suppression = getChannelAutostartSuppression();
-      if (!suppression) {
-        return;
-      }
-      params.logChannels.info(
-        `${action} suppressed by crash-loop breaker for channels: ${[...channels].join(", ")}`,
-      );
-    };
     const commitRuntime = async (onCommit?: () => void) => {
       if (runtimeCommitted) {
         return;
@@ -693,9 +680,7 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
         "skipping channel reload (OPENCLAW_SKIP_CHANNELS=1 or OPENCLAW_SKIP_PROVIDERS=1)",
       pluginReloadAborted,
       isLifecycleReloadAborted,
-      getChannelAutostartSuppression,
       channelReloadTargets,
-      logSuppressedChannelRestart,
       scheduleRecoveryRestart,
     });
 

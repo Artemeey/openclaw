@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
 import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
@@ -47,6 +48,8 @@ describe("prepared reply dispatch runtime", () => {
     const pluginMetadata: PreparedPluginMetadata = {
       workspaces: new Map([[metadataSnapshot.workspaceDir, metadataSnapshot]]),
       configWorkspaceDirs: [metadataSnapshot.workspaceDir],
+      agentWorkspaceDirs: new Map([["default", "/tmp/unused-workspace"]]),
+      installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
       envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
       selectedSnapshot: metadataSnapshot,
       plugins: metadataSnapshot.plugins,

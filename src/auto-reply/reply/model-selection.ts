@@ -191,8 +191,7 @@ export async function createModelSelectionState(params: {
       config: cfg,
       ...(params.agentId ? { agentId: params.agentId } : {}),
     }));
-  const runtimeModelNormalization = resolveRuntimeNormalization(cfg);
-  const { manifestPlugins } = runtimeModelNormalization;
+  const runtimeModelNormalization = resolveRuntimeNormalization(cfg, params.agentId);
 
   let provider = params.provider;
   let model = params.model;
@@ -220,7 +219,7 @@ export async function createModelSelectionState(params: {
     model: defaultModel,
   });
   const configuredModelCatalog = mergePreparedConfiguredCatalog({
-    configured: buildConfiguredModelCatalog({ cfg, manifestPlugins }),
+    configured: buildConfiguredModelCatalog({ cfg, ...runtimeModelNormalization }),
     prepared: params.preparedModelCatalog?.entries,
   });
   const needsModelCatalog =

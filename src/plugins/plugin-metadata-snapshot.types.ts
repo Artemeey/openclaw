@@ -65,7 +65,7 @@ export type PluginMetadataSnapshot = {
 
 export type PluginMetadataRegistryView = Pick<
   PluginMetadataSnapshot,
-  "index" | "manifestRegistry" | "discovery"
+  "index" | "manifestRegistry" | "discovery" | "workspaceDir"
 >;
 
 export type PluginMetadataManifestView = Pick<PluginMetadataSnapshot, "index" | "plugins">;

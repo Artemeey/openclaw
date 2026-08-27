@@ -1,11 +1,14 @@
 // Verifies config IO compatibility loading and migration behavior.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveContextTokensForModelFromCache } from "../agents/context-resolution.js";
+import * as pluginManifestRegistry from "../plugins/manifest-registry.js";
 import { withTempDir } from "../test-utils/temp-dir.js";
 import { VERSION } from "../version.js";
 import { createConfigIO } from "./io.factory.js";
+import * as configPluginMetadata from "./io.plugin-metadata.js";
+import { tryGetLegacyDefaultAgentId } from "./legacy.default-agent-owner.js";
 import { normalizeExecSafeBinProfilesInConfig } from "./normalize-exec-safe-bin.js";
 import { createPluginMetadataSnapshot } from "./plugin-auto-enable.test-helpers.js";
 
@@ -44,6 +47,10 @@ vi.mock("../plugins/plugin-metadata-snapshot.js", async (importOriginal) => {
     loadPluginMetadataSnapshot: loadSnapshot,
     resolvePluginMetadataSnapshot: loadSnapshot,
   };
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 function withTempHome<T>(run: (home: string) => Promise<T>): Promise<T> {
@@ -191,6 +198,128 @@ describe("config io paths", () => {
       });
       expect(snapshot.warnings).not.toContainEqual(expect.objectContaining({ path: "" }));
       await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(raw);
+    });
+  });
+
+  it("keeps core-only legacy roster reads independent from plugin metadata", async () => {
+    await withTempHome(async (home) => {
+      const configPath = await writeConfig(home, ".openclaw", 19001);
+      const authored = {
+        gateway: { mode: "local" },
+        agents: { list: [{ id: "ops", default: true }, { id: "other" }] },
+        channels: { "fixture-channel": { enabled: true } },
+      };
+      const raw = `${JSON.stringify(authored, null, 2)}\n`;
+      await fs.writeFile(configPath, raw);
+      const metadataRead = vi
+        .spyOn(configPluginMetadata, "resolveConfigWidePluginManifestRegistry")
+        .mockImplementation(() => {
+          throw new Error("core-only config must not read plugin metadata");
+        });
+      const io = createConfigIO({
+        configPath,
+        env: { HOME: home },
+        homedir: () => home,
+        logger: { error: vi.fn(), warn: vi.fn() },
+        observe: false,
+        pluginValidation: "core-only",
+      });
+
+      const snapshot = await io.readConfigFileSnapshot();
+
+      expect(snapshot.valid, JSON.stringify(snapshot.issues)).toBe(true);
+      expect(snapshot.sourceConfigBeforeMigrations).toEqual(authored);
+      for (const config of [snapshot.config, io.loadConfig(), await io.readBestEffortConfig()]) {
+        expect(config.agents?.entries).toEqual({ ops: {}, other: {} });
+        expect(config.agents?.defaults?.systemAgent?.agentId).toBe("ops");
+        expect(config.bindings).toContainEqual({
+          agentId: "ops",
+          match: { channel: "fixture-channel", accountId: "*" },
+        });
+        expect(tryGetLegacyDefaultAgentId(config)).toBe("ops");
+      }
+      expect(metadataRead).not.toHaveBeenCalled();
+      await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(raw);
+    });
+  });
+
+  it("keeps core-only invalid config diagnostics independent from plugin metadata", async () => {
+    await withTempHome(async (home) => {
+      const configPath = await writeConfig(home, ".openclaw", 19001);
+      const authored = {
+        gateway: { port: "invalid", webchat: { enabled: true } },
+        plugins: { entries: { "fixture-plugin": { enabled: true } } },
+      };
+      const raw = `${JSON.stringify(authored, null, 2)}\n`;
+      await fs.writeFile(configPath, raw);
+      const metadataRead = vi
+        .spyOn(configPluginMetadata, "resolveConfigWidePluginManifestRegistry")
+        .mockImplementation(() => {
+          throw new Error("core-only config must not read plugin metadata");
+        });
+      const io = createConfigIO({
+        configPath,
+        env: { HOME: home },
+        homedir: () => home,
+        logger: { error: vi.fn(), warn: vi.fn() },
+        observe: false,
+        pluginValidation: "core-only",
+      });
+
+      const snapshot = await io.readConfigFileSnapshot();
+
+      expect(snapshot.valid).toBe(false);
+      expect(snapshot.issues).toContainEqual(expect.objectContaining({ path: "gateway.port" }));
+      expect(snapshot.legacyIssues).toContainEqual({
+        path: "gateway.webchat",
+        message: 'gateway.webchat is retired. Run "openclaw doctor --fix".',
+      });
+      expect(io.loadConfig).toThrow(/gateway\.port/);
+      expect(metadataRead).not.toHaveBeenCalled();
+      await expect(fs.readFile(configPath, "utf-8")).resolves.toBe(raw);
+    });
+  });
+
+  it("keeps core-only custom provider defaults independent from plugin metadata", async () => {
+    await withTempHome(async (home) => {
+      const configPath = await writeConfig(home, ".openclaw", 19001);
+      await fs.writeFile(
+        configPath,
+        JSON.stringify({
+          models: {
+            providers: {
+              "fixture-external": {
+                baseUrl: "https://fixture.invalid/v1",
+                api: "openai-completions",
+                models: [{ id: "custom-model", name: "Custom model" }],
+              },
+            },
+          },
+        }),
+      );
+      const metadataRead = vi
+        .spyOn(pluginManifestRegistry, "loadPluginManifestRegistryCore")
+        .mockImplementation(() => {
+          throw new Error("core-only defaults must not read plugin metadata");
+        });
+      const io = createConfigIO({
+        configPath,
+        env: { HOME: home },
+        homedir: () => home,
+        logger: { error: vi.fn(), warn: vi.fn() },
+        observe: false,
+        pluginValidation: "core-only",
+      });
+
+      const snapshot = await io.readConfigFileSnapshot();
+
+      expect(snapshot.valid, JSON.stringify(snapshot.issues)).toBe(true);
+      for (const config of [snapshot.config, io.loadConfig(), await io.readBestEffortConfig()]) {
+        expect(config.models?.providers?.["fixture-external"]?.models).toEqual([
+          expect.objectContaining({ id: "custom-model", maxTokens: 8192, input: ["text"] }),
+        ]);
+      }
+      expect(metadataRead).not.toHaveBeenCalled();
     });
   });
 

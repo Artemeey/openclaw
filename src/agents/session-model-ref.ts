@@ -3,6 +3,8 @@ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coe
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
+import type { ModelManifestNormalizationContext } from "./model-ref-shared.js";
+import { createModelManifestPluginContext } from "./model-selection-shared.js";
 import {
   inferUniqueProviderFromConfiguredModels,
   normalizeStoredOverrideModel,
@@ -27,8 +29,9 @@ export function resolveSessionModelRef(
   cfg: OpenClawConfig,
   entry?: SessionModelEntry,
   agentId?: string,
-  options?: { allowPluginNormalization?: boolean },
+  options?: { allowPluginNormalization?: boolean } & ModelManifestNormalizationContext,
 ): { provider: string; model: string } {
+  const manifestContext = createModelManifestPluginContext({ cfg, agentId, ...options });
   const normalizedOverride = normalizeStoredOverrideModel({
     providerOverride: entry?.providerOverride,
     modelOverride: entry?.modelOverride,
@@ -41,6 +44,7 @@ export function resolveSessionModelRef(
         ? false
         : options?.allowPluginNormalization;
     return resolvePersistedSelectedModelRef({
+      ...manifestContext.getContext(),
       defaultProvider: normalizedOverride.providerOverride,
       overrideProvider: normalizedOverride.providerOverride,
       overrideModel: normalizedOverride.modelOverride,
@@ -54,16 +58,19 @@ export function resolveSessionModelRef(
     ? resolveDefaultModelForAgent({
         cfg,
         agentId,
-        allowPluginNormalization: options?.allowPluginNormalization,
+        ...options,
       })
     : resolveConfiguredModelRef({
         cfg,
         defaultProvider: DEFAULT_PROVIDER,
         defaultModel: DEFAULT_MODEL,
-        allowPluginNormalization: options?.allowPluginNormalization,
+        ...options,
       });
 
   const persisted = resolvePersistedSelectedModelRef({
+    ...(normalizedOverride.modelOverride || (!agentId && runtimeModel && !runtimeProvider)
+      ? manifestContext.getContext()
+      : options),
     defaultProvider: resolved.provider || DEFAULT_PROVIDER,
     // Runtime fields record the previous run. Agent-scoped selection must use
     // current config or an explicit override; legacy callers without an agent
@@ -82,8 +89,9 @@ export function resolveSessionModelIdentityRef(
   entry?: SessionModelEntry,
   agentId?: string,
   fallbackModelRef?: string,
-  options?: { allowPluginNormalization?: boolean },
+  options?: { allowPluginNormalization?: boolean } & ModelManifestNormalizationContext,
 ): { provider?: string; model: string } {
+  const manifestContext = createModelManifestPluginContext({ cfg, agentId, ...options });
   const runtimeModel = entry?.model?.trim();
   const runtimeProvider = entry?.modelProvider?.trim();
   if (runtimeModel) {
@@ -94,12 +102,14 @@ export function resolveSessionModelIdentityRef(
       cfg,
       model: runtimeModel,
       agentId,
+      ...options,
     });
     if (inferredProvider) {
       return { provider: inferredProvider, model: runtimeModel };
     }
     if (runtimeModel.includes("/")) {
       const parsedRuntime = parseModelRef(runtimeModel, DEFAULT_PROVIDER, {
+        ...manifestContext.getContext(),
         allowPluginNormalization: options?.allowPluginNormalization,
       });
       if (parsedRuntime) {
@@ -112,6 +122,7 @@ export function resolveSessionModelIdentityRef(
   const fallbackRef = fallbackModelRef?.trim();
   if (fallbackRef) {
     const parsedFallback = parseModelRef(fallbackRef, DEFAULT_PROVIDER, {
+      ...manifestContext.getContext(),
       allowPluginNormalization: options?.allowPluginNormalization,
     });
     if (parsedFallback) {
@@ -121,14 +132,13 @@ export function resolveSessionModelIdentityRef(
       cfg,
       model: fallbackRef,
       agentId,
+      ...options,
     });
     if (inferredProvider) {
       return { provider: inferredProvider, model: fallbackRef };
     }
     return { model: fallbackRef };
   }
-  const resolved = resolveSessionModelRef(cfg, entry, agentId, {
-    allowPluginNormalization: options?.allowPluginNormalization,
-  });
+  const resolved = resolveSessionModelRef(cfg, entry, agentId, options);
   return { provider: resolved.provider, model: resolved.model };
 }

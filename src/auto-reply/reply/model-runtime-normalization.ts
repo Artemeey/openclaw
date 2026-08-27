@@ -1,20 +1,27 @@
 /** Prepared plugin metadata handoff for runtime model normalization. */
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
+import {
+  createModelManifestPluginContext,
+  type ModelManifestPluginContext,
+} from "../../agents/model-selection-shared.js";
 import { modelKey, normalizeModelRef, normalizeProviderId } from "../../agents/model-selection.js";
 import { RUNTIME_MODEL_VISIBILITY_NORMALIZATION } from "../../agents/model-visibility-policy.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { getCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-snapshot.js";
 
-export type RuntimeModelNormalization = NonNullable<Parameters<typeof normalizeModelRef>[2]>;
+export type RuntimeModelNormalization = NonNullable<Parameters<typeof normalizeModelRef>[2]> & {
+  manifestPluginContext?: ModelManifestPluginContext;
+};
 
 /** Carries the Gateway-owned metadata snapshot through one model-selection run. */
-export function resolveRuntimeNormalization(cfg: OpenClawConfig): RuntimeModelNormalization {
+export function resolveRuntimeNormalization(
+  cfg: OpenClawConfig,
+  agentId?: string,
+): RuntimeModelNormalization {
+  const manifestPluginContext = createModelManifestPluginContext({ cfg, agentId });
   return {
     ...RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
-    manifestPlugins: getCurrentPluginMetadataSnapshot({
-      config: cfg,
-      allowWorkspaceScopedSnapshot: true,
-    })?.plugins,
+    ...manifestPluginContext.getContext(),
+    manifestPluginContext,
   };
 }
 

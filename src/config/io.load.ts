@@ -1,6 +1,7 @@
 import { formatErrorMessage } from "../infra/errors.js";
 import { DuplicateAgentDirError, findDuplicateAgentDirs } from "./agent-dirs.js";
 import type { ConfigIoContext } from "./io.context.js";
+import { prepareObservedConfigState } from "./io.health-state.js";
 import { throwInvalidConfig } from "./io.invalid-config.js";
 import { maybeRecoverSuspiciousConfigReadSync } from "./io.observe-recovery.js";
 import {
@@ -40,7 +41,10 @@ export function loadConfigFromContext(
       // same runtime defaults an empty {} config gets, or out-of-box behavior
       // (compaction safeguard, session/cron defaults) silently diverges.
       return context.finalizeLoadedRuntimeConfig(
-        materializeRuntimeConfig(coerceConfig(migratePersistedImplicitMainRoster({}).config)),
+        materializeRuntimeConfig(coerceConfig(migratePersistedImplicitMainRoster({}).config), {
+          manifestRegistry:
+            context.options.pluginValidation === "core-only" ? { plugins: [] } : undefined,
+        }),
       );
     }
     const raw = deps.fs.readFileSync(configPath, "utf-8");
@@ -90,7 +94,10 @@ export function loadConfigFromContext(
     const validated = validateConfigObjectWithPlugins(validationConfigRaw, {
       env: deps.env,
       pluginValidation: context.options.pluginValidation,
-      loadPluginMetadataSnapshot: pluginMetadata.load,
+      loadPluginMetadataSnapshot: (config) => {
+        prepareObservedConfigState(deps);
+        return pluginMetadata.load(config);
+      },
       sourceRaw: snapshotParsed,
       preservedLegacyRootKeys: context.options.preservedLegacyRootKeys,
     });
@@ -146,7 +153,9 @@ export function loadConfigFromContext(
       }
     }
     const cfg = materializeRuntimeConfig(validated.config, {
-      manifestRegistry: pluginMetadata.getManifestRegistry(),
+      manifestRegistry:
+        pluginMetadata.getManifestRegistry() ??
+        (context.options.pluginValidation === "core-only" ? { plugins: [] } : undefined),
     });
     context.observeLoadConfigSnapshot(
       createConfigFileSnapshot({

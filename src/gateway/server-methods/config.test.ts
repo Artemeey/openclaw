@@ -9,6 +9,7 @@ import { ConfigMutationConflictError } from "../../config/mutation-conflict.js";
 import { createPluginMetadataSnapshot } from "../../config/plugin-auto-enable.test-helpers.js";
 import type { ConfigUiHints } from "../../config/schema.hints.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../../plugins/installed-plugin-index-record-cache.js";
 import type { PreparedPluginMetadata } from "../../plugins/plugin-metadata-collection.js";
 import { resolvePluginMetadataEnvFingerprint } from "../../plugins/plugin-metadata-env.js";
 import {
@@ -620,6 +621,8 @@ describe("config.patch model input normalization", () => {
     modelNormalizationPluginMetadata = {
       workspaces: new Map([[undefined, snapshot]]),
       configWorkspaceDirs: [undefined],
+      agentWorkspaceDirs: new Map(),
+      installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
       envFingerprint: resolvePluginMetadataEnvFingerprint(),
       selectedSnapshot: snapshot,
       manifestRegistry: snapshot.manifestRegistry,

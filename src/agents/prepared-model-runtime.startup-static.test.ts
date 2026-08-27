@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import type { ModelRegistry } from "./sessions/model-registry.js";
@@ -123,6 +124,8 @@ vi.mock("../plugins/plugin-metadata-collection.js", async (importOriginal) => ({
   }) => ({
     workspaces: new Map([[workspaceDir, mocks.metadataSnapshot]]),
     configWorkspaceDirs: [workspaceDir],
+    agentWorkspaceDirs: new Map(workspaceDir ? [["default", workspaceDir]] : []),
+    installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
     envFingerprint: resolvePluginMetadataEnvFingerprint(env),
     selectedSnapshot: mocks.metadataSnapshot,
     manifestRegistry: mocks.metadataSnapshot.manifestRegistry,

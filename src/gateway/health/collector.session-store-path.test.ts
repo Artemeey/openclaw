@@ -3,7 +3,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
-import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
+import {
+  loadExactSessionEntryReadOnly,
+  upsertSessionEntryCore,
+} from "../../config/sessions/session-accessor.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../../config/sessions/session-sqlite-target.js";
 import {
   closeOpenClawAgentDatabasesForTest,
@@ -59,11 +62,18 @@ describe("health session store paths", () => {
       );
     }
     now.mockReturnValue(100);
+    loadExactSessionEntryReadOnly({ agentId, env, sessionKey: "agent:main:session-70", storePath });
     const clone = vi.spyOn(globalThis, "structuredClone");
+    const parse = vi.spyOn(JSON, "parse");
 
     const summary = await buildHealthSessionSummary(storePath, agentId);
 
     expect(clone).not.toHaveBeenCalled();
+    expect(
+      parse.mock.calls.filter(
+        ([value]) => typeof value === "string" && /session-(10|20)"/u.test(value),
+      ),
+    ).toHaveLength(0);
     expect(summary).toMatchObject({
       count: 7,
       recent: [

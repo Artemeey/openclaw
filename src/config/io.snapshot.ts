@@ -6,6 +6,7 @@ import {
 import { resolveManagedUnsetPathsForWrite } from "./config-path-mutation.js";
 import { ConfigIncludeError } from "./includes.js";
 import type { ConfigIoContext } from "./io.context.js";
+import { prepareObservedConfigState } from "./io.health-state.js";
 import { maybeRecoverSuspiciousConfigRead } from "./io.observe-recovery.js";
 import {
   coerceConfig,
@@ -204,14 +205,21 @@ export async function readConfigFileSnapshotInternal(
       validateConfigObjectWithPlugins(validationConfigRaw, {
         env: deps.env,
         pluginValidation: context.options.pluginValidation,
-        loadPluginMetadataSnapshot: pluginMetadata.load,
+        loadPluginMetadataSnapshot: (config) => {
+          prepareObservedConfigState(deps);
+          return pluginMetadata.load(config);
+        },
         sourceRaw: effectiveParsed,
         preservedLegacyRootKeys: context.options.preservedLegacyRootKeys,
       }),
     );
     if (!validated.ok) {
       const legacyIssues = await deps.measure("config.snapshot.read.legacy-issues", () =>
-        collectInvalidConfigLegacyIssues(effectiveConfigRaw, effectiveParsed),
+        collectInvalidConfigLegacyIssues(
+          effectiveConfigRaw,
+          effectiveParsed,
+          context.options.pluginValidation,
+        ),
       );
       // Invalid snapshots stay inspectable, but rejected env.vars must not become runtime state.
       restoreEnvChangesIfUnchanged({
@@ -454,7 +462,9 @@ export async function readBestEffortConfigSnapshotFromContext(
   return {
     config: context.finalizeLoadedRuntimeConfig(
       materializeRuntimeConfig(result.snapshot.sourceConfig, {
-        manifestRegistry: result.pluginMetadata?.manifestRegistry,
+        manifestRegistry:
+          result.pluginMetadata?.manifestRegistry ??
+          (context.options.pluginValidation === "core-only" ? { plugins: [] } : undefined),
       }),
     ),
     sourceConfig: result.snapshot.sourceConfig,

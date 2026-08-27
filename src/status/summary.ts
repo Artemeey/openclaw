@@ -13,8 +13,9 @@ import {
 } from "../config/sessions/model-override-provenance.js";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
 import {
-  listSessionEntriesReadOnly,
   loadExactSessionEntryReadOnly,
+  readSessionStoreSummaryReadOnly,
+  type SessionEntrySummary,
 } from "../config/sessions/session-accessor.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import {
@@ -161,24 +162,15 @@ function hasUserPinnedModelSelection(entry: SessionEntry | undefined): boolean {
   return !hasSessionAutoModelFallbackProvenance(entry);
 }
 
-type SessionCandidate = {
-  key: string;
-  entry: SessionEntry;
-  updatedAt: number | null;
-};
-
-function compareSessionCandidatesByUpdatedAt(left: SessionCandidate, right: SessionCandidate) {
-  return (right.updatedAt ?? 0) - (left.updatedAt ?? 0);
-}
-
 function selectRecentSessionCandidates(
-  candidates: SessionCandidate[],
+  candidates: SessionEntrySummary[],
   limit: number,
-): SessionCandidate[] {
-  const selected: SessionCandidate[] = [];
+): SessionEntrySummary[] {
+  const selected: SessionEntrySummary[] = [];
   for (const candidate of candidates) {
     const insertAt = selected.findIndex(
-      (selectedCandidate) => compareSessionCandidatesByUpdatedAt(candidate, selectedCandidate) < 0,
+      (selectedCandidate) =>
+        (candidate.entry.updatedAt ?? 0) > (selectedCandidate.entry.updatedAt ?? 0),
     );
     if (insertAt >= 0) {
       selected.splice(insertAt, 0, candidate);
@@ -190,22 +182,6 @@ function selectRecentSessionCandidates(
     }
   }
   return selected;
-}
-
-function listSessionCandidates(storePath: string, agentId?: string) {
-  return (
-    listSessionEntriesReadOnly({
-      ...(agentId ? { agentId } : {}),
-      storePath,
-    })
-      // Compatibility aggregate buckets are not real user sessions.
-      .filter(({ sessionKey }) => sessionKey !== "global" && sessionKey !== "unknown")
-      .map(({ sessionKey, entry }) => ({
-        key: sessionKey,
-        entry,
-        updatedAt: entry?.updatedAt ?? null,
-      }))
-  );
 }
 
 /** Removes session paths and recent session details from a status summary. */
@@ -305,36 +281,41 @@ export async function getStatusSummary(
   const agentList = listGatewayAgentsBasic(cfg);
   const heartbeatAgents: HeartbeatStatus[] = agentList.agents.map((agent) => {
     const summary = resolveHeartbeatSummaryForAgent(cfg, agent.id);
-    const heartbeatSession = resolveHeartbeatSessionKey(
-      cfg,
-      agent.id,
-      summary.session === undefined ? undefined : { session: summary.session },
-    );
-    // Status must not create, register, or migrate an absent session database.
-    const entry = loadExactSessionEntryReadOnly({
-      agentId: agent.id,
-      storePath: heartbeatSession.storePath,
-      sessionKey: heartbeatSession.sessionKey,
-    })?.entry;
-    const route = deliveryContextFromSession(entry);
-    const heartbeat = {
-      ...cfg.agents?.defaults?.heartbeat,
-      ...resolveAgentConfig(cfg, agent.id)?.heartbeat,
-    };
-    // Owner status uses the runner's synchronous stage-1 decision.
-    // The shared probe requires positive direct proof before reporting ready.
-    const hasDeliveryRoute =
-      summary.target === "last"
-        ? Boolean(route?.channel && route.to)
-        : summary.target === "owner"
-          ? hasResolvableHeartbeatOwnerRoute({ cfg, agentId: agent.id, entry, heartbeat })
-          : true;
+    let waitingForRoute = false;
+    if (summary.enabled && (summary.target === "last" || summary.target === "owner")) {
+      const heartbeatSession = resolveHeartbeatSessionKey(
+        cfg,
+        agent.id,
+        summary.session === undefined ? undefined : { session: summary.session },
+      );
+      // Only these enabled targets consume the session route. Keep the probe
+      // read-only so status cannot create, register, or migrate an absent store.
+      const entry = loadExactSessionEntryReadOnly({
+        agentId: agent.id,
+        storePath: heartbeatSession.storePath,
+        sessionKey: heartbeatSession.sessionKey,
+      })?.entry;
+      const route = deliveryContextFromSession(entry);
+      // Owner status uses the runner's synchronous stage-1 decision.
+      waitingForRoute =
+        summary.target === "last"
+          ? !(route?.channel && route.to)
+          : !hasResolvableHeartbeatOwnerRoute({
+              cfg,
+              agentId: agent.id,
+              entry,
+              heartbeat: {
+                ...cfg.agents?.defaults?.heartbeat,
+                ...resolveAgentConfig(cfg, agent.id)?.heartbeat,
+              },
+            });
+    }
     return {
       agentId: agent.id,
       enabled: summary.enabled,
       every: summary.every,
       everyMs: summary.everyMs,
-      waitingForRoute: summary.enabled && !hasDeliveryRoute,
+      waitingForRoute,
     } satisfies HeartbeatStatus;
   });
   const channelSummary = needsChannelPlugins
@@ -390,23 +371,13 @@ export async function getStatusSummary(
       allowAsyncLoad: false,
     }) ?? DEFAULT_CONTEXT_TOKENS;
 
-  const candidateCache = new Map<string, SessionCandidate[]>();
-  const loadSessionCandidates = (storePath: string, agentId?: string) => {
-    const cacheKey = `${storePath}\0${agentId ?? ""}`;
-    const cached = candidateCache.get(cacheKey);
-    if (cached) {
-      return cached;
-    }
-    const candidates = listSessionCandidates(storePath, agentId);
-    candidateCache.set(cacheKey, candidates);
-    return candidates;
-  };
   const buildSessionRows = async (
-    candidates: SessionCandidate[],
+    candidates: SessionEntrySummary[],
     opts: { agentIdOverride?: string } = {},
   ) =>
     Promise.all(
-      candidates.map(async ({ key, entry, updatedAt }) => {
+      candidates.map(async ({ sessionKey: key, entry }) => {
+        const updatedAt = entry?.updatedAt ?? null;
         const age = updatedAt ? now - updatedAt : null;
         const parsedAgentId = parseAgentSessionKey(key)?.agentId;
         const agentId = opts.agentIdOverride ?? parsedAgentId;
@@ -532,55 +503,42 @@ export async function getStatusSummary(
       }),
     );
 
+  const stores = new Map<string, ReturnType<typeof readSessionStoreSummaryReadOnly>>();
   const storeSources = agentList.agents.map((agent) => {
     const storePath = resolveSessionStorePathCore(cfg.session?.store, { agentId: agent.id });
-    return {
+    const databasePath = resolveSqliteTargetFromSessionStorePath(storePath, {
       agentId: agent.id,
-      databasePath: resolveSqliteTargetFromSessionStorePath(storePath, {
-        agentId: agent.id,
-      }).path,
-      storePath,
-    };
+    }).path;
+    let store = stores.get(databasePath);
+    if (!store) {
+      // A shared physical store contributes once to aggregate counts. Carry the
+      // same owned snapshot into each agent projection instead of rereading it.
+      store = readSessionStoreSummaryReadOnly(
+        { agentId: agent.id, storePath },
+        { recentLimit: RECENT_SESSION_LIMIT, excludeSessionKeys: ["global", "unknown"] },
+      );
+      stores.set(databasePath, store);
+    }
+    return { agentId: agent.id, databasePath, store };
   });
-  const paths = new Set<string>();
-  const pathCounts = new Map<string, number>();
-  for (const source of storeSources) {
-    paths.add(source.databasePath);
-    pathCounts.set(source.databasePath, (pathCounts.get(source.databasePath) ?? 0) + 1);
-  }
 
   const byAgent = await Promise.all(
-    storeSources.map(async ({ agentId, databasePath, storePath }) => {
-      const candidates = loadSessionCandidates(storePath, agentId);
-      const sessions = await buildSessionRows(
-        selectRecentSessionCandidates(candidates, RECENT_SESSION_LIMIT),
-        { agentIdOverride: agentId },
-      );
+    storeSources.map(async ({ agentId, databasePath, store }) => {
+      const sessions = await buildSessionRows(store.recent, { agentIdOverride: agentId });
       return {
         agentId,
         path: databasePath,
-        count: candidates.length,
+        count: store.count,
         recent: sessions,
       };
     }),
   );
 
-  const allSessions = storeSources
-    .filter((source, index, sources) => {
-      return (
-        sources.findIndex((candidate) => candidate.databasePath === source.databasePath) === index
-      );
-    })
-    .flatMap((source) =>
-      loadSessionCandidates(
-        source.storePath,
-        pathCounts.get(source.databasePath) === 1 ? source.agentId : undefined,
-      ),
-    );
+  const allSessions = [...stores.values()].flatMap((store) => store.recent);
   const recent = await buildSessionRows(
     selectRecentSessionCandidates(allSessions, RECENT_SESSION_LIMIT),
   );
-  const totalSessions = allSessions.length;
+  const totalSessions = [...stores.values()].reduce((count, store) => count + store.count, 0);
   const hostDesktopStatus =
     options.hostDesktopStatus ??
     (
@@ -627,7 +585,7 @@ export async function getStatusSummary(
     taskAudit,
     ...(taskAuditRetainedLost.count > 0 ? { taskAuditRetainedLost } : {}),
     sessions: {
-      paths: Array.from(paths),
+      paths: [...stores.keys()],
       count: totalSessions,
       defaults: {
         model: configModel ?? null,

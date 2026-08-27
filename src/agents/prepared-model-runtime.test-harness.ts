@@ -1,4 +1,5 @@
 import { vi } from "vitest";
+import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import type { AuthStorageData } from "./sessions/auth-storage.js";
@@ -104,6 +105,10 @@ vi.mock("../plugins/plugin-metadata-collection.js", async (importOriginal) => ({
   }) => ({
     workspaces: new Map([[workspaceDir, preparedModelRuntimeMocks.pluginMetadataSnapshot]]),
     configWorkspaceDirs: [workspaceDir],
+    agentWorkspaceDirs: new Map(
+      workspaceDir ? [["default", workspaceDir]] : preparedModelRuntimeMocks.configuredWorkspaces,
+    ),
+    installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
     envFingerprint: resolvePluginMetadataEnvFingerprint(env),
     selectedSnapshot: preparedModelRuntimeMocks.pluginMetadataSnapshot,
     manifestRegistry: preparedModelRuntimeMocks.pluginMetadataSnapshot.manifestRegistry,

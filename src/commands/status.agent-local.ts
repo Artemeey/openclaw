@@ -4,7 +4,7 @@
 import path from "node:path";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
-import { listSessionEntriesReadOnly } from "../config/sessions/session-accessor.js";
+import { readSessionStoreSummaryReadOnly } from "../config/sessions/session-accessor.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import type { OpenClawConfig } from "../config/types.js";
 import { listGatewayAgentsBasic, type GatewayAgentOwnership } from "../gateway/agent-list.js";
@@ -54,12 +54,11 @@ export async function getAgentLocalStatuses(
 
     const storePath = resolveSessionStorePathCore(cfg.session?.store, { agentId });
     const sessionsPath = resolveSqliteTargetFromSessionStorePath(storePath, { agentId }).path;
-    const sessions = listSessionEntriesReadOnly({ agentId, storePath })
-      // Global/unknown buckets are aggregate compatibility entries, not agent activity.
-      .filter(({ sessionKey }) => sessionKey !== "global" && sessionKey !== "unknown")
-      .map(({ entry }) => entry);
-    const sessionsCount = sessions.length;
-    const lastUpdatedAt = sessions.reduce((max, e) => Math.max(max, e?.updatedAt ?? 0), 0);
+    const sessions = readSessionStoreSummaryReadOnly(
+      { agentId, storePath },
+      { recentLimit: 1, excludeSessionKeys: ["global", "unknown"] },
+    );
+    const lastUpdatedAt = sessions.recent[0]?.entry.updatedAt ?? 0;
     const resolvedLastUpdatedAt = lastUpdatedAt > 0 ? lastUpdatedAt : null;
     const lastActiveAgeMs = resolvedLastUpdatedAt ? now - resolvedLastUpdatedAt : null;
 
@@ -69,7 +68,7 @@ export async function getAgentLocalStatuses(
       workspaceDir,
       bootstrapPending,
       sessionsPath,
-      sessionsCount,
+      sessionsCount: sessions.count,
       lastUpdatedAt: resolvedLastUpdatedAt,
       lastActiveAgeMs,
     });

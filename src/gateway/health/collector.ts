@@ -113,53 +113,30 @@ export function resolveHealthAgentOrder(cfg: OpenClawConfig) {
 
 export async function buildHealthSessionSummary(storePath: string, agentId?: string) {
   const databasePath = resolveSqliteTargetFromSessionStorePath(storePath, { agentId }).path;
-  const { listSessionEntriesReadOnly } = await import("../../config/sessions/session-accessor.js");
+  const { readSessionStoreSummaryReadOnly } =
+    await import("../../config/sessions/session-accessor.js");
   const { isTransientSqliteError } = await import("../../infra/unhandled-rejections.js");
-  let listed: ReturnType<typeof listSessionEntriesReadOnly>;
+  let summary: ReturnType<typeof readSessionStoreSummaryReadOnly>;
   try {
-    listed = listSessionEntriesReadOnly({
-      ...(agentId ? { agentId } : {}),
-      clone: false,
-      projection: "list",
-      storePath,
-    });
+    summary = readSessionStoreSummaryReadOnly(
+      { ...(agentId ? { agentId } : {}), storePath },
+      { recentLimit: HEALTH_RECENT_SESSION_LIMIT, excludeSessionKeys: ["global", "unknown"] },
+    );
   } catch (error) {
     if (!isTransientSqliteError(error)) {
       throw error;
     }
     // Health is best-effort: an empty snapshot beats failing on a transient lock.
-    listed = [];
+    summary = { count: 0, recent: [] };
   }
-  const recentSessions: Array<{ key: string; updatedAt: number }> = [];
-  let sessionCount = 0;
-  for (const { sessionKey, entry } of listed) {
-    if (sessionKey === "global" || sessionKey === "unknown") {
-      continue;
-    }
-    sessionCount += 1;
-    const session = { key: sessionKey, updatedAt: entry?.updatedAt ?? 0 };
-    const insertAt = recentSessions.findIndex(
-      (recentSession) => session.updatedAt > recentSession.updatedAt,
-    );
-    // Health returns only five rows. Keep the projection bounded while scanning
-    // so refreshes never sort the complete session snapshot.
-    if (insertAt >= 0) {
-      recentSessions.splice(insertAt, 0, session);
-      if (recentSessions.length > HEALTH_RECENT_SESSION_LIMIT) {
-        recentSessions.pop();
-      }
-    } else if (recentSessions.length < HEALTH_RECENT_SESSION_LIMIT) {
-      recentSessions.push(session);
-    }
-  }
-  const recent = recentSessions.map((session) => ({
-    key: session.key,
-    updatedAt: session.updatedAt || null,
-    age: session.updatedAt ? Date.now() - session.updatedAt : null,
+  const recent = summary.recent.map(({ sessionKey, entry }) => ({
+    key: sessionKey,
+    updatedAt: entry.updatedAt || null,
+    age: entry.updatedAt ? Date.now() - entry.updatedAt : null,
   }));
   return {
     path: databasePath,
-    count: sessionCount,
+    count: summary.count,
     recent,
   } satisfies HealthSummary["sessions"];
 }
