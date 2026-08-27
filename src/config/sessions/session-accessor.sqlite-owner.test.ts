@@ -411,6 +411,27 @@ describe("SQLite session owner assignment", () => {
     });
   });
 
+  it("does not add an undefined owner to an owner-preserving patch result", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+      const scope = {
+        agentId: "main",
+        env: state.env,
+        sessionKey: "agent:main:unowned-reply-patch",
+      };
+      await upsertSessionEntryCore(scope, {
+        sessionId: "session-unowned-reply-patch",
+        updatedAt: 1,
+      });
+
+      const patched = await updateSessionEntry(scope, () => ({ label: "updated", updatedAt: 2 }), {
+        preserveOwnerProjection: true,
+      });
+
+      expect(patched).not.toHaveProperty("owner");
+      expect(loadSessionEntry(scope)).not.toHaveProperty("owner");
+    });
+  });
+
   it("rejects a target replacement prepared before assigning an owner", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
       const sessionKey = "agent:main:owned-target-patch";

@@ -649,11 +649,14 @@ async function patchSqliteSessionEntrySnapshot<TSnapshot>(
             }),
           );
           currentIdentity = readSessionIdentitySnapshot(writeDatabase, identityKeys);
-          result = cloneSessionEntry(
-            options.preserveOwnerProjection
-              ? { ...next, owner: selectedPreviousEntry.owner }
-              : next,
-          );
+          const resultEntry = { ...next };
+          if (options.preserveOwnerProjection) {
+            resultEntry.owner = selectedPreviousEntry.owner;
+            if (resultEntry.owner === undefined) {
+              delete resultEntry.owner;
+            }
+          }
+          result = cloneSessionEntry(resultEntry);
         }, toDatabaseOptions(resolved));
         emitCommittedSessionIdentityDiff(previousIdentity, currentIdentity);
         return { maintenancePlans, result };
