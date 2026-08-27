@@ -29,6 +29,26 @@ const repairDreamingArtifacts = vi.hoisted(() => vi.fn());
 const repairShortTermPromotionArtifacts = vi.hoisted(() => vi.fn());
 const noteWorkspaceMemoryHealth = vi.hoisted(() => vi.fn(async () => undefined));
 const maybeRepairWorkspaceMemoryHealth = vi.hoisted(() => vi.fn(async () => undefined));
+const inspectConfiguredEmbeddingProviderSetup = vi.hoisted(() => vi.fn());
+const loadPluginManifestRegistryForPluginRegistry = vi.hoisted(() =>
+  vi.fn(() => ({ plugins: [], diagnostics: [] })),
+);
+const resolveProviderPolicySurface = vi.hoisted(() =>
+  vi.fn(
+    (): {
+      inspectEmbeddingProviderSetup: typeof inspectConfiguredEmbeddingProviderSetup;
+    } | null => ({ inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup }),
+  ),
+);
+const getMissingLocalMemoryEmbeddingProviderMessage = vi.hoisted(() =>
+  vi.fn(
+    () =>
+      "Unknown memory embedding provider: local.\n" +
+      "Local GGUF embeddings are provided by the official llama.cpp provider plugin.\n" +
+      "Install it with: openclaw plugins install @openclaw/llama-cpp-provider\n" +
+      "Then restart OpenClaw and retry: openclaw memory status --deep",
+  ),
+);
 
 vi.mock("../../packages/terminal-core/src/note.js", () => ({
   note,
@@ -42,7 +62,6 @@ vi.mock("../agents/agent-scope.js", () => ({
 }));
 
 vi.mock("../agents/memory-search.js", () => ({
-  DEFAULT_MEMORY_EMBEDDING_PROVIDER: "openai",
   resolveMemorySearchConfig,
 }));
 
@@ -63,9 +82,18 @@ vi.mock("../plugins/memory-runtime.js", () => ({
   resolveActiveMemoryBackendConfig,
 }));
 
+vi.mock("../plugins/plugin-registry.js", () => ({
+  loadPluginManifestRegistryForPluginRegistry,
+}));
+
+vi.mock("../plugins/provider-public-artifacts.js", () => ({
+  resolveProviderPolicySurface,
+}));
+
 vi.mock("../plugin-sdk/memory-core-bundled-runtime.js", () => ({
   auditDreamingArtifacts,
   auditShortTermPromotionArtifacts,
+  getMissingLocalMemoryEmbeddingProviderMessage,
   repairDreamingArtifacts,
   repairShortTermPromotionArtifacts,
 }));
@@ -286,6 +314,13 @@ describe("noteMemorySearchHealth", () => {
     isConfiguredAwsSdkAuthProfileForProvider.mockReset();
     isConfiguredAwsSdkAuthProfileForProvider.mockReturnValue(false);
     getActiveMemorySearchManagerCore.mockReset();
+    getMissingLocalMemoryEmbeddingProviderMessage.mockClear();
+    inspectConfiguredEmbeddingProviderSetup.mockReset();
+    inspectConfiguredEmbeddingProviderSetup.mockResolvedValue(null);
+    resolveProviderPolicySurface.mockReset();
+    resolveProviderPolicySurface.mockReturnValue({
+      inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup,
+    });
     resolveActiveMemoryBackendConfig.mockReset();
     resolveActiveMemoryBackendConfig.mockReturnValue({ backend: "builtin" });
     getActiveMemorySearchManagerCore.mockResolvedValue({
@@ -297,16 +332,39 @@ describe("noteMemorySearchHealth", () => {
     resetMemoryRecallMocks();
   });
 
-  it("warns when local provider is set but readiness was not confirmed", async () => {
+  it("uses the memory-core recovery message when the local provider plugin is missing", async () => {
+    resolveProviderPolicySurface.mockReturnValueOnce(null);
     await runMemorySearchHealth("local", {});
 
     expect(note).toHaveBeenCalledTimes(1);
     expectFirstNoteContains(
-      'Memory search provider is set to "local"',
+      "Unknown memory embedding provider: local",
       "openclaw plugins install @openclaw/llama-cpp-provider",
-      "openclaw config set memory.search.provider openai",
+      "openclaw memory status --deep",
     );
-    expectFirstNoteExcludes("github-copilot");
+    expect(getMissingLocalMemoryEmbeddingProviderMessage).toHaveBeenCalledOnce();
+  });
+
+  it("uses installed provider setup guidance instead of reinstalling the plugin", async () => {
+    inspectConfiguredEmbeddingProviderSetup.mockResolvedValueOnce({
+      provider: "local",
+      reason: "Local embeddings need the managed llama.cpp server config.",
+      requirement: "managed-llama-cpp-setup",
+      fixHint:
+        "Run `openclaw models --agent agent-default auth login --provider llama-cpp --method local` in an interactive terminal, then rerun this check.",
+    });
+
+    await runMemorySearchHealth(
+      "local",
+      failedGatewayOptions("Managed local embeddings are unavailable."),
+    );
+
+    expectFirstNoteContains(
+      "Local embeddings need the managed llama.cpp server config",
+      "openclaw models --agent agent-default auth login --provider llama-cpp --method local",
+      "Managed local embeddings are unavailable",
+    );
+    expectFirstNoteExcludes("openclaw plugins install @openclaw/llama-cpp-provider");
   });
 
   it("supports silent structured collection through an injected note sink", async () => {
@@ -331,7 +389,9 @@ describe("noteMemorySearchHealth", () => {
     expectFirstNoteContains(
       "local embeddings are not confirmed ready",
       "managed llama-server unavailable",
+      "Repair the llama.cpp server problem reported by the Gateway",
     );
+    expectFirstNoteExcludes("openclaw plugins install @openclaw/llama-cpp-provider");
   });
 
   it("does not warn when local provider with default model and gateway probe is ready", async () => {
@@ -422,8 +482,12 @@ describe("noteMemorySearchHealth", () => {
       "Endpoints: health=unavailable models=unavailable props=unavailable metrics=unavailable",
       "Load error: GGUF load failed",
       "local embeddings are not confirmed ready",
+      "Repair the llama.cpp server problem reported by the Gateway",
     );
-    expectFirstNoteExcludes("Gateway probe: GGUF load failed");
+    expectFirstNoteExcludes(
+      "Gateway probe: GGUF load failed",
+      "openclaw plugins install @openclaw/llama-cpp-provider",
+    );
   });
 
   it("does not warn when local provider readiness probe was intentionally skipped", async () => {

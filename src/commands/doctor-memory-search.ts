@@ -16,10 +16,7 @@ import {
   hasAuthProfileStoreSourceForProvider,
   isConfiguredAwsSdkAuthProfileForProvider,
 } from "../agents/auth-profiles.js";
-import {
-  DEFAULT_MEMORY_EMBEDDING_PROVIDER,
-  resolveMemorySearchConfig,
-} from "../agents/memory-search.js";
+import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import {
   resolveApiKeyForProviderCore,
   resolveEnvApiKey,
@@ -38,6 +35,7 @@ import { hasConfiguredMemorySecretInput } from "../memory-host-sdk/secret.js";
 import {
   auditDreamingArtifacts,
   auditShortTermPromotionArtifacts,
+  getMissingLocalMemoryEmbeddingProviderMessage,
   repairDreamingArtifacts,
   repairShortTermPromotionArtifacts,
   type DreamingArtifactsAuditSummary,
@@ -48,6 +46,8 @@ import {
   getActiveMemorySearchManagerCore,
   resolveActiveMemoryBackendConfig,
 } from "../plugins/memory-runtime.js";
+import { loadPluginManifestRegistryForPluginRegistry } from "../plugins/plugin-registry.js";
+import { resolveProviderPolicySurface } from "../plugins/provider-public-artifacts.js";
 import { defaultSlotIdForKey } from "../plugins/slots.js";
 import { getProviderEnvVars } from "../secrets/provider-env-vars.js";
 import { resolveUserPath } from "../utils.js";
@@ -481,6 +481,7 @@ type MemorySearchHealthOptions = {
   noteFn?: typeof note;
   includeWorkspaceMemoryHealth?: boolean;
   skipAuthProfileResolution?: boolean;
+  env?: NodeJS.ProcessEnv;
 };
 
 export async function noteMemorySearchHealth(
@@ -570,6 +571,19 @@ async function noteMemorySearchHealthForAgent(
     }
     const detail = opts?.gatewayMemoryProbe?.error?.trim();
     const gatewayDetail = detail && detail !== runtimeFacts?.loadError ? detail : null;
+    const env = opts.env ?? process.env;
+    const manifestRegistry = loadPluginManifestRegistryForPluginRegistry({ config: cfg, env });
+    const inspectSetup = resolveProviderPolicySurface(provider, {
+      manifestRegistry,
+    })?.inspectEmbeddingProviderSetup;
+    if (!inspectSetup) {
+      noteFn(getMissingLocalMemoryEmbeddingProviderMessage(), "Memory search");
+      return;
+    }
+    const setup = await inspectSetup({ config: cfg, env, agentId, provider });
+    const setupReason = setup?.reason.trim();
+    const setupFix = setup?.fixHint?.trim();
+    const hasRuntimeFailureDetail = Boolean(gatewayDetail || runtimeFacts?.loadError);
     noteFn(
       [
         runtimeFacts ? formatLocalRuntimeDoctorNote(runtimeFacts) : null,
@@ -577,12 +591,16 @@ async function noteMemorySearchHealthForAgent(
         hasExplicitLocalModel
           ? 'Memory search provider is set to "local" and a local model path is configured, but local embeddings are not confirmed ready.'
           : 'Memory search provider is set to "local", but local embeddings are not confirmed ready.',
-        gatewayDetail ? `Gateway probe: ${gatewayDetail}` : null,
+        setupReason ? `Setup: ${setupReason}` : null,
+        gatewayDetail && gatewayDetail !== setupReason ? `Gateway probe: ${gatewayDetail}` : null,
         "",
-        "Fix (pick one):",
-        `- Install the llama.cpp provider plugin: ${formatCliCommand("openclaw plugins install @openclaw/llama-cpp-provider")}`,
-        `- Set a local GGUF model path in config`,
-        `- Switch to a remote provider: ${formatCliCommand(`openclaw config set memory.search.provider ${DEFAULT_MEMORY_EMBEDDING_PROVIDER}`)}`,
+        setupFix
+          ? `Fix: ${setupFix}`
+          : hasUnavailableConfiguredLocalModel
+            ? "Fix: Set memory.search.local.modelPath to an existing GGUF file, or remove it to use the managed default."
+            : hasRuntimeFailureDetail
+              ? "Fix: Repair the llama.cpp server problem reported by the Gateway."
+              : null,
         "",
         `Verify: ${formatCliCommand("openclaw memory status --deep")}`,
       ]
