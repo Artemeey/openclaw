@@ -1741,7 +1741,7 @@ install_openclaw_from_prewarmed_runtime() {
   mkdir -p "$PREFIX" "$PREFIX/bin" "$PREFIX/tools"
   stage="$(mktemp -d "${PREFIX}/.prewarmed-runtime.XXXXXX")"
   TMPFILES+=("$stage")
-  emit_json '{"event":"step","name":"prewarmed-runtime","status":"start"}'
+  emit_json step name prewarmed-runtime status start
   /usr/bin/tar -xzf "$PREWARMED_RUNTIME" -C "$stage"
 
   new_runtime="${PREFIX}/tools/.${runtime_directory}.new.$$"
@@ -1817,7 +1817,7 @@ EOF
   fi
   rm -rf "$backup_runtime" "$backup_wrapper"
   unset -f rollback_prewarmed_runtime
-  emit_json "{\"event\":\"step\",\"name\":\"prewarmed-runtime\",\"status\":\"ok\",\"version\":\"${app_version}\"}"
+  emit_json step name prewarmed-runtime status ok version "$app_version"
 }
 
 resolve_openclaw_version() {
