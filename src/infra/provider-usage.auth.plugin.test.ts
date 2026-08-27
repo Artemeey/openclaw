@@ -274,6 +274,60 @@ describe("resolveProviderAuths plugin boundary", () => {
     ]);
   });
 
+  it("keeps provider billing API keys outside the inference order", async () => {
+    const store = {
+      profiles: {
+        "anthropic:work": {
+          type: "oauth",
+          provider: "anthropic",
+          access: "oauth-access",
+          refresh: "oauth-refresh",
+          expires: Date.now() + 60_000,
+        },
+        "anthropic:admin": {
+          type: "api_key",
+          provider: "anthropic",
+          key: "sk-ant-admin-billing",
+        },
+      },
+    };
+    ensureAuthProfileStoreMock.mockReturnValue(store as never);
+    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue(store as never);
+    resolveAuthProfileOrderMock.mockReturnValue(["anthropic:work"]);
+    resolveApiKeyForProfileMock.mockResolvedValue({
+      apiKey: "sk-ant-admin-billing",
+      provider: "anthropic",
+    });
+    resolveProviderUsageAuthWithPluginMock.mockImplementationOnce(async (rawParams) => {
+      const params = rawParams as {
+        context: {
+          resolveApiKeyCandidatesFromConfigAndStore: () => Promise<string[]>;
+        };
+      };
+      const candidates = await params.context.resolveApiKeyCandidatesFromConfigAndStore();
+      return candidates[0] ? { token: candidates[0] } : null;
+    });
+
+    await expect(
+      resolveProviderAuthsForTest({
+        providers: ["anthropic"],
+        store: store as never,
+        providerWideAuthOnly: true,
+      }),
+    ).resolves.toEqual([
+      {
+        provider: "anthropic",
+        token: "sk-ant-admin-billing",
+      },
+    ]);
+    expect(resolveApiKeyForProfileMock).toHaveBeenCalledWith({
+      cfg: {},
+      store,
+      profileId: "anthropic:admin",
+      agentDir: undefined,
+    });
+  });
+
   it("excludes native credential providers from plugin OAuth resolution", async () => {
     const store = {
       profiles: {

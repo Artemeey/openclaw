@@ -272,10 +272,18 @@ async function resolveProviderApiKeyCandidatesFromConfigAndStore(params: {
   }
 
   const store = resolveUsageAuthStore(params.state);
+  const providerIds = normalizeProviderIds(params.providerIds);
   const profileIds = dedupeProfileIds(
-    normalizeProviderIds(params.providerIds).flatMap((provider) =>
-      resolveAuthProfileOrder({ cfg: params.state.cfg, store, provider }),
-    ),
+    providerIds
+      .flatMap((provider) => resolveAuthProfileOrder({ cfg: params.state.cfg, store, provider }))
+      .concat(
+        Object.entries(store.profiles).flatMap(([profileId, credential]) =>
+          credential.type === "api_key" &&
+          providerIds.includes(normalizeProviderId(credential.provider))
+            ? [profileId]
+            : [],
+        ),
+      ),
   );
   for (const profileId of profileIds) {
     const credential = store.profiles[profileId];

@@ -240,6 +240,35 @@ describe("runtime auth profile snapshots", () => {
     }
   });
 
+  it("notifies when local order ownership changes without changing the effective order", () => {
+    const agentDir = "/tmp/openclaw-auth-runtime-order-owner";
+    const store: RuntimeAuthProfileStore = {
+      ...createStore("order-owner"),
+      runtimeInheritedOrder: { openai: ["openai:default"] },
+      runtimeLocalOrderProviders: [],
+    };
+    setRuntimeAuthProfileStoreSnapshot(store, agentDir);
+    const listener = vi.fn();
+    const unregister = registerRuntimeAuthProfileStoreMutationListener(listener);
+    try {
+      replaceRuntimeAuthProfileStoreSnapshots([
+        {
+          agentDir,
+          store: {
+            ...store,
+            runtimeLocalOrderProviders: ["openai"],
+          },
+        },
+      ]);
+
+      expect(listener).toHaveBeenCalledOnce();
+      expect(listener).toHaveBeenCalledWith({ affectsInheritedStores: true });
+    } finally {
+      unregister();
+      clearRuntimeAuthProfileStoreSnapshots();
+    }
+  });
+
   it("notifies when identical external credentials change from CLI to plugin ownership", () => {
     const agentDir = "/tmp/openclaw-auth-runtime-external-owner";
     const store: RuntimeAuthProfileStore = {

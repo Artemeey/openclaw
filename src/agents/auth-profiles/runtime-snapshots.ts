@@ -146,6 +146,8 @@ function ownerState(
       | "runtimeExternalProfileIdsAuthoritative"
       | "runtimeExternalCliProfileIds"
       | "runtimeLocalProfileIds"
+      | "runtimeLocalOrderProviders"
+      | "runtimeInheritedOrder"
       | "runtimeInheritsMainState"
     >
   | undefined {
@@ -160,6 +162,8 @@ function ownerState(
     runtimeExternalProfileIdsAuthoritative: store.runtimeExternalProfileIdsAuthoritative,
     runtimeExternalCliProfileIds: store.runtimeExternalCliProfileIds,
     runtimeLocalProfileIds: store.runtimeLocalProfileIds,
+    runtimeLocalOrderProviders: store.runtimeLocalOrderProviders,
+    runtimeInheritedOrder: store.runtimeInheritedOrder,
     runtimeInheritsMainState: store.runtimeInheritsMainState,
   };
 }
