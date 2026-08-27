@@ -386,6 +386,7 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
         const utilityField = defaults.locator(".field").nth(1);
         const utilityLabel = utilityField.locator(".model-providers__utility-label");
         await utilityField.waitFor();
+        expect(await utilityLabel.evaluate((node) => getComputedStyle(node).columnGap)).toBe("8px");
         await expect
           .poll(() => modelPickerValue(utilityField.locator("wa-select")))
           .toBe("__openclaw_automatic_utility__");
