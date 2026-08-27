@@ -830,7 +830,7 @@ function createReloaderHarness(
       ownership: GatewayConfigReloadTransactionOwnership,
       sourceConfig: OpenClawConfig,
       acceptance: {
-        runtimeApplied: boolean;
+        application: "applied" | "restart-pending" | "skipped";
         publishSource?: () => Promise<() => Promise<void>>;
       },
     ) => void | (() => Promise<void>) | Promise<void | (() => Promise<void>)>;
@@ -1019,7 +1019,7 @@ describe("startGatewayConfigReloader include files", () => {
     await symlink(includePath, includeLinkPath);
     const configIo = createConfigIO({
       configPath,
-      env: {},
+      env: { OPENCLAW_STATE_DIR: rootDir },
       homedir: () => rootDir,
       observe: false,
       pluginValidation: "skip",
@@ -1083,7 +1083,7 @@ describe("startGatewayConfigReloader include files", () => {
     await symlink(outsideIncludePath, includeLinkPath);
     const configIo = createConfigIO({
       configPath,
-      env: {},
+      env: { OPENCLAW_STATE_DIR: rootDir },
       homedir: () => rootDir,
       observe: false,
       pluginValidation: "skip",
@@ -3307,7 +3307,7 @@ describe("startGatewayConfigReloader", () => {
       expected: "candidate",
     },
   ] as const)(
-    "publishes config env only for a runtime-applied $label transaction",
+    "publishes config env only for an applied or restart-admitted $label transaction",
     async (testCase) => {
       const envKey = "OPENCLAW_TEST_RELOAD_TRANSACTION_ENV";
       const targetEnv: NodeJS.ProcessEnv = { [envKey]: "old" };
@@ -3677,7 +3677,7 @@ describe("startGatewayConfigReloader", () => {
       freshConfig,
       expect.any(Object),
       freshConfig,
-      { runtimeApplied: true },
+      { application: "applied" },
     );
     expect(harness.log.info).not.toHaveBeenCalledWith(
       "config reload skipped by writer intent (stale resolved intent)",
@@ -3731,7 +3731,7 @@ describe("startGatewayConfigReloader", () => {
       runtimeConfig,
       expect.any(Object),
       sourceConfig,
-      { runtimeApplied: false },
+      { application: "skipped" },
     );
     expect(harness.onRestart).not.toHaveBeenCalled();
     expect(harness.onHotReload).not.toHaveBeenCalled();
@@ -3941,8 +3941,8 @@ describe("startGatewayConfigReloader", () => {
     await flushWatcherChange(harness);
 
     expect(harness.onConfigAccepted.mock.calls.map((call) => call[3])).toEqual([
-      { runtimeApplied: false },
-      { runtimeApplied: false },
+      { application: "skipped" },
+      { application: "skipped" },
     ]);
     expect(originalOwnership?.isCurrent()).toBe(false);
     const reboundOwnership = harness.onConfigAccepted.mock.calls[1]?.[1];

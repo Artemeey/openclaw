@@ -117,6 +117,8 @@ export type GatewayConfigReloadTransactionOwnership = {
   runtimeRefresh?: RuntimeConfigSnapshotRefreshOptions;
 };
 
+type ConfigApplication = "applied" | "restart-pending" | "skipped";
+
 type PreparedGatewayConfigCandidate = {
   runtimeConfig: OpenClawConfig;
   compareConfig: OpenClawConfig;
@@ -178,7 +180,7 @@ export function startGatewayConfigReloader(opts: {
     ownership: GatewayConfigReloadTransactionOwnership,
     sourceConfig: OpenClawConfig,
     acceptance: {
-      runtimeApplied: boolean;
+      application: ConfigApplication;
       publishSource?: () => Promise<() => Promise<void>>;
     },
   ) => void | (() => Promise<void>) | Promise<void | (() => Promise<void>)>;
@@ -278,12 +280,14 @@ export function startGatewayConfigReloader(opts: {
   let watcherIntentCameFromPendingWrite = false;
   let startupInternalWriteHash = opts.initialInternalWriteHash ?? null;
   let lastAppliedWriteHash: string | null = null;
-  let lastSourceOnlyWriteHash: string | null = null;
-  let lastSourceOnlyReapplyRuntimeOverlays: ((config: OpenClawConfig) => OpenClawConfig) | null =
-    null;
-  let lastSourceOnlyRuntimeRefresh: RuntimeConfigSnapshotRefreshOptions | undefined;
-  let lastSourceOnlyRuntimeConfig: OpenClawConfig | null = null;
-  let lastSourceOnlySourceConfig: OpenClawConfig | null = null;
+  let unappliedCandidate: {
+    application: Exclude<ConfigApplication, "applied">;
+    hash: string | null;
+    config: OpenClawConfig;
+    sourceConfig: OpenClawConfig;
+    reapplyRuntimeOverlays: GatewayConfigReloadTransactionOwnership["reapplyRuntimeOverlays"];
+    runtimeRefresh?: RuntimeConfigSnapshotRefreshOptions;
+  } | null = null;
 
   const appendExternalAudit = (
     record: Omit<ConfigExternalChangeAuditRecord, "ts" | "source" | "event" | "configPath">,
@@ -484,6 +488,9 @@ export function startGatewayConfigReloader(opts: {
       runtimeEnvCommitted = true;
       publishedRuntimeEnv?.commit();
       publishedRuntimeEnv = undefined;
+      // Restart admission can commit env before the replacement runtime starts.
+      // Future env preparation must diff that owner, not the still-active services.
+      currentRuntimeEnvSourceConfig = nextSourceConfig;
     };
     const ownership: GatewayConfigReloadTransactionOwnership = {
       isCurrent,
@@ -569,7 +576,7 @@ export function startGatewayConfigReloader(opts: {
     assertCurrent();
     const commitReloadBaseline = async (
       options: {
-        runtimeApplied?: boolean;
+        application?: ConfigApplication;
         publishSource?: () => Promise<() => Promise<void>>;
       } = {},
     ) => {
@@ -597,7 +604,7 @@ export function startGatewayConfigReloader(opts: {
           ownership,
           nextSourceConfig,
           {
-            runtimeApplied: options.runtimeApplied !== false,
+            application: options.application ?? "applied",
             ...(options.publishSource ? { publishSource: options.publishSource } : {}),
           },
         );
@@ -615,36 +622,33 @@ export function startGatewayConfigReloader(opts: {
             currentRawHash = persistedHash;
           }
         }
-        if (options.runtimeApplied === false) {
-          // Persisted-but-skipped candidates are not runtime truth. Keep the
-          // effective baseline so a later safe edit cannot publish them indirectly.
-          lastSourceOnlyWriteHash = persistedHash ?? null;
-          lastSourceOnlyReapplyRuntimeOverlays = ownership.reapplyRuntimeOverlays;
-          lastSourceOnlyRuntimeRefresh = ownership.runtimeRefresh;
-          lastSourceOnlyRuntimeConfig = nextConfig;
-          lastSourceOnlySourceConfig = nextSourceConfig;
+        // Runtime/restart owners publish env at their commit edge; retain the
+        // idempotent fallback for accepted transactions without that callback.
+        if (options.application !== "skipped") {
+          ownership.publishRuntimeEnv();
+          commitPublishedRuntimeEnv();
+        }
+        if (options.application && options.application !== "applied") {
+          // Neither skipped writes nor restart admission activate services/secrets.
+          // Keep their echo disposition without moving the active comparison baseline.
+          unappliedCandidate = {
+            application: options.application,
+            hash: persistedHash ?? null,
+            config: nextConfig,
+            sourceConfig: nextSourceConfig,
+            reapplyRuntimeOverlays: ownership.reapplyRuntimeOverlays,
+            runtimeRefresh: ownership.runtimeRefresh,
+          };
           notifyCommitted();
           return;
         }
-        // Runtime owners publish env at their commit edge. Keep this idempotent
-        // fallback for effective-config-unchanged transactions without a
-        // dedicated runtime publication callback.
-        ownership.publishRuntimeEnv();
-        currentRuntimeEnvSourceConfig = nextSourceConfig;
-        if (persistedHash === lastSourceOnlyWriteHash) {
-          lastSourceOnlyWriteHash = null;
-          lastSourceOnlyReapplyRuntimeOverlays = null;
-          lastSourceOnlyRuntimeRefresh = undefined;
-          lastSourceOnlyRuntimeConfig = null;
-          lastSourceOnlySourceConfig = null;
-        }
+        unappliedCandidate = null;
         currentConfig = committedRuntimeConfig ?? nextConfig;
         currentCompareConfig = nextCompareConfig;
         currentReapplyRuntimeOverlays = ownership.reapplyRuntimeOverlays;
         currentRuntimeRefresh = ownership.runtimeRefresh;
         currentPluginInstallRecords = nextPluginInstallRecords;
         settings = committedRuntimeConfig ? resolveSettings(committedRuntimeConfig) : nextSettings;
-        commitPublishedRuntimeEnv();
       } catch (error) {
         ownership.rollbackRuntimeEnv();
         await rollbackAcceptedSource?.();
@@ -705,7 +709,7 @@ export function startGatewayConfigReloader(opts: {
     );
     if (followUp.mode === "none") {
       opts.log.info(`config reload skipped by writer intent (${followUp.reason})`);
-      await commitReloadBaseline({ runtimeApplied: false });
+      await commitReloadBaseline({ application: "skipped" });
       return;
     }
     const plan = buildGatewayReloadPlan(changedPaths, {
@@ -721,7 +725,7 @@ export function startGatewayConfigReloader(opts: {
     }
     if (nextSettings.mode === "off") {
       opts.log.info("config reload disabled (gateway.reload.mode=off)");
-      await commitReloadBaseline({ runtimeApplied: false });
+      await commitReloadBaseline({ application: "skipped" });
       return;
     }
     if (isNoopGatewayReloadPlan(plan) && !followUp.requiresRestart) {
@@ -742,7 +746,7 @@ export function startGatewayConfigReloader(opts: {
       };
       await opts.onConfigChange?.(restartPlan, nextConfig);
       await prepareRestart(restartPlan, nextConfig, ownership, nextSourceConfig);
-      await commitReloadBaseline();
+      await commitReloadBaseline({ application: "restart-pending" });
       // The accepted restart owns snapshot republication at next startup.
       markPluginMetadataRefreshApplied();
       return;
@@ -750,7 +754,7 @@ export function startGatewayConfigReloader(opts: {
     if (plan.restartGateway) {
       await opts.onConfigChange?.(plan, nextConfig);
       await prepareRestart(plan, nextConfig, ownership, nextSourceConfig);
-      await commitReloadBaseline();
+      await commitReloadBaseline({ application: "restart-pending" });
       markPluginMetadataRefreshApplied();
       return;
     }
@@ -809,7 +813,7 @@ export function startGatewayConfigReloader(opts: {
         throw new GatewayConfigReloadSupersededError();
       }
       await opts.onConfigAccepted?.(currentConfig, ownership, currentSourceConfig, {
-        runtimeApplied: true,
+        application: "applied",
       });
       if (!ownership.isCurrent()) {
         throw new GatewayConfigReloadSupersededError();
@@ -972,17 +976,15 @@ export function startGatewayConfigReloader(opts: {
           snapshot.hash === lastAppliedWriteHash &&
           diffConfigPaths(currentSourceConfig, snapshot.sourceConfig).length === 0;
         if (matchesAcceptedEffectiveConfig) {
-          if (snapshot.hash === lastSourceOnlyWriteHash) {
+          if (unappliedCandidate?.hash === snapshot.hash) {
+            const candidate = unappliedCandidate;
             const ownership: GatewayConfigReloadTransactionOwnership = {
               isCurrent: () => configWriteEpoch === transactionEpoch,
-              reapplyRuntimeOverlays:
-                lastSourceOnlyReapplyRuntimeOverlays ?? currentReapplyRuntimeOverlays,
+              reapplyRuntimeOverlays: candidate.reapplyRuntimeOverlays,
               publishRuntimeEnv: () => {},
               rollbackRuntimeEnv: () => {},
               commitRuntimeEnv: () => {},
-              ...(lastSourceOnlyRuntimeRefresh
-                ? { runtimeRefresh: lastSourceOnlyRuntimeRefresh }
-                : {}),
+              ...(candidate.runtimeRefresh ? { runtimeRefresh: candidate.runtimeRefresh } : {}),
               markRuntimeCommitted: () => {},
             };
             await runAcceptedTransaction(async () => {
@@ -990,12 +992,9 @@ export function startGatewayConfigReloader(opts: {
               if (!ownership.isCurrent()) {
                 throw new GatewayConfigReloadSupersededError();
               }
-              await opts.onConfigAccepted?.(
-                lastSourceOnlyRuntimeConfig ?? currentConfig,
-                ownership,
-                lastSourceOnlySourceConfig ?? currentSourceConfig,
-                { runtimeApplied: false },
-              );
+              await opts.onConfigAccepted?.(candidate.config, ownership, candidate.sourceConfig, {
+                application: candidate.application,
+              });
               if (!ownership.isCurrent()) {
                 throw new GatewayConfigReloadSupersededError();
               }
