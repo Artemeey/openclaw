@@ -84,6 +84,7 @@ enum CLIInstaller {
     enum InstallTarget: Equatable {
         case exact(String)
         case channel(Channel)
+        case candidate(packagePath: String, expectedVersion: String)
 
         var selector: String {
             switch self {
@@ -91,12 +92,20 @@ enum CLIInstaller {
             case .channel(.stable): "latest"
             case .channel(.beta): "beta"
             case .channel(.dev): "main"
+            case let .candidate(packagePath, _): packagePath
+            }
+        }
+
+        var expectedVersion: String? {
+            switch self {
+            case let .exact(version): version
+            case let .candidate(_, expectedVersion): expectedVersion
+            case .channel: nil
             }
         }
 
         var requiresExactVersion: Bool {
-            if case .exact = self { return true }
-            return false
+            self.expectedVersion != nil
         }
     }
 
@@ -357,7 +366,7 @@ enum CLIInstaller {
         }
 
         if response.success {
-            let expectedVersion = target.requiresExactVersion ? GatewayEnvironment.appVersionString() : nil
+            let expectedVersion = target.expectedVersion
             let managedStatus = await self.managedStatus(expectedVersion: expectedVersion)
             guard case let .ready(_, verifiedVersion) = managedStatus else {
                 await statusHandler("Install failed: \(managedStatus.message)")
@@ -571,7 +580,7 @@ enum CLIInstaller {
 
     private static func rememberInstallPolicy(_ target: InstallTarget) {
         let policy = switch target {
-        case .exact: "exact"
+        case .exact, .candidate: "exact"
         case let .channel(channel): channel.rawValue
         }
         AppDefaults.standard.set(policy, forKey: cliInstallPolicyKey)

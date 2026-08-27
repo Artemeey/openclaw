@@ -286,6 +286,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     func applicationDidFinishLaunching(_: Notification) {
         #if DEBUG
+        do {
+            if let options = try MacOSOnboardingE2EOptions.parse(arguments: CommandLine.arguments) {
+                GatewayEndpointStore.admitPrimaryAppLaunch()
+                GatewayConnectivityCoordinator.shared.start()
+                Task { await MacOSOnboardingE2ERunner.runAndExit(options: options) }
+                return
+            }
+        } catch {
+            fputs("OPENCLAW_ONBOARDING_E2E_ARGUMENT_ERROR=\(error.localizedDescription)\n", stderr)
+            Darwin.exit(2)
+        }
         if CommandLine.arguments.contains("--swarm-chat-fixture") {
             AppActivationPolicy.apply(showDockIcon: true)
             WebChatManager.shared.showSwarmFixture()
