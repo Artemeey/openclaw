@@ -102,6 +102,10 @@
   gap: var(--space-2);
 }
 
+.model-providers__profiles-heading-actions .btn {
+  min-height: 44px;
+}
+
 .model-providers__profiles-heading-copy strong {
   color: var(--text-strong);
   font-size: var(--control-ui-text-sm);
@@ -283,6 +287,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.model-providers__profile-usage .provider-usage-error {
+  overflow-wrap: anywhere;
 }
 
 .model-providers__profile-usage .provider-usage-billing,
