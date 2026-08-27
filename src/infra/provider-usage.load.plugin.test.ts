@@ -140,6 +140,33 @@ describe("provider-usage.load plugin boundary", () => {
     }
   });
 
+  it("preserves caller context while resolving one exact profile", async () => {
+    const env = { OPENCLAW_TEST_PROFILE_USAGE: "enabled" };
+    const workspaceDir = "/tmp/openclaw-profile-usage-workspace";
+    resolveProviderProfileUsageAuthWithPluginMock.mockResolvedValueOnce({ token: "profile-token" });
+    resolveProviderUsageSnapshotWithPluginMock.mockResolvedValueOnce({
+      provider: "openai",
+      displayName: "OpenAI",
+      windows: [{ label: "Weekly", usedPercent: 4 }],
+    });
+
+    await loadProviderUsageSummary({
+      authProfile: { provider: "openai", profileId: "openai:work" },
+      authStore: { version: 1, profiles: {} },
+      config: {},
+      env,
+      workspaceDir,
+    });
+
+    expect(resolveProviderProfileUsageAuthWithPluginMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env,
+        workspaceDir,
+        context: expect.objectContaining({ env, workspaceDir }),
+      }),
+    );
+  });
+
   it("prefers plugin-owned usage snapshots", async () => {
     resolveProviderUsageSnapshotWithPluginMock.mockResolvedValueOnce({
       provider: "github-copilot",

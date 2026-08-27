@@ -449,11 +449,13 @@ export async function resolveProviderProfileUsageAuth(params: {
   profileId: string;
   store: AuthProfileStore;
   agentDir?: string;
+  workspaceDir?: string;
   config: OpenClawConfig;
+  env?: NodeJS.ProcessEnv;
 }): Promise<ProviderAuth | null> {
   const state: UsageAuthState = {
     cfg: params.config,
-    env: process.env,
+    env: params.env ?? process.env,
     agentDir: params.agentDir,
     allowAuthProfileStore: true,
     store: params.store,
@@ -461,10 +463,12 @@ export async function resolveProviderProfileUsageAuth(params: {
   const pluginAuth = await resolveProviderProfileUsageAuthWithPlugin({
     provider: params.provider,
     config: params.config,
+    workspaceDir: params.workspaceDir,
     env: state.env,
     context: {
       config: params.config,
       agentDir: params.agentDir,
+      workspaceDir: params.workspaceDir,
       env: state.env,
       provider: params.provider,
       profileId: params.profileId,

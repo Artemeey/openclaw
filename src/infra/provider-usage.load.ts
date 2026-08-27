@@ -157,7 +157,9 @@ export async function loadProviderUsageSummary(
               profileId: opts.authProfile.profileId,
               store: getAuthStore(),
               agentDir: opts.agentDir,
+              workspaceDir: opts.workspaceDir,
               config,
+              env,
             })
           : (opts.auth?.find((candidate) => candidate.provider === provider) ??
             (
