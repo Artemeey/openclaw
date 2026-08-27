@@ -1,6 +1,6 @@
 import { stableStringify } from "@openclaw/normalization-core";
 import { sha256Hex } from "../infra/crypto-digest.js";
-import type { PendingBridgeRequest } from "./code-mode-runtime.js";
+import type { PendingBridgeRequest } from "./code-mode-worker-types.js";
 
 const repairableFailureDetails = new WeakSet<object>();
 const uncertainMutationKeysByDetails = new WeakMap<object, readonly string[]>();
