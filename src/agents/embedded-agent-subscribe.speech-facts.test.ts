@@ -95,7 +95,7 @@ describe("assistant speech facts through session settlement", () => {
           },
         ],
       });
-      const pending = createDeferred<void>();
+      const pending = createDeferred();
       const deliveredBlocks: ReplyPayload[] = [];
       const subscription = subscribeEmbeddedAgentSession({
         session,

@@ -42,8 +42,8 @@ it("keeps the explicit final reply target when captioned TTS defers queued block
   ttsMocks.state.synthesizeFinalAudio = true;
   const rawText =
     "[[reply_to:message-42]]Report ready. [[tts:text]]The report is ready.[[/tts:text]]";
-  const pendingMedia = createDeferred<void>();
-  const mediaStarted = createDeferred<void>();
+  const pendingMedia = createDeferred();
+  const mediaStarted = createDeferred();
   replyMediaPathMocks.createReplyMediaPathNormalizer.mockReturnValue(async (payload) => {
     if (payload.mediaUrls?.includes("https://example.com/report.png")) {
       mediaStarted.resolve();
