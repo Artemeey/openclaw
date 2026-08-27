@@ -1,6 +1,7 @@
 #!/usr/bin/env -S pnpm tsx
 // Macos Smoke script supports OpenClaw repository automation.
-import { readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { copyFile, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { posixAgentWorkspaceScript } from "./agent-workspace.ts";
@@ -18,6 +19,7 @@ import {
   posixProviderOnlyPluginIsolationScript,
   readGitCommitEnv,
   readPositiveIntEnv,
+  repoRoot,
   resolveParallelsModelTimeoutSeconds,
   resolveHostIp,
   resolveHostPort,
@@ -54,6 +56,8 @@ import {
 } from "./smoke-common.ts";
 
 interface MacosOptions extends SmokeCliOptions {
+  appOnboarding?: "dev" | "staged";
+  appOnboardingTrials: number;
   vmNameExplicit: boolean;
   skipLatestRefCheck: boolean;
   discordTokenEnv?: string;
@@ -91,6 +95,48 @@ interface MacosSummary {
     agent: string;
     discord: string;
   };
+  appOnboarding?: AppOnboardingSummary;
+}
+
+interface AppOnboardingResult {
+  status: string;
+  error?: string | null;
+  installTarget: string;
+  installedVersion?: string | null;
+  installMs: number;
+  gatewayMs: number;
+  setupMs: number;
+  totalMs: number;
+  selectedKind?: string | null;
+}
+
+interface AppOnboardingTrialSummary {
+  trial: number;
+  status: "pass";
+  coreVersion: string;
+  coreCommit: string;
+  installMs: number;
+  gatewayMs: number;
+  setupMs: number;
+  appOnboardingMs: number;
+  trialWallMs: number;
+}
+
+interface AppOnboardingSummary {
+  mode: "dev" | "staged";
+  status: "pass" | "fail";
+  requestedTrials: number;
+  completedTrials: number;
+  coreVersion: string;
+  coreCommit: string;
+  codexVersion: string;
+  host: {
+    corePackageMs: number;
+    appPackageMs: number;
+    preparationMs: number;
+  };
+  trials: AppOnboardingTrialSummary[];
+  totalWallMs: number;
 }
 
 const guestPath =
@@ -102,6 +148,8 @@ const guestNode = "node";
 const guestNpm = "npm";
 
 const defaultOptions = (): MacosOptions => ({
+  appOnboarding: undefined,
+  appOnboardingTrials: 1,
   discordChannelId: undefined,
   discordGuildId: undefined,
   discordTokenEnv: undefined,
@@ -143,6 +191,10 @@ Options:
   --install-version <ver>    Pin site-installer version/dist-tag for the baseline lane.
   --target-package-spec <npm-spec>
                              Install this npm package tarball instead of packing current main.
+  --app-onboarding <dev|staged>
+                             Run the opt-in real-app onboarding benchmark instead of CLI smoke.
+  --app-onboarding-trials <n>
+                             Restored pristine-VM trials. Default: 1
   --npm-registry <url>       Registry used for target package installs.
   --skip-latest-ref-check    Skip the known latest-release ref-mode precheck in upgrade lane.
   --keep-server              Leave temp host HTTP server running.
@@ -166,6 +218,18 @@ export function parseArgs(argv: string[]): MacosOptions {
     },
     usage,
     valueHandlers: {
+      "--app-onboarding": (parsed, value) => {
+        if (value !== "dev" && value !== "staged") {
+          die("--app-onboarding must be dev or staged");
+        }
+        parsed.appOnboarding = value;
+      },
+      "--app-onboarding-trials": (parsed, value) => {
+        if (!/^[1-9]\d*$/u.test(value)) {
+          die("--app-onboarding-trials must be a positive integer");
+        }
+        parsed.appOnboardingTrials = Number(value);
+      },
       "--discord-channel-id": (parsed, value) => (parsed.discordChannelId = value),
       "--discord-guild-id": (parsed, value) => (parsed.discordGuildId = value),
       "--discord-token-env": (parsed, value) => (parsed.discordTokenEnv = value),
@@ -179,7 +243,18 @@ export function parseArgs(argv: string[]): MacosOptions {
 
 class MacosSmoke {
   private agentTimeoutSeconds: number;
-  private auth: ProviderAuth;
+  private auth: ProviderAuth | null;
+  private appZipPath = "";
+  private appZipSha256 = "";
+  private coreSha256 = "";
+  private codexFixturePath = "";
+  private codexFixtureSha256 = "";
+  private hostCorePackageMs = 0;
+  private hostAppPackageMs = 0;
+  private hostPreparationMs = 0;
+  private appOnboardingStartedAt = 0;
+  private appOnboardingStatus: "pass" | "fail" = "pass";
+  private appOnboardingTrials: AppOnboardingTrialSummary[] = [];
   private discordToken = "";
   private hostIp = "";
   private hostPort = 0;
@@ -221,11 +296,13 @@ class MacosSmoke {
 
   constructor(options: MacosOptions) {
     this.options = options;
-    this.auth = resolveProviderAuth({
-      apiKeyEnv: options.apiKeyEnv,
-      modelId: options.modelId,
-      provider: options.provider,
-    });
+    this.auth = options.appOnboarding
+      ? null
+      : resolveProviderAuth({
+          apiKeyEnv: options.apiKeyEnv,
+          modelId: options.modelId,
+          provider: options.provider,
+        });
     this.agentTimeoutSeconds = readPositiveIntEnv("OPENCLAW_PARALLELS_MACOS_AGENT_TIMEOUT_S", 2700);
     this.modelTimeoutSeconds = resolveParallelsModelTimeoutSeconds("macos");
     this.updateDevTimeoutSeconds = readPositiveIntEnv(
@@ -258,13 +335,17 @@ class MacosSmoke {
       this.snapshot = shouldSkipSnapshotRestore()
         ? currentRunningSnapshotInfo(this.options.vmName)
         : resolveSnapshot(this.options.vmName, this.options.snapshotHint);
-      this.latestVersion = resolveLatestVersion(this.options.latestVersion);
-      this.installVersion = this.options.installVersion || this.latestVersion;
+      if (!this.options.appOnboarding) {
+        this.latestVersion = resolveLatestVersion(this.options.latestVersion);
+        this.installVersion = this.options.installVersion || this.latestVersion;
+      }
 
       say(`VM: ${this.options.vmName}`);
       say(`Snapshot hint: ${this.options.snapshotHint}`);
       say(`Resolved snapshot: ${this.snapshot.name} [${this.snapshot.state}]`);
-      say(`Latest npm version: ${this.latestVersion}`);
+      if (this.latestVersion) {
+        say(`Latest npm version: ${this.latestVersion}`);
+      }
       say(
         `Current head: ${run("git", ["rev-parse", "--short", "HEAD"], { quiet: true }).stdout.trim()}`,
       );
@@ -272,6 +353,20 @@ class MacosSmoke {
         `Discord smoke: ${this.discordEnabled() ? `guild=${this.options.discordGuildId} channel=${this.options.discordChannelId}` : "disabled"}`,
       );
       say(`Run logs: ${this.runDir}`);
+
+      if (this.options.appOnboarding) {
+        await this.runAppOnboardingBenchmark();
+        const summaryPath = await this.writeSummary();
+        if (this.options.json) {
+          process.stdout.write(await readFile(summaryPath, "utf8"));
+        } else {
+          this.printSummary(summaryPath);
+        }
+        if (this.appOnboardingStatus === "fail") {
+          process.exitCode = 1;
+        }
+        return;
+      }
 
       if (this.needsHostTgz()) {
         this.hostIp = resolveHostIp(this.options.hostIp);
@@ -397,6 +492,417 @@ class MacosSmoke {
       return "target package spec";
     }
     return this.options.targetPackageSpec ? "target package tgz" : "current main tgz";
+  }
+
+  private async runAppOnboardingBenchmark(): Promise<void> {
+    if (this.options.provider !== "openai") {
+      die("--app-onboarding currently requires --provider openai");
+    }
+    if (this.options.targetPackageSpec) {
+      die("--app-onboarding packs the current checkout; do not pass --target-package-spec");
+    }
+    if (this.discordEnabled()) {
+      die("--app-onboarding cannot be combined with Discord smoke options");
+    }
+
+    this.appOnboardingStartedAt = Date.now();
+    await this.prepareAppOnboardingHostArtifacts();
+    try {
+      for (let trial = 1; trial <= this.options.appOnboardingTrials; trial += 1) {
+        try {
+          this.appOnboardingTrials.push(await this.runAppOnboardingTrial(trial));
+        } catch (error) {
+          this.appOnboardingStatus = "fail";
+          warn(
+            `app onboarding trial ${trial} failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          break;
+        }
+      }
+    } finally {
+      const cleanupPassed = await this.phaseReturns("app.cleanup.restore-pristine", 780, () =>
+        this.restoreSnapshotStopped(),
+      );
+      if (!cleanupPassed) {
+        this.appOnboardingStatus = "fail";
+      }
+    }
+  }
+
+  private async prepareAppOnboardingHostArtifacts(): Promise<void> {
+    const preparationStartedAt = Date.now();
+    this.hostIp = resolveHostIp(this.options.hostIp);
+    this.hostPort = await resolveHostPort(
+      this.options.hostPort,
+      this.options.hostPortExplicit,
+      defaultOptions().hostPort,
+    );
+
+    const coreStartedAt = Date.now();
+    await this.phase("host.package-core", 2400, async () => {
+      [this.artifact, this.server, this.hostPort] = await packAndServeSmokeArtifact(
+        this.tgzDir,
+        undefined,
+        this.hostIp,
+        this.hostPort,
+        "app onboarding core and Codex candidates",
+        true,
+        "openai",
+      );
+    });
+    this.hostCorePackageMs = Date.now() - coreStartedAt;
+
+    if (!this.artifact || !this.server) {
+      die("app onboarding core artifact/server missing");
+    }
+    this.coreSha256 = await this.sha256(this.artifact.path);
+
+    const appStartedAt = Date.now();
+    await this.phase("host.package-app", 2400, async () => {
+      const architecture = run("uname", ["-m"], { quiet: true }).stdout.trim();
+      const packaged = run("bash", ["scripts/package-mac-app.sh"], {
+        check: false,
+        env: {
+          ...process.env,
+          BUILD_ARCHS: architecture,
+          OPENCLAW_SKIP_MLX_TTS: "1",
+          SKIP_PNPM_INSTALL: "1",
+          SKIP_TSC: "1",
+          SKIP_UI_BUILD: "1",
+        },
+        quiet: true,
+      });
+      this.log(packaged.stdout);
+      this.log(packaged.stderr);
+      if (packaged.status !== 0) {
+        throw new Error(`macOS app packaging failed with exit code ${packaged.status}`);
+      }
+
+      this.appZipPath = path.join(
+        this.tgzDir,
+        `OpenClaw-app-${this.artifact?.buildCommitShort || "candidate"}.zip`,
+      );
+      await rm(this.appZipPath, { force: true });
+      const zipped = run(
+        "ditto",
+        [
+          "-c",
+          "-k",
+          "--sequesterRsrc",
+          "--keepParent",
+          path.join(repoRoot, "dist/OpenClaw.app"),
+          this.appZipPath,
+        ],
+        { check: false, quiet: true },
+      );
+      this.log(zipped.stdout);
+      this.log(zipped.stderr);
+      if (zipped.status !== 0) {
+        throw new Error(`macOS app archive failed with exit code ${zipped.status}`);
+      }
+
+      const fixtureSource = path.join(
+        repoRoot,
+        "scripts/e2e/parallels/fixtures/codex-app-server.mjs",
+      );
+      this.codexFixturePath = path.join(this.tgzDir, "codex-app-server.mjs");
+      await copyFile(fixtureSource, this.codexFixturePath);
+      this.appZipSha256 = await this.sha256(this.appZipPath);
+      this.codexFixtureSha256 = await this.sha256(this.codexFixturePath);
+    });
+    this.hostAppPackageMs = Date.now() - appStartedAt;
+    this.hostPreparationMs = Date.now() - preparationStartedAt;
+  }
+
+  private async runAppOnboardingTrial(trial: number): Promise<AppOnboardingTrialSummary> {
+    const trialStartedAt = Date.now();
+    const prefix = `app.trial-${trial}`;
+    await this.phase(`${prefix}.restore-snapshot`, 780, () => this.restoreSnapshot());
+    await this.phase(`${prefix}.reset-state`, 180, () => this.resetAppOnboardingState());
+    await this.phase(`${prefix}.stage-candidate`, 420, () => this.stageAppOnboardingCandidate());
+
+    let result: AppOnboardingResult | undefined;
+    await this.phase(
+      `${prefix}.app-onboarding`,
+      this.options.appOnboarding === "dev" ? 7200 : 1800,
+      async () => {
+        await this.launchAppOnboarding(trial);
+        result = this.readAppOnboardingResult(trial);
+        this.log(JSON.stringify(result));
+        if (result.status !== "passed") {
+          throw new Error(result.error || "app onboarding reported failure");
+        }
+      },
+    );
+    if (!result) {
+      throw new Error("app onboarding result missing");
+    }
+
+    let coreCommit = "";
+    await this.phase(`${prefix}.verify`, 420, () => {
+      coreCommit = this.verifyAppOnboardingTrial(result as AppOnboardingResult);
+    });
+    return {
+      trial,
+      status: "pass",
+      coreVersion: result.installedVersion || "",
+      coreCommit,
+      installMs: result.installMs,
+      gatewayMs: result.gatewayMs,
+      setupMs: result.setupMs,
+      appOnboardingMs: result.totalMs,
+      trialWallMs: Date.now() - trialStartedAt,
+    };
+  }
+
+  private resetAppOnboardingState(): void {
+    this.guestSh(String.raw`set -eu
+/usr/bin/pkill -x OpenClaw >/dev/null 2>&1 || true
+/bin/launchctl bootout "gui/$(/usr/bin/id -u)/ai.openclaw.gateway" >/dev/null 2>&1 || true
+/usr/bin/pkill -f '^openclaw-gateway([[:space:]]|$)' >/dev/null 2>&1 || true
+/usr/bin/pkill -f 'openclaw.mjs gateway' >/dev/null 2>&1 || true
+/usr/bin/defaults delete ai.openclaw.mac.debug >/dev/null 2>&1 || true
+/bin/rm -rf "$HOME/.openclaw"
+/bin/rm -f "$HOME/.npmrc"
+/bin/rm -f "$HOME/Library/LaunchAgents/ai.openclaw.gateway.plist"
+/bin/rm -f /private/tmp/openclaw-onboarding-result-*.json
+/bin/rm -f /private/tmp/openclaw-onboarding-codex-app-server.jsonl
+/bin/rm -rf /private/tmp/openclaw-app-onboarding`);
+  }
+
+  private stageAppOnboardingCandidate(): void {
+    if (!this.server || !this.artifact) {
+      die("app onboarding artifact server missing");
+    }
+    const stageDir = "/private/tmp/openclaw-app-onboarding";
+    const coreStagePath = `${stageDir}/openclaw-current.tgz`;
+    const appStagePath = `${stageDir}/OpenClaw.app.zip`;
+    const fixtureStagePath = `${stageDir}/codex-app-server.mjs`;
+    const registry = this.server.registry?.url;
+    if (!registry) {
+      die("app onboarding npm registry missing matching Codex candidate");
+    }
+    const coreStage =
+      this.options.appOnboarding === "staged"
+        ? `download ${shellQuote(this.server.urlFor(this.artifact.path))} ${shellQuote(coreStagePath)} ${shellQuote(this.coreSha256)}`
+        : "";
+    this.guestSh(`set -euo pipefail
+stage_dir=${shellQuote(stageDir)}
+rm -rf "$stage_dir"
+mkdir -p "$stage_dir"
+download() {
+  url="$1"
+  destination="$2"
+  expected="$3"
+  curl -fsSL --connect-timeout 10 --max-time 300 --retry 2 --retry-delay 2 "$url" -o "$destination"
+  actual=$(/usr/bin/shasum -a 256 "$destination" | /usr/bin/awk '{print $1}')
+  [ "$actual" = "$expected" ] || {
+    echo "SHA-256 mismatch for $destination: expected $expected, got $actual" >&2
+    exit 1
+  }
+}
+download ${shellQuote(this.server.urlFor(this.appZipPath))} ${shellQuote(appStagePath)} ${shellQuote(this.appZipSha256)}
+download ${shellQuote(this.server.urlFor(this.codexFixturePath))} ${shellQuote(fixtureStagePath)} ${shellQuote(this.codexFixtureSha256)}
+${coreStage}
+/usr/bin/ditto -x -k ${shellQuote(appStagePath)} "$stage_dir"
+printf 'registry=%s\n' ${shellQuote(registry)} >"$HOME/.npmrc"
+chmod 0600 "$HOME/.npmrc"`);
+
+    const installed = run(
+      "prlctl",
+      [
+        "exec",
+        this.options.vmName,
+        "/usr/bin/install",
+        "-m",
+        "0755",
+        fixtureStagePath,
+        "/usr/local/bin/codex",
+      ],
+      { check: false, quiet: true, timeoutMs: this.remainingPhaseTimeoutMs(60_000) },
+    );
+    this.log(installed.stdout);
+    this.log(installed.stderr);
+    if (installed.status !== 0) {
+      throw new Error(`Codex fixture install failed with exit code ${installed.status}`);
+    }
+    this.guestExec(["/usr/local/bin/codex", "--version"]);
+  }
+
+  private async launchAppOnboarding(trial: number): Promise<void> {
+    if (!this.server?.registry || !this.artifact?.version) {
+      die("app onboarding candidate metadata missing");
+    }
+    const stageDir = "/private/tmp/openclaw-app-onboarding";
+    const resultPath = `/private/tmp/openclaw-onboarding-result-${trial}.json`;
+    const argumentsLocal = [
+      "--onboarding-e2e",
+      "--onboarding-codex-command",
+      "/usr/local/bin/codex",
+      "--onboarding-result-path",
+      resultPath,
+    ];
+    if (this.options.appOnboarding === "staged") {
+      argumentsLocal.push(
+        "--onboarding-candidate-package",
+        `${stageDir}/openclaw-current.tgz`,
+        "--onboarding-candidate-version",
+        this.artifact.version,
+      );
+    }
+    const appExecutable = `${stageDir}/OpenClaw.app/Contents/MacOS/OpenClaw`;
+    await this.guest.shBackground(
+      `macos-app-onboarding-${trial}`,
+      `set -euo pipefail
+rm -f ${shellQuote(resultPath)} /private/tmp/openclaw-onboarding-codex-app-server.jsonl
+${shellQuote(appExecutable)} ${argumentsLocal.map(shellQuote).join(" ")}
+test -s ${shellQuote(resultPath)}
+cat ${shellQuote(resultPath)}`,
+      npmRegistryEnv(this.server.registry.url),
+      this.options.appOnboarding === "dev" ? 7_100_000 : 1_700_000,
+    );
+  }
+
+  private readAppOnboardingResult(trial: number): AppOnboardingResult {
+    const raw = this.guestExec([
+      "/bin/cat",
+      `/private/tmp/openclaw-onboarding-result-${trial}.json`,
+    ]);
+    return JSON.parse(raw) as AppOnboardingResult;
+  }
+
+  private verifyAppOnboardingTrial(result: AppOnboardingResult): string {
+    if (!this.artifact?.version || !this.artifact.buildCommit) {
+      die("app onboarding core artifact identity missing");
+    }
+    const expectedVersion = this.artifact.version;
+    const cli = `${this.guestHome()}/.openclaw/bin/openclaw`;
+    const inspectPath = "/private/tmp/openclaw-onboarding-codex-inspect.json";
+    this.guestSh(`set -euo pipefail
+test -x ${shellQuote(cli)}
+${shellQuote(cli)} --version
+/bin/launchctl print "gui/$(/usr/bin/id -u)/ai.openclaw.gateway"
+${shellQuote(cli)} gateway status --deep --require-rpc --timeout 15000
+${shellQuote(cli)} plugins inspect codex --runtime --json >${shellQuote(inspectPath)}
+/opt/homebrew/bin/node - ${shellQuote(String(result.installedVersion || ""))} ${shellQuote(expectedVersion)} ${shellQuote(inspectPath)} <<'JS'
+const fs = require("node:fs");
+const [installedVersion, expectedVersion, inspectPath] = process.argv.slice(2);
+if (installedVersion !== expectedVersion) {
+  throw new Error("installed core version " + installedVersion + " did not match " + expectedVersion);
+}
+const inspect = JSON.parse(fs.readFileSync(inspectPath, "utf8"));
+if (inspect.plugin?.id !== "codex" || inspect.plugin?.status !== "loaded") {
+  throw new Error("Codex plugin was not loaded: " + JSON.stringify(inspect.plugin));
+}
+if (inspect.plugin?.version !== expectedVersion || inspect.install?.version !== expectedVersion) {
+  throw new Error("Codex version did not match core " + expectedVersion + ": " + JSON.stringify({ plugin: inspect.plugin?.version, install: inspect.install?.version }));
+}
+const methods = fs.readFileSync("/private/tmp/openclaw-onboarding-codex-app-server.jsonl", "utf8")
+  .trim().split(/\\n/u).filter(Boolean).map((line) => JSON.parse(line).method);
+for (const method of ["initialize", "thread/start", "turn/start"]) {
+  if (!methods.includes(method)) throw new Error("Codex app-server did not receive " + method);
+}
+JS`);
+
+    const buildInfoPath = this.guestSh(
+      `find ${shellQuote(`${this.guestHome()}/.openclaw`)} -path '*/openclaw/dist/build-info.json' -type f -print -quit`,
+    )
+      .replaceAll("\r", "")
+      .trim()
+      .split("\n")
+      .at(-1);
+    if (!buildInfoPath) {
+      throw new Error("installed core build-info.json was not found");
+    }
+    const coreCommit = this.guestSh(
+      `/opt/homebrew/bin/node -p "require(${JSON.stringify(buildInfoPath)}).commit"`,
+    )
+      .replaceAll("\r", "")
+      .trim()
+      .split("\n")
+      .at(-1);
+    if (!coreCommit) {
+      throw new Error("installed core commit was empty");
+    }
+    if (this.options.appOnboarding === "staged" && coreCommit !== this.artifact.buildCommit) {
+      throw new Error(
+        `installed core commit ${coreCommit} did not match staged ${this.artifact.buildCommit}`,
+      );
+    }
+    if (this.options.appOnboarding === "dev") {
+      const checkoutCommit = this.guestSh(
+        `git -C ${shellQuote(`${this.guestHome()}/.openclaw/dev/openclaw`)} rev-parse HEAD`,
+      )
+        .replaceAll("\r", "")
+        .trim()
+        .split("\n")
+        .at(-1);
+      if (coreCommit !== checkoutCommit) {
+        throw new Error(
+          `installed core commit ${coreCommit} did not match dev checkout ${checkoutCommit || "<empty>"}`,
+        );
+      }
+    }
+    return coreCommit;
+  }
+
+  private restoreSnapshotStopped(): void {
+    if (shouldSkipSnapshotRestore()) {
+      warn("OPENCLAW_PARALLELS_SKIP_SNAPSHOT_RESTORE leaves app-onboarding guest state intact");
+      return;
+    }
+    const status = run("prlctl", ["status", this.options.vmName], {
+      check: false,
+      quiet: true,
+      timeoutMs: this.remainingPhaseTimeoutMs(60_000),
+    });
+    this.log(status.stdout);
+    this.log(status.stderr);
+    if (status.stdout.includes(" running") || status.stdout.includes(" suspended")) {
+      const stopped = run("prlctl", ["stop", this.options.vmName, "--kill"], {
+        check: false,
+        quiet: true,
+        timeoutMs: this.remainingPhaseTimeoutMs(120_000),
+      });
+      this.log(stopped.stdout);
+      this.log(stopped.stderr);
+      if (stopped.status !== 0) {
+        throw new Error(`final VM stop failed with exit code ${stopped.status}`);
+      }
+      waitForVmStatus(this.options.vmName, "stopped", 360, {
+        probeTimeoutMs: () => this.remainingPhaseTimeoutMs(30_000),
+      });
+    }
+    const restored = run(
+      "prlctl",
+      [
+        "snapshot-switch",
+        this.options.vmName,
+        "--id",
+        this.snapshot.id,
+        "--skip-resume",
+      ],
+      { check: false, quiet: true, timeoutMs: this.remainingPhaseTimeoutMs(360_000) },
+    );
+    this.log(restored.stdout);
+    this.log(restored.stderr);
+    if (restored.status !== 0) {
+      throw new Error(`final snapshot restore failed with exit code ${restored.status}`);
+    }
+    waitForVmStatus(this.options.vmName, "stopped", 360, {
+      probeTimeoutMs: () => this.remainingPhaseTimeoutMs(30_000),
+    });
+  }
+
+  private async sha256(filePath: string): Promise<string> {
+    return createHash("sha256").update(await readFile(filePath)).digest("hex");
+  }
+
+  private requireAuth(): ProviderAuth {
+    if (!this.auth) {
+      throw new Error("provider auth is unavailable in app-onboarding mode");
+    }
+    return this.auth;
   }
 
   private async runLane(name: "fresh" | "upgrade", fn: () => Promise<void>): Promise<void> {
@@ -811,18 +1317,19 @@ fi`);
   }
 
   private runRefOnboard(): void {
+    const auth = this.requireAuth();
     const daemonFlag = this.guestTransport === "sudo" ? "--skip-health" : "--install-daemon";
     this.guestExec([
       "/usr/bin/env",
-      `${this.auth.apiKeyEnv}=${this.auth.apiKeyValue}`,
+      `${auth.apiKeyEnv}=${auth.apiKeyValue}`,
       guestOpenClaw,
       "onboard",
       "--non-interactive",
       "--mode",
       "local",
       "--auth-choice",
-      this.auth.authChoice,
-      ...(this.auth.tokenProvider ? ["--token-provider", this.auth.tokenProvider] : []),
+      auth.authChoice,
+      ...(auth.tokenProvider ? ["--token-provider", auth.tokenProvider] : []),
       "--secret-input-mode",
       "ref",
       "--gateway-port",
@@ -916,6 +1423,7 @@ ${guestOpenClawEntryRunner} update status --json`,
     if (this.guestTransport !== "sudo") {
       return;
     }
+    const auth = this.requireAuth();
     const home = this.guestHome();
     this.guestSh(
       `set -euo pipefail
@@ -924,7 +1432,7 @@ trap '' HUP
 /usr/bin/pkill -f 'openclaw-gateway' >/dev/null 2>&1 || true
 /usr/bin/pkill -f 'openclaw.mjs gateway' >/dev/null 2>&1 || true
 /usr/bin/env HOME=${shellQuote(home)} USER=${shellQuote(this.guestUser)} LOGNAME=${shellQuote(this.guestUser)} PATH=${shellQuote(guestPath)} ${shellQuote(
-        `${this.auth.apiKeyEnv}=${this.auth.apiKeyValue}`,
+        `${auth.apiKeyEnv}=${auth.apiKeyValue}`,
       )} OPENCLAW_HOME=${shellQuote(home)} OPENCLAW_STATE_DIR=${shellQuote(`${home}/.openclaw`)} OPENCLAW_CONFIG_PATH=${shellQuote(
         `${home}/.openclaw/openclaw.json`,
       )} ${guestOpenClawEntryRunner} gateway run --bind loopback --port 18789 --force </dev/null >/tmp/openclaw-parallels-macos-gateway.log 2>&1 &
@@ -1005,23 +1513,25 @@ exit 1`);
   }
 
   private restrictAgentTurnPlugins(): void {
+    const auth = this.requireAuth();
     this.guestSh(
       posixProviderOnlyPluginIsolationScript({
         fallbackPluginId: this.options.provider,
         homeFallback: this.guestHome(),
-        modelId: this.auth.modelId,
+        modelId: auth.modelId,
         nodeCommand: guestNode,
       }),
     );
   }
 
   private verifyTurn(): void {
+    const auth = this.requireAuth();
     this.guestSh(
       `set -euo pipefail\n${posixStopGatewayScript(this.guestTransport === "sudo" ? undefined : guestOpenClawEntryRunner)}`,
     );
-    this.guestOpenClawEntryExec(["models", "set", this.auth.modelId]);
+    this.guestOpenClawEntryExec(["models", "set", auth.modelId]);
     const modelProviderConfigBatch = modelProviderConfigBatchJson(
-      this.auth.modelId,
+      auth.modelId,
       "macos",
       this.modelTimeoutSeconds,
     );
@@ -1052,7 +1562,7 @@ for attempt in 1 2; do
   rm -f "$HOME/.openclaw/agents/main/sessions/$session_id.jsonl"
   output_file="$(mktemp)"
   set +e
-  /usr/bin/env ${shellQuote(`${this.auth.apiKeyEnv}=${this.auth.apiKeyValue}`)} ${guestOpenClawEntryRunner} agent --local --agent main --session-id "$session_id" --message ${shellQuote(
+  /usr/bin/env ${shellQuote(`${auth.apiKeyEnv}=${auth.apiKeyValue}`)} ${guestOpenClawEntryRunner} agent --local --agent main --session-id "$session_id" --message ${shellQuote(
     "Reply with exact ASCII text OK only.",
   )} --thinking off --timeout ${this.modelTimeoutSeconds} --json >"$output_file" 2>&1
   rc=$?
@@ -1131,6 +1641,24 @@ fi`,
   }
 
   private async writeSummary(): Promise<string> {
+    const appOnboarding = this.options.appOnboarding
+      ? {
+          mode: this.options.appOnboarding,
+          status: this.appOnboardingStatus,
+          requestedTrials: this.options.appOnboardingTrials,
+          completedTrials: this.appOnboardingTrials.length,
+          coreVersion: this.artifact?.version || "",
+          coreCommit: this.artifact?.buildCommit || "",
+          codexVersion: "0.149.1",
+          host: {
+            corePackageMs: this.hostCorePackageMs,
+            appPackageMs: this.hostAppPackageMs,
+            preparationMs: this.hostPreparationMs,
+          },
+          trials: this.appOnboardingTrials,
+          totalWallMs: this.appOnboardingStartedAt ? Date.now() - this.appOnboardingStartedAt : 0,
+        }
+      : undefined;
     const summary: MacosSummary = {
       currentHead:
         this.artifact?.buildCommitShort ||
@@ -1163,9 +1691,34 @@ fi`,
         status: this.status.upgrade,
       },
       vm: this.options.vmName,
+      ...(appOnboarding ? { appOnboarding } : {}),
     };
     const summaryPath = path.join(this.runDir, "summary.json");
     await writeJson(summaryPath, summary);
+    if (summary.appOnboarding) {
+      const app = summary.appOnboarding;
+      await writeSummaryMarkdown({
+        lines: [
+          `- vm: ${summary.vm}`,
+          `- app onboarding: ${app.status} (${app.mode})`,
+          `- exact core: ${app.coreVersion} (${app.coreCommit})`,
+          `- matching Codex: ${app.codexVersion}`,
+          `- host core package: ${app.host.corePackageMs} ms`,
+          `- host app package: ${app.host.appPackageMs} ms`,
+          `- host preparation total: ${app.host.preparationMs} ms`,
+          `- restored trials: ${app.completedTrials}/${app.requestedTrials}`,
+          ...app.trials.map(
+            (trial) =>
+              `- trial ${trial.trial}: app=${trial.appOnboardingMs} ms wall=${trial.trialWallMs} ms install=${trial.installMs} ms gateway=${trial.gatewayMs} ms setup=${trial.setupMs} ms`,
+          ),
+          `- total wall: ${app.totalWallMs} ms`,
+          `- logs: ${summary.runDir}`,
+        ],
+        summaryPath,
+        title: "macOS Parallels App Onboarding",
+      });
+      return summaryPath;
+    }
     await writeSummaryMarkdown({
       lines: [
         `- vm: ${summary.vm}`,
@@ -1183,6 +1736,22 @@ fi`,
 
   private printSummary(summaryPath: string): void {
     process.stdout.write("\nSummary:\n");
+    if (this.options.appOnboarding) {
+      process.stdout.write(
+        `  app-onboarding: ${this.appOnboardingStatus} (${this.options.appOnboarding}) trials=${this.appOnboardingTrials.length}/${this.options.appOnboardingTrials}\n`,
+      );
+      process.stdout.write(
+        `  host: core-package=${this.hostCorePackageMs}ms app-package=${this.hostAppPackageMs}ms preparation=${this.hostPreparationMs}ms\n`,
+      );
+      for (const trial of this.appOnboardingTrials) {
+        process.stdout.write(
+          `  trial-${trial.trial}: app=${trial.appOnboardingMs}ms wall=${trial.trialWallMs}ms version=${trial.coreVersion} commit=${trial.coreCommit}\n`,
+        );
+      }
+      process.stdout.write(`  logs: ${this.runDir}\n`);
+      process.stdout.write(`  summary: ${summaryPath}\n`);
+      return;
+    }
     if (this.options.targetPackageSpec) {
       process.stdout.write(`  target-package: ${this.options.targetPackageSpec}\n`);
     }

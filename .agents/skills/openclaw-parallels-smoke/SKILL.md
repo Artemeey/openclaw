@@ -107,6 +107,27 @@ Use this skill for Parallels guest workflows and smoke interpretation. Do not lo
 ## macOS flow
 
 - Preferred entrypoint: `pnpm test:parallels:macos`
+- The existing CLI-only smoke remains the fast default. Real app onboarding is an opt-in benchmark:
+  - `pnpm test:parallels:macos -- --app-onboarding dev --app-onboarding-trials 3 --json`
+  - `pnpm test:parallels:macos -- --app-onboarding staged --app-onboarding-trials 3 --json`
+- The app-onboarding lane builds and packs core plus the matching Codex package set once, builds
+  `OpenClaw.app` once, then restores the pristine snapshot for every trial. `dev` exercises the
+  app's bundled `install-cli.sh` Git-main path; `staged` sends the exact host-built core tgz through
+  that same app-owned installer seam. Both launch the real debug app bundle, install/start the
+  LaunchAgent, require Gateway RPC, require the matching Codex plugin to load, and require a
+  deterministic Codex app-server initialize/thread/turn round trip.
+- Read `summary.md` first, then `summary.json` and `phase-timings.json`. Host core packaging, host
+  app packaging, combined host preparation, app-owned guest onboarding, whole restored-trial wall
+  time, and overall wall time are reported separately. Reusing a host build across restored trials
+  is part of the benchmark contract; do not rebuild the app inside a trial.
+- App packaging is intentionally not part of default macOS smoke. A cold build has measured around
+  15-16 minutes, so making it default would hide the fast CLI regression signal.
+- The app-onboarding lane is deterministic and does not need a provider credential. It serves the
+  exact core and matching `@openclaw/codex` candidates from the existing ephemeral registry and
+  stages a local Codex app-server fixture in the guest. Do not substitute a public moving Codex
+  package when judging candidate compatibility.
+- After the app benchmark, the lane restores the selected pristine snapshot with `--skip-resume`
+  and leaves the VM stopped. A cleanup failure makes the lane fail.
 - `parallels-macos-smoke.sh --mode fresh --target-package-spec openclaw@<version>` is an install smoke only. For published old-version -> new-version update coverage on macOS, prefer the npm-update wrapper with `--platform macos`; `parallels-macos-smoke.sh --mode upgrade --target-package-spec ...` installs the target package and does not exercise the baseline CLI's updater.
 - Default upgrade coverage on macOS should now include: fresh snapshot -> site installer pinned to the latest stable tag -> `openclaw update --channel dev` on the guest. Treat this as part of the default Tahoe regression plan, not an optional side quest.
 - `parallels-macos-smoke.sh --mode upgrade` should run that release-to-dev lane by default. Keep the older host-tgz upgrade path only when the caller explicitly passes `--target-package-spec`.

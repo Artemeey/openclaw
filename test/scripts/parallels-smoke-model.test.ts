@@ -682,6 +682,17 @@ ensure_vm_running`,
     expect(parseMacosSmokeArgs(["--", "--mode", "upgrade"]).mode).toBe("upgrade");
     expect(parseMacosSmokeArgs(["--mode", "fresh", "--", "--mode", "upgrade"]).mode).toBe("fresh");
     expect(parseMacosSmokeArgs([]).vmNameExplicit).toBe(false);
+    expect(parseMacosSmokeArgs([]).appOnboarding).toBeUndefined();
+    expect(parseMacosSmokeArgs([]).appOnboardingTrials).toBe(1);
+    expect(parseMacosSmokeArgs(["--app-onboarding", "dev"]).appOnboarding).toBe("dev");
+    expect(
+      parseMacosSmokeArgs([
+        "--app-onboarding",
+        "staged",
+        "--app-onboarding-trials",
+        "3",
+      ]),
+    ).toMatchObject({ appOnboarding: "staged", appOnboardingTrials: 3 });
     expect(parseMacosSmokeArgs(["--vm", "macOS"]).vmNameExplicit).toBe(true);
     expect(parseMacosSmokeArgs(["--host-port", "65535"]).hostPort).toBe(65535);
     expect(parseLinuxSmokeArgs(["--host-port", "65535"]).hostPort).toBe(65535);
@@ -784,6 +795,23 @@ ensure_vm_running`,
     }
   });
 
+  it("rejects invalid macOS app-onboarding benchmark options", () => {
+    expectFatalError(
+      () => parseMacosSmokeArgs(["--app-onboarding", "other"]),
+      "--app-onboarding must be dev or staged",
+    );
+    expectFatalError(
+      () => parseMacosSmokeArgs(["--app-onboarding-trials", "-1"]),
+      "--app-onboarding-trials requires a value",
+    );
+    for (const value of ["0", "1.5", "nope"]) {
+      expectFatalError(
+        () => parseMacosSmokeArgs(["--app-onboarding-trials", value]),
+        "--app-onboarding-trials must be a positive integer",
+      );
+    }
+  });
+
   it("rejects inherited object keys as unknown Parallels smoke arguments", () => {
     for (const parseArgs of [parseMacosSmokeArgs, parseLinuxSmokeArgs, parseWindowsSmokeArgs]) {
       for (const arg of ["constructor", "toString"]) {
@@ -805,11 +833,12 @@ ensure_vm_running`,
       expect(script, scriptPath).toContain("modelId");
     }
 
-    for (const scriptPath of [TS_PATHS.linux, TS_PATHS.macos]) {
-      expect(readFileSync(scriptPath, "utf8")).toContain(
-        '...(this.auth.tokenProvider ? ["--token-provider", this.auth.tokenProvider] : [])',
-      );
-    }
+    expect(readFileSync(TS_PATHS.linux, "utf8")).toContain(
+      '...(this.auth.tokenProvider ? ["--token-provider", this.auth.tokenProvider] : [])',
+    );
+    expect(macos).toContain(
+      '...(auth.tokenProvider ? ["--token-provider", auth.tokenProvider] : [])',
+    );
     expect(windows).toContain("tokenProviderArg");
   });
 
