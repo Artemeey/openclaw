@@ -42,6 +42,7 @@ type MemorySessionTranscriptUpdate = {
     agentId: string;
     sessionId: string;
     sessionKey: string;
+    storePath?: string;
   };
 };
 
@@ -111,8 +112,8 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
 
   protected buildSessionEntryOptions(entry: SessionTranscriptCorpusEntry) {
     return {
-      generatedByDreamingNarrative: entry.generatedByDreamingNarrative === true,
-      generatedByCronRun: entry.generatedByCronRun === true,
+      ...(entry.generatedByDreamingNarrative ? { generatedByDreamingNarrative: true } : {}),
+      ...(entry.generatedByCronRun ? { generatedByCronRun: true } : {}),
       ...(entry.sessionKind ? { sessionKind: entry.sessionKind } : {}),
       ...(entry.transcriptSource === "sqlite" && entry.storePath
         ? {
@@ -304,6 +305,7 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
     const agentId = (update.target?.agentId ?? update.agentId)?.trim();
     const sessionId = (update.target?.sessionId ?? update.sessionId)?.trim();
     const sessionKey = update.target?.sessionKey.trim();
+    const storePath = update.target?.storePath?.trim();
     if (!agentId || !sessionId || normalizeAgentId(agentId) !== normalizeAgentId(this.agentId)) {
       return null;
     }
@@ -312,6 +314,7 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
       agentId,
       sessionId,
       ...(sessionKey ? { sessionKey } : {}),
+      ...(storePath ? { storePath } : {}),
       ...(sessionFile ? { sessionFile: path.resolve(sessionFile) } : {}),
     };
   }
@@ -372,6 +375,22 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
         continue;
       }
       const sessionKey = rawSession.sessionKey?.trim();
+      const storePath = rawSession.storePath?.trim();
+      if (storePath && sessionKey) {
+        const entry: SessionTranscriptCorpusEntry = {
+          agentId,
+          artifactKind: "active-session",
+          sessionFile: sessionKey,
+          sessionId,
+          sessionKey,
+          sessionKind: "unknown",
+          storePath,
+          transcriptSource: "sqlite",
+        };
+        entries.set(sessionKey, entry);
+        targetArchiveFiles.add(sessionKey);
+        continue;
+      }
       const matchingEntries = corpusEntries.filter(
         (entry) =>
           normalizeAgentId(entry.agentId) === normalizeAgentId(this.agentId) &&
@@ -395,7 +414,11 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
     const sessions = params.sessions ?? [];
     const needsCorpusDiscovery =
       params.archiveFiles?.some((sessionFile) => sessionFile.trim().length > 0) === true ||
-      sessions.some((session) => !session.sessionFile?.trim());
+      sessions.some(
+        (session) =>
+          !session.sessionFile?.trim() &&
+          !(session.storePath?.trim() && session.sessionKey?.trim()),
+      );
     const discoveredEntries = needsCorpusDiscovery ? await this.listSessionCorpusEntries() : [];
     const { corpusEntries, targetArchiveFiles } = this.resolveSessionSyncTargets(
       sessions,
@@ -412,6 +435,7 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
       target.agentId ?? "",
       target.sessionId,
       target.sessionKey ?? "",
+      target.storePath ?? "",
       target.sessionFile ?? "",
     ].join("\0");
   }
