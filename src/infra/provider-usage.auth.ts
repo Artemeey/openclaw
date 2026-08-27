@@ -468,18 +468,6 @@ export async function resolveProviderProfileUsageAuth(params: {
       env: state.env,
       provider: params.provider,
       profileId: params.profileId,
-      resolveApiKeyFromConfigAndStore: (options) =>
-        resolveProviderApiKeyFromConfigAndStore({
-          state,
-          providerIds: options?.providerIds ?? [params.provider],
-          envDirect: options?.envDirect,
-        }),
-      resolveApiKeyCandidatesFromConfigAndStore: async (options) =>
-        await resolveProviderApiKeyCandidatesFromConfigAndStore({
-          state,
-          providerIds: options?.providerIds ?? [params.provider],
-          envDirect: options?.envDirect,
-        }),
       resolveOAuthToken: async (options) =>
         await resolveOAuthToken({
           state,

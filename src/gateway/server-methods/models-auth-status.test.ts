@@ -386,7 +386,7 @@ function firstDeferredAuthScope() {
 
 function profileUsageCalls() {
   return mocks.loadProviderUsageSummary.mock.calls.flatMap(([options]) =>
-    options?.auth ? [options] : [],
+    options?.authProfile ? [options] : [],
   );
 }
 
@@ -1828,12 +1828,10 @@ describe("models.authStatus", () => {
     });
     expect(profileUsageCalls().at(-1)).toEqual(
       expect.objectContaining({
-        auth: [
-          expect.objectContaining({
-            provider: "fixture-owner",
-            authProfileId: profile.profileId,
-          }),
-        ],
+        authProfile: {
+          provider: "fixture-owner",
+          profileId: profile.profileId,
+        },
       }),
     );
   });
@@ -1872,13 +1870,7 @@ describe("models.authStatus", () => {
     const first = await readAuthStatus();
 
     expect(mocks.loadProviderUsageSummary).toHaveBeenCalledWith({
-      auth: [
-        {
-          provider: "anthropic",
-          token: "profile-usage-token",
-          authProfileId: "claude-cli",
-        },
-      ],
+      authProfile: { provider: "anthropic", profileId: "claude-cli" },
       agentDir: "/tmp/agent",
       workspaceDir: "/tmp/workspace",
       authStore: preparedAuthStore,
@@ -2115,13 +2107,7 @@ describe("models.authStatus", () => {
     const rebound = await readAuthStatus();
     expect(rebound.providers[0]?.profiles[0]?.usage?.windows[0]?.usedPercent).toBe(20);
     expect(profileUsageCalls().at(-1)).toEqual({
-      auth: [
-        {
-          provider: "openai",
-          token: "profile-usage-token",
-          authProfileId: "openai:default",
-        },
-      ],
+      authProfile: { provider: "openai", profileId: "openai:default" },
       agentDir: "/tmp/rebound-agent",
       workspaceDir: "/tmp/workspace",
       authStore: preparedAuthStore,
@@ -2265,7 +2251,7 @@ describe("models.authStatus", () => {
           ],
         };
       }
-      const profileId = options?.auth?.[0]?.authProfileId;
+      const profileId = options?.authProfile?.profileId;
       return {
         updatedAt: 0,
         providers: [

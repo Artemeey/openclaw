@@ -230,6 +230,23 @@ function notifyRuntimeAuthStoreMutation(agentDir?: string): void {
   }
 }
 
+/**
+ * Cooldown clearing changes selection immediately, unlike routine last-used/stat writes.
+ * One main-store event covers every inherited owner and avoids duplicate rebuilds.
+ */
+export function notifyRuntimeAuthProfileSelectionMutation(
+  agentDirs: Iterable<string | undefined>,
+): void {
+  const owners = new Set(agentDirs);
+  if (owners.has(undefined)) {
+    notifyRuntimeAuthStoreMutation();
+    return;
+  }
+  for (const agentDir of owners) {
+    notifyRuntimeAuthStoreMutation(agentDir);
+  }
+}
+
 function authProfilesChanged(
   previous: RuntimeAuthProfileStore | undefined,
   next: RuntimeAuthProfileStore | undefined,

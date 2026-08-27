@@ -270,6 +270,25 @@ describe("ProfileOrderController", () => {
     });
   });
 
+  it("saves a reorder queued while a failed save refreshes", async () => {
+    const refreshPending = createDeferred();
+    const { controller, getData, refresh, request, requests } = createHarness();
+    refresh.mockImplementationOnce(() => refreshPending.promise);
+
+    controller.queue("openai", ["openai:two", "openai:one"]);
+    requests[0]?.reject(new Error("profile order changed"));
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+
+    controller.queue("openai", ["openai:one", "openai:two"]);
+    refreshPending.resolve();
+
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    requests[1]?.resolve({});
+    await controller.waitFor("openai");
+
+    expect(getData().authStatus?.providers[0]?.profileOrder).toEqual(["openai:one", "openai:two"]);
+  });
+
   it("waits for a pending order save before logging out", async () => {
     vi.mocked(showConfirmDialog).mockResolvedValue(true);
     const { controller, request, requests } = createHarness();

@@ -358,6 +358,9 @@ export class ProfileOrderController {
             kind: "error",
             text: modelProviderErrorMessage(error),
           });
+          if (this.host.getDrafts()[owner]) {
+            continue;
+          }
         }
         return;
       }

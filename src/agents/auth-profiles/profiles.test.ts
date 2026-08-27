@@ -52,6 +52,7 @@ import {
   getRuntimeAuthProfileStoreCredentialsRevision,
   getRuntimeAuthProfileStoreStateMutationToken,
   listRuntimeAuthProfileStoreSnapshots,
+  registerRuntimeAuthProfileStoreMutationListener,
   replaceRuntimeAuthProfileStoreSnapshots,
 } from "./runtime-snapshots.js";
 import {
@@ -1806,12 +1807,21 @@ describe("promoteAuthProfileInOrder", () => {
         saveAuthProfileStore(store(Date.now() + 60_000), mainAgentDir);
         saveAuthProfileStore(store(Date.now() + 120_000), customAgentDir);
         const selectedStore = loadAuthProfileStoreForRuntime(customAgentDir);
-
-        const cleared = clearAuthProfileCooldownAcrossOwnerStores({
-          store: selectedStore,
-          agentDir: customAgentDir,
-          profileId,
+        const mutations: Array<{ agentDir?: string; affectsInheritedStores: boolean }> = [];
+        const unregister = registerRuntimeAuthProfileStoreMutationListener((event) => {
+          mutations.push(event);
         });
+
+        let cleared: boolean;
+        try {
+          cleared = clearAuthProfileCooldownAcrossOwnerStores({
+            store: selectedStore,
+            agentDir: customAgentDir,
+            profileId,
+          });
+        } finally {
+          unregister();
+        }
 
         expect(cleared).toBe(true);
         for (const agentDir of [mainAgentDir, customAgentDir]) {
@@ -1821,6 +1831,7 @@ describe("promoteAuthProfileInOrder", () => {
           expect(stats?.errorCount ?? 0).toBe(0);
         }
         expect(selectedStore.usageStats?.[profileId]?.cooldownUntil).toBeUndefined();
+        expect(mutations).toEqual([{ affectsInheritedStores: true }]);
       },
     );
   });

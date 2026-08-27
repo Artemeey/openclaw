@@ -22,6 +22,7 @@ import {
   setRuntimeExternalCliProfileIds,
   setRuntimeLocalProfileIds,
 } from "./runtime-external-profile-references.js";
+import { notifyRuntimeAuthProfileSelectionMutation } from "./runtime-snapshots.js";
 import {
   ensureAuthProfileStoreForLocalUpdate,
   resolvePersistedAuthProfileOwnerAgentDirs,
@@ -465,6 +466,9 @@ export function clearAuthProfileCooldownAcrossOwnerStoresResult(params: {
       },
     })),
   });
+  if (updated.committed) {
+    notifyRuntimeAuthProfileSelectionMutation(ownerAgentDirs);
+  }
   if (!updated.ok || !cleared) {
     return { ok: false, committed: updated.committed };
   }
