@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import { PassThrough } from "node:stream";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { createDeferred } from "../../../../test/helpers/promise.js";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { defineDiscordVoiceTests } from "./voice-test-harness.test-support.js";
 
 defineDiscordVoiceTests(
@@ -359,7 +359,7 @@ defineDiscordVoiceTests(
     it("flushes bounded contiguous long speech with ingress timestamps", async () => {
       const f = await fixture();
       const packetCount = 130;
-      const processed = createDeferred();
+      const processed = createDeferred<void>();
       decodeOpusStreamChunksMock.mockImplementationOnce(async (input, params) => {
         let decodedPackets = 0;
         try {
