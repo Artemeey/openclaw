@@ -33,6 +33,19 @@ type AuthenticatedGitHubIdentitySyncResult = { profileId: string; updatedAt: num
 export type AuthenticatedGitHubIdentitySync = () => Promise<AuthenticatedGitHubIdentitySyncResult>;
 type GitHubApiCredentialScope = ReturnType<typeof resolveGitHubApiCredentialScope>;
 
+class GitHubIdentityLookupError extends ControlUiGitHubError {
+  constructor(
+    error: ControlUiGitHubError,
+    readonly retryableForCachedIdentity: boolean,
+  ) {
+    super(
+      error.statusCode,
+      error.message,
+      error.retryAfterMs === undefined ? undefined : { retryAfterMs: error.retryAfterMs },
+    );
+  }
+}
+
 function headerValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -116,13 +129,21 @@ async function resolveCloudflareAccessIdentity(
 }
 
 async function fetchGitHubIdentityPayload(rawUrl: string, token: string | undefined) {
+  let response: Response | undefined;
   try {
-    return await readGitHubJsonResponse(await fetchGitHubApi(rawUrl, fetch, token));
+    response = await fetchGitHubApi(rawUrl, fetch, token);
+    return await readGitHubJsonResponse(response);
   } catch (error) {
     if (error instanceof ControlUiGitHubError) {
-      throw error;
+      throw new GitHubIdentityLookupError(
+        error,
+        response === undefined || error.statusCode === 429 || response.status >= 500,
+      );
     }
-    throw new ControlUiGitHubError(502, "GitHub request failed");
+    throw new GitHubIdentityLookupError(
+      new ControlUiGitHubError(502, "GitHub request failed"),
+      response === undefined,
+    );
   }
 }
 
@@ -136,8 +157,6 @@ async function resolveGitHubUserIdentityByLogin(
   }
   return githubUserIdentityCoordinator.lookup({
     credentialScope: credential.cacheScope,
-    identityKind: "login",
-    lookupKey: `login:${requestedLogin}`,
     request: async () => {
       const payload = await fetchGitHubIdentityPayload(
         `${GITHUB_API_ORIGIN}/users/${encodeURIComponent(requestedLogin)}`,
@@ -166,8 +185,6 @@ function resolveGitHubUserIdentityById(
 ): Promise<ResolvedGitHubUserIdentity> {
   return githubUserIdentityCoordinator.lookup({
     credentialScope: credential.cacheScope,
-    identityKind: "account-id",
-    lookupKey: `id:${accountId}`,
     request: async () => {
       const payload = await fetchGitHubIdentityPayload(
         `${GITHUB_API_ORIGIN}/user/${accountId}`,
@@ -275,8 +292,8 @@ export function createAuthenticatedGitHubIdentitySync(params: {
       identity = await resolveGitHubUserIdentityById(accessIdentity.accountId, credential);
     } catch (error) {
       const retryable =
-        error instanceof ControlUiGitHubError &&
-        (error.statusCode === 429 || error.statusCode >= 500);
+        (error instanceof GitHubIdentityLookupError && error.retryableForCachedIdentity) ||
+        (error instanceof ControlUiGitHubError && error.statusCode === 429);
       if (retryable) {
         // Retry failures may reuse only the exact verified email + immutable-account binding.
         const cached = resolveCachedGitHubIdentity({

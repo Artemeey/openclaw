@@ -304,49 +304,17 @@ describe("authenticated GitHub identity sync", () => {
     });
   });
 
-  it("deduplicates concurrent lookups across Gateway connections", async () => {
+  it("independently verifies a mutable login before attaching a concurrent connection", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async () => {
-      const profile = ensureProfileForTailscaleIdentity({ login: "ada@github" });
-      let resolveLookup: ((response: Response) => void) | undefined;
-      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementationOnce(
-        async () =>
-          await new Promise<Response>((resolve) => {
-            resolveLookup = resolve;
-          }),
-      );
-
-      const connections = Array.from({ length: 10 }, () =>
-        createAuthenticatedGitHubIdentitySync({
-          authResult: {
-            ok: true,
-            method: "tailscale",
-            user: "ada@github",
-            tailscaleIdentity: { login: "ada@github", name: "Ada" },
-          },
-        }),
-      );
-      const requests = connections.map((sync) => {
-        if (!sync) {
-          throw new Error("GitHub test identity did not produce a sync function");
-        }
-        return sync();
-      });
-      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-      resolveLookup?.(githubResponse({ id: 583231, login: "Ada" }));
-
-      await expect(Promise.all(requests)).resolves.toEqual(
-        Array.from({ length: 10 }, () => expect.objectContaining({ profileId: profile.id })),
-      );
-      expect(getUserProfileListItem(profile.id).githubIdentity).toMatchObject({ login: "Ada" });
-      expect(fetchMock).toHaveBeenCalledOnce();
-    });
-  });
-
-  it("freshly verifies a mutable login before attaching a later connection", async () => {
-    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      let resolveFirst: ((response: Response) => void) | undefined;
       const fetchMock = vi
         .spyOn(globalThis, "fetch")
-        .mockResolvedValueOnce(githubResponse({ id: 1, login: "ada" }))
+        .mockImplementationOnce(
+          async () =>
+            await new Promise<Response>((resolve) => {
+              resolveFirst = resolve;
+            }),
+        )
         .mockResolvedValueOnce(githubResponse({ id: 2, login: "ada" }));
       const createSync = () =>
         createAuthenticatedGitHubIdentitySync({
@@ -358,8 +326,15 @@ describe("authenticated GitHub identity sync", () => {
           },
         });
 
-      const first = await createSync()?.();
-      const reassigned = await createSync()?.();
+      const firstRequest = createSync()?.();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+      const reassignedRequest = createSync()?.();
+      expect(fetchMock).toHaveBeenCalledOnce();
+
+      resolveFirst?.(githubResponse({ id: 1, login: "ada" }));
+      const first = await firstRequest;
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      const reassigned = await reassignedRequest;
 
       expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(reassigned?.profileId).not.toBe(first?.profileId);
@@ -377,8 +352,6 @@ describe("authenticated GitHub identity sync", () => {
     const inFlight = Array.from({ length: 200 }, (_, index) =>
       githubUserIdentityCoordinator.lookup({
         credentialScope: "capacity-test",
-        identityKind: "login",
-        lookupKey: `login:user-${index}`,
         request: async () => {
           await requestGate;
           return { accountId: index + 1, login: `user-${index}` };
@@ -391,8 +364,6 @@ describe("authenticated GitHub identity sync", () => {
       await expect(
         githubUserIdentityCoordinator.lookup({
           credentialScope: "capacity-test",
-          identityKind: "login",
-          lookupKey: "login:overflow",
           request: overflowRequest,
         }),
       ).rejects.toMatchObject({ statusCode: 429, retryAfterMs: 1_000 });
@@ -415,14 +386,10 @@ describe("authenticated GitHub identity sync", () => {
 
     const first = githubUserIdentityCoordinator.lookup({
       credentialScope: "shared-quota",
-      identityKind: "login",
-      lookupKey: "login:ada",
       request: firstRequest,
     });
     const second = githubUserIdentityCoordinator.lookup({
       credentialScope: "shared-quota",
-      identityKind: "login",
-      lookupKey: "login:grace",
       request: secondRequest,
     });
     await vi.waitFor(() => expect(firstRequest).toHaveBeenCalledOnce());
