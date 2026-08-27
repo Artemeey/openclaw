@@ -607,12 +607,17 @@ export function createSessionMutations(host: SessionMutationsHost) {
       if (!host.connection.isCurrent(scope)) {
         return null;
       }
-      const scopeRevisions = host.ownerAssignmentScopeRevisions(result.key);
-      const sessionId = host.publishedRow(result.key)?.sessionId;
-      ownerAssignments.confirm(result.key, result.owner, scopeRevisions, sessionId);
+      const ownerClaim = ownerAssignments.confirm(
+        result.key,
+        result.owner,
+        host.ownerAssignmentScopeRevisions(result.key),
+        host.publishedRow(result.key)?.sessionId,
+      );
       patchRowLocal(result.key, { owner: result.owner });
       host.redecorateLists();
-      void host.refreshReplacement(options.agentId, result.key);
+      void host
+        .refreshReplacement(options.agentId, result.key)
+        .then(() => ownerAssignments.settleConfirmed(result.key, ownerClaim));
       return result.owner;
     } catch (error) {
       if (host.connection.isCurrent(scope)) {

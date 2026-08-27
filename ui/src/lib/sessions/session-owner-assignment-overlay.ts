@@ -2,6 +2,7 @@ import type { SessionOwner } from "../../../../packages/gateway-protocol/src/ind
 import type { SessionsListResult } from "../../api/types.ts";
 
 type ConfirmedOwnerClaim = {
+  confirmedScopes: Set<string>;
   owner: SessionOwner;
   scopeRevisions: Map<string, number>;
   sessionId?: string;
@@ -36,6 +37,7 @@ export function createSessionOwnerAssignmentOverlay() {
       sessionId?: string,
     ): ConfirmedOwnerClaim {
       const claim = {
+        confirmedScopes: new Set<string>(),
         owner,
         scopeRevisions: new Map(scopeRevisions),
         ...(sessionId ? { sessionId } : {}),
@@ -45,6 +47,18 @@ export function createSessionOwnerAssignmentOverlay() {
     },
     retire(key: string): void {
       claims.delete(key);
+    },
+    settleConfirmed(key: string, claim: ConfirmedOwnerClaim): void {
+      if (claims.get(key) !== claim) {
+        return;
+      }
+      for (const scope of claim.confirmedScopes) {
+        claim.scopeRevisions.delete(scope);
+      }
+      claim.confirmedScopes.clear();
+      if (claim.scopeRevisions.size === 0) {
+        claims.delete(key);
+      }
     },
     clear(): void {
       claims.clear();
@@ -94,22 +108,17 @@ export function createSessionOwnerAssignmentOverlay() {
           if (row.sessionId) {
             claim.sessionId = row.sessionId;
           }
-          claim.scopeRevisions.delete(scope);
-          if (claim.scopeRevisions.size === 0) {
-            claims.delete(key);
-          }
+          claim.confirmedScopes.add(scope);
           continue;
         }
         if (ownersMatch(row?.owner, claim.owner) || (requestRevision > scopeRevision && !row)) {
-          claim.scopeRevisions.delete(scope);
-          if (claim.scopeRevisions.size === 0) {
-            claims.delete(key);
-          }
+          claim.confirmedScopes.add(scope);
         }
       }
     },
     retireScope: (scope: string): void => {
       for (const [key, claim] of claims) {
+        claim.confirmedScopes.delete(scope);
         if (claim.scopeRevisions.delete(scope) && claim.scopeRevisions.size === 0) {
           claims.delete(key);
         }
