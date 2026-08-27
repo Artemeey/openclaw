@@ -26,10 +26,7 @@ import {
 import type { SubagentLifecycleController } from "./subagent-registry-lifecycle.js";
 import type { SubagentRunRecord } from "./subagent-registry.types.js";
 import { deleteSubagentSessionForCleanup } from "./subagent-session-cleanup.js";
-import {
-  loadSubagentSessionEntry,
-  type SubagentSessionStoreCache,
-} from "./subagent-session-reconciliation.js";
+import { loadSubagentSessionEntry } from "./subagent-session-reconciliation.js";
 
 type RestoredQueuedFailureSettlementClaim = {
   entry: SubagentRunRecord;
@@ -196,7 +193,6 @@ export function createSubagentRegistryRestorer(config: {
     ensureListener();
     // Session-mode runs have no archive deadline but still need TTL cleanup.
     startSweeper();
-    const restoredSessionCache: SubagentSessionStoreCache = new Map();
     for (const [runId, entry] of runs) {
       // Restart recovery exclusively owns receipt-bearing source rows until it
       // remaps or terminalizes them. Generic resume would wait on an obsolete run.
@@ -206,7 +202,6 @@ export function createSubagentRegistryRestorer(config: {
       if (entry.collect && entry.execution.status === "queued") {
         const cleanupSessionEntry = loadSubagentSessionEntry({
           childSessionKey: entry.childSessionKey,
-          storeCache: restoredSessionCache,
         });
         const launch = entry.queuedLaunch;
         if (!launch) {
@@ -297,7 +292,6 @@ export function createSubagentRegistryRestorer(config: {
       if (
         loadSubagentSessionEntry({
           childSessionKey: entry.childSessionKey,
-          storeCache: restoredSessionCache,
         })?.abortedLastRun === true
       ) {
         continue;
