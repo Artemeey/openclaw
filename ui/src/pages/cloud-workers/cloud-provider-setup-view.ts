@@ -90,8 +90,9 @@ function diagnostics(items: WorkerSetupDiagnostic[], props: SetupProps) {
     renderSettingsRow({
       title: renderSettingsStatus({
         kind: item.severity === "error" ? "danger" : item.severity === "warning" ? "warn" : "muted",
-        label: item.message,
+        label: t("configView.sections.diagnostics"),
       }),
+      description: item.message,
       control:
         item.action === "configure_endpoint"
           ? action(t("cloudSetup.endpointSettings"), props.onEndpointSettings)

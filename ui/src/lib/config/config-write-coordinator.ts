@@ -773,7 +773,7 @@ export function createConfigWriteCoordinator({
                 // Do not join a config.get that started before the external RPC.
                 const refresh = run(() => loadConfig(state));
                 void trackLoad("config", refresh);
-                return await refresh;
+                return await refresh.finally(reconcileAppliedRefresh);
               },
             ),
           unavailable,

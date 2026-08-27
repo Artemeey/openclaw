@@ -41,6 +41,7 @@ import {
   type PluginMutationResult,
   type PluginSearchResult,
 } from "../../lib/plugins/index.ts";
+import { createPluginSurfaceRefresh } from "../../lib/plugins/surface-refresh.ts";
 import {
   GatewayPageController,
   type GatewayPageChange,
@@ -219,13 +220,19 @@ class PluginsPage extends OpenClawLightDomElement {
     },
   });
 
-  private readonly subscriptions = new SubscriptionsController(this).effect(
-    () => this.context?.runtimeConfig,
-    (runtimeConfig) => {
-      this.syncMcpServers();
-      return runtimeConfig.subscribe(() => this.syncMcpServers());
-    },
-  );
+  private surfaceRefresh: (() => () => void) | undefined;
+  private readonly subscriptions = new SubscriptionsController(this)
+    .effect(
+      () => this.context?.runtimeConfig,
+      (runtimeConfig) => {
+        this.syncMcpServers();
+        return runtimeConfig.subscribe(() => this.syncMcpServers());
+      },
+    )
+    .effect(
+      () => this.surfaceRefresh,
+      (observe) => observe(),
+    );
 
   override willUpdate(changed: PropertyValues<this>) {
     if (changed.has("routeData")) {
@@ -354,6 +361,7 @@ class PluginsPage extends OpenClawLightDomElement {
   }
 
   private invalidateRequests(invalidateCatalog = true) {
+    this.surfaceRefresh = undefined;
     this.clearSearchTimer();
     this.debouncedSearchQuery = "";
     if (invalidateCatalog) {
@@ -734,19 +742,21 @@ class PluginsPage extends OpenClawLightDomElement {
     this.pageNotice = null;
     const mutationToken = ++this.mutationToken;
     this.mutationTokens.set(rowKey, mutationToken);
-    const isCurrent = () =>
-      this.gateway.isCurrent(scope) && this.mutationTokens.get(rowKey) === mutationToken;
-    const isLatest = () => isCurrent() && this.mutationToken === mutationToken;
+    const config = this.context.runtimeConfig;
+    const hello = this.gateway.snapshot?.hello;
+    const sameTarget = () =>
+      this.gateway.isCurrent(scope) &&
+      this.context.runtimeConfig === config &&
+      this.gateway.snapshot?.hello === hello;
+    const isCurrent = () => sameTarget() && this.mutationTokens.get(rowKey) === mutationToken;
+    // Applied-revision observation outlives the row's busy state, but not a newer mutation.
+    const isLatest = () => sameTarget() && this.mutationToken === mutationToken;
     this.setBusy(rowKey, true);
     if (!options.preserveMessageWhilePending) {
       this.setMessage(rowKey, null);
     }
     try {
-      const mutation = await runPluginConfigMutation(
-        this.context.runtimeConfig,
-        scope.client,
-        mutate,
-      );
+      const mutation = await runPluginConfigMutation(config, scope.client, mutate);
       if (!isCurrent()) {
         return;
       }
@@ -821,7 +831,7 @@ class PluginsPage extends OpenClawLightDomElement {
     await this.runPluginMutation(
       key,
       (client) => setPluginEnabled(client, pluginId, enabled),
-      async (result, refreshError, client, isCurrent) => {
+      async (result, refreshError, client, _isCurrent, isLatest) => {
         this.applyMutationResult(result);
         this.setMessage(
           key,
@@ -830,10 +840,14 @@ class PluginsPage extends OpenClawLightDomElement {
             refreshError,
           ),
         );
+        const refresh =
+          !result.restartRequired && !refreshError
+            ? createPluginSurfaceRefresh(this.context.runtimeConfig, client, isLatest)
+            : undefined;
         await this.refreshCatalogAfterMutation(client);
-        if (isCurrent() && !result.restartRequired) {
-          // Plugin tabs come from hello; reconnect after the registry refresh.
-          this.context.gateway.connect();
+        if (isLatest()) {
+          this.surfaceRefresh = refresh;
+          this.requestUpdate();
         }
       },
     );

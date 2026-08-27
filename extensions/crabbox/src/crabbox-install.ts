@@ -136,7 +136,9 @@ export function createCrabboxInstallation(runCommand: CrabboxCommandRunner) {
   };
   const inspect = () => (inspection ??= load());
   const install = async (): Promise<WorkerSetupInstallResult> => {
-    const current = await inspect();
+    // Explicit installation rechecks operator changes; ordinary inspection stays cached.
+    inspection = load();
+    const current = await inspection;
     if (current.dependency.state === "available") {
       return {
         status: current.dependency.managed ? "installed" : "unmanaged",
@@ -219,6 +221,9 @@ export function createCrabboxInstallation(runCommand: CrabboxCommandRunner) {
       const installed = await inspection;
       return { status: "installed", dependency: installed.dependency, diagnostics: [] };
     } catch (error) {
+      // The extractor's closed error code is safe to project; its message may contain paths.
+      const archiveRejected =
+        error instanceof Error && "code" in error && error.code === "archive-header-invalid";
       return {
         status: "failed",
         dependency: current.dependency,
@@ -227,12 +232,16 @@ export function createCrabboxInstallation(runCommand: CrabboxCommandRunner) {
             code:
               error instanceof OccupiedInstallationError
                 ? "install_directory_occupied"
-                : "install_failed",
+                : archiveRejected
+                  ? "install_archive_rejected"
+                  : "install_failed",
             severity: "error",
             message:
               error instanceof OccupiedInstallationError
                 ? `The managed Crabbox version directory contains unexpected or modified files: ${destination}. Move that directory aside after stopping users of its binary, then retry installation. No files were overwritten.`
-                : "Crabbox installation failed verification or could not be published. Check network access and the Gateway's managed tools directory, then retry; a complete verified installation can be recovered. No cloud machine was allocated.",
+                : archiveRejected
+                  ? "OpenClaw rejected the Crabbox release archive format before installation. Check for an OpenClaw update, or use a compatible Crabbox CLI on the Gateway user's PATH or set settings.binary in Advanced. No cloud machine was allocated."
+                  : "Crabbox installation failed verification or could not be published. Check network access and the Gateway's managed tools directory, then retry; a complete verified installation can be recovered. No cloud machine was allocated.",
             action: "install",
           },
         ],

@@ -48,6 +48,8 @@ Open **Settings → Connections → Cloud sessions**, then choose **Add cloud pr
 
 The test creates an ordinary managed-worktree session, runs a real agent turn, verifies a file roundtrip, and reclaims the worker. A pass requires verified teardown, not just a successful credential check or a session appearing in the sidebar. Navigating away does not cancel server-owned cleanup. Cancellation can remain **cleanup pending** until release is verified. After a Gateway restart, the test is interrupted rather than replayed; durable cleanup intent allows the Gateway to reclaim only that exact test placement. An interrupted test never becomes a pass merely because its environment disappears.
 
+If archive validation rejects the CLI release, keep the validation checks enabled. Check for an OpenClaw update, or place a compatible Crabbox executable on the Gateway user's existing `PATH` and choose **Install compatible dependency** again. This explicit action rechecks the installation without allocating a worker.
+
 Saved keys are write-only through the secret-store API, but the SQLite store is **not encrypted at rest**. Protect the Gateway's state directory and backups. Cloud control credentials are resolved only for the selected connection's local Crabbox commands; they are not forwarded to worker setup or agent tools. See [Secrets](/gateway/secrets).
 
 Use **Advanced** for existing manual profiles and provider configurations without guided setup. Removing a profile also removes project defaults that reference it, but retains its connection and secret so outstanding workers can still be cleaned up.

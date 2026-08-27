@@ -1,5 +1,16 @@
-import { chmod, mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { createHash, Hash } from "node:crypto";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  stat,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
+import { ArchiveFormatError } from "@openclaw/fs-safe/archive";
 import type { SpawnResult } from "openclaw/plugin-sdk/process-runtime";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,7 +43,10 @@ beforeEach(() => {
     mock.mockReset();
   }
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
 describe("explicit Crabbox installation", () => {
   async function verifiedArchive(root: string, name: string) {
@@ -104,21 +118,88 @@ describe("explicit Crabbox installation", () => {
     },
   );
 
-  it("reuses a compatible PATH executable as unmanaged without downloading or publishing metadata", async () => {
+  it("refreshes cached missing inspection on explicit install to reuse an operator PATH executable", async () => {
     const dir = tempDirs.make("crabbox-unmanaged-");
     const binary = path.join(dir, process.platform === "win32" ? "crabbox.exe" : "crabbox");
-    await writeFile(binary, "fixture");
-    await chmod(binary, 0o700);
     vi.stubEnv("PATH", dir);
     vi.stubEnv("OPENCLAW_STATE_DIR", path.join(dir, "state"));
-    const installation = createCrabboxInstallation(vi.fn(async () => version));
-    expect(await installation.install()).toMatchObject({
-      status: "unmanaged",
-      dependency: { version: "0.46.0", managed: false },
+    const runCommand = vi.fn(async () => version);
+    const installation = createCrabboxInstallation(runCommand);
+    expect((await installation.inspect()).dependency.state).toBe("missing");
+    await writeFile(binary, "fixture");
+    await chmod(binary, 0o700);
+    // Ordinary inspection remains cached until the operator explicitly requests installation.
+    expect((await installation.inspect()).dependency.state).toBe("missing");
+    expect(runCommand).not.toHaveBeenCalled();
+    for (const result of await Promise.all([installation.install(), installation.install()])) {
+      expect(result).toMatchObject({
+        status: "unmanaged",
+        dependency: { state: "available", version: "0.46.0", managed: false },
+      });
+    }
+    expect(await installation.inspect()).toMatchObject({
+      binary,
+      dependency: { state: "available", managed: false },
     });
+    expect(await installation.requireBinary()).toBe(binary);
+    expect(runCommand).toHaveBeenCalledOnce();
     expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.extract).not.toHaveBeenCalled();
     expect(mocks.register).not.toHaveBeenCalled();
   });
+
+  it.each(["removed", "tampered-managed"])(
+    "invalidates cached availability on explicit install after the executable is %s",
+    async (change) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      vi.spyOn(process, "arch", "get").mockReturnValue("x64");
+      const dir = tempDirs.make("crabbox-refresh-");
+      const stateDir = path.join(dir, "state");
+      vi.stubEnv("PATH", dir);
+      vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+      let binary = path.join(dir, "crabbox");
+      await writeFile(binary, "path-fixture", { mode: 0o700 });
+      if (change === "tampered-managed") {
+        const destination = path.join(stateDir, "tools", "crabbox", "0.46.0-linux_amd64");
+        await mkdir(destination, { recursive: true });
+        binary = path.join(destination, "crabbox");
+        await writeFile(binary, "managed-fixture", { mode: 0o700 });
+        mocks.lookup.mockReturnValue({
+          binary,
+          files: { crabbox: createHash("sha256").update("managed-fixture").digest("hex") },
+          version: "0.46.0",
+          assetHash: "6a9341e810307356361dbed4c4b84be28a036b5cc291af1566d2ccd376570d90",
+        });
+      }
+      const runCommand = vi.fn(async () => version);
+      const installation = createCrabboxInstallation(runCommand);
+      expect(await installation.inspect()).toMatchObject({
+        binary,
+        dependency: { state: "available", managed: change === "tampered-managed" },
+      });
+      if (change === "removed") {
+        await unlink(binary);
+      } else {
+        await writeFile(binary, "do-not-overwrite");
+      }
+      mocks.fetch.mockRejectedValue(new Error("fixture download unavailable"));
+      expect(await installation.install()).toMatchObject({
+        status: "failed",
+        dependency: { state: "missing" },
+      });
+      expect((await installation.inspect()).dependency.state).toBe("missing");
+      await expect(installation.requireBinary()).rejects.toThrow(
+        "Install a compatible Crabbox CLI",
+      );
+      expect(runCommand).toHaveBeenCalledOnce();
+      expect(mocks.fetch).toHaveBeenCalledOnce();
+      expect(mocks.extract).not.toHaveBeenCalled();
+      expect(mocks.register).not.toHaveBeenCalled();
+      if (change === "tampered-managed") {
+        expect(await readFile(binary, "utf8")).toBe("do-not-overwrite");
+      }
+    },
+  );
 
   it("rejects a bad official payload checksum before extraction or execution", async () => {
     const dir = tempDirs.make("crabbox-checksum-");
@@ -142,4 +223,55 @@ describe("explicit Crabbox installation", () => {
     expect(runCommand).not.toHaveBeenCalled();
     expect(mocks.register).not.toHaveBeenCalled();
   });
+
+  it.each([true, false])(
+    "reports extraction failure safely (format rejection: %s)",
+    async (format) => {
+      vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+      vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
+      const dir = tempDirs.make("crabbox-extraction-");
+      const stateDir = path.join(dir, "state");
+      vi.stubEnv("PATH", dir);
+      vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+      const release = vi.fn(async () => {});
+      mocks.fetch.mockResolvedValue({
+        response: new Response("synthetic-verified-archive"),
+        release,
+      });
+      // Only the checksum oracle is mocked: exercise the installer through extraction failure.
+      // The independent tampered-payload case above keeps the real checksum rejection boundary.
+      vi.spyOn(Hash.prototype, "digest").mockReturnValue(
+        "2216da0acbcc6e822ee341ec313aaab58875db951fa1daf0d13dd710ebfba9b8",
+      );
+      mocks.extract.mockRejectedValue(
+        format
+          ? new ArchiveFormatError("private archive detail")
+          : new Error("private archive detail"),
+      );
+      const runCommand = vi.fn(async () => version);
+      const result = await createCrabboxInstallation(runCommand).install();
+      expect(mocks.extract).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({
+        status: "failed",
+        dependency: { state: "missing", managed: false },
+      });
+      expect(result.diagnostics[0]?.message).not.toContain("private archive detail");
+      if (format) {
+        expect(result.diagnostics[0]).toMatchObject({
+          code: "install_archive_rejected",
+          action: "install",
+        });
+        expect(result.diagnostics[0]?.message).toContain("archive format");
+        expect(result.diagnostics[0]?.message).toContain("OpenClaw update");
+        expect(result.diagnostics[0]?.message).toContain("PATH");
+      } else {
+        expect(result.diagnostics[0]).toMatchObject({ code: "install_failed", action: "install" });
+        expect(result.diagnostics[0]?.message).toContain("Check network access");
+      }
+      expect(release).toHaveBeenCalledOnce();
+      expect(runCommand).not.toHaveBeenCalled();
+      expect(mocks.register).not.toHaveBeenCalled();
+      expect(await readdir(path.join(stateDir, "tools", "crabbox"))).toEqual([]);
+    },
+  );
 });

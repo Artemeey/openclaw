@@ -19,6 +19,7 @@ import { resolveEditableSnapshotConfig } from "../../lib/config/config-state-mod
 import { formatUiError } from "../../lib/format-error.ts";
 import { canCallGatewayMethod } from "../../lib/gateway-methods.ts";
 import { setPluginEnabled, type PluginCatalogItem } from "../../lib/plugins/index.ts";
+import { createPluginSurfaceRefresh } from "../../lib/plugins/surface-refresh.ts";
 import { GatewayPageController } from "../../lit/gateway-page-controller.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
@@ -44,6 +45,7 @@ class CloudProviderSetup extends OpenClawLightDomElement {
   @state() private draft: CloudConnectionDraft | null = null;
   @state() private checks: Record<string, WorkerSetupCheckResult> = {};
   private checksRevision: string | null | undefined;
+  private surfaceRefresh: (() => () => void) | undefined;
   @state() private busy = false;
   @state() private loaded = false;
   @state() private adding = false;
@@ -56,6 +58,7 @@ class CloudProviderSetup extends OpenClawLightDomElement {
   private readonly gateway = new GatewayPageController(this, {
     getGateway: () => this.context?.gateway,
     invalidateRequests: () => {
+      this.surfaceRefresh = undefined;
       if (this.busy && this.draft) {
         this.notice = "interrupted";
       }
@@ -93,6 +96,10 @@ class CloudProviderSetup extends OpenClawLightDomElement {
     .watch(
       () => this.cloudSessionTest,
       (test, notify) => test.subscribe(notify),
+    )
+    .effect(
+      () => this.surfaceRefresh,
+      (observe) => observe(),
     );
 
   private get cloudSessionTest() {
@@ -294,6 +301,9 @@ class CloudProviderSetup extends OpenClawLightDomElement {
     const scope = this.gateway.capture();
     const owner = this.owner();
     const config = this.context.runtimeConfig;
+    const hello = this.gateway.snapshot?.hello;
+    const draft = this.draft;
+    const selected = this.selected;
     if (
       !scope ||
       !owner ||
@@ -303,10 +313,13 @@ class CloudProviderSetup extends OpenClawLightDomElement {
     ) {
       return;
     }
-    const isCurrent = () =>
+    const sameTarget = () =>
       this.gateway.isCurrent(scope) &&
       this.context.runtimeConfig === config &&
-      this.owner() === owner;
+      this.gateway.snapshot?.hello === hello &&
+      this.selected === selected &&
+      this.draft === draft;
+    const isCurrent = () => sameTarget() && this.owner()?.descriptor === owner.descriptor;
     this.busy = true;
     this.error = null;
     try {
@@ -331,6 +344,10 @@ class CloudProviderSetup extends OpenClawLightDomElement {
           : entry,
       );
       this.waitingForRestart = result.value.restartRequired;
+      this.surfaceRefresh =
+        !this.waitingForRestart && result.refresh.ok
+          ? createPluginSurfaceRefresh(config, scope.client, isCurrent)
+          : undefined;
       this.notice = this.waitingForRestart ? "saved" : null;
       if (!result.refresh.ok) {
         this.error = result.refresh.error;
@@ -343,9 +360,6 @@ class CloudProviderSetup extends OpenClawLightDomElement {
       if (this.gateway.isCurrent(scope)) {
         this.busy = false;
       }
-    }
-    if (this.gateway.isCurrent(scope) && !this.waitingForRestart) {
-      void this.load();
     }
   }
 
