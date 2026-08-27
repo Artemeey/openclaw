@@ -564,6 +564,7 @@ class MacosSmoke {
         check: false,
         env: {
           ...process.env,
+          ALLOW_ADHOC_SIGNING: "1",
           BUILD_ARCHS: architecture,
           OPENCLAW_SKIP_MLX_TTS: "1",
           SKIP_PNPM_INSTALL: "1",

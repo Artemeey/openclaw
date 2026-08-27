@@ -812,6 +812,10 @@ ensure_vm_running`,
     }
   });
 
+  it("packages the debug app-onboarding candidate with explicit ad-hoc signing", () => {
+    expect(macos).toContain('ALLOW_ADHOC_SIGNING: "1"');
+  });
+
   it("rejects inherited object keys as unknown Parallels smoke arguments", () => {
     for (const parseArgs of [parseMacosSmokeArgs, parseLinuxSmokeArgs, parseWindowsSmokeArgs]) {
       for (const arg of ["constructor", "toString"]) {
