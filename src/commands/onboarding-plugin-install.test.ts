@@ -827,7 +827,7 @@ describe("ensureOnboardingPluginInstalled", () => {
     );
   });
 
-  it("keeps version-bound official runtime plugins aligned with the stable core version", async () => {
+  it("keeps version-bound official runtime plugins aligned with the current release channel", async () => {
     installPluginFromNpmSpec.mockResolvedValueOnce({
       ok: true,
       pluginId: "codex",
@@ -860,7 +860,11 @@ describe("ensureOnboardingPluginInstalled", () => {
     const [npmCall] = readFirstMockCall(installPluginFromNpmSpec, "installPluginFromNpmSpec") as [
       NpmSpecInstallCall,
     ];
-    expect(npmCall.spec).toBe(`@openclaw/codex@${VERSION}`);
+    expect(npmCall.spec).toBe(
+      resolveRegistryUpdateChannel({ configChannel: "stable", currentVersion: VERSION }) === "beta"
+        ? "@openclaw/codex@beta"
+        : `@openclaw/codex@${VERSION}`,
+    );
     const [, recordUpdate] = readFirstMockCall(recordPluginInstall, "recordPluginInstall") as [
       OpenClawConfig,
       PluginInstallRecord,

@@ -12,6 +12,9 @@ import {
 } from "../../scripts/package-source-preflight.mjs";
 import { writeRunSummary } from "../../scripts/test-docker-all.mts";
 
+const currentVersion = (JSON.parse(readFileSync("package.json", "utf8")) as { version: string })
+  .version;
+
 const changelog = `# Changelog
 
 ## Unreleased
@@ -441,12 +444,12 @@ describe("package source preflight", () => {
       validatePackageSourceRef("HEAD", {
         allowUnreleasedChangelog: true,
       }),
-    ).toBe("2026.8.1");
+    ).toBe(currentVersion);
     expect(
       validatePackageSourceDir(process.cwd(), {
         allowUnreleasedChangelog: true,
       }),
-    ).toBe("2026.8.1");
+    ).toBe(currentVersion);
   });
 
   it("normalizes release-check package mode and guards the source resolver", () => {
