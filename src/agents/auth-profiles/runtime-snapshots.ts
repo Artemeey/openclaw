@@ -328,7 +328,7 @@ export function hasAnyRuntimeAuthProfileStoreSource(agentDir?: string): boolean 
 
 /** Replaces all runtime auth profile snapshots with cloned entries. */
 export function replaceRuntimeAuthProfileStoreSnapshots(
-  entries: Array<{ databasePath?: string; agentDir?: string; store: AuthProfileStore }>,
+  entries: Array<{ databasePath?: string; agentDir?: string; store: RuntimeAuthProfileStore }>,
 ): void {
   const credentialsChanged = replaceChangesCredentials(entries);
   const ownerChanged = replaceChangesOwner(entries);
