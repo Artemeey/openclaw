@@ -37,15 +37,24 @@ const listTrustedExternalProviderPolicyOwners = vi.hoisted(() =>
   vi.fn((): Array<{ id: string }> => [{ id: "llama-cpp" }]),
 );
 const loadTrustedExternalProviderPolicyArtifacts = vi.hoisted(() =>
-  vi.fn((owners: Array<{ id: string }>) => {
-    const owner = owners[0];
-    return owner
-      ? {
-          owner,
-          surface: { inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup },
-        }
-      : null;
-  }),
+  vi.fn(
+    (
+      owners: Array<{ id: string }>,
+    ): {
+      owner: { id: string };
+      surface: {
+        inspectEmbeddingProviderSetup: typeof inspectConfiguredEmbeddingProviderSetup;
+      } | null;
+    } | null => {
+      const owner = owners[0];
+      return owner
+        ? {
+            owner,
+            surface: { inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup },
+          }
+        : null;
+    },
+  ),
 );
 const resolveManifestOwnerBasePolicyBlock = vi.hoisted(() =>
   vi.fn(
