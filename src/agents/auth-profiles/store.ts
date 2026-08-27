@@ -165,6 +165,8 @@ function applyScopedAuthReadThrough(store: AuthProfileStore): AuthProfileStore {
   return setRuntimeLocalProfileMetadata(
     merged,
     Object.keys(store.profiles),
+    Object.keys(store.order ?? {}),
+    shared.order,
     runtimeStoreInheritsMainState(merged, store),
   );
 }
