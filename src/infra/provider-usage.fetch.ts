@@ -1,5 +1,5 @@
 // Public facade for built-in provider usage fetch implementations.
-export { fetchClaudeUsage, parseClaudeUsageSnapshot } from "./provider-usage.fetch.claude.js";
+export { fetchClaudeUsage } from "./provider-usage.fetch.claude.js";
 export { fetchCodexUsage } from "./provider-usage.fetch.codex.js";
 export { fetchDeepSeekUsage } from "./provider-usage.fetch.deepseek.js";
 export { fetchGeminiUsage } from "./provider-usage.fetch.gemini.js";

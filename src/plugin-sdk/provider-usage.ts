@@ -13,7 +13,6 @@ export type {
 
 export {
   fetchClaudeUsage,
-  parseClaudeUsageSnapshot,
   fetchCodexUsage,
   fetchDeepSeekUsage,
   fetchGeminiUsage,

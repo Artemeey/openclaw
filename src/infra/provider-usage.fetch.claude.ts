@@ -146,7 +146,7 @@ function buildClaudeUsageWindows(
 }
 
 /** Normalize a Claude usage payload from either HTTP or the native Agent SDK. */
-export function parseClaudeUsageSnapshot(value: unknown): ProviderUsageSnapshot {
+function parseClaudeUsageSnapshot(value: unknown): ProviderUsageSnapshot {
   const usage = normalizeClaudeUsage(value);
   const extra = usage.extraUsage;
   const unit = extra?.currency?.toUpperCase() || "USD";
