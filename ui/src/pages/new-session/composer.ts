@@ -34,8 +34,8 @@ import {
   updateSkillMenu,
   type SkillMenuHost,
 } from "../chat/components/chat-composer-skill-menu.ts";
+import { createSlashMenuState } from "../chat/components/chat-composer-slash-menu-state.ts";
 import {
-  createSlashMenuState,
   getActiveSlashMenuOptionId,
   getActiveSlashMenuOptionLabel,
   handleSlashMenuKeydown,

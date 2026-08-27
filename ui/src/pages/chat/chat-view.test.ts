@@ -4303,7 +4303,7 @@ describe("chat slash menu accessibility", () => {
 
     keydownComposer(container, "Enter");
     container = harness.renderCurrent();
-    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("/status-check ");
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("/status-check");
   });
 
   it("dismisses invocation sheets on an outside pointer press", () => {
@@ -4578,7 +4578,7 @@ describe("chat slash menu accessibility", () => {
     expect(container.querySelector(".slash-menu")).toBeNull();
   });
 
-  it("does not submit a stale slash argument menu after disconnect", () => {
+  it("does not submit a stale slash menu after disconnect", () => {
     let draft = "";
     const onDraftChange = vi.fn((next: string) => {
       draft = next;
@@ -4596,7 +4596,7 @@ describe("chat slash menu accessibility", () => {
     };
 
     renderCurrent(true);
-    inputDraft(container, "/tools ");
+    inputDraft(container, "/too");
     renderCurrent(true);
     expect(container.querySelector(".slash-menu")).not.toBeNull();
 
@@ -4605,7 +4605,7 @@ describe("chat slash menu accessibility", () => {
     keydownComposer(container, "Enter");
 
     expect(onSend).not.toHaveBeenCalled();
-    expect(draft).toBe("/tools ");
+    expect(draft).toBe("/too");
   });
 
   it("does not dispatch a stale inline command selection after disconnect", () => {
@@ -4930,7 +4930,7 @@ describe("chat slash menu accessibility", () => {
 
     keydownComposer(container, "Enter");
     container = harness.renderCurrent();
-    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("/pair-device ");
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("/pair-device");
     expect(container.querySelector(".slash-menu")).toBeNull();
   });
 
@@ -4991,20 +4991,15 @@ describe("chat slash menu accessibility", () => {
     }
   });
 
-  it("wires fixed argument suggestions with command-and-argument option ids", () => {
+  it("keeps declared built-in arguments textual without explicit interaction metadata", () => {
     const harness = createSlashRerenderHarness();
     const container = harness.inputAndRender(harness.container, "/tools ");
 
-    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
-    const listbox = container.querySelector<HTMLElement>("#chat-single-slash-menu-listbox");
-    const activeId = textarea?.getAttribute("aria-activedescendant");
-
-    expect(listbox?.getAttribute("aria-label")).toBe("Command arguments");
-    expect(activeId).toBe("chat-single-slash-option-arg-tools-compact");
-    expect(listbox?.querySelector(`#${activeId}`)?.getAttribute("aria-selected")).toBe("true");
+    expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("/tools ");
+    expect(container.querySelector(".slash-menu")).toBeNull();
   });
 
-  it("opens model-supported thinking arguments after tab-completing /think", () => {
+  it("keeps thinking arguments with the model-control owner", () => {
     const sessions = createSessionsListResult({
       model: "gpt-5.6-sol",
       modelProvider: "openai",
@@ -5026,11 +5021,7 @@ describe("chat slash menu accessibility", () => {
     keydownComposer(container, "Tab");
 
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("/think ");
-    expect(
-      Array.from(container.querySelectorAll<HTMLElement>(".slash-menu [role='option']")).map(
-        (option) => option.querySelector(".slash-menu-name")?.textContent?.trim(),
-      ),
-    ).toEqual(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+    expect(container.querySelector(".slash-menu")).toBeNull();
   });
 
   it("suppresses thinking arguments while the active model is switching", () => {
@@ -5052,7 +5043,7 @@ describe("chat slash menu accessibility", () => {
     expect(container.querySelector(".slash-menu")).toBeNull();
   });
 
-  it("closes open thinking arguments when the active model starts switching", () => {
+  it("does not create model-dependent argument state that can outlive a model switch", () => {
     const sessions = createSessionsListResult({
       model: "gpt-5.6-sol",
       modelProvider: "openai",
@@ -5066,12 +5057,7 @@ describe("chat slash menu accessibility", () => {
 
     inputDraft(container, "/think");
     keydownComposer(container, "Tab");
-    expect(container.querySelector(".slash-menu")).not.toBeNull();
-    expect(
-      container
-        .querySelector<HTMLTextAreaElement>("textarea")
-        ?.getAttribute("aria-activedescendant"),
-    ).toBe("chat-single-slash-option-arg-think-default");
+    expect(container.querySelector(".slash-menu")).toBeNull();
 
     renderCurrent({ modelSwitching: true });
 

@@ -6,7 +6,7 @@ import {
 } from "./chat-composer-dom.ts";
 import { clearGoalElapsedTimers } from "./chat-composer-goal.ts";
 import { createSkillMenuState } from "./chat-composer-skill-menu.ts";
-import { createSlashMenuState } from "./chat-composer-slash-menu.ts";
+import { createSlashMenuState } from "./chat-composer-slash-menu-state.ts";
 import type { ChatComposerProps, ChatComposerState } from "./chat-composer-types.ts";
 
 function createChatComposerState(): ChatComposerState {

@@ -160,7 +160,18 @@ function slashCommand(
   name: string,
   options: Partial<Omit<SlashCommandDef, "key" | "name">> = {},
 ): SlashCommandDef {
-  return { key: name, name, description: `${name} command.`, ...options };
+  return {
+    key: name,
+    name,
+    description: `${name} command.`,
+    definition: {
+      key: name,
+      description: `${name} command.`,
+      textAliases: [`/${name}`],
+      scope: "text",
+    },
+    ...options,
+  };
 }
 
 describe("getSlashCommandCompletions", () => {
@@ -408,12 +419,16 @@ describe("parseSlashCommand", () => {
       key: "dreaming",
       executeLocal: false,
     });
+    expect(requireCommandByName("dreaming").definition).toMatchObject({
+      argsParsing: "none",
+    });
     expectRecordFields(requireCommandByName("draft"), "draft command", {
       key: "draft",
       executeLocal: false,
       source: "skill",
       skillModelVisible: true,
     });
+    expect(requireCommandByName("draft").definition).toMatchObject({ argsParsing: "none" });
     expectParsedSlash("/dock_discord", { name: "dock-discord" }, "");
     expect(getSkillCommandCompletions("dra").map((command) => command.name)).toEqual(["draft"]);
   });

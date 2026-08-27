@@ -4,7 +4,11 @@ import { asNullableRecord as asRecord } from "@openclaw/normalization-core/recor
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import type { CommandEntry } from "../../../../packages/gateway-protocol/src/index.js";
-import { buildBuiltinChatCommands } from "../../../../src/auto-reply/commands-registry.shared.js";
+import {
+  buildBuiltinChatCommands,
+  defineChatCommand,
+} from "../../../../src/auto-reply/commands-registry.shared.js";
+import type { ChatCommandDefinition } from "../../../../src/auto-reply/commands-registry.types.js";
 import { t } from "../../i18n/index.ts";
 
 export type SlashCommandCategory = "session" | "model" | "agents" | "tools";
@@ -33,6 +37,11 @@ export type SlashCommandDef = {
   skillDisplayName?: string;
   skillModelVisible?: boolean;
   clientPresentation?: NonNullable<CommandEntry["clientPresentation"]>;
+  definition?: ChatCommandDefinition;
+  /** In-process opt-in. Declared arguments alone never choose Control UI interaction. */
+  interaction?:
+    | { kind: "collect-arguments" }
+    | { kind: "execute-action"; action: { kind: "run-local-command" } };
 };
 
 type LocalArgChoice = string | { value: string; label: string };
@@ -53,6 +62,8 @@ type CommandLike = {
   skillDisplayName?: string;
   skillModelVisible?: boolean;
   clientPresentation?: NonNullable<CommandEntry["clientPresentation"]>;
+  definition: ChatCommandDefinition;
+  interaction?: SlashCommandDef["interaction"];
 };
 
 export function executesInlineImmediately(command: SlashCommandDef): boolean {
@@ -110,27 +121,43 @@ const LOCAL_COMMANDS = new Set([
   "redirect",
 ]);
 
+const CLEAR_COMMAND_COPY = { description: "Clear chat history" };
+const REDIRECT_COMMAND_COPY = { description: "Abort and restart with a new message" };
+
 const UI_ONLY_COMMANDS: SlashCommandDef[] = [
   {
     key: "clear",
     name: "clear",
-    description: "Clear chat history",
+    ...CLEAR_COMMAND_COPY,
     descriptionKey: "chat.commands.clearDescription",
     icon: "trash",
     category: "session",
     executeLocal: true,
     tier: "standard",
+    definition: defineChatCommand({
+      key: "clear",
+      textAlias: "/clear",
+      description: CLEAR_COMMAND_COPY.description,
+    }),
+    interaction: { kind: "execute-action", action: { kind: "run-local-command" } },
   },
   {
     key: "redirect",
     name: "redirect",
-    description: "Abort and restart with a new message",
+    ...REDIRECT_COMMAND_COPY,
     descriptionKey: "chat.commands.redirectDescription",
     args: "<message>",
     icon: "refresh",
     category: "agents",
     executeLocal: true,
     tier: "power",
+    definition: defineChatCommand({
+      key: "redirect",
+      textAlias: "/redirect",
+      description: REDIRECT_COMMAND_COPY.description,
+      acceptsArgs: true,
+      argsParsing: "none",
+    }),
   },
 ];
 
@@ -252,6 +279,12 @@ function toSlashCommand(
     return null;
   }
   const resolvedSource = command.source ?? (source === "local" ? "native" : undefined);
+  const executeLocal = source === "local" && LOCAL_COMMANDS.has(command.key);
+  const interaction =
+    command.interaction ??
+    (executeLocal && !formatArgs(command)
+      ? ({ kind: "execute-action", action: { kind: "run-local-command" } } as const)
+      : undefined);
   return {
     key: command.key,
     name,
@@ -263,7 +296,7 @@ function toSlashCommand(
     args: COMMAND_ARGS_OVERRIDES[command.key] ?? formatArgs(command),
     icon: mapIcon(command),
     category: mapCategory(command),
-    executeLocal: source === "local" && LOCAL_COMMANDS.has(command.key),
+    executeLocal,
     argOptions: getArgOptions(command),
     tier: source === "local" ? mapTier(command) : "standard",
     ...(resolvedSource ? { source: resolvedSource } : {}),
@@ -272,6 +305,8 @@ function toSlashCommand(
       ? { skillModelVisible: command.skillModelVisible }
       : {}),
     ...(command.clientPresentation ? { clientPresentation: command.clientPresentation } : {}),
+    definition: command.definition,
+    ...(interaction ? { interaction } : {}),
   };
 }
 
@@ -370,6 +405,7 @@ function buildLocalSlashCommands(): SlashCommandDef[] {
       })),
       category: command.category,
       tier: command.tier,
+      definition: command,
     }))
     .map((command) => toSlashCommand(command, "local"))
     .filter((command): command is SlashCommandDef => command !== null);
@@ -439,6 +475,21 @@ function normalizeCommandEntry(
       typeof entry.skillModelVisible === "boolean" ? entry.skillModelVisible : undefined,
     clientPresentation:
       entry.source === "plugin" ? normalizeClientPresentation(entry.clientPresentation) : undefined,
+    definition: defineChatCommand({
+      key: primaryName,
+      textAliases: aliases.map((alias) => `/${alias}`),
+      description: clampText(entry.description, MAX_REMOTE_DESCRIPTION_LENGTH),
+      acceptsArgs: entry.acceptsArgs === true,
+      args: args.map((arg) => ({
+        name: arg.name,
+        description: arg.name,
+        type: "string",
+        required: arg.required,
+        choices: arg.choices,
+      })),
+      // The wire does not carry parser or formatter ownership. Remote tails stay textual.
+      argsParsing: "none",
+    }),
   };
 }
 
@@ -662,14 +713,21 @@ export function parseSlashCommand(text: string): ParsedSlashCommand | null {
   }
 
   const normalizedName = normalizeLowercaseStringOrEmpty(name);
-  const command = SLASH_COMMANDS.find(
-    (cmd) =>
-      cmd.name === normalizedName ||
-      cmd.aliases?.some((alias) => normalizeLowercaseStringOrEmpty(alias) === normalizedName),
-  );
+  const command = findSlashCommandByName(normalizedName);
   if (!command) {
     return null;
   }
 
   return { command, args };
+}
+
+function findSlashCommandByName(name: string): SlashCommandDef | undefined {
+  const normalizedName = normalizeLowercaseStringOrEmpty(name.replace(/^\//u, ""));
+  return SLASH_COMMANDS.find(
+    (command) =>
+      normalizeLowercaseStringOrEmpty(command.name) === normalizedName ||
+      command.aliases?.some(
+        (alias) => normalizeLowercaseStringOrEmpty(alias.replace(/^\//u, "")) === normalizedName,
+      ),
+  );
 }

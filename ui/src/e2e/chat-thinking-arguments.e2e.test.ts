@@ -1,4 +1,4 @@
-// Control UI E2E proves model-aware /think completion in the rendered composer.
+// Control UI E2E proves that command grammar does not duplicate model-control interaction.
 import fs from "node:fs/promises";
 import path from "node:path";
 import { expect, it } from "vitest";
@@ -11,7 +11,6 @@ const suite = createControlUiE2eSuite({
 
 const VIEWPORTS = [
   { name: "mobile", width: 390, height: 844 },
-  { name: "tablet", width: 768, height: 1024 },
   { name: "desktop", width: 1440, height: 900 },
 ] as const;
 
@@ -41,7 +40,7 @@ suite.define(() => {
   });
 
   it.each(VIEWPORTS)(
-    "opens the active model's thinking levels above the composer ($name)",
+    "keeps thinking-level input textual for the model-control owner ($name)",
     async (viewport) => {
       await suite.withPage({ viewport }, async ({ page }) => {
         const browserErrors: string[] = [];
@@ -102,33 +101,14 @@ suite.define(() => {
         await composer.fill("/think");
         await composer.press("Tab");
 
-        const picker = page.locator(".slash-menu[role='listbox']");
-        await picker.waitFor({ state: "visible" });
         await expect.poll(() => composer.inputValue()).toBe("/think ");
-        await expect
-          .poll(() => picker.getByRole("option").locator(".slash-menu-name").allTextContents())
-          .toEqual(["default", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
-
-        const [pickerBox, inputBox] = await Promise.all([
-          picker.boundingBox(),
-          page.locator(".agent-chat__input").boundingBox(),
-        ]);
-        expect(pickerBox).not.toBeNull();
-        expect(inputBox).not.toBeNull();
-        expect((pickerBox?.y ?? 0) + (pickerBox?.height ?? 0)).toBeLessThanOrEqual(
-          (inputBox?.y ?? 0) + 1,
-        );
-        expect(pickerBox?.x ?? -1).toBeGreaterThanOrEqual(0);
-        expect((pickerBox?.x ?? 0) + (pickerBox?.width ?? 0)).toBeLessThanOrEqual(viewport.width);
-        expect(pickerBox?.y ?? -1).toBeGreaterThanOrEqual(0);
+        expect(await page.locator(".slash-menu[role='listbox']").count()).toBe(0);
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
           viewport.width,
         );
         expect(browserErrors).toEqual([]);
 
-        await composer.press("ArrowUp");
-        await composer.press("Tab");
-        await expect.poll(() => composer.inputValue()).toBe("/think ultra");
+        await composer.fill("/think ultra");
         await composer.press("Enter");
         const patchRequest = await gateway.waitForRequest("sessions.patch");
         expect(patchRequest.params).toMatchObject({
