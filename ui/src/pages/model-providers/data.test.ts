@@ -313,6 +313,42 @@ describe("buildModelProviderCards", () => {
     expect(firstCard(cards).profileOrderProviders).toEqual({ minimax: "minimax-cn" });
   });
 
+  it("uses the profile-carrying alias route's order when aliases differ", () => {
+    const profiles = [
+      { profileId: "minimax:one", type: "oauth" as const, status: "ok" as const },
+      { profileId: "minimax:two", type: "oauth" as const, status: "ok" as const },
+    ];
+    const cards = buildModelProviderCards({
+      ...EMPTY_INPUT,
+      authStatus: authStatus([
+        {
+          provider: "minimax",
+          authProvider: "minimax",
+          displayName: "MiniMax",
+          status: "ok",
+          profiles: [],
+          profileOrder: ["minimax:one", "minimax:two"],
+          profileOrderProvider: "minimax",
+        },
+        {
+          provider: "minimax-cn",
+          authProvider: "minimax",
+          displayName: "MiniMax (China)",
+          status: "ok",
+          profiles,
+          profileOrder: ["minimax:two", "minimax:one"],
+          profileOrderProvider: "minimax-cn",
+        },
+      ]),
+    });
+
+    expect(firstCard(cards).profileOrder).toEqual(["minimax:two", "minimax:one"]);
+    expect(firstCard(cards).profileOrders).toEqual({
+      minimax: ["minimax:two", "minimax:one"],
+    });
+    expect(firstCard(cards).profileOrderProviders).toEqual({ minimax: "minimax-cn" });
+  });
+
   it("uses the Gateway effective order and preserves explicit exclusion", () => {
     const cards = buildModelProviderCards({
       ...EMPTY_INPUT,

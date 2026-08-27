@@ -258,6 +258,9 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
       }
     }
     ownerProfileIds.set(authProvider, membership);
+    if (provider.profiles.length === 0) {
+      continue;
+    }
     const candidate = {
       provider: provider.profileOrderProvider ?? provider.provider,
       order: provider.profileOrder,
