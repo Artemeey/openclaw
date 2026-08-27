@@ -22,6 +22,7 @@ import {
   recordPluginCandidateInstallOwner,
   resolvePluginCandidateInstallOwner,
 } from "./candidate-install-owner.js";
+import type { PluginCandidate, PluginDiscoveryResult } from "./discovery.types.js";
 import { shouldRejectHardlinkedPluginFiles } from "./hardlink-policy.js";
 import { readLegacyNpmPluginDeclaration } from "./legacy-npm-declaration.js";
 import type { PluginBundleFormat, PluginDiagnostic, PluginFormat } from "./manifest-types.js";
@@ -47,10 +48,7 @@ import { registerPluginMetadataProcessMemoLifecycleClear } from "./plugin-metada
 import type { PluginOrigin } from "./plugin-origin.types.js";
 import { withPluginScanExistenceCache } from "./plugin-scan-existence-cache.js";
 import { resolvePluginSourceRoots } from "./roots.js";
-import {
-  normalizePluginDependencySpecs,
-  type PluginDependencySpecMap,
-} from "./status-dependencies-core.js";
+import { normalizePluginDependencySpecs } from "./status-dependencies-core.js";
 
 const EXTENSION_EXTS = new Set([".ts", ".js", ".mts", ".cts", ".mjs", ".cjs"]);
 const SCANNED_DIRECTORY_IGNORE_NAMES = new Set([
@@ -75,39 +73,7 @@ registerPluginMetadataProcessMemoLifecycleClear(() => {
   packageManifestProcessCache.clear();
 });
 
-/** One potential plugin root discovered before manifest validation and registry normalization. */
-export type PluginCandidate = {
-  idHint: string;
-  /** Discovery-owned identity for one entry in a multi-entry package pack. */
-  effectivePluginId?: string;
-  diagnosticIdHint?: string;
-  source: string;
-  setupSource?: string;
-  rootDir: string;
-  origin: PluginOrigin;
-  format?: PluginFormat;
-  bundleFormat?: PluginBundleFormat;
-  workspaceDir?: string;
-  packageName?: string;
-  packageVersion?: string;
-  packageDescription?: string;
-  packageDir?: string;
-  packageManifest?: OpenClawPackageManifest;
-  packageDependencies?: PluginDependencySpecMap;
-  packageOptionalDependencies?: PluginDependencySpecMap;
-  bundledManifestId?: string;
-  bundledManifest?: PluginManifest;
-  bundledManifestPath?: string;
-  requiredPluginIds?: string[];
-  requiredPluginSource?: string;
-  rawPackageManifest?: PackageManifest;
-};
-
-/** Discovery candidates plus warnings/errors emitted while scanning roots. */
-export type PluginDiscoveryResult = {
-  candidates: PluginCandidate[];
-  diagnostics: PluginDiagnostic[];
-};
+export type { PluginCandidate, PluginDiscoveryResult } from "./discovery.types.js";
 
 type PluginDiscoveryRootScope = "all" | "bundled";
 

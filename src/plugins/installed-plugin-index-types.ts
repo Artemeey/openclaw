@@ -2,12 +2,12 @@
 import type { OpenClawConfig } from "../config/types.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
 import type { PluginCompatCode } from "./compat/registry.js";
-import type { PluginCandidate, PluginDiscoveryResult } from "./discovery.js";
+import type { PluginCandidate, PluginDiscoveryResult } from "./discovery.types.js";
 import type { PluginInstallSourceInfo } from "./install-source-info.js";
 import type { InstalledPluginFileSignature } from "./installed-plugin-index-hash.js";
-import type { PluginManifestRecord } from "./manifest-registry.js";
+import type { PluginManifestRecord } from "./manifest-registry.types.js";
 import type { PluginDiagnostic } from "./manifest-types.js";
-import type { OpenClawPackageBuild, PluginPackageChannel } from "./manifest.js";
+import type { OpenClawPackageBuild, PluginPackageChannel } from "./package-manifest.js";
 
 /** Schema version for installed plugin index files. */
 export const INSTALLED_PLUGIN_INDEX_VERSION = 1;

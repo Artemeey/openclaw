@@ -243,10 +243,8 @@ describe("secrets runtime fast path", () => {
     const { prepareSecretsRuntimeSnapshot } = await import("./runtime.js");
     const { collectConfigAssignments } = await import("./runtime-config-collectors.js");
     const { resolveRuntimeWebTools } = await import("./runtime-web-tools.js");
-    const { loadPluginMetadataSnapshot } = await import("../plugins/plugin-metadata-snapshot.js");
-    const { setCurrentPluginMetadataSnapshot } =
-      await import("../plugins/current-plugin-metadata-snapshot.js");
-    const { listAgentWorkspaceDirs } = await import("../agents/workspace-dirs.js");
+    const { createPluginMetadataOwner, installPluginMetadataOwner } =
+      await import("../plugins/plugin-metadata-collection.js");
     const config = asConfig({
       ...explicitMainRoster(),
       tools: { web: { search: { provider: "webiq" } } },
@@ -261,27 +259,23 @@ describe("secrets runtime fast path", () => {
         },
       },
     });
-    const workspaceDir = listAgentWorkspaceDirs(config, process.env)[0];
-    const pluginMetadataSnapshot = loadPluginMetadataSnapshot({
+    const owner = createPluginMetadataOwner();
+    const metadata = owner.prepare({
       config,
       env: process.env,
-      workspaceDir,
     });
-    expect(pluginMetadataSnapshot.plugins.length).toBeGreaterThan(0);
-    setCurrentPluginMetadataSnapshot(pluginMetadataSnapshot, {
-      config,
-      env: process.env,
-      workspaceDir,
-    });
-    collectConfigAssignmentsMock.mockImplementationOnce(collectConfigAssignments);
-    resolveRuntimeWebToolsMock.mockImplementationOnce(resolveRuntimeWebTools);
+    expect(metadata.plugins.length).toBeGreaterThan(0);
+    const disposeOwner = installPluginMetadataOwner(owner);
     const openSyncSpy = vi.spyOn(fs, "openSync");
-    const probeDescriptor = fs.openSync(pluginMetadataSnapshot.plugins[0]!.manifestPath, "r");
-    fs.closeSync(probeDescriptor);
-    expect(openSyncSpy).toHaveBeenCalledOnce();
-    openSyncSpy.mockClear();
-
     try {
+      owner.publish(metadata, { config, env: process.env });
+      collectConfigAssignmentsMock.mockImplementationOnce(collectConfigAssignments);
+      resolveRuntimeWebToolsMock.mockImplementationOnce(resolveRuntimeWebTools);
+      const probeDescriptor = fs.openSync(metadata.plugins[0]!.manifestPath, "r");
+      fs.closeSync(probeDescriptor);
+      expect(openSyncSpy).toHaveBeenCalledOnce();
+      openSyncSpy.mockClear();
+
       const snapshot = await prepareSecretsRuntimeSnapshot({
         config,
         env: process.env,
@@ -296,7 +290,7 @@ describe("secrets runtime fast path", () => {
       expect(manifestOpens).toHaveLength(0);
     } finally {
       openSyncSpy.mockRestore();
-      setCurrentPluginMetadataSnapshot(undefined);
+      disposeOwner();
     }
   });
 

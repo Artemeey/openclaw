@@ -12,7 +12,6 @@ import { createPluginMetadataOwner } from "../plugins/plugin-metadata-collection
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import type { ConfigSetDryRunResult } from "./config-set-dryrun.js";
 import { applyCliProfileEnv } from "./profile.js";
-import { createCliRuntimeCapture, mockRuntimeModule } from "./test-runtime-capture.js";
 
 /**
  * Test for issue #6070:
@@ -217,7 +216,14 @@ vi.mock("../secrets/channel-contract-api.js", () => ({
   loadChannelSecretContractApiForRecord: () => undefined,
 }));
 
-const { defaultRuntime, resetRuntimeCapture } = createCliRuntimeCapture();
+// Metadata imports can reach runtime.js before ordinary test imports initialize.
+const { defaultRuntime, resetRuntimeCapture, mockRuntimeModule } = await vi.hoisted(async () => {
+  const runtimeCapture = await import("./test-runtime-capture.js");
+  return {
+    ...runtimeCapture.createCliRuntimeCapture(),
+    mockRuntimeModule: runtimeCapture.mockRuntimeModule,
+  };
+});
 const mockLog = defaultRuntime.log;
 const mockWriteStdout = defaultRuntime.writeStdout;
 const mockError = defaultRuntime.error;

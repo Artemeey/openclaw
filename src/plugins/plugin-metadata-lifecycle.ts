@@ -3,7 +3,7 @@ import {
   clearCurrentPluginMetadataSnapshot,
   getCurrentPluginMetadataOwner,
 } from "./current-plugin-metadata-state.js";
-import type { PluginMetadataOwner } from "./plugin-metadata-collection.js";
+import type { PluginMetadataOwner } from "./plugin-metadata-collection.types.js";
 
 const pluginMetadataProcessMemoClears = new Set<() => void>();
 

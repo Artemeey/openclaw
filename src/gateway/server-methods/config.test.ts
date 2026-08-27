@@ -302,7 +302,7 @@ describe("config.schema", () => {
       async () => {
         for (const label of ["Generation A", "Generation B", undefined]) {
           const uiHints: ConfigUiHints = label ? { "plugins.entries.demo": { label } } : {};
-          currentSchema = { ...currentSchema, uiHints };
+          currentSchema = { schema: currentSchema.schema, version: currentSchema.version, uiHints };
           const { respond } = await invokeConfigSchema();
 
           expect(respond).toHaveBeenCalledWith(

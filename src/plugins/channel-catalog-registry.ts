@@ -1,38 +1,19 @@
 // Maintains channel catalog entries advertised by plugins.
 import { normalizeOptionalString as resolveOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
+import type {
+  ChannelCatalogParams,
+  PluginChannelCatalogEntry,
+} from "./channel-catalog-registry.types.js";
 import { getCurrentPluginChannelCatalog } from "./current-plugin-metadata-state.js";
 import { discoverOpenClawPlugins, type PluginDiscoveryResult } from "./discovery.js";
 import { loadInstalledPluginIndexInstallRecordsSync } from "./installed-plugin-index-record-reader.js";
-import type { PluginPackageChannel, PluginPackageInstall } from "./manifest.js";
-import type { PluginOrigin } from "./plugin-origin.types.js";
 
-export type PluginChannelCatalogEntry = {
-  pluginId: string;
-  origin: PluginOrigin;
-  packageName?: string;
-  workspaceDir?: string;
-  rootDir: string;
-  channel: PluginPackageChannel;
-  install?: PluginPackageInstall;
-};
-
-export type ChannelCatalogParams = {
-  origin?: PluginOrigin;
-  workspaceDir?: string;
-  env?: NodeJS.ProcessEnv;
-  extraPaths?: string[];
-  /**
-   * Optional override. Prepared catalogs require matching retained records;
-   * cold callers load the ledger when omitted, except for bundled-only reads.
-   */
-  installRecords?: Record<string, PluginInstallRecord>;
-  discovery?: PluginDiscoveryResult;
-};
-
-export type PreparedPluginChannelCatalog = {
-  readonly read: (params: ChannelCatalogParams) => PluginChannelCatalogEntry[];
-};
+export type {
+  ChannelCatalogParams,
+  PluginChannelCatalogEntry,
+  PreparedPluginChannelCatalog,
+} from "./channel-catalog-registry.types.js";
 
 export function listChannelCatalogEntries(
   params: ChannelCatalogParams = {},

@@ -24,47 +24,21 @@ import {
   type PluginCandidate,
   type PluginDiscoveryResult,
 } from "./discovery.js";
-import type { DoctorSessionRouteStateOwner } from "./doctor-session-route-state-owner-types.js";
 import { shouldRejectHardlinkedPluginFiles } from "./hardlink-policy.js";
 import { loadInstalledPluginIndexInstallRecordsSync } from "./installed-plugin-index-record-reader.js";
-import type { PluginManifestCommandAlias } from "./manifest-command-aliases.js";
 import { recordPluginManifestInstallOwner } from "./manifest-install-owner.js";
+import type { PluginManifestRecord, PluginManifestRegistry } from "./manifest-registry.types.js";
 import type {
-  PluginBundleFormat,
-  PluginConfigUiHint,
   PluginDiagnostic,
-  PluginFormat,
-  PluginManifestBackupResource,
-  PluginManifestDoctorContract,
+  PluginManifest,
+  PluginManifestCatalog,
+  PluginManifestChannelConfig,
+  PluginManifestContracts,
 } from "./manifest-types.js";
 import {
   isCoreReservedPluginId,
   loadPluginManifest,
   PLUGIN_MANIFEST_FILENAME,
-  type OpenClawPackageManifest,
-  type PluginManifestActivation,
-  type PluginManifestCatalog,
-  type PluginManifestConfigContracts,
-  type PluginManifest,
-  type PluginManifestCapabilityProviderMetadata,
-  type PluginManifestChannelCommandDefaults,
-  type PluginManifestChannelConfig,
-  type PluginManifestContracts,
-  type PluginManifestDashboard,
-  type PluginManifestMediaUnderstandingProviderMetadata,
-  type PluginManifestMcpServer,
-  type PluginManifestModelCatalog,
-  type PluginManifestModelIdNormalization,
-  type PluginManifestModelPricing,
-  type PluginManifestModelSupport,
-  type PluginManifestProviderEndpoint,
-  type PluginManifestProviderRequest,
-  type PluginManifestQaRunner,
-  type PluginManifestSecretProviderIntegration,
-  type PluginManifestSetup,
-  type PluginManifestToolMetadata,
-  type PluginPackageChannel,
-  type PluginPackageInstall,
   normalizeManifestChannelCommandDefaults,
 } from "./manifest.js";
 import { checkMinHostVersion } from "./min-host-version.js";
@@ -76,11 +50,10 @@ import {
   resolveOfficialExternalPluginInstall,
 } from "./official-external-plugin-catalog.js";
 import { satisfiesPluginApiRange, resolvePackagePluginApiRange } from "./package-compat.js";
+import type { OpenClawPackageManifest } from "./package-manifest.js";
 import { isPathInside, safeRealpathSync, safeStatSync } from "./path-safety.js";
-import type { PluginKind } from "./plugin-kind.types.js";
 import type { PluginOrigin } from "./plugin-origin.types.js";
 import { normalizePluginPolicyId } from "./plugin-policy-id.js";
-import type { PluginDependencySpecMap } from "./status-dependencies-core.js";
 
 function resolvePluginSourcePath(sourcePath: string): string {
   if (fs.existsSync(sourcePath)) {
@@ -216,92 +189,7 @@ const PLUGIN_ORIGIN_RANK: Readonly<Record<PluginOrigin, number>> = {
   bundled: 3,
 };
 
-export type PluginManifestRecord = {
-  id: string;
-  backupResources?: PluginManifestBackupResource[];
-  name?: string;
-  description?: string;
-  catalog?: PluginManifestCatalog;
-  icon?: string;
-  version?: string;
-  packageName?: string;
-  packageVersion?: string;
-  packageDescription?: string;
-  enabledByDefault?: boolean;
-  enabledByDefaultOnPlatforms?: string[];
-  autoEnableWhenConfiguredProviders?: string[];
-  legacyPluginIds?: string[];
-  format?: PluginFormat;
-  bundleFormat?: PluginBundleFormat;
-  bundleCapabilities?: string[];
-  kind?: PluginKind | PluginKind[];
-  channels: string[];
-  providers: string[];
-  providerDiscoverySource?: string;
-  modelSupport?: PluginManifestModelSupport;
-  modelCatalog?: PluginManifestModelCatalog;
-  modelPricing?: PluginManifestModelPricing;
-  modelIdNormalization?: PluginManifestModelIdNormalization;
-  providerEndpoints?: PluginManifestProviderEndpoint[];
-  providerRequest?: PluginManifestProviderRequest;
-  secretProviderIntegrations?: Record<string, PluginManifestSecretProviderIntegration>;
-  cliBackends: string[];
-  syntheticAuthRefs?: string[];
-  nonSecretAuthMarkers?: string[];
-  commandAliases?: PluginManifestCommandAlias[];
-  cliCommands?: PluginManifest["cliCommands"];
-  providerUsageAuthEnvVars?: Record<string, string[]>;
-  providerAuthAliases?: Record<string, string>;
-  providerAuthChoices?: PluginManifest["providerAuthChoices"];
-  activation?: PluginManifestActivation;
-  setup?: PluginManifestSetup;
-  doctorContract?: PluginManifestDoctorContract;
-  sessionRouteStateOwners?: DoctorSessionRouteStateOwner[];
-  packageManifest?: OpenClawPackageManifest;
-  packageDependencies?: PluginDependencySpecMap;
-  packageOptionalDependencies?: PluginDependencySpecMap;
-  packageChannel?: PluginPackageChannel;
-  packageInstall?: PluginPackageInstall;
-  trustedOfficialInstall?: boolean;
-  qaRunners?: PluginManifestQaRunner[];
-  dashboard?: PluginManifestDashboard;
-  mcpServers?: Record<string, PluginManifestMcpServer>;
-  skills: string[];
-  settingsFiles?: string[];
-  hooks: string[];
-  origin: PluginOrigin;
-  workspaceDir?: string;
-  rootDir: string;
-  source: string;
-  setupSource?: string;
-  manifestPath: string;
-  schemaCacheKey?: string;
-  configSchema?: Record<string, unknown>;
-  configUiHints?: Record<string, PluginConfigUiHint>;
-  contracts?: PluginManifestContracts;
-  mediaUnderstandingProviderMetadata?: Record<
-    string,
-    PluginManifestMediaUnderstandingProviderMetadata
-  >;
-  imageGenerationProviderMetadata?: Record<string, PluginManifestCapabilityProviderMetadata>;
-  videoGenerationProviderMetadata?: Record<string, PluginManifestCapabilityProviderMetadata>;
-  musicGenerationProviderMetadata?: Record<string, PluginManifestCapabilityProviderMetadata>;
-  toolMetadata?: Record<string, PluginManifestToolMetadata>;
-  configContracts?: PluginManifestConfigContracts;
-  channelConfigs?: Record<string, PluginManifestChannelConfig>;
-  channelCatalogMeta?: {
-    id: string;
-    label?: string;
-    blurb?: string;
-    preferOver?: readonly string[];
-    commands?: PluginManifestChannelCommandDefaults;
-  };
-};
-
-export type PluginManifestRegistry = {
-  plugins: PluginManifestRecord[];
-  diagnostics: PluginDiagnostic[];
-};
+export type { PluginManifestRecord, PluginManifestRegistry } from "./manifest-registry.types.js";
 
 export type BundledChannelConfigCollector = (params: {
   pluginDir: string;

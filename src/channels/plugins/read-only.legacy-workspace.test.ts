@@ -1,98 +1,108 @@
+import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { retainLegacyDefaultAgentId } from "../../config/legacy.default-agent-owner.js";
-import type { PluginManifestRecord } from "../../plugins/manifest-registry.js";
+import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import {
+  createPluginMetadataOwner,
+  installPluginMetadataOwner,
+} from "../../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadata-lifecycle.js";
 import { resetPluginRuntimeStateForTest } from "../../plugins/runtime.js";
+import { createColdPluginFixture } from "../../plugins/test-helpers/cold-plugin-fixtures.js";
+import {
+  cleanupTrackedTempDirs,
+  makeTrackedTempDir,
+} from "../../plugins/test-helpers/fs-fixtures.js";
+import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { resolveReadOnlyChannelPluginsForConfig } from "./read-only.js";
 
-const mocks = vi.hoisted(() => ({
-  resolvePluginMetadataSnapshot: vi.fn((_params: { workspaceDir?: string }) => {
-    const plugins: PluginManifestRecord[] = [];
-    return { plugins, manifestRegistry: { plugins, diagnostics: [] } };
-  }),
-}));
+const tempDirs: string[] = [];
 
-vi.mock("../../plugins/plugin-metadata-snapshot.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../plugins/plugin-metadata-snapshot.js")>()),
-  resolvePluginMetadataSnapshot: mocks.resolvePluginMetadataSnapshot,
-}));
-
+beforeEach(() => resetPluginRuntimeStateForTest());
 afterEach(() => {
-  mocks.resolvePluginMetadataSnapshot.mockClear();
   clearPluginMetadataLifecycleCaches();
   resetPluginRuntimeStateForTest();
+  closeOpenClawStateDatabaseForTest();
+  cleanupTrackedTempDirs(tempDirs);
 });
 
 describe("read-only channel plugin legacy workspace discovery", () => {
-  it("scans the retained compatibility owner's explicit workspace", () => {
-    const cfg = retainLegacyDefaultAgentId(
-      {
-        agents: {
-          ownership: "explicit",
-          entries: {
-            research: {},
-            ops: { workspace: "/srv/ops" },
-          },
-        },
-      },
-      "ops",
-    );
-
-    resolveReadOnlyChannelPluginsForConfig(cfg, {
-      env: { ...process.env },
-      includePersistedAuthState: false,
+  it.each([
+    { name: "retains the compatibility owner's explicit workspace", retainedOwner: "ops" },
+    { name: "discovers plugins from every explicit agent workspace", retainedOwner: undefined },
+  ])("$name", ({ retainedOwner }) => {
+    const root = fs.realpathSync(makeTrackedTempDir("openclaw-read-only-workspaces", tempDirs));
+    const env = {
+      HOME: root,
+      OPENCLAW_HOME: root,
+      OPENCLAW_STATE_DIR: path.join(root, "state"),
+      OPENCLAW_CONFIG_PATH: path.join(root, "openclaw.json"),
+      OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
+      OPENCLAW_DISABLE_BUNDLED_SOURCE_OVERLAYS: "1",
+    };
+    const fixtures = ["ops", "research"].map((agentId) => {
+      const workspaceDir = path.join(root, agentId);
+      const pluginId = `${agentId}-chat-plugin`;
+      const rootDir = path.join(workspaceDir, ".openclaw", "extensions", pluginId);
+      fs.mkdirSync(rootDir, { recursive: true });
+      return {
+        agentId,
+        workspaceDir,
+        plugin: createColdPluginFixture({
+          rootDir,
+          pluginId,
+          channelId: `${agentId}-chat`,
+          manifest: { providers: [], providerAuthChoices: [] },
+        }),
+      };
     });
-
-    expect(mocks.resolvePluginMetadataSnapshot).toHaveBeenCalledWith(
-      expect.objectContaining({
-        config: cfg,
-        workspaceDir: path.resolve("/srv/ops"),
-      }),
-    );
-  });
-
-  it("discovers plugins from every explicit agent workspace", () => {
-    const researchPlugin = {
-      id: "research-chat-plugin",
-      name: "Research Chat",
-      description: "Research workspace channel",
-      version: "1.0.0",
-      source: "/srv/research/.openclaw/extensions/research-chat-plugin",
-      origin: "workspace",
-      channels: ["research-chat"],
-    } as PluginManifestRecord;
-    mocks.resolvePluginMetadataSnapshot.mockImplementation(({ workspaceDir }) => {
-      const plugins = workspaceDir === path.resolve("/srv/research") ? [researchPlugin] : [];
-      return { plugins, manifestRegistry: { plugins, diagnostics: [] } };
-    });
-    const cfg = {
+    const cfg: OpenClawConfig = {
       agents: {
-        ownership: "explicit" as const,
-        entries: {
-          ops: { workspace: "/srv/ops" },
-          research: { workspace: "/srv/research" },
-        },
+        ownership: "explicit",
+        entries: Object.fromEntries(
+          fixtures.map(({ agentId, workspaceDir }) => [agentId, { workspace: workspaceDir }]),
+        ),
       },
-      channels: { "research-chat": { enabled: true } },
+      channels: Object.fromEntries(
+        fixtures.map(({ plugin }) => [plugin.channelId, { enabled: true }]),
+      ),
       plugins: {
-        allow: ["research-chat-plugin"],
-        entries: { "research-chat-plugin": { enabled: true } },
+        allow: fixtures.map(({ plugin }) => plugin.pluginId),
+        entries: Object.fromEntries(
+          fixtures.map(({ plugin }) => [plugin.pluginId, { enabled: true }]),
+        ),
       },
     };
+    retainLegacyDefaultAgentId(cfg, retainedOwner);
+    const owner = createPluginMetadataOwner();
+    const releaseOwner = installPluginMetadataOwner(owner);
+    try {
+      const metadata = owner.prepare({ config: cfg, env });
+      owner.publish(metadata, { config: cfg, env });
+      expect(metadata.selectedSnapshot.workspaceDir).toBe(
+        retainedOwner ? path.join(root, retainedOwner) : undefined,
+      );
 
-    const resolution = resolveReadOnlyChannelPluginsForConfig(cfg, {
-      env: { ...process.env },
-      includePersistedAuthState: false,
-    });
+      const resolution = resolveReadOnlyChannelPluginsForConfig(cfg, {
+        env,
+        includePersistedAuthState: false,
+      });
 
-    expect(resolution.plugins.map((plugin) => plugin.id)).toContain("research-chat");
-    expect(resolution.manifestRecords.map((plugin) => plugin.id)).toContain("research-chat-plugin");
-    expect(mocks.resolvePluginMetadataSnapshot).toHaveBeenCalledWith(
-      expect.objectContaining({ workspaceDir: path.resolve("/srv/ops") }),
-    );
-    expect(mocks.resolvePluginMetadataSnapshot).toHaveBeenCalledWith(
-      expect.objectContaining({ workspaceDir: path.resolve("/srv/research") }),
-    );
+      expect(resolution.plugins.map((plugin) => plugin.id).toSorted()).toEqual([
+        "ops-chat",
+        "research-chat",
+      ]);
+      expect(resolution.manifestRecords.map((plugin) => plugin.id).toSorted()).toEqual([
+        "ops-chat-plugin",
+        "research-chat-plugin",
+      ]);
+      expect(resolution.missingConfiguredChannelIds).toEqual([]);
+      for (const { plugin } of fixtures) {
+        expect(fs.existsSync(plugin.runtimeMarker)).toBe(false);
+      }
+    } finally {
+      releaseOwner();
+    }
   });
 });

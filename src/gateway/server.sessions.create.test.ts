@@ -1831,6 +1831,8 @@ test("sessions.create runs an existing managed worktree cwd for initial and foll
   });
   const requestedCwd = await fs.realpath(worktree.path);
   const { prepareAgentCommandExecution } = await import("../agents/command/prepare.js");
+  const { getPreparedReplyDispatchRuntime } =
+    await import("../auto-reply/reply/prepared-reply-dispatch-context.js");
   const { resolveIngressWorkspaceOverrideForSessionRun } =
     await import("../agents/spawned-context.js");
   const acpManagerModule = await import("../acp/control-plane/manager.js");
@@ -1858,6 +1860,7 @@ test("sessions.create runs an existing managed worktree cwd for initial and foll
           workspaceDir,
         },
         defaultRuntime,
+        getPreparedReplyDispatchRuntime(),
       );
       try {
         preparedRuntime({ cwd: prepared.cwd, workspaceDir: prepared.workspaceDir });

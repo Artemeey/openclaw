@@ -2,7 +2,7 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { parseClawHubPluginSpec } from "../infra/clawhub-spec.js";
 import { parseRegistryNpmSpec, type ParsedRegistryNpmSpec } from "../infra/npm-registry-spec.js";
-import type { PluginPackageInstall } from "./manifest.js";
+import type { PluginPackageInstall } from "./package-manifest.js";
 import { normalizePluginInstallDefaultChoice } from "./plugin-install-default-choice.js";
 
 /** Warning emitted while describing plugin package install source metadata. */

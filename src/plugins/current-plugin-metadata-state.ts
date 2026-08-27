@@ -5,8 +5,8 @@ import {
 } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
-import type { PreparedPluginChannelCatalog } from "./channel-catalog-registry.js";
-import type { PluginMetadataOwner } from "./plugin-metadata-collection.js";
+import type { PreparedPluginChannelCatalog } from "./channel-catalog-registry.types.js";
+import type { PluginMetadataOwner } from "./plugin-metadata-collection.types.js";
 
 export type CurrentPluginMetadataSnapshotRevision = symbol;
 
