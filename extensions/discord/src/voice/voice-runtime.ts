@@ -18,6 +18,7 @@ import {
   type VoiceSessionEntry,
 } from "./session.js";
 import { DiscordVoiceSpeakerContextResolver } from "./speaker-context.js";
+import { resolveDiscordTranscriptsCapture } from "./transcripts-source.js";
 import {
   DiscordVoiceFollowing,
   normalizeVoiceChannelResidencies,
@@ -63,7 +64,11 @@ function isFatalAutoJoinFailure(message: string): boolean {
 
 type VoiceGuildLifecycle =
   | { status: "inactive"; generation: number }
-  | { status: "starting"; generation: number; instance: { guildId: string; channelId: string } }
+  | {
+      status: "starting";
+      generation: number;
+      instance: { guildId: string; channelId: string; captureOnly: boolean };
+    }
   | { status: "active"; generation: number; instance: VoiceSessionEntry }
   | { status: "stopped"; generation: number; reason: string };
 
@@ -75,7 +80,7 @@ export class DiscordVoiceManager {
   private readonly botUserId?: string;
   private readonly client: Client;
   private readonly voiceEnabled: boolean;
-  private readonly autoJoinTasks = new Map<string, Promise<void>>();
+  private readonly autoJoinTasks = new Map<string, Promise<VoiceOperationResult | undefined>>();
   private readonly fatalAutoJoinFailures = new Map<
     string,
     { message: string; skipLogged: boolean }
@@ -89,6 +94,10 @@ export class DiscordVoiceManager {
   private readonly following: DiscordVoiceFollowing;
   private readonly receive: DiscordVoiceReceive;
   private readonly voiceSessions: DiscordVoiceSessions;
+  private readonly getTranscripts: (target: {
+    guildId: string;
+    channelId: string;
+  }) => VoiceSessionEntry["transcripts"];
   private destroyed = false;
 
   constructor(params: {
@@ -102,6 +111,13 @@ export class DiscordVoiceManager {
     this.client = params.client;
     this.botUserId = params.botUserId;
     this.voiceEnabled = resolveDiscordVoiceEnabled(params.discordConfig.voice);
+    this.getTranscripts = ({ guildId, channelId }) =>
+      this.destroyed
+        ? undefined
+        : resolveDiscordTranscriptsCapture(
+            { guildId, channelId, accountId: params.accountId },
+            this,
+          );
     const voiceAccess = resolveDiscordVoiceAccess(params);
     this.admissionAllowFrom = voiceAccess.admissionAllowFrom;
     this.ownerAllowFrom = voiceAccess.ownerAllowFrom;
@@ -164,6 +180,7 @@ export class DiscordVoiceManager {
       client: params.client,
       destroyed: () => this.destroyed,
       discordConfig: params.discordConfig,
+      getTranscripts: this.getTranscripts,
       membership: this.membership,
       onLeaveFollowState: (guildId) => {
         this.following.followedVoiceGuilds.delete(guildId);
@@ -273,6 +290,57 @@ export class DiscordVoiceManager {
     };
   }
 
+  async startTranscriptsCapture(target: {
+    guildId: string;
+    channelId: string;
+  }): Promise<VoiceOperationResult> {
+    const capture = this.getTranscripts(target);
+    while (this.joinTasks.has(target.guildId)) {
+      await this.joinTasks.get(target.guildId)?.catch(() => undefined);
+    }
+    if (!capture || this.getTranscripts(target) !== capture || !this.voiceEnabled) {
+      return { ok: false, message: "Discord transcripts capture is no longer current." };
+    }
+    if (!this.isAllowedVoiceChannel(target)) {
+      return {
+        ok: false,
+        message: `${formatMention({ channelId: target.channelId })} is not allowed by channels.discord.voice.allowedChannels.`,
+      };
+    }
+    const autoJoin = this.resolveAutoJoinTarget(target.guildId);
+    // A subscription never takes over an existing or configured conversation owner.
+    if (
+      this.sessions.has(target.guildId) ||
+      (autoJoin && autoJoin.channelId !== target.channelId)
+    ) {
+      const entry = this.sessions.get(target.guildId);
+      if (entry?.channelId === target.channelId) {
+        this.receive.captureCurrentSpeakers(entry);
+      }
+      return { ok: true, message: "Capture registered for the selected voice channel.", ...target };
+    }
+    if (autoJoin?.channelId === target.channelId) {
+      return (
+        (await this.enqueueAutoJoin(autoJoin)) ?? {
+          ok: true,
+          message: "Capture waiting for the configured voice channel.",
+          ...target,
+        }
+      );
+    }
+    return await this.join(target, { captureOnly: true });
+  }
+
+  async stopTranscriptsCapture(target: { guildId: string; channelId: string }): Promise<void> {
+    const lifecycle = this.guildLifecycles.get(target.guildId);
+    if (lifecycle?.status !== "starting" && lifecycle?.status !== "active") {
+      return;
+    }
+    if (lifecycle.instance.channelId === target.channelId && lifecycle.instance.captureOnly) {
+      await this.leave(target);
+    }
+  }
+
   async join(
     params: { guildId: string; channelId: string },
     options?: VoiceJoinOptions,
@@ -303,6 +371,7 @@ export class DiscordVoiceManager {
       };
     }
     logVoiceVerbose(`join requested: guild ${guildId} channel ${channelId}`);
+    const capture = options?.captureOnly ? this.getTranscripts({ guildId, channelId }) : undefined;
 
     while (true) {
       const activeJoinTask = this.joinTasks.get(guildId);
@@ -316,16 +385,43 @@ export class DiscordVoiceManager {
       }
     }
 
+    const captureIsCurrent = () =>
+      !options?.captureOnly ||
+      (capture !== undefined && this.getTranscripts({ guildId, channelId }) === capture);
+    // A queued recovery must not invalidate the manual join it just waited behind.
+    if (!captureIsCurrent()) {
+      return { ok: false, message: "Discord voice join was cancelled.", guildId, channelId };
+    }
+    const waitingForOccupancy = () => {
+      if (!options?.autoJoinWhenOccupied) {
+        return false;
+      }
+      const count = this.countHumanParticipants({ guildId, channelId });
+      return count === null || count === 0;
+    };
+    const waitingResult = {
+      ok: true,
+      message: "Waiting for an occupied voice channel.",
+      guildId,
+      channelId,
+    };
+    if (waitingForOccupancy()) {
+      return waitingResult;
+    }
     const generation = ++this.nextGuildGeneration;
     const starting: VoiceGuildLifecycle = {
       status: "starting",
       generation,
-      instance: { guildId, channelId },
+      instance: { guildId, channelId, captureOnly: options?.captureOnly === true },
     };
     this.guildLifecycles.set(guildId, starting);
     const isCurrent = () => {
       const lifecycle = this.guildLifecycles.get(guildId);
-      return lifecycle?.status === "starting" && lifecycle.generation === generation;
+      return (
+        lifecycle?.status === "starting" &&
+        lifecycle.generation === generation &&
+        captureIsCurrent()
+      );
     };
     const joinTask = this.voiceSessions.joinUnlocked({ guildId, channelId }, options, {
       generation,
@@ -334,19 +430,26 @@ export class DiscordVoiceManager {
     this.joinTasks.set(guildId, joinTask);
     try {
       const result = await joinTask;
-      if (result.ok && isCurrent()) {
+      if (result.ok) {
         const entry = this.sessions.get(guildId);
-        if (!entry) {
-          this.guildLifecycles.set(guildId, {
-            status: "stopped",
-            generation,
-            reason: "join completed without a session",
-          });
+        if (!entry || !isCurrent()) {
+          // Registration can change after joinUnlocked publishes and before this continuation.
+          if (entry?.generation === generation) {
+            entry.stop("voice join cancelled before activation");
+          }
+          if (this.guildLifecycles.get(guildId)?.generation === generation) {
+            this.guildLifecycles.set(guildId, { status: "inactive", generation });
+          }
           return { ...result, ok: false, message: "Discord voice join was cancelled." };
         }
         this.guildLifecycles.set(guildId, { status: "active", generation, instance: entry });
         this.fatalAutoJoinFailures.delete(formatAutoJoinFailureKey({ guildId, channelId }));
-      } else if (!result.ok && isCurrent()) {
+        // Recovery can finish after the last human leaves. Keep capture registered, not presence.
+        if (waitingForOccupancy()) {
+          await this.leave({ guildId, channelId });
+          return waitingResult;
+        }
+      } else if (this.guildLifecycles.get(guildId)?.generation === generation) {
         this.guildLifecycles.set(guildId, { status: "inactive", generation });
       }
       return result;
@@ -359,14 +462,11 @@ export class DiscordVoiceManager {
 
   async leave(
     params: { guildId: string; channelId?: string },
-    options?: { preserveFollowState?: boolean; transcriptsSessionId?: string },
+    options?: { preserveFollowState?: boolean },
   ): Promise<VoiceOperationResult> {
     const guildId = params.guildId.trim();
     const lifecycle = this.guildLifecycles.get(guildId);
     if (lifecycle?.status === "starting") {
-      if (options?.transcriptsSessionId && this.sessions.has(guildId)) {
-        return await this.voiceSessions.leave(params, options);
-      }
       this.guildLifecycles.set(guildId, {
         status: "stopped",
         generation: lifecycle.generation,
@@ -388,15 +488,6 @@ export class DiscordVoiceManager {
     }
     const result = await this.voiceSessions.leave(params, options);
     if (result.ok) {
-      const activeEntry = this.sessions.get(guildId);
-      if (options?.transcriptsSessionId && activeEntry) {
-        this.guildLifecycles.set(guildId, {
-          status: "active",
-          generation: activeEntry.generation,
-          instance: activeEntry,
-        });
-        return result;
-      }
       const currentLifecycle = this.guildLifecycles.get(guildId);
       if (lifecycle && currentLifecycle && currentLifecycle.generation !== lifecycle.generation) {
         return result;
@@ -467,7 +558,14 @@ export class DiscordVoiceManager {
     return this.autoJoinChannels.toReversed().find((entry) => entry.guildId === guildId.trim());
   }
 
-  private enqueueAutoJoin(entry: VoiceChannelResidency): Promise<void> {
+  private countHumanParticipants(target: { guildId: string; channelId: string }): number | null {
+    const states = listDiscordVoiceParticipantStates({ client: this.client, ...target });
+    return states === null
+      ? null
+      : countDiscordVoiceHumanParticipants({ states, botUserId: this.botUserId });
+  }
+
+  private enqueueAutoJoin(entry: VoiceChannelResidency): Promise<VoiceOperationResult | undefined> {
     const previous = this.autoJoinTasks.get(entry.guildId) ?? Promise.resolve();
     const task = previous
       .catch(() => undefined)
@@ -481,9 +579,11 @@ export class DiscordVoiceManager {
     return task;
   }
 
-  private async reconcileAutoJoinEntry(entry: VoiceChannelResidency): Promise<void> {
+  private async reconcileAutoJoinEntry(
+    entry: VoiceChannelResidency,
+  ): Promise<VoiceOperationResult | undefined> {
     if (this.destroyed) {
-      return;
+      return { ok: false, message: "Discord voice manager is stopped." };
     }
     const failureKey = formatAutoJoinFailureKey(entry);
     const fatalFailure = this.fatalAutoJoinFailures.get(failureKey);
@@ -494,29 +594,21 @@ export class DiscordVoiceManager {
         );
         fatalFailure.skipLogged = true;
       }
-      return;
+      return { ok: false, message: fatalFailure.message };
     }
 
     if (entry.whenOccupied) {
-      const states = listDiscordVoiceParticipantStates({
-        client: this.client,
-        guildId: entry.guildId,
-        channelId: entry.channelId,
-      });
-      if (states === null) {
+      const humanCount = this.countHumanParticipants(entry);
+      if (humanCount === null) {
         logVoiceVerbose(
           `autoJoin waiting for guild voice snapshot guild=${entry.guildId} channel=${entry.channelId}`,
         );
-        return;
+        return undefined;
       }
-      const humanCount = countDiscordVoiceHumanParticipants({
-        states,
-        botUserId: this.botUserId,
-      });
       const existing = this.sessions.get(entry.guildId);
       if (humanCount === 0) {
         if (!existing?.autoJoinWhenOccupied || existing.channelId !== entry.channelId) {
-          return;
+          return undefined;
         }
         logger.info(
           `discord voice: occupied autoJoin leaving empty channel guild=${entry.guildId} channel=${entry.channelId}`,
@@ -527,11 +619,11 @@ export class DiscordVoiceManager {
             `discord voice: occupied autoJoin failed to leave guild=${entry.guildId} channel=${entry.channelId}: ${result.message}`,
           );
         }
-        return;
+        return undefined;
       }
       const lifecycle = this.guildLifecycles.get(entry.guildId);
       if (existing || lifecycle?.status === "starting" || lifecycle?.status === "active") {
-        return;
+        return undefined;
       }
       logger.info(
         `discord voice: occupied autoJoin joining guild=${entry.guildId} channel=${entry.channelId} humans=${humanCount}`,
@@ -552,6 +644,7 @@ export class DiscordVoiceManager {
         });
       }
     }
+    return result;
   }
 }
 
