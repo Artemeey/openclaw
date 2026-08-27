@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import type { ConfigFileSnapshot } from "../config/types.js";
 import type { StartupMigrationLease } from "../infra/startup-migration-checkpoint.js";
+import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import type { DoctorConfigPreflightPluginSnapshotRead } from "./doctor-config-preflight-plugin-index.js";
 
@@ -15,10 +17,21 @@ const { persistRefreshedPluginIndex } = await import("./doctor-config-preflight-
 function snapshotRead(
   metadata: Pick<PluginMetadataSnapshot, "index" | "registryDiagnostics" | "registrySource">,
 ): DoctorConfigPreflightPluginSnapshotRead {
+  const snapshot = {
+    ...createPluginMetadataSnapshot({ manifestRegistry: { plugins: [], diagnostics: [] } }),
+    ...metadata,
+  };
   return {
     snapshot: {} as ConfigFileSnapshot,
     pluginMigrationFingerprint: "plugin-migrations",
-    pluginMetadataSnapshot: metadata as PluginMetadataSnapshot,
+    pluginMetadata: {
+      ...snapshot,
+      selectedSnapshot: snapshot,
+      workspaces: new Map([[undefined, snapshot]]),
+      configWorkspaceDirs: [undefined],
+      envFingerprint: resolvePluginMetadataEnvFingerprint(),
+      channelCatalog: { read: () => [] },
+    },
   };
 }
 

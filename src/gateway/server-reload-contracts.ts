@@ -1,8 +1,12 @@
 import type { CliDeps } from "../cli/deps.types.js";
+import type { RuntimeConfigWritePreparedCandidate } from "../config/runtime-snapshot.js";
 import type { ConfigFileSnapshot, OpenClawConfig } from "../config/types.openclaw.js";
 import type { HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import type { GatewayRestartEmitter } from "../infra/restart.js";
-import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
+import type {
+  PluginMetadataOwner,
+  PreparedPluginMetadata,
+} from "../plugins/plugin-metadata-collection.js";
 import type { ChannelHealthMonitor } from "./channel-health-monitor.js";
 import type { ChannelKind } from "./config-reload-plan.js";
 import type { GatewayReloadPlan } from "./config-reload.js";
@@ -68,6 +72,8 @@ export type GatewayGmailRestartAbortController = {
 
 export type GatewayHotReloadPublication = {
   publish: (commit: () => Promise<void>, isCommitted: () => boolean) => Promise<void>;
+  onCommitted?: () => void;
+  pluginMetadata?: PreparedPluginMetadata;
   isCurrent: () => boolean;
   sourceConfig: OpenClawConfig;
   prepareRestartRuntimeConfig?: () => Promise<OpenClawConfig>;
@@ -148,7 +154,7 @@ export type GatewayReloadHandlerParams = {
     | undefined;
   getState: () => GatewayHotReloadState;
   setState: (state: GatewayHotReloadState) => void;
-  getPluginMetadataSnapshot?: () => PluginMetadataSnapshot | undefined;
+  getPluginMetadata?: () => PreparedPluginMetadata | undefined;
   startChannel: GatewayChannelManager["startChannel"];
   stopChannel: GatewayChannelManager["stopChannel"];
   pruneInactiveChannelAccountState: (activeChannelIds: ReadonlySet<ChannelKind>) => void;
@@ -157,6 +163,7 @@ export type GatewayReloadHandlerParams = {
   reloadPlugins: (params: {
     nextConfig: OpenClawConfig;
     sourceConfig: OpenClawConfig;
+    pluginMetadata?: PreparedPluginMetadata;
     changedPaths: readonly string[];
     beforeReplace: (
       channels: ReadonlySet<ChannelKind>,
@@ -192,6 +199,7 @@ export type ManagedGatewayConfigReloaderParams = Omit<
 > & {
   configRevisionProjector: import("./config-revision-token.js").GatewayConfigRevisionProjector;
   minimalTestGateway: boolean;
+  pluginMetadataOwner?: PluginMetadataOwner;
   initialConfig: OpenClawConfig;
   initialCompareConfig?: OpenClawConfig;
   initialSnapshotRawHash: string | null;
@@ -213,12 +221,8 @@ export type ManagedGatewayConfigReloaderParams = Omit<
   prepareConfigCandidate?: (params: {
     runtimeConfig: OpenClawConfig;
     sourceConfig: OpenClawConfig;
-  }) => {
-    runtimeConfig: OpenClawConfig;
-    compareConfig: OpenClawConfig;
-    reapplyRuntimeOverlays?: (config: OpenClawConfig) => OpenClawConfig;
-    reapplyCompareOverlays?: (config: OpenClawConfig) => OpenClawConfig;
-  };
+    previousSourceConfig?: OpenClawConfig;
+  }) => RuntimeConfigWritePreparedCandidate;
   /** Reapplies fixed process-lifetime overlays before secrets preparation. */
   applyRuntimeConfigOverrides?: (config: OpenClawConfig) => OpenClawConfig;
   resolveSharedGatewaySessionGenerationForConfig: (config: OpenClawConfig) => string | undefined;

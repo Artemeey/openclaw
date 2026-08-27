@@ -70,6 +70,7 @@ Docs: https://docs.openclaw.ai
 ### Fixes
 
 - Codex image attachments: decode mixed-case `file://` URLs as local image paths while preserving existing file URL validation and platform behavior. (#121611) Thanks @sunlit-deng.
+- **Gateway plugin metadata:** reuse prepared metadata across agent workspaces and config reads, keep serving metadata intact until reload commit, and remove stale channel/schema/media caches that caused repeated discovery and event-loop stalls. (#130324)
 
 - **Control UI agent files:** keep confirmed saves and file metadata intact when older reads or list refreshes finish later, preserve newer drafts, and rebuild invalidated file lists without losing the open editor.
 

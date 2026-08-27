@@ -8,6 +8,11 @@ import { resetConfigRuntimeState } from "../config/runtime-snapshot.js";
 import { readLoggingConfig } from "../logging/config.js";
 import { resetLogger } from "../logging/logger.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import {
+  createPluginMetadataOwner,
+  getCurrentPluginMetadataOwner,
+  installPluginMetadataOwner,
+} from "../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { createOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { getFreePort } from "../test-utils/ports.js";
@@ -25,6 +30,27 @@ afterEach(() => {
 });
 
 describe("gateway minimal boot smoke", () => {
+  it("releases the metadata owner when config validation rejects startup", async () => {
+    const state = await createOpenClawTestState({
+      label: "gateway-metadata-startup-failure",
+      layout: "home",
+      env: {
+        OPENCLAW_TEST_MINIMAL_GATEWAY: "1",
+        OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
+        VITEST: "1",
+      },
+    });
+    await state.writeConfig({ gateway: { mode: "invalid" } });
+    state.applyEnv();
+    try {
+      const { createGatewayKernel } = await import("./server-kernel.js");
+      await expect(createGatewayKernel(await getFreePort())).rejects.toThrow("Invalid config");
+      expect(getCurrentPluginMetadataOwner()).toBeUndefined();
+    } finally {
+      await state.cleanup();
+    }
+  });
+
   it("suppresses ambient channel triggers when the server option is omitted", async () => {
     const port = await getFreePort();
     const state = await createOpenClawTestState({
@@ -48,6 +74,8 @@ describe("gateway minimal boot smoke", () => {
       plugins: {},
     });
     state.applyEnv();
+    const pluginMetadataOwner = createPluginMetadataOwner();
+    const disposePluginMetadataOwner = installPluginMetadataOwner(pluginMetadataOwner);
 
     try {
       const { prepareGatewayServerBootstrap } = await import("./server-startup-bootstrap.js");
@@ -65,6 +93,8 @@ describe("gateway minimal boot smoke", () => {
         loadWorkerEnvironmentStartupModule: async () =>
           await import("./server-worker-environment-startup.js"),
         formatRuntimeGatewayAuthTokenWarning: () => "unused",
+        pluginMetadataOwner,
+        disposePluginMetadataOwner,
       });
 
       expect(bootstrap.ambientEnvTriggers).toBe("suppress");
@@ -74,6 +104,7 @@ describe("gateway minimal boot smoke", () => {
       );
       expect(readLoggingConfig()).toMatchObject({ level: "debug" });
     } finally {
+      disposePluginMetadataOwner();
       await state.cleanup();
     }
   });
@@ -114,7 +145,9 @@ describe("gateway minimal boot smoke", () => {
         sidecarStartup: "defer",
       });
       expect(server).toBeTruthy();
+      expect(getCurrentPluginMetadataOwner()?.getActive()).toBeDefined();
       await server.close({ reason: "minimal boot smoke complete" });
+      expect(getCurrentPluginMetadataOwner()).toBeUndefined();
     } finally {
       await state.cleanup();
     }

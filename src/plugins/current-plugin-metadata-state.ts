@@ -5,12 +5,18 @@ import {
 } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
+import type { PreparedPluginChannelCatalog } from "./channel-catalog-registry.js";
+import type { PluginMetadataOwner } from "./plugin-metadata-collection.js";
 
 export type CurrentPluginMetadataSnapshotRevision = symbol;
 
 type CurrentPluginMetadataMutableState = {
+  owner?: PluginMetadataOwner;
+  channelCatalogReader?: () => PreparedPluginChannelCatalog | undefined;
   snapshot: unknown;
   configFingerprint: string | undefined;
+  envFingerprint: string | undefined;
+  defaultDiscoveryCompatible: boolean;
   compatiblePolicyHashes: readonly string[] | undefined;
   compatibleConfigFingerprints: readonly string[] | undefined;
   manifestModelIdNormalizationRecords: readonly ManifestModelIdNormalizationRecord[] | undefined;
@@ -20,6 +26,31 @@ type CurrentPluginMetadataMutableState = {
   configIdentities: WeakSet<OpenClawConfig>;
 };
 
+export function getCurrentPluginMetadataOwner(): PluginMetadataOwner | undefined {
+  return state.owner;
+}
+
+export function registerCurrentPluginChannelCatalogReader(
+  reader: () => PreparedPluginChannelCatalog | undefined,
+): void {
+  state.channelCatalogReader = reader;
+}
+
+export function getCurrentPluginChannelCatalog(): PreparedPluginChannelCatalog | undefined {
+  return state.channelCatalogReader?.();
+}
+
+/** Installs one lifecycle owner without letting an older disposer retire its replacement. */
+export function installPluginMetadataOwner(owner: PluginMetadataOwner): () => void {
+  state.owner = owner;
+  return () => {
+    if (state.owner === owner) {
+      state.owner = undefined;
+    }
+    owner.dispose();
+  };
+}
+
 // Process-scoped facts must survive dual module instances (ESM plus the lazy
 // require bridge in plugin-metadata-snapshot.runtime.ts), so the state lives
 // on a globalThis singleton like the scoped snapshot ALS.
@@ -28,6 +59,8 @@ const state = resolveGlobalSingleton<CurrentPluginMetadataMutableState>(
   () => ({
     snapshot: undefined,
     configFingerprint: undefined,
+    envFingerprint: undefined,
+    defaultDiscoveryCompatible: false,
     compatiblePolicyHashes: undefined,
     compatibleConfigFingerprints: undefined,
     manifestModelIdNormalizationRecords: undefined,
@@ -59,12 +92,16 @@ export const currentPluginMetadataConfigIdentityCache = {
 export function setCurrentPluginMetadataSnapshotState(
   snapshot: unknown,
   configFingerprint: string | undefined,
+  envFingerprint: string | undefined,
+  defaultDiscoveryCompatible: boolean,
   compatiblePolicyHashes?: readonly string[],
   compatibleConfigFingerprints?: readonly string[],
   manifestModelIdNormalizationRecords?: readonly ManifestModelIdNormalizationRecord[],
 ): CurrentPluginMetadataSnapshotRevision {
   state.snapshot = snapshot;
   state.configFingerprint = snapshot ? configFingerprint : undefined;
+  state.envFingerprint = snapshot ? envFingerprint : undefined;
+  state.defaultDiscoveryCompatible = Boolean(snapshot && defaultDiscoveryCompatible);
   state.compatiblePolicyHashes = snapshot ? compatiblePolicyHashes : undefined;
   state.compatibleConfigFingerprints = snapshot ? compatibleConfigFingerprints : undefined;
   state.manifestModelIdNormalizationRecords = snapshot
@@ -79,6 +116,8 @@ export function setCurrentPluginMetadataSnapshotState(
 function clearCurrentPluginMetadataSnapshotState(): CurrentPluginMetadataSnapshotRevision {
   state.snapshot = undefined;
   state.configFingerprint = undefined;
+  state.envFingerprint = undefined;
+  state.defaultDiscoveryCompatible = false;
   state.compatiblePolicyHashes = undefined;
   state.compatibleConfigFingerprints = undefined;
   state.manifestModelIdNormalizationRecords = undefined;
@@ -97,6 +136,8 @@ export function clearCurrentPluginMetadataSnapshot(): void {
 export function getCurrentPluginMetadataSnapshotState(): {
   snapshot: unknown;
   configFingerprint: string | undefined;
+  envFingerprint: string | undefined;
+  defaultDiscoveryCompatible: boolean;
   compatiblePolicyHashes: readonly string[] | undefined;
   compatibleConfigFingerprints: readonly string[] | undefined;
   manifestModelIdNormalizationRecords: readonly ManifestModelIdNormalizationRecord[] | undefined;
@@ -105,6 +146,8 @@ export function getCurrentPluginMetadataSnapshotState(): {
   return {
     snapshot: state.snapshot,
     configFingerprint: state.configFingerprint,
+    envFingerprint: state.envFingerprint,
+    defaultDiscoveryCompatible: state.defaultDiscoveryCompatible,
     compatiblePolicyHashes: state.compatiblePolicyHashes,
     compatibleConfigFingerprints: state.compatibleConfigFingerprints,
     manifestModelIdNormalizationRecords: state.manifestModelIdNormalizationRecords,

@@ -9,7 +9,6 @@ import type { GatewayAuthConfig, GatewayTailscaleConfig } from "../config/types.
 import type { ConfigFileSnapshot, OpenClawConfig } from "../config/types.openclaw.js";
 import { measureDiagnosticsTimelineSpan } from "../infra/diagnostics-timeline.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
-import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import {
   classifySecretResolutionErrorDegradations,
   isRetryableSecretDegradationReason,
@@ -77,6 +76,7 @@ type RuntimeSecretsActivationParams = {
   /** Reject warning publication after a speculative reload loses transaction ownership. */
   canPublishFailureAsDegraded?: () => boolean;
   env?: NodeJS.ProcessEnv;
+  manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
   includeAuthStoreRefs?: boolean;
   /** Raw config source paired with an otherwise fully activated prepared snapshot. */
   runtimeSourceConfig?: OpenClawConfig;
@@ -138,7 +138,6 @@ export function createRuntimeSecretsActivator(params: {
   prepareRuntimeSecretsSnapshot?: PrepareRuntimeSecretsSnapshot;
   activateRuntimeSecretsSnapshot?: ActivateRuntimeSecretsSnapshot;
   manifestRegistry?: Pick<PluginManifestRegistry, "plugins">;
-  pluginMetadataSnapshot?: Pick<PluginMetadataSnapshot, "plugins" | "manifestRegistry">;
   channelAutostartSuppression?: ChannelAutostartSuppression | null;
 }): ActivateRuntimeSecrets {
   let secretsDegraded = false;
@@ -156,8 +155,6 @@ export function createRuntimeSecretsActivator(params: {
   const loadAuthProfiles = createLazyPromise(() => import("../agents/auth-profiles.js"), {
     cacheRejections: true,
   });
-  const startupManifestRegistry =
-    params.manifestRegistry ?? params.pluginMetadataSnapshot?.manifestRegistry;
   const runWithSecretsActivationLock = async <T>(operation: () => Promise<T>): Promise<T> => {
     // Secret refresh mutates process-wide active snapshot state, so activation
     // requests are serialized even when reload and startup probes overlap.
@@ -375,6 +372,7 @@ export function createRuntimeSecretsActivator(params: {
           assignmentConfig === undefined
         ) {
           const startupEnv = activationParams.env ?? process.env;
+          const manifestRegistry = activationParams.manifestRegistry ?? params.manifestRegistry;
           const fastPath = hasLegacyAuthProfileSourcesForStartup({
             agentDirs: collectCandidateAgentDirs(sourceConfig, startupEnv),
             env: startupEnv,
@@ -383,7 +381,7 @@ export function createRuntimeSecretsActivator(params: {
             : prepareSecretsRuntimeFastPathSnapshot({
                 config: sourceConfig,
                 env: startupEnv,
-                ...(startupManifestRegistry ? { manifestRegistry: startupManifestRegistry } : {}),
+                ...(manifestRegistry ? { manifestRegistry } : {}),
               });
           if (fastPath) {
             // The startup fast path avoids importing the full secrets runtime
@@ -428,10 +426,7 @@ export function createRuntimeSecretsActivator(params: {
               ...(activationParams.env ? { env: activationParams.env } : {}),
               includeAuthStoreRefs: activationParams.includeAuthStoreRefs,
               forceColdRefKeys: activationParams.forceColdRefKeys,
-              ...(startupManifestRegistry ? { manifestRegistry: startupManifestRegistry } : {}),
-              ...(params.pluginMetadataSnapshot
-                ? { pluginMetadataSnapshot: params.pluginMetadataSnapshot }
-                : {}),
+              manifestRegistry: activationParams.manifestRegistry ?? params.manifestRegistry,
               ...(loadAuthStore ? { loadAuthStore } : {}),
             }),
           {

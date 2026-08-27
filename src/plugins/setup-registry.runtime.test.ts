@@ -7,6 +7,7 @@ import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.
 import type { PluginMetadataSnapshot } from "./plugin-metadata-snapshot.js";
 import { createEmptyPluginRegistry } from "./registry-empty.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "./runtime.js";
+import { withPluginRuntimeGenerationScope } from "./runtime/generation-scope.js";
 
 const loadPluginRegistrySnapshotMock = vi.hoisted(() => vi.fn());
 const loadPluginManifestRegistryForInstalledIndexMock = vi.hoisted(() => vi.fn());
@@ -95,6 +96,21 @@ function createCurrentSnapshot(params: {
 }
 
 describe("setup-registry descriptor lookup", () => {
+  it("keeps CLI backend descriptors inside the selected metadata scope", async () => {
+    const { resolvePluginSetupCliBackendIds } = await import("./setup-registry.runtime.js");
+    const full = createCurrentSnapshot({
+      manifestHash: "shared-scope",
+      cliBackends: ["example-cli"],
+    });
+    const finite = { ...full, pluginIds: [], plugins: [] };
+    const ids = [full, finite, full].map((metadataSnapshot) =>
+      withPluginRuntimeGenerationScope({ config: {}, metadataSnapshot }, () =>
+        resolvePluginSetupCliBackendIds(),
+      ),
+    );
+    expect(ids).toEqual([["example-cli"], [], ["example-cli"]]);
+  });
+
   it("uses enabled metadata cliBackends", async () => {
     loadPluginMetadataSnapshotMock.mockReturnValue({
       index: {

@@ -5,10 +5,12 @@ import {
 } from "../config/io.js";
 import type { ConfigFileSnapshot } from "../config/types.js";
 import type { StartupMigrationLease } from "../infra/startup-migration-checkpoint.js";
-import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
+import type {
+  PluginMetadataOwner,
+  PreparedPluginMetadata,
+} from "../plugins/plugin-metadata-collection.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { addDoctorLegacyIssues } from "./doctor/shared/legacy-config-issues.js";
-import { completeDoctorPluginMetadataSnapshot } from "./doctor/shared/plugin-metadata-snapshot-scope.js";
 
 const loadInstalledPluginIndexStore = createLazyRuntimeModule(
   () => import("../plugins/installed-plugin-index-store.js"),
@@ -17,7 +19,7 @@ const loadInstalledPluginIndexStore = createLazyRuntimeModule(
 export type DoctorConfigPreflightPluginSnapshotRead = {
   snapshot: ConfigFileSnapshot;
   pluginMigrationFingerprint: string | null;
-  pluginMetadataSnapshot?: PluginMetadataSnapshot;
+  pluginMetadata?: PreparedPluginMetadata;
 };
 
 type MeasurePreflightStep = <T>(name: string, run: () => T | Promise<T>) => Promise<T>;
@@ -33,26 +35,23 @@ export async function readDoctorConfigPreflightSnapshot(params: {
   includePluginMetadata: boolean;
   measure?: ConfigSnapshotReadMeasure;
   observe?: boolean;
-  preparePluginMetadataSnapshot: boolean;
+  pluginMetadataOwner: PluginMetadataOwner;
   skipPluginValidation: boolean;
 }): Promise<DoctorConfigPreflightPluginSnapshotRead> {
   const sharedOptions = {
+    pluginMetadataOwner: params.pluginMetadataOwner,
     ...(params.observe === false ? { observe: false } : {}),
     ...(params.measure ? { measure: params.measure } : {}),
     ...(params.allowCurrentPluginMetadata ? {} : { allowCurrentPluginMetadata: false }),
   };
   if (params.includePluginMetadata && !params.skipPluginValidation) {
     const result = await readConfigFileSnapshotWithPluginMetadata(sharedOptions);
-    const pluginMetadataSnapshot = params.preparePluginMetadataSnapshot
-      ? completeDoctorPluginMetadataSnapshot({
-          snapshot: result.pluginMetadataSnapshot,
-          config: result.snapshot.sourceConfig ?? result.snapshot.config ?? {},
-        })
-      : result.pluginMetadataSnapshot;
+    const pluginMetadata = result.pluginMetadata;
     return {
-      snapshot: addDoctorLegacyIssues(result.snapshot, pluginMetadataSnapshot),
-      pluginMigrationFingerprint: pluginMetadataSnapshot?.configFingerprint?.trim() || null,
-      ...(pluginMetadataSnapshot ? { pluginMetadataSnapshot } : {}),
+      snapshot: addDoctorLegacyIssues(result.snapshot, pluginMetadata),
+      pluginMigrationFingerprint:
+        pluginMetadata?.selectedSnapshot.configFingerprint?.trim() || null,
+      ...(pluginMetadata ? { pluginMetadata } : {}),
     };
   }
   return {
@@ -69,7 +68,7 @@ export async function readDoctorConfigPreflightSnapshot(params: {
 export function needsRefreshedPluginIndexPersistence(
   snapshotRead: DoctorConfigPreflightPluginSnapshotRead,
 ): boolean {
-  return snapshotRead.pluginMetadataSnapshot?.registrySource === "derived";
+  return snapshotRead.pluginMetadata?.selectedSnapshot.registrySource === "derived";
 }
 
 export async function persistRefreshedPluginIndex(params: {
@@ -79,7 +78,7 @@ export async function persistRefreshedPluginIndex(params: {
   snapshotRead: DoctorConfigPreflightPluginSnapshotRead;
   lease: StartupMigrationLease | undefined;
 }): Promise<DoctorConfigPreflightPluginSnapshotRead> {
-  const derivedPluginMetadataSnapshot = params.snapshotRead.pluginMetadataSnapshot;
+  const derivedPluginMetadataSnapshot = params.snapshotRead.pluginMetadata?.selectedSnapshot;
   if (!derivedPluginMetadataSnapshot || !params.snapshotRead.pluginMigrationFingerprint) {
     throwPluginRegistryPersistenceFailed("derived metadata was incomplete");
   }
@@ -100,7 +99,7 @@ export async function persistRefreshedPluginIndex(params: {
     }),
   );
   const persistedSnapshotRead = await params.readPersistedSnapshot();
-  const persistedPluginMetadataSnapshot = persistedSnapshotRead.pluginMetadataSnapshot;
+  const persistedPluginMetadataSnapshot = persistedSnapshotRead.pluginMetadata?.selectedSnapshot;
   // The registry selector owns freshness and returns "persisted" only after accepting the
   // durable index. Persisted parsing intentionally canonicalizes non-runtime package metadata.
   if (persistedPluginMetadataSnapshot?.registrySource !== "persisted") {

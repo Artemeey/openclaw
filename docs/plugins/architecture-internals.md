@@ -114,27 +114,31 @@ metadata-only while the setup module contributes other setup hooks.
 
 ### Plugin cache boundary
 
-OpenClaw does not cache plugin discovery results or direct manifest registry
-data behind wall-clock windows. Installs, manifest edits, and load-path changes
-must become visible on the next explicit metadata read or snapshot rebuild.
+OpenClaw does not refresh plugin metadata on wall-clock timers or poll plugin
+files during runtime lookups. A Gateway owner retains its accepted metadata
+collection and one observed candidate. Installs, manifest edits, and load-path
+changes become visible through explicit preparation and replacement; rejected
+reloads retain the accepted collection. Cold operations outside an owner prepare
+their own metadata and do not publish it globally.
 The manifest file parser keeps a bounded file-signature cache keyed by the
 opened manifest path plus device/inode, size, and mtime/ctime; that cache only
 avoids re-parsing unchanged bytes and must not cache discovery, registry,
 owner, or policy answers.
 
 The safe metadata fast path is explicit object ownership, not a hidden cache.
-Gateway startup hot paths should pass the current `PluginMetadataSnapshot`, the
-derived `PluginLookUpTable`, or an explicit manifest registry through the call
-chain. Config validation, startup auto-enable, plugin bootstrap, and provider
-selection can reuse those objects while they represent the current config and
-plugin inventory. Setup lookup still reconstructs manifest metadata on demand
-unless the specific setup path receives an explicit manifest registry; keep
-that as a cold-path fallback rather than adding hidden lookup caches. When the
-input changes, rebuild and replace the snapshot instead of mutating it or
-keeping historical copies. Views over the active plugin registry and bundled
-channel bootstrap helpers should be recomputed from the current
-registry/root. Short-lived maps are fine inside one call to dedupe work or
-guard reentry; they must not become process metadata caches.
+Gateway hot paths pass a prepared collection, an exact workspace
+`PluginMetadataSnapshot`, a derived `PluginLookUpTable`, or an explicit manifest
+registry. Config validation uses the collection's manifest union; execution uses
+only the selected workspace's inventory. CLI and Doctor scopes retain their
+collections through asynchronous consumers. Derived schemas, descriptors, and
+media defaults follow immutable manifest identity, while account state,
+environment triggers, and active runtime registry selection remain live.
+Retained runtime generations keep their exact finite metadata view. A newly
+prepared config operation may enter its own scope without widening that retained
+view after the operation returns.
+Replace snapshots instead of mutating them or retaining unbounded historical
+copies. Raw channel catalogs retain discovery candidates separately from
+validated manifests so metadata reuse does not change trust or shadowing rules.
 
 For plugin loading, the persistent cache layer is runtime loading. It may reuse
 loader state when code or installed artifacts are actually loaded, such as:

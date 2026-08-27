@@ -17,7 +17,10 @@ import type {
   MigrationCheckpointIdentity,
   StartupMigrationLease,
 } from "../infra/startup-migration-checkpoint.js";
-import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
+import {
+  createPluginMetadataOwner,
+  type PreparedPluginMetadata,
+} from "../plugins/plugin-metadata-collection.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { assertOpenClawStateWriteAllowedAtPath } from "../state/openclaw-state-ownership.js";
@@ -57,7 +60,7 @@ const loadLegacyCronRepair = createLazyRuntimeModule(
 export type DoctorConfigPreflightResult = {
   snapshot: Awaited<ReturnType<typeof readConfigFileSnapshot>>;
   baseConfig: OpenClawConfig;
-  pluginMetadataSnapshot?: PluginMetadataSnapshot;
+  pluginMetadata?: PreparedPluginMetadata;
   cronCodexRuntimePolicyTargets?: CronCodexRuntimePolicyTarget[];
 };
 
@@ -104,8 +107,8 @@ export async function runDoctorConfigPreflight(
     beforeStateMigrations?: (snapshot?: ConfigFileSnapshot) => Promise<boolean>;
     requireStateMigrationCheckpoint?: boolean;
     requireStartupMigrationCheckpoint?: boolean;
-    /** Load one authoritative plugin metadata snapshot for the caller's full lifecycle. */
-    preparePluginMetadataSnapshot?: boolean;
+    /** Prepare plugin inventories for every workspace used by the caller's lifecycle. */
+    includePluginMetadata?: boolean;
     /** Core state was proven absent before Gateway selection could create runtime files. */
     skipPristineCoreStateMigrations?: boolean;
     /** Prepared before Gateway bootstrap can create files under an otherwise pristine state root. */
@@ -154,8 +157,9 @@ export async function runDoctorConfigPreflight(
   let doctorMediaPersistenceAttempted = false;
   let legacyConfigMigrationComplete = false;
   let configSnapshotRead: DoctorConfigPreflightPluginSnapshotRead | undefined;
+  const pluginMetadataOwner = createPluginMetadataOwner();
   const { run: runWithPluginMetadataSnapshot } = createDoctorPluginMetadataSnapshotScope({
-    getBaseSnapshot: () => configSnapshotRead?.pluginMetadataSnapshot,
+    getBaseMetadata: () => configSnapshotRead?.pluginMetadata,
     env: process.env,
   });
   const ensureStartupMigrationLease = async () => {
@@ -235,18 +239,24 @@ export async function runDoctorConfigPreflight(
       note(legacyConfigChanges.map((entry) => `- ${entry}`).join("\n"), "Doctor changes");
     }
   };
-  const readConfigSnapshotForPreflight = async (allowCurrentPluginMetadata = true) =>
-    await measurePreflightStep("config-snapshot", () =>
+  const readConfigSnapshotForPreflight = async (allowCurrentPluginMetadata = false) => {
+    // Lease acquisition and repair checkpoints verify the current durable
+    // inventory; an earlier operation-owned generation cannot certify it.
+    if (!allowCurrentPluginMetadata) {
+      pluginMetadataOwner.invalidatePreparation();
+    }
+    return await measurePreflightStep("config-snapshot", () =>
       readDoctorConfigPreflightSnapshot({
         allowCurrentPluginMetadata,
         includePluginMetadata:
-          Boolean(migrationCheckpoint) || options.preparePluginMetadataSnapshot === true,
+          Boolean(migrationCheckpoint) || options.includePluginMetadata === true,
         measure: options.measure,
         observe: options.observe,
-        preparePluginMetadataSnapshot: options.preparePluginMetadataSnapshot === true,
+        pluginMetadataOwner,
         skipPluginValidation: shouldSkipPluginValidationForDoctorConfigPreflight(),
       }),
     );
+  };
   try {
     if (migrationCheckpoint && !skipPristineStartupStateMigrations) {
       // Capture pristine state before command bootstrap can prepare runtime state.
@@ -456,12 +466,33 @@ export async function runDoctorConfigPreflight(
           throw new Error("Startup plugin host-link repair requires the startup migration lease.");
         }
         // Repair host links under the pinned lease before plugin migrations import packages.
-        await measurePreflightStep("plugin-host-link-repair", () =>
+        const repairedHostLinks = await measurePreflightStep("plugin-host-link-repair", () =>
           maybeRepairPluginOpenClawHostLinks({
             env: startupMigrationEnv,
             prompter: { shouldRepair: true },
           }),
         );
+        if (repairedHostLinks && configSnapshotRead.pluginMetadata) {
+          pluginMetadataOwner.invalidatePreparation();
+          const pluginMetadata = pluginMetadataOwner.prepare({
+            config: baseConfig,
+            env: startupMigrationEnv,
+            allowCurrent: false,
+          });
+          configSnapshotRead = {
+            ...configSnapshotRead,
+            pluginMetadata,
+            pluginMigrationFingerprint:
+              pluginMetadata.selectedSnapshot.configFingerprint?.trim() || null,
+          };
+          migrationCheckpointIdentity = resolveMigrationCheckpointIdentity({
+            snapshot,
+            baseConfig,
+            pluginMigrationFingerprint: configSnapshotRead.pluginMigrationFingerprint,
+          });
+          shouldPersistRefreshedPluginIndex =
+            needsRefreshedPluginIndexPersistence(configSnapshotRead);
+        }
       }
       const {
         autoMigrateLegacyState,
@@ -659,8 +690,8 @@ export async function runDoctorConfigPreflight(
     return {
       snapshot,
       baseConfig,
-      ...(configSnapshotRead.pluginMetadataSnapshot
-        ? { pluginMetadataSnapshot: configSnapshotRead.pluginMetadataSnapshot }
+      ...(configSnapshotRead.pluginMetadata
+        ? { pluginMetadata: configSnapshotRead.pluginMetadata }
         : {}),
       ...(cronCodexRuntimePolicyTargets.length > 0 ? { cronCodexRuntimePolicyTargets } : {}),
     };
@@ -669,5 +700,6 @@ export async function runDoctorConfigPreflight(
       clearInterval(startupMigrationHeartbeat);
     }
     startupMigrationLease?.release();
+    pluginMetadataOwner.dispose();
   }
 }

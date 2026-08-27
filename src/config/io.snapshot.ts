@@ -197,7 +197,6 @@ export async function readConfigFileSnapshotInternal(
     const snapshotHash = rawHash;
     fallbackSourceConfig = coerceConfig(effectiveConfigRaw);
     const pluginMetadata = context.createValidationPluginMetadataSnapshotLoader({
-      effectiveConfigRaw,
       env: deps.env,
       allowCurrentPluginMetadata: options.allowCurrentPluginMetadata,
     });
@@ -297,7 +296,7 @@ export async function readConfigFileSnapshotInternal(
     const snapshotConfig = await deps.measure("config.snapshot.read.materialize", () =>
       materializeRuntimeConfig(validated.config, {
         manifestRegistry:
-          pluginMetadata.getSnapshot()?.manifestRegistry ??
+          pluginMetadata.getMetadata()?.manifestRegistry ??
           (context.options.pluginValidation === "core-only" ? { plugins: [] } : undefined),
       }),
     );
@@ -327,7 +326,7 @@ export async function readConfigFileSnapshotInternal(
           envSnapshotForRestore: readResolution.envSnapshotForRestore,
           includeFileHashesForWrite,
           includeFileTargetsForWrite,
-          pluginMetadataSnapshot: pluginMetadata.getSnapshot(),
+          pluginMetadata: pluginMetadata.getMetadata(),
         },
         { observe: !callerRejectedSuspiciousRecovery },
       ),
@@ -379,6 +378,7 @@ export async function readConfigFileSnapshotFromContext(
 ): Promise<ConfigFileSnapshot> {
   return (
     await readConfigFileSnapshotInternal(context, {
+      allowCurrentPluginMetadata: options.allowCurrentPluginMetadata,
       recoverSuspicious: options.recoverSuspicious === true,
       allowSuspiciousRecovery: options.allowSuspiciousRecovery,
     })
@@ -394,19 +394,18 @@ export async function readConfigFileSnapshotWithPluginMetadataFromContext(
     recoverSuspicious: options.recoverSuspicious === true,
     allowSuspiciousRecovery: options.allowSuspiciousRecovery,
   });
-  let pluginMetadataSnapshot = result.pluginMetadataSnapshot;
-  if (!pluginMetadataSnapshot && result.snapshot.valid) {
-    const pluginMetadata = context.createValidationPluginMetadataSnapshotLoader({
-      effectiveConfigRaw: result.snapshot.sourceConfig,
+  let pluginMetadata = result.pluginMetadata;
+  if (!pluginMetadata && result.snapshot.valid) {
+    const loader = context.createValidationPluginMetadataSnapshotLoader({
       env: context.deps.env,
       allowCurrentPluginMetadata: options.allowCurrentPluginMetadata,
     });
-    pluginMetadata.load(result.snapshot.sourceConfig);
-    pluginMetadataSnapshot = pluginMetadata.getSnapshot();
+    loader.load(result.snapshot.sourceConfig);
+    pluginMetadata = loader.getMetadata();
   }
   return {
     snapshot: result.snapshot,
-    ...(pluginMetadataSnapshot ? { pluginMetadataSnapshot } : {}),
+    ...(pluginMetadata ? { pluginMetadata } : {}),
   };
 }
 
@@ -427,7 +426,7 @@ export async function readConfigFileSnapshotForWriteFromContext(
     snapshot: result.snapshot,
     writeOptions: {
       assertConfigPathForWrite,
-      basePluginMetadataSnapshot: result.pluginMetadataSnapshot,
+      basePluginMetadata: result.pluginMetadata,
       envSnapshotForRestore: result.envSnapshotForRestore,
       expectedConfigPath: context.configPath,
       ownedConfigPathForWrite: context.configPath,
@@ -455,7 +454,7 @@ export async function readBestEffortConfigSnapshotFromContext(
   return {
     config: context.finalizeLoadedRuntimeConfig(
       materializeRuntimeConfig(result.snapshot.sourceConfig, {
-        manifestRegistry: result.pluginMetadataSnapshot?.manifestRegistry,
+        manifestRegistry: result.pluginMetadata?.manifestRegistry,
       }),
     ),
     sourceConfig: result.snapshot.sourceConfig,

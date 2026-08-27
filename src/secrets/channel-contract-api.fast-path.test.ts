@@ -1,8 +1,11 @@
 /** Tests fast-path secret collection for channel contract API credentials. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { loadPluginMetadataSnapshotMock } = vi.hoisted(() => ({
-  loadPluginMetadataSnapshotMock: vi.fn((_params: unknown) => ({ plugins: [] })),
+const { resolveConfigWidePluginManifestRegistryMock } = vi.hoisted(() => ({
+  resolveConfigWidePluginManifestRegistryMock: vi.fn((_params: unknown) => ({
+    plugins: [],
+    diagnostics: [],
+  })),
 }));
 const { loadBundledPluginPublicArtifactModuleSyncMock } = vi.hoisted(() => ({
   loadBundledPluginPublicArtifactModuleSyncMock: vi.fn(
@@ -26,15 +29,8 @@ const { loadBundledPluginPublicArtifactModuleSyncMock } = vi.hoisted(() => ({
   ),
 }));
 
-vi.mock("../plugins/plugin-metadata-snapshot.js", () => ({
-  loadPluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
-  resolvePluginMetadataSnapshot: (params: unknown) => {
-    const snapshot = loadPluginMetadataSnapshotMock(params);
-    return {
-      ...snapshot,
-      manifestRegistry: { plugins: snapshot.plugins, diagnostics: [] },
-    };
-  },
+vi.mock("../config/io.plugin-metadata.js", () => ({
+  resolveConfigWidePluginManifestRegistry: resolveConfigWidePluginManifestRegistryMock,
 }));
 
 vi.mock("../plugins/public-surface-loader.js", () => ({
@@ -45,7 +41,7 @@ import { loadChannelSecretContractApi } from "./channel-contract-api.js";
 
 describe("channel contract api explicit fast path", () => {
   beforeEach(() => {
-    loadPluginMetadataSnapshotMock.mockClear();
+    resolveConfigWidePluginManifestRegistryMock.mockClear();
   });
 
   it("resolves bundled channel secret contracts by explicit channel id without manifest scans", () => {
@@ -60,7 +56,7 @@ describe("channel contract api explicit fast path", () => {
       (entry) => entry.id === "channels.discord.accounts.*.token",
     );
     expect(tokenEntry?.id).toBe("channels.discord.accounts.*.token");
-    expect(loadPluginMetadataSnapshotMock).not.toHaveBeenCalled();
+    expect(resolveConfigWidePluginManifestRegistryMock).not.toHaveBeenCalled();
   });
 
   it("does not fall back to the broad contract-api artifact when the secret artifact is missing", () => {
@@ -75,11 +71,9 @@ describe("channel contract api explicit fast path", () => {
       dirName: "missing",
       artifactBasename: "contract-api.js",
     });
-    expect(loadPluginMetadataSnapshotMock).toHaveBeenCalledTimes(1);
-    expect(loadPluginMetadataSnapshotMock.mock.calls[0]?.[0]).toMatchObject({
+    expect(resolveConfigWidePluginManifestRegistryMock).toHaveBeenCalledExactlyOnceWith({
       config: {},
-      workspaceDir: expect.any(String),
-      allowWorkspaceScopedCurrent: true,
+      env: process.env,
     });
   });
 });

@@ -138,11 +138,11 @@ That split lets OpenClaw validate config, explain missing/disabled plugins, and 
 
 ### Plugin metadata snapshot and lookup table
 
-Gateway startup builds one `PluginMetadataSnapshot` for the current config snapshot. The snapshot is metadata-only: it stores the installed plugin index, manifest registry, manifest diagnostics, owner maps, a plugin id normalizer, and manifest records. It does not hold loaded plugin modules, provider SDKs, package contents, or runtime exports.
+Gateway startup prepares one metadata collection containing a `PluginMetadataSnapshot` for each distinct agent workspace and the selected control-plane workspace. Each snapshot stores its installed plugin index, manifest registry, diagnostics, owner maps, plugin id normalizer, and discovery facts without executing plugin runtime code.
 
-Plugin-aware config validation, startup auto-enable, and Gateway plugin bootstrap consume that snapshot instead of rebuilding manifest/index metadata independently. `PluginLookUpTable` is derived from the same snapshot and adds the startup plugin plan for the current runtime config.
+Plugin-aware config validation and startup auto-enable consume a configuration-wide manifest view. That view has no executable index: runtime loading and model preparation select the exact workspace snapshot. `PluginLookUpTable` adds the startup plugin plan without rediscovering manifests. Raw channel catalog candidates remain separate from validated manifests so catalog inspection preserves untrusted candidates and shadowed sources.
 
-After startup, Gateway keeps the current metadata snapshot as a replaceable runtime product. Repeated runtime provider discovery can borrow that snapshot instead of reconstructing the installed index and manifest registry for each provider-catalog pass. The snapshot is cleared or replaced on Gateway shutdown, config/plugin inventory changes, and installed index writes; callers fall back to the cold manifest/index path when no compatible current snapshot exists. Compatibility checks must include plugin discovery roots such as `plugins.load.paths` and the default agent workspace, because workspace plugins are part of the metadata scope.
+After startup, one Gateway owner retains the accepted collection and at most one observed candidate. Repeated configuration reads reuse metadata when its inputs are unchanged, even if the candidate has not been accepted. A rejected reload leaves the serving collection intact. Configuration, environment, secret, and metadata publication share the reload commit boundary; superseded preparations cannot publish. An explicit inventory change invalidates preparation and triggers replacement without first clearing the serving collection.
 
 The snapshot and lookup table keep repeated startup decisions on the fast path:
 
@@ -154,7 +154,7 @@ The snapshot and lookup table keep repeated startup decisions on the fast path:
 - plugin config schema and channel config schema validation
 - startup auto-enable decisions
 
-The safety boundary is snapshot replacement, not mutation. Rebuild the snapshot when config, plugin inventory, install records, or persisted index policy changes. Do not treat it as a broad mutable global registry, and do not keep unbounded historical snapshots. Runtime plugin loading remains separate from metadata snapshots so stale runtime state cannot be hidden behind a metadata cache.
+The safety boundary is snapshot replacement, not mutation. Rebuild metadata when its configuration, plugin inventory, install records, or persisted index policy changes. CLI and Doctor operations own local collections through their asynchronous work and never publish them over Gateway state. Runtime readers select prepared facts; explicit preparation boundaries own cold discovery. Runtime plugin loading remains separate, and configuration, environment triggers, and account authentication remain live inputs rather than cached metadata results.
 
 The cache rule is documented in [Plugin architecture internals](/plugins/architecture-internals#plugin-cache-boundary): manifest and discovery metadata are fresh unless a caller holds an explicit snapshot, lookup table, or manifest registry for the current flow. Hidden metadata caches and wall-clock TTLs are not part of plugin loading. Only runtime loader, module, and dependency-artifact caches may persist after code or installed artifacts are actually loaded.
 

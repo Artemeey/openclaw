@@ -956,7 +956,7 @@ afterEach(() => {
 
 async function runManagedOwnershipScenario(params: {
   kind: "noop" | "hot" | "restart";
-  getPluginMetadataSnapshot?: ManagedReloaderParams["getPluginMetadataSnapshot"];
+  getPluginMetadata?: ManagedReloaderParams["getPluginMetadata"];
   loggingChanged?: boolean;
   queueRevert: boolean;
   secretProviderChanged?: boolean;
@@ -1022,7 +1022,7 @@ async function runManagedOwnershipScenario(params: {
   activateSecretsRuntimeSnapshot(snapshot(initialConfig));
   const reloader = startManagedGatewayConfigReloader({
     initialConfig,
-    getPluginMetadataSnapshot: params.getPluginMetadataSnapshot,
+    getPluginMetadata: params.getPluginMetadata,
     readSnapshot: vi.fn(async () => createValidConfigSnapshot(configB, "hash-b")) as never,
     subscribeToWrites: captureConfigWriteListener(writeListenerRef, false),
     activateRuntimeSecrets: activateRuntimeSecrets as never,
@@ -1064,12 +1064,12 @@ describe("managed reload transaction ownership", () => {
   });
 
   it("rebuilds prepared model owners for a no-op secret-provider publication", async () => {
-    const pluginMetadataSnapshot = {} as never;
+    const pluginMetadata = {} as never;
     const result = await runManagedOwnershipScenario({
       kind: "noop",
       queueRevert: false,
       secretProviderChanged: true,
-      getPluginMetadataSnapshot: () => pluginMetadataSnapshot,
+      getPluginMetadata: () => pluginMetadata,
     });
 
     expect(hoisted.advancePreparedModelRuntimeConfig).not.toHaveBeenCalled();
@@ -1079,7 +1079,7 @@ describe("managed reload transaction ownership", () => {
         gatewayLifecycle: true,
         catalogMode: "static",
         allowGatewaySubagentBinding: true,
-        pluginMetadataSnapshot,
+        pluginMetadata,
       },
     );
   });
@@ -1089,13 +1089,13 @@ describe("managed reload transaction ownership", () => {
     // resolution yields a different object, the rebuilt owner carries an
     // identity no reader supplies, so every strict catalog read rejects it --
     // reviving the failure on the very fallback meant to be safe.
-    const pluginMetadataSnapshot = {} as never;
+    const pluginMetadata = {} as never;
     const result = await runManagedOwnershipScenario({
       kind: "noop",
       queueRevert: false,
       secretProviderChanged: true,
       resolveToDistinctConfig: true,
-      getPluginMetadataSnapshot: () => pluginMetadataSnapshot,
+      getPluginMetadata: () => pluginMetadata,
     });
 
     const resolved = result.resolvedConfigs.at(-1);
@@ -1113,7 +1113,7 @@ describe("managed reload transaction ownership", () => {
       gatewayLifecycle: true,
       catalogMode: "static",
       allowGatewaySubagentBinding: true,
-      pluginMetadataSnapshot,
+      pluginMetadata,
     });
   });
 
@@ -5403,6 +5403,35 @@ describe("gateway plugin hot reload handlers", () => {
     await reloader.stop();
   });
 
+  it("publishes the committed generation before awaiting cron teardown", async () => {
+    const state = createDefaultGatewayReloadState();
+    const drainStarted = createDeferred();
+    const releaseDrain = createDeferred();
+    state.cronState.cron.stopAndDrain = async () => {
+      drainStarted.resolve();
+      await releaseDrain.promise;
+    };
+    const onCommitted = vi.fn();
+    const handlers = createGatewayReloadHandlers({ getState: () => state });
+    const reload = handlers.applyHotReload(
+      createHotTailPlan({ restartCron: true }),
+      { cron: { enabled: true } },
+      {
+        sourceConfig: { cron: { enabled: true } },
+        isCurrent: () => true,
+        onCommitted,
+        publish: async (commit) => await commit(),
+      },
+    );
+    try {
+      await drainStarted.promise;
+      expect(onCommitted).toHaveBeenCalledOnce();
+    } finally {
+      releaseDrain.resolve();
+      await reload;
+    }
+  });
+
   it("keeps mixed reload state old until the plugin replacement commit", async () => {
     const events: string[] = [];
     const reloadPlugins = vi.fn(
@@ -5445,6 +5474,9 @@ describe("gateway plugin hot reload handlers", () => {
           events.push("runtime:publish");
           await commit();
         },
+        onCommitted: () => {
+          events.push("runtime:committed");
+        },
       },
     );
 
@@ -5456,7 +5488,13 @@ describe("gateway plugin hot reload handlers", () => {
     await vi.advanceTimersByTimeAsync(500);
     await reload;
 
-    expect(events).toEqual(["reload:start", "stop:discord", "runtime:publish", "registry:replace"]);
+    expect(events).toEqual([
+      "reload:start",
+      "stop:discord",
+      "runtime:publish",
+      "runtime:committed",
+      "registry:replace",
+    ]);
     expect(handlers.setState).toHaveBeenCalledTimes(1);
   });
 

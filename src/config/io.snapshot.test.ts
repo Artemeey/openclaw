@@ -100,8 +100,8 @@ describe("config snapshot plugin metadata", () => {
 
     expect(result.snapshot).toMatchObject({ exists: false, valid: true });
     expect(loader).toHaveBeenCalledOnce();
-    expect(result.pluginMetadataSnapshot?.configFingerprint).toMatch(/^[a-f0-9]{64}$/u);
-    expect(result.pluginMetadataSnapshot?.index).toMatchObject({
+    expect(result.pluginMetadata?.selectedSnapshot.configFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+    expect(result.pluginMetadata?.selectedSnapshot.index).toMatchObject({
       version: 1,
       hostContractVersion: expect.any(String),
       plugins: expect.any(Array),
@@ -117,7 +117,7 @@ describe("config snapshot plugin metadata", () => {
     const result = await readConfigFileSnapshotWithPluginMetadataFromContext(context);
 
     expect(result.snapshot.valid).toBe(false);
-    expect(result.pluginMetadataSnapshot).toBeUndefined();
+    expect(result.pluginMetadata).toBeUndefined();
     expect(loader).not.toHaveBeenCalled();
   });
 });

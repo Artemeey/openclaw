@@ -1,37 +1,34 @@
 // Load context tests cover agent and workspace context resolution for plugin runtimes.
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeRegistry } from "../../config/plugin-auto-enable.test-helpers.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 
 const loadConfigMock = vi.fn<typeof import("../../config/config.js").loadConfig>();
 const applyPluginAutoEnableMock =
   vi.fn<typeof import("../../config/plugin-auto-enable.js").applyPluginAutoEnable>();
-const fingerprintPluginAutoEnableConfigMock = vi.fn((config: OpenClawConfig) =>
-  JSON.stringify(config),
-);
-const fingerprintPluginAutoEnableEnvMock = vi.fn((env: NodeJS.ProcessEnv) => JSON.stringify(env));
 const resolvePluginControlPlaneWorkspaceMock = vi.fn(
   (params: { config: OpenClawConfig; env?: NodeJS.ProcessEnv; workspaceDir?: string }) => ({
     workspaceDir: params.workspaceDir ?? "/resolved-workspace",
     workspaceScope: "selected" as const,
   }),
 );
-const manifestRegistry = { diagnostics: [], plugins: [] };
+const manifestRegistry: ReturnType<typeof makeRegistry> = { diagnostics: [], plugins: [] };
 const metadataSnapshot = {
   configFingerprint: "fingerprint",
   diagnostics: [],
   index: { plugins: [], policyHash: "policy" },
   manifestRegistry,
-  plugins: [],
+  plugins: manifestRegistry.plugins,
   policyHash: "policy",
   workspaceDir: "/resolved-workspace",
 };
 type MetadataSnapshotMock = typeof metadataSnapshot & { pluginIds?: readonly string[] };
-const loadPluginMetadataSnapshotMock = vi.fn((): MetadataSnapshotMock => metadataSnapshot);
-const rebasePluginMetadataSnapshotManifestRegistryMock = vi.fn(
-  (snapshot: MetadataSnapshotMock) => snapshot,
+const loadPluginMetadataSnapshotMock = vi.fn(
+  (_params?: unknown): MetadataSnapshotMock => metadataSnapshot,
 );
-const resolveConfigWidePluginManifestRegistryMock = vi.fn(() => manifestRegistry);
-const isPluginMetadataSnapshotCompatibleMock = vi.fn(() => true);
+const resolveConfigWidePluginManifestRegistryMock = vi.fn<
+  typeof import("../../config/io.plugin-metadata.js").resolveConfigWidePluginManifestRegistry
+>(() => manifestRegistry);
 
 let resolvePluginRuntimeLoadContext: typeof import("./load-context.js").resolvePluginRuntimeLoadContext;
 let buildPluginRuntimeLoadOptions: typeof import("./load-context.js").buildPluginRuntimeLoadOptions;
@@ -48,11 +45,6 @@ vi.mock("../../config/plugin-auto-enable.js", () => ({
   applyPluginAutoEnable: applyPluginAutoEnableMock,
 }));
 
-vi.mock("../../config/plugin-auto-enable.apply.js", () => ({
-  fingerprintPluginAutoEnableConfig: fingerprintPluginAutoEnableConfigMock,
-  fingerprintPluginAutoEnableEnv: fingerprintPluginAutoEnableEnvMock,
-}));
-
 vi.mock("../control-plane-workspace.js", () => ({
   resolvePluginControlPlaneWorkspace: resolvePluginControlPlaneWorkspaceMock,
 }));
@@ -62,10 +54,19 @@ vi.mock("../../config/io.plugin-metadata.js", () => ({
 }));
 
 vi.mock("../plugin-metadata-snapshot.js", () => ({
-  isPluginMetadataSnapshotCompatible: isPluginMetadataSnapshotCompatibleMock,
   loadPluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
-  rebasePluginMetadataSnapshotManifestRegistry: rebasePluginMetadataSnapshotManifestRegistryMock,
   resolvePluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
+}));
+
+vi.mock("../plugin-metadata-collection.js", () => ({
+  getCurrentPluginMetadataOwner: () => undefined,
+  getScopedPluginMetadata: () => undefined,
+  withPluginMetadataCollectionScope: (_metadata: unknown, run: () => unknown) => run(),
+  preparePluginMetadata: (params: unknown) => ({
+    selectedSnapshot: loadPluginMetadataSnapshotMock(params),
+  }),
+  getPluginMetadataWorkspaceSnapshot: (metadata: { selectedSnapshot: MetadataSnapshotMock }) =>
+    metadata.selectedSnapshot,
 }));
 
 describe("resolvePluginRuntimeLoadContext", () => {
@@ -80,12 +81,7 @@ describe("resolvePluginRuntimeLoadContext", () => {
   beforeEach(() => {
     loadConfigMock.mockReset();
     applyPluginAutoEnableMock.mockReset();
-    fingerprintPluginAutoEnableConfigMock.mockClear();
-    fingerprintPluginAutoEnableEnvMock.mockClear();
-    isPluginMetadataSnapshotCompatibleMock.mockReset();
-    isPluginMetadataSnapshotCompatibleMock.mockReturnValue(true);
     loadPluginMetadataSnapshotMock.mockClear();
-    rebasePluginMetadataSnapshotManifestRegistryMock.mockClear();
     resolveConfigWidePluginManifestRegistryMock.mockClear();
     resolvePluginControlPlaneWorkspaceMock.mockClear();
 
@@ -98,6 +94,8 @@ describe("resolvePluginRuntimeLoadContext", () => {
     clearRuntimeConfigSnapshot();
     clearPluginMetadataLifecycleCaches();
   });
+
+  afterEach(() => vi.unstubAllEnvs());
 
   it("builds the runtime plugin load context from the auto-enabled config", () => {
     const rawConfig = { plugins: {} };
@@ -139,7 +137,6 @@ describe("resolvePluginRuntimeLoadContext", () => {
       preferBuiltPluginArtifacts: false,
     });
     expect(loadPluginMetadataSnapshotMock).toHaveBeenCalledWith({
-      allowWorkspaceScopedCurrent: true,
       config: rawConfig,
       env,
       workspaceDir: "/resolved-workspace",
@@ -148,26 +145,28 @@ describe("resolvePluginRuntimeLoadContext", () => {
       config: rawConfig,
       env,
       manifestRegistry,
+      discovery: undefined,
     });
     expect(resolvePluginControlPlaneWorkspaceMock).toHaveBeenNthCalledWith(1, {
       config: rawConfig,
       env,
       workspaceDir: undefined,
     });
-    expect(resolvePluginControlPlaneWorkspaceMock).toHaveBeenNthCalledWith(2, {
-      config: resolvedConfig,
-      env,
-      workspaceDir: undefined,
-    });
     expect(resolveConfigWidePluginManifestRegistryMock).toHaveBeenCalledWith({
       config: rawConfig,
       env,
+      metadata: expect.anything(),
     });
   });
 
   it("reuses a prepared metadata snapshot without resolving metadata again", () => {
     const config = { plugins: {} };
     const env = { HOME: "/tmp/openclaw-home" } as NodeJS.ProcessEnv;
+    applyPluginAutoEnableMock.mockReturnValue({
+      config: { plugins: { entries: { demo: { enabled: true } } } },
+      changes: ["demo configured"],
+      autoEnabledReasons: { demo: ["demo configured"] },
+    });
 
     const context = resolvePluginRuntimeLoadContext({
       config,
@@ -177,7 +176,32 @@ describe("resolvePluginRuntimeLoadContext", () => {
     });
 
     expect(context.metadataSnapshot).toBe(metadataSnapshot);
+    expect(context.config.plugins?.entries?.demo?.enabled).toBe(true);
     expect(loadPluginMetadataSnapshotMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps config-wide activation policy separate from the executable workspace inventory", () => {
+    const selectedRegistry = makeRegistry([{ id: "selected", channels: [] }]);
+    const wideRegistry = makeRegistry([
+      { id: "selected", channels: [] },
+      { id: "another-workspace", channels: [] },
+    ]);
+    const snapshot = {
+      ...metadataSnapshot,
+      manifestRegistry: selectedRegistry,
+      plugins: selectedRegistry.plugins,
+    };
+    loadPluginMetadataSnapshotMock.mockReturnValueOnce(snapshot);
+    resolveConfigWidePluginManifestRegistryMock.mockReturnValueOnce(wideRegistry);
+
+    const context = resolvePluginRuntimeLoadContext({ config: {}, env: {} });
+
+    expect(applyPluginAutoEnableMock).toHaveBeenCalledWith(
+      expect.objectContaining({ manifestRegistry: wideRegistry }),
+    );
+    expect(context.manifestRegistry).toBe(selectedRegistry);
+    expect(context.metadataSnapshot).toBe(snapshot);
+    expect(context.metadataSnapshot?.plugins.map((plugin) => plugin.id)).toEqual(["selected"]);
   });
 
   it("keeps derived metadata operation-local", () => {
@@ -214,56 +238,35 @@ describe("resolvePluginRuntimeLoadContext", () => {
       config: runtimeConfig,
       env: process.env,
       manifestRegistry,
+      discovery: undefined,
     });
   });
 
-  it("reuses auto-enable results until Gateway config or metadata changes", () => {
+  it("re-evaluates current environment selection without replacing the prepared inventory", async () => {
     const rawConfig = { plugins: {} };
     const env = process.env;
-    const initialSnapshot = { ...metadataSnapshot, pluginIds: ["openai"] };
-    loadPluginMetadataSnapshotMock
-      .mockReturnValueOnce(initialSnapshot)
-      .mockReturnValueOnce({ ...initialSnapshot, pluginIds: ["openai"] })
-      .mockReturnValueOnce({ ...initialSnapshot, policyHash: "changed" })
-      .mockReturnValueOnce(initialSnapshot);
+    applyPluginAutoEnableMock.mockImplementation(({ env: currentEnv }) => ({
+      config: {
+        plugins: {
+          entries: { demo: { enabled: currentEnv?.OPENCLAW_TEST_RUNTIME_SELECTION === "enabled" } },
+        },
+      },
+      changes: [],
+      autoEnabledReasons: {},
+    }));
+    const options = { config: rawConfig, env, metadataSnapshot: metadataSnapshot as never };
+    vi.stubEnv("OPENCLAW_TEST_RUNTIME_SELECTION", "disabled");
+    const first = resolvePluginRuntimeLoadContext(options);
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+    vi.stubEnv("OPENCLAW_TEST_RUNTIME_SELECTION", "enabled");
+    const second = resolvePluginRuntimeLoadContext(options);
 
-    const first = resolvePluginRuntimeLoadContext({ config: rawConfig, env });
-    const second = resolvePluginRuntimeLoadContext({ config: rawConfig, env });
-    resolvePluginRuntimeLoadContext({ config: rawConfig, env });
-    resolvePluginRuntimeLoadContext({ config: { plugins: {} }, env });
-
-    expect(second.config).toBe(first.config);
-    expect(applyPluginAutoEnableMock).toHaveBeenCalledTimes(3);
-  });
-
-  it("uses reference fast paths, content fingerprints, and lifecycle invalidation", () => {
-    const firstConfig: OpenClawConfig = { plugins: {} };
-    const env = process.env;
-    const first = resolvePluginRuntimeLoadContext({ config: firstConfig, env });
-
-    for (let index = 0; index < 20; index += 1) {
-      expect(resolvePluginRuntimeLoadContext({ config: firstConfig, env }).config).toBe(
-        first.config,
-      );
-    }
-    expect(applyPluginAutoEnableMock).toHaveBeenCalledTimes(1);
-    expect(fingerprintPluginAutoEnableConfigMock).toHaveBeenCalledTimes(1);
-    expect(fingerprintPluginAutoEnableEnvMock).toHaveBeenCalledTimes(1);
-
-    const replacementConfig: OpenClawConfig = { plugins: {} };
-    expect(resolvePluginRuntimeLoadContext({ config: replacementConfig, env }).config).toBe(
-      first.config,
-    );
-    expect(applyPluginAutoEnableMock).toHaveBeenCalledTimes(1);
-    expect(fingerprintPluginAutoEnableConfigMock).toHaveBeenCalledTimes(2);
-    expect(fingerprintPluginAutoEnableEnvMock).toHaveBeenCalledTimes(1);
-
-    clearPluginMetadataLifecycleCaches();
-    resolvePluginRuntimeLoadContext({ config: replacementConfig, env });
-
-    expect(applyPluginAutoEnableMock).toHaveBeenCalledTimes(2);
-    expect(fingerprintPluginAutoEnableConfigMock).toHaveBeenCalledTimes(3);
-    expect(fingerprintPluginAutoEnableEnvMock).toHaveBeenCalledTimes(2);
+    expect(first.config.plugins?.entries?.demo?.enabled).toBe(false);
+    expect(second.config.plugins?.entries?.demo?.enabled).toBe(true);
+    expect(second.metadataSnapshot).toBe(first.metadataSnapshot);
+    expect(loadPluginMetadataSnapshotMock).not.toHaveBeenCalled();
   });
 
   it("threads install records from the metadata snapshot into the context and load options", () => {
@@ -300,13 +303,12 @@ describe("resolvePluginRuntimeLoadContext", () => {
     const env = { HOME: "/tmp/openclaw-home" } as NodeJS.ProcessEnv;
     loadPluginMetadataSnapshotMock.mockReturnValueOnce({ ...metadataSnapshot, pluginIds });
 
-    resolvePluginRuntimeLoadContext({ config, env, onlyPluginIds: pluginIds });
+    const context = resolvePluginRuntimeLoadContext({ config, env, onlyPluginIds: pluginIds });
 
+    expect(context.metadataSnapshot?.pluginIds).toEqual(pluginIds);
     expect(loadPluginMetadataSnapshotMock).toHaveBeenCalledExactlyOnceWith({
-      allowWorkspaceScopedCurrent: true,
       config,
       env,
-      pluginIds,
       workspaceDir: "/resolved-workspace",
     });
   });

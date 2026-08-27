@@ -2,6 +2,11 @@
 // auto-enable behavior, model defaults, and recovery diagnostics.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConfigFileSnapshot, ModelDefinitionConfig, OpenClawConfig } from "../config/types.js";
+import type {
+  PluginMetadataOwner,
+  PreparedPluginMetadata,
+} from "../plugins/plugin-metadata-collection.js";
+import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import { buildTestConfigSnapshot } from "./test-helpers.config-snapshots.js";
 
@@ -58,6 +63,28 @@ const pluginMetadataSnapshot = vi.hoisted((): PluginMetadataSnapshot => {
     metrics: zeroMetrics,
   };
 });
+const pluginMetadata: PreparedPluginMetadata = {
+  workspaces: new Map([[undefined, pluginMetadataSnapshot]]),
+  configWorkspaceDirs: [undefined],
+  envFingerprint: resolvePluginMetadataEnvFingerprint(),
+  selectedSnapshot: pluginMetadataSnapshot,
+  manifestRegistry: pluginMetadataSnapshot.manifestRegistry,
+  plugins: pluginMetadataSnapshot.plugins,
+  byPluginId: pluginMetadataSnapshot.byPluginId,
+  owners: pluginMetadataSnapshot.owners,
+  diagnostics: pluginMetadataSnapshot.diagnostics,
+  channelCatalog: { read: () => [] },
+};
+const pluginMetadataOwner: PluginMetadataOwner = {
+  prepare: () => pluginMetadata,
+  publish: () => {},
+  getActive: () => undefined,
+  isPreparedCurrent: () => true,
+  readSnapshot: () => undefined,
+  readConfigWide: () => undefined,
+  invalidatePreparation: () => {},
+  dispose: () => {},
+};
 vi.mock("../config/io.js", () => ({
   readConfigFileSnapshot: vi.fn(),
   readConfigFileSnapshotWithPluginMetadata: vi.fn(),
@@ -163,7 +190,7 @@ function buildRuntimeSnapshot(
 function mockStartupSnapshot(snapshot: ConfigFileSnapshot) {
   vi.mocked(configIo.readConfigFileSnapshotWithPluginMetadata).mockResolvedValueOnce({
     snapshot,
-    pluginMetadataSnapshot,
+    pluginMetadata,
   });
 }
 
@@ -183,7 +210,7 @@ async function expectStartupResult(params: {
   ).resolves.toEqual({
     snapshot: params.snapshot,
     wroteConfig: false,
-    pluginMetadataSnapshot,
+    pluginMetadata,
   });
 }
 
@@ -272,6 +299,7 @@ function loadTestStartup(params: {
     minimalTestGateway: params.minimalTestGateway ?? true,
     log: params.log ?? testStartupLog(),
     initialSnapshotRead: params.initialSnapshotRead,
+    pluginMetadataOwner,
   });
 }
 
@@ -297,10 +325,10 @@ function installConfigIoMockDefaults() {
     if (!snapshot) {
       throw new Error(
         "configIo.readConfigFileSnapshot mock returned no snapshot; " +
-          "mock readConfigFileSnapshotWithPluginMetadata with { snapshot, pluginMetadataSnapshot }.",
+          "mock readConfigFileSnapshotWithPluginMetadata with { snapshot, pluginMetadata }.",
       );
     }
-    return snapshot.valid ? { snapshot, pluginMetadataSnapshot } : { snapshot };
+    return snapshot.valid ? { snapshot, pluginMetadata } : { snapshot };
   });
   writeConfig.mockResolvedValue({
     persistedHash: "test-persisted-hash",
@@ -378,7 +406,7 @@ describe("gateway startup config validation", () => {
       log,
       initialSnapshotRead: {
         snapshot,
-        pluginMetadataSnapshot,
+        pluginMetadata,
       },
     });
 

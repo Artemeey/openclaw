@@ -5,16 +5,11 @@ import {
   setCurrentPluginMetadataSnapshot,
 } from "../current-plugin-metadata-snapshot.js";
 import { resolveInstalledPluginIndexPolicyHash } from "../installed-plugin-index-policy.js";
+import * as pluginMetadata from "../plugin-metadata-collection.js";
+import { resolvePluginMetadataEnvFingerprint } from "../plugin-metadata-env.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugin-metadata-lifecycle.js";
 import type { PluginMetadataSnapshot } from "../plugin-metadata-snapshot.types.js";
 import { resolvePluginRuntimeLoadContext } from "./load-context.js";
-
-const resolvePluginMetadataSnapshotMock = vi.hoisted(() => vi.fn());
-
-vi.mock("../plugin-metadata-snapshot.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../plugin-metadata-snapshot.js")>()),
-  resolvePluginMetadataSnapshot: resolvePluginMetadataSnapshotMock,
-}));
 
 function createSnapshot(params: {
   config: OpenClawConfig;
@@ -65,7 +60,7 @@ function createSnapshot(params: {
 
 describe("plugin runtime load context current snapshot ownership", () => {
   afterEach(() => {
-    resolvePluginMetadataSnapshotMock.mockReset();
+    vi.restoreAllMocks();
     clearPluginMetadataLifecycleCaches();
   });
 
@@ -86,7 +81,18 @@ describe("plugin runtime load context current snapshot ownership", () => {
       config: lifecycleConfig,
       workspaceDir: lifecycleWorkspace,
     });
-    resolvePluginMetadataSnapshotMock.mockReturnValue(operationSnapshot);
+    vi.spyOn(pluginMetadata, "preparePluginMetadata").mockReturnValue({
+      workspaces: new Map([[operationWorkspace, operationSnapshot]]),
+      configWorkspaceDirs: [operationWorkspace],
+      envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
+      selectedSnapshot: operationSnapshot,
+      manifestRegistry: operationSnapshot.manifestRegistry,
+      plugins: operationSnapshot.plugins,
+      byPluginId: operationSnapshot.byPluginId,
+      owners: operationSnapshot.owners,
+      diagnostics: operationSnapshot.diagnostics,
+      channelCatalog: { read: () => [] },
+    });
 
     const context = resolvePluginRuntimeLoadContext({
       config: operationConfig,

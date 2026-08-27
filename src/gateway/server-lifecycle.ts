@@ -7,7 +7,6 @@ import { getRuntimeConfig } from "../config/io.js";
 import { upsertPresence } from "../infra/system-presence.js";
 import { startDiagnosticHeartbeat, stopDiagnosticHeartbeat } from "../logging/diagnostic.js";
 import type { createSubsystemLogger } from "../logging/subsystem.js";
-import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { clearSecretsRuntimeSnapshotState } from "../secrets/runtime-state.js";
 import {
   recordRemoteNodeInfo,
@@ -433,7 +432,7 @@ export async function prepareGatewayLifecycle(params: {
     await beginClosePrelude();
     disposeNodeConnectionNotifications(nodeRegistry);
     watchNodeHttpRuntime.close();
-    clearPluginMetadataLifecycleCaches();
+    runtime.disposePluginMetadataOwner();
     await shutdownRuntime.runGatewayClosePrelude({
       ...(diagnosticsEnabled ? { stopDiagnostics: stopDiagnosticHeartbeat } : {}),
       clearSkillsRefreshTimer: () => {

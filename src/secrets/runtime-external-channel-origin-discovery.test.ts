@@ -1,25 +1,14 @@
 /** Tests external channel origin discovery for secrets runtime loading. */
 import { describe, expect, it, vi } from "vitest";
 
-const { loadPluginMetadataSnapshotMock, loadChannelSecretContractApiMock } = vi.hoisted(() => ({
-  loadPluginMetadataSnapshotMock: vi.fn(),
-  loadChannelSecretContractApiMock: vi.fn(),
-}));
+const { resolveConfigWidePluginManifestRegistryMock, loadChannelSecretContractApiMock } =
+  vi.hoisted(() => ({
+    resolveConfigWidePluginManifestRegistryMock: vi.fn(),
+    loadChannelSecretContractApiMock: vi.fn(),
+  }));
 
-vi.mock("../plugins/plugin-metadata-snapshot.js", () => ({
-  loadPluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
-  resolvePluginMetadataSnapshot: (params: unknown) => {
-    const snapshot = loadPluginMetadataSnapshotMock(params) as {
-      plugins: Array<{ id: string; origin: string }>;
-    };
-    return {
-      ...snapshot,
-      manifestRegistry: { plugins: snapshot.plugins, diagnostics: [] },
-    };
-  },
-  listPluginOriginsFromMetadataSnapshot: (snapshot: {
-    plugins: Array<{ id: string; origin: string }>;
-  }) => new Map(snapshot.plugins.map((record) => [record.id, record.origin])),
+vi.mock("../config/io.plugin-metadata.js", () => ({
+  resolveConfigWidePluginManifestRegistry: resolveConfigWidePluginManifestRegistryMock,
 }));
 
 vi.mock("./channel-contract-api.js", () => ({
@@ -55,8 +44,9 @@ function requireLoadChannelSecretContractApiCall(): {
 
 describe("secrets runtime external channel origin discovery", () => {
   it("discovers loadable plugins for channel SecretRefs when plugins.entries is absent", async () => {
-    loadPluginMetadataSnapshotMock.mockReturnValue({
+    resolveConfigWidePluginManifestRegistryMock.mockReturnValue({
       plugins: [{ id: "discord", origin: "global" }],
+      diagnostics: [],
     });
     loadChannelSecretContractApiMock.mockReturnValue({
       collectRuntimeConfigAssignments: (params: {
@@ -102,7 +92,7 @@ describe("secrets runtime external channel origin discovery", () => {
     });
 
     expect(requireDiscordConfig(snapshot).token).toBe("resolved-discord-token");
-    expect(loadPluginMetadataSnapshotMock).toHaveBeenCalled();
+    expect(resolveConfigWidePluginManifestRegistryMock).toHaveBeenCalled();
     const loadCall = requireLoadChannelSecretContractApiCall();
     expect(loadCall.channelId).toBe("discord");
     expect(loadCall.loadablePluginOrigins).toEqual(new Map([["discord", "global"]]));

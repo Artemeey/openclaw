@@ -85,7 +85,6 @@ export function loadConfigFromContext(
       }
     }
     const pluginMetadata = context.createValidationPluginMetadataSnapshotLoader({
-      effectiveConfigRaw,
       env: deps.env,
     });
     const validated = validateConfigObjectWithPlugins(validationConfigRaw, {

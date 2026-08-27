@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import type { ModelRegistry } from "./sessions/model-registry.js";
 
@@ -8,6 +9,7 @@ type StaticCatalogResolver = ReturnType<CreateStaticCatalogResolver>;
 
 const mocks = vi.hoisted(() => {
   const metadataSnapshot = {
+    discovery: { candidates: [], diagnostics: [] },
     plugins: [],
     pluginIds: [],
     index: { plugins: [{ pluginId: "openai", enabled: true }] },
@@ -108,6 +110,26 @@ vi.mock("../plugins/plugin-metadata-snapshot.js", async (importOriginal) => ({
   isPluginMetadataSnapshotCompatible: () => true,
   loadPluginMetadataSnapshot: () => mocks.metadataSnapshot,
   resolvePluginMetadataSnapshot: mocks.resolvePluginMetadataSnapshot,
+}));
+
+vi.mock("../plugins/plugin-metadata-collection.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../plugins/plugin-metadata-collection.js")>()),
+  preparePluginMetadata: ({
+    workspaceDir,
+    env,
+  }: {
+    workspaceDir?: string;
+    env?: NodeJS.ProcessEnv;
+  }) => ({
+    workspaces: new Map([[workspaceDir, mocks.metadataSnapshot]]),
+    configWorkspaceDirs: [workspaceDir],
+    envFingerprint: resolvePluginMetadataEnvFingerprint(env),
+    selectedSnapshot: mocks.metadataSnapshot,
+    manifestRegistry: mocks.metadataSnapshot.manifestRegistry,
+    plugins: mocks.metadataSnapshot.plugins,
+    owners: mocks.metadataSnapshot.owners,
+  }),
+  getPluginMetadataWorkspaceSnapshot: () => mocks.metadataSnapshot,
 }));
 
 vi.mock("./agent-auth-discovery.js", () => ({
@@ -428,9 +450,6 @@ describe("prepared model runtime Gateway catalog mode", () => {
     );
     expect(mocks.buildPreparedModelCatalogSnapshot).not.toHaveBeenCalled();
     expect(mocks.loadStaticCatalog).not.toHaveBeenCalled();
-    // The prepared plugin context and model-id normalization probe the same
-    // published metadata generation without starting catalog discovery.
-    expect(mocks.resolvePluginMetadataSnapshot).toHaveBeenCalledTimes(2);
     expect(configuredRuntimeModelCount).toBe(1);
     expect(generatedCatalogReadCount).toBe(0);
     const snapshot = getPreparedModelRuntimeSnapshot({

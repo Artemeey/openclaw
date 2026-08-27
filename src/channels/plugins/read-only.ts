@@ -3,7 +3,6 @@
  *
  * Builds lightweight channel plugin views from config, manifests, and setup metadata.
  */
-import { createHash } from "node:crypto";
 import {
   sortUniqueStrings,
   uniqueStrings,
@@ -11,10 +10,8 @@ import {
 import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
 import { tryResolveConfiguredAgentWorkspaceDir } from "../../agents/agent-scope.js";
 import { resolveConfigWidePluginManifestRegistry } from "../../config/io.plugin-metadata.js";
-import { resolveRuntimeConfigCacheKey } from "../../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { pruneMapToMaxSize } from "../../infra/map-size.js";
 import { isBlockedObjectKey } from "../../infra/prototype-keys.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
@@ -35,7 +32,6 @@ import {
   getCachedPluginModuleLoader,
   type PluginModuleLoaderCache,
 } from "../../plugins/plugin-module-loader-cache.js";
-import { getActivePluginChannelRegistryVersion } from "../../plugins/runtime.js";
 import { resolveNormalizedAccountEntry } from "../../routing/account-lookup.js";
 import {
   DEFAULT_ACCOUNT_ID,
@@ -64,7 +60,7 @@ type ReadOnlyChannelPluginOptions = {
   activationSourceConfig?: OpenClawConfig;
   includePersistedAuthState?: boolean;
   includeSetupFallbackPlugins?: boolean;
-  metadataSnapshot?: PluginMetadataSnapshot;
+  metadataSnapshot?: Pick<PluginMetadataSnapshot, "plugins">;
 };
 
 type ReadOnlyChannelPluginResolution = {
@@ -82,97 +78,27 @@ type ReadOnlyChannelPluginLoadFailure = {
   source?: string;
 };
 
-const readOnlyChannelPluginResolutionCache = new Map<string, ReadOnlyChannelPluginResolution>();
-const MAX_READ_ONLY_CHANNEL_PLUGIN_RESOLUTION_CACHE_SIZE = 8;
-const readOnlyChannelPluginObjectIds = new WeakMap<ChannelPlugin, number>();
-let nextReadOnlyChannelPluginObjectId = 1;
+type ManifestChannelMetadata = {
+  plugins: Map<string, ChannelPlugin>;
+  setupPlugin?: ChannelPlugin;
+};
+
+// Descriptors belong to immutable manifest records; config, auth, and runtime
+// registry selection remain live and must never be retained with them.
+let channelMetadataByManifest = new WeakMap<PluginManifestRecord, ManifestChannelMetadata>();
 
 registerPluginMetadataProcessMemoLifecycleClear(() => {
-  readOnlyChannelPluginResolutionCache.clear();
+  channelMetadataByManifest = new WeakMap();
   clearPluginModuleLoaderLifecycleCache({ moduleLoaders, moduleRoots });
 });
 
-function cloneReadOnlyChannelPluginResolution(
-  resolution: ReadOnlyChannelPluginResolution,
-): ReadOnlyChannelPluginResolution {
-  return {
-    plugins: [...resolution.plugins],
-    manifestRecords: [...resolution.manifestRecords],
-    configuredChannelIds: [...resolution.configuredChannelIds],
-    missingConfiguredChannelIds: [...resolution.missingConfiguredChannelIds],
-    loadFailures: resolution.loadFailures.map((failure) => ({ ...failure })),
-  };
-}
-
-function rememberReadOnlyChannelPluginResolution(
-  key: string,
-  resolution: ReadOnlyChannelPluginResolution,
-): void {
-  if (readOnlyChannelPluginResolutionCache.has(key)) {
-    readOnlyChannelPluginResolutionCache.delete(key);
+function getManifestChannelMetadata(record: PluginManifestRecord): ManifestChannelMetadata {
+  let metadata = channelMetadataByManifest.get(record);
+  if (!metadata) {
+    metadata = { plugins: new Map() };
+    channelMetadataByManifest.set(record, metadata);
   }
-  readOnlyChannelPluginResolutionCache.set(key, cloneReadOnlyChannelPluginResolution(resolution));
-  pruneMapToMaxSize(
-    readOnlyChannelPluginResolutionCache,
-    MAX_READ_ONLY_CHANNEL_PLUGIN_RESOLUTION_CACHE_SIZE,
-  );
-}
-
-function resolveReadOnlyChannelPluginResolutionCacheKey(params: {
-  cfg: OpenClawConfig;
-  options: ReadOnlyChannelPluginOptions;
-  env: NodeJS.ProcessEnv;
-  loadedChannelPlugins: readonly ChannelPlugin[];
-  workspaceDir?: string;
-}): string | null {
-  if (params.env !== process.env) {
-    return null;
-  }
-  if (params.options.includePersistedAuthState !== false) {
-    return null;
-  }
-  const activationSourceConfig = params.options.activationSourceConfig ?? params.cfg;
-  return [
-    resolveRuntimeConfigCacheKey(params.cfg),
-    activationSourceConfig === params.cfg
-      ? "activation:same"
-      : resolveRuntimeConfigCacheKey(activationSourceConfig),
-    `channel-registry:${getActivePluginChannelRegistryVersion()}`,
-    `loaded-channels:${fingerprintLoadedChannelPlugins(params.loadedChannelPlugins)}`,
-    `env:${hashEnvironment(params.env)}`,
-    `cwd:${process.cwd()}`,
-    `state:${params.options.stateDir ?? ""}`,
-    `workspace:${params.workspaceDir}`,
-    `setup:${params.options.includeSetupFallbackPlugins === true}`,
-  ].join("\0");
-}
-
-function resolveReadOnlyChannelPluginObjectId(plugin: ChannelPlugin): number {
-  const existing = readOnlyChannelPluginObjectIds.get(plugin);
-  if (existing !== undefined) {
-    return existing;
-  }
-  const next = nextReadOnlyChannelPluginObjectId;
-  nextReadOnlyChannelPluginObjectId += 1;
-  readOnlyChannelPluginObjectIds.set(plugin, next);
-  return next;
-}
-
-function fingerprintLoadedChannelPlugins(plugins: readonly ChannelPlugin[]): string {
-  return plugins
-    .map((plugin) => `${plugin.id}:${resolveReadOnlyChannelPluginObjectId(plugin)}`)
-    .join(",");
-}
-
-function hashEnvironment(env: NodeJS.ProcessEnv): string {
-  const hash = createHash("sha256");
-  for (const key of Object.keys(env).toSorted((left, right) => left.localeCompare(right))) {
-    hash.update(key);
-    hash.update("\0");
-    hash.update(env[key] ?? "");
-    hash.update("\0");
-  }
-  return hash.digest("base64url");
+  return metadata;
 }
 
 function addChannelPlugins(
@@ -330,6 +256,11 @@ function buildManifestChannelPlugin(params: {
   if (!isSafeManifestChannelId(params.channelId)) {
     return undefined;
   }
+  const metadata = getManifestChannelMetadata(params.record);
+  const cached = metadata.plugins.get(params.channelId);
+  if (cached) {
+    return cached;
+  }
   const catalogMeta =
     params.record.channelCatalogMeta?.id === params.channelId
       ? params.record.channelCatalogMeta
@@ -364,7 +295,7 @@ function buildManifestChannelPlugin(params: {
   const commands = normalizeChannelCommandDefaults(
     channelConfig?.commands ?? catalogMeta?.commands,
   );
-  return {
+  const plugin: ChannelPlugin = {
     id: params.channelId,
     meta: {
       id: params.channelId,
@@ -413,6 +344,8 @@ function buildManifestChannelPlugin(params: {
         }),
     },
   };
+  metadata.plugins.set(params.channelId, plugin);
+  return plugin;
 }
 
 function canUseManifestChannelPlugin(record: PluginManifestRecord, channelId: string): boolean {
@@ -433,6 +366,10 @@ function loadSetupChannelPluginFromManifestRecord(params: {
 }): { plugin?: ChannelPlugin; failure?: ReadOnlyChannelPluginLoadFailure } {
   if (!params.record.setupSource || !params.record.channels.includes(params.channelId)) {
     return {};
+  }
+  const metadata = getManifestChannelMetadata(params.record);
+  if (metadata.setupPlugin) {
+    return { plugin: metadata.setupPlugin };
   }
   try {
     moduleRoots.set(params.record.setupSource, params.record.rootDir);
@@ -468,6 +405,9 @@ function loadSetupChannelPluginFromManifestRecord(params: {
     ) {
       return {};
     }
+    // Failed or empty registrations remain retryable; only validated setup
+    // metadata shares the manifest's lifetime.
+    metadata.setupPlugin = registration.plugin;
     return { plugin: registration.plugin };
   } catch (error) {
     const detail = formatErrorMessage(error);
@@ -711,17 +651,6 @@ export function resolveReadOnlyChannelPluginsForConfig(
   const env = options.env ?? process.env;
   const workspaceDir = resolveReadOnlyWorkspaceDir(cfg, options);
   const loadedChannelPlugins = listChannelPlugins();
-  const cacheKey = resolveReadOnlyChannelPluginResolutionCacheKey({
-    cfg,
-    options,
-    env,
-    loadedChannelPlugins,
-    workspaceDir,
-  });
-  const cached = cacheKey ? readOnlyChannelPluginResolutionCache.get(cacheKey) : undefined;
-  if (cached) {
-    return cloneReadOnlyChannelPluginResolution(cached);
-  }
   const manifestRecords =
     options.metadataSnapshot?.plugins ??
     (options.workspaceDir !== undefined
@@ -866,16 +795,12 @@ export function resolveReadOnlyChannelPluginsForConfig(
   }
 
   const plugins = [...byId.values()];
-  const resolution = {
+  return {
     plugins,
     manifestRecords,
     configuredChannelIds,
     missingConfiguredChannelIds: configuredChannelIds.filter((channelId) => !byId.has(channelId)),
     loadFailures,
   };
-  if (cacheKey) {
-    rememberReadOnlyChannelPluginResolution(cacheKey, resolution);
-  }
-  return cloneReadOnlyChannelPluginResolution(resolution);
 }
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

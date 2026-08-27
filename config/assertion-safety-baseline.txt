@@ -2667,7 +2667,7 @@ src/config/io.snapshot.ts	1
 src/config/io.warnings.ts	2
 src/config/io.write-prepare.ts	16
 src/config/io.write-safety.ts	4
-src/config/io.write.ts	13
+src/config/io.write.ts	11
 src/config/issue-location.ts	2
 src/config/legacy-private-network-migration.ts	1
 src/config/legacy.default-agent-roles.ts	1
@@ -2950,7 +2950,7 @@ src/gateway/server-methods/chat-transcript-persistence.ts	7
 src/gateway/server-methods/chat-tts-markers.ts	1
 src/gateway/server-methods/chat.ts	2
 src/gateway/server-methods/config-write-flow.ts	1
-src/gateway/server-methods/config.ts	7
+src/gateway/server-methods/config.ts	6
 src/gateway/server-methods/cron.ts	17
 src/gateway/server-methods/device-scope-upgrade.ts	2
 src/gateway/server-methods/devices.ts	6
@@ -3692,7 +3692,6 @@ src/secrets/runtime-web-tools.shared.ts	2
 src/secrets/runtime-web-tools.ts	4
 src/secrets/runtime.ts	4
 src/secrets/store/secret-store.ts	3
-src/secrets/target-registry-query.ts	1
 src/security/audit-channel.ts	4
 src/security/audit-extra.async.ts	2
 src/security/audit-extra.summary.ts	2

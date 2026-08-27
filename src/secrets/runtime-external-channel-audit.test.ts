@@ -3,7 +3,6 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
-import type { PluginOrigin } from "../plugins/plugin-origin.types.js";
 import { getPath } from "./path-utils.js";
 import {
   assertSecretOwnerAvailable,
@@ -14,25 +13,15 @@ import { activateSecretsRuntimeSnapshot } from "./runtime.js";
 const {
   getBootstrapChannelSecretsMock,
   loadBundledPluginPublicArtifactModuleSyncMock,
-  loadPluginMetadataSnapshotMock,
+  resolveConfigWidePluginManifestRegistryMock,
 } = vi.hoisted(() => ({
   getBootstrapChannelSecretsMock: vi.fn(),
   loadBundledPluginPublicArtifactModuleSyncMock: vi.fn(),
-  loadPluginMetadataSnapshotMock: vi.fn(),
+  resolveConfigWidePluginManifestRegistryMock: vi.fn(),
 }));
 
-vi.mock("../plugins/plugin-metadata-snapshot.js", () => ({
-  loadPluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
-  resolvePluginMetadataSnapshot: (params: unknown) => {
-    const snapshot = loadPluginMetadataSnapshotMock(params) as { plugins: PluginManifestRecord[] };
-    return {
-      ...snapshot,
-      manifestRegistry: { plugins: snapshot.plugins, diagnostics: [] },
-    };
-  },
-  listPluginOriginsFromMetadataSnapshot: (snapshot: {
-    plugins: Array<{ id: string; origin: PluginOrigin }>;
-  }) => new Map(snapshot.plugins.map((record) => [record.id, record.origin])),
+vi.mock("../config/io.plugin-metadata.js", () => ({
+  resolveConfigWidePluginManifestRegistry: resolveConfigWidePluginManifestRegistryMock,
 }));
 
 vi.mock("../plugins/public-surface-loader.js", () => ({
@@ -90,7 +79,10 @@ function configureExternalChannelRecords(
   channelIds: readonly ExternalizedChannelId[] = EXTERNALIZED_CHANNEL_IDS,
 ): PluginManifestRecord[] {
   const records = channelIds.map((id) => createExternalChannelRecord(id));
-  loadPluginMetadataSnapshotMock.mockReturnValue({ plugins: records });
+  resolveConfigWidePluginManifestRegistryMock.mockReturnValue({
+    plugins: records,
+    diagnostics: [],
+  });
   return records;
 }
 
@@ -199,7 +191,7 @@ function expectMetadataBackedContractsWereUsed(
 ) {
   expect(getBootstrapChannelSecretsMock).not.toHaveBeenCalled();
   if (channelIds.some((channelId) => channelId !== "googlechat")) {
-    expect(loadPluginMetadataSnapshotMock).toHaveBeenCalled();
+    expect(resolveConfigWidePluginManifestRegistryMock).toHaveBeenCalled();
   }
   for (const channelId of channelIds) {
     expect(loadBundledPluginPublicArtifactModuleSyncMock).toHaveBeenCalledWith({
@@ -225,7 +217,7 @@ describe("secrets runtime externalized channel SecretRef audit", () => {
     getBootstrapChannelSecretsMock.mockReturnValue(undefined);
     loadBundledPluginPublicArtifactModuleSyncMock.mockReset();
     mockBundledPublicArtifactMiss();
-    loadPluginMetadataSnapshotMock.mockReset();
+    resolveConfigWidePluginManifestRegistryMock.mockReset();
   });
 
   it.each(EXTERNALIZED_CHANNEL_IDS)(

@@ -8,6 +8,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigMutationConflictError } from "../config/mutation-conflict.js";
 import type { ConfigFileSnapshot, OpenClawConfig } from "../config/types.js";
 import type { PluginManifestRecord, PluginManifestRegistry } from "../plugins/manifest-registry.js";
+import { createPluginMetadataOwner } from "../plugins/plugin-metadata-collection.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import type { ConfigSetDryRunResult } from "./config-set-dryrun.js";
 import { applyCliProfileEnv } from "./profile.js";
@@ -86,10 +87,13 @@ vi.mock("../config/config.js", () => ({
     mockReadConfigFileSnapshot(...args),
   readConfigFileSnapshotWithPluginMetadata: async (
     ...args: Parameters<typeof mockReadConfigFileSnapshot>
-  ) => ({
-    snapshot: await mockReadConfigFileSnapshot(...args),
-    pluginMetadataSnapshot: createPluginMetadataSnapshot(),
-  }),
+  ) => {
+    const snapshot = await mockReadConfigFileSnapshot(...args);
+    return {
+      snapshot,
+      pluginMetadata: createPluginMetadataOwner().prepare({ config: snapshot.sourceConfig }),
+    };
+  },
   readConfigFileSnapshotForWrite: async () => ({
     snapshot: await mockReadConfigFileSnapshot(),
     writeOptions: {},
@@ -197,7 +201,8 @@ vi.mock("../gateway/config-reload-plan.js", () => ({
   },
 }));
 
-vi.mock("../plugins/plugin-metadata-snapshot.js", () => ({
+vi.mock("../plugins/plugin-metadata-snapshot.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../plugins/plugin-metadata-snapshot.js")>()),
   loadPluginMetadataSnapshot: (config: unknown) => mockLoadPluginMetadataSnapshot(config),
   resolvePluginMetadataSnapshot: (params: { config?: unknown }) =>
     mockLoadPluginMetadataSnapshot(params.config),

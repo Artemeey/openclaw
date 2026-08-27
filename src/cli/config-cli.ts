@@ -167,15 +167,15 @@ export async function runConfigGet(opts: { path: string; json?: boolean; runtime
   try {
     const parsedPath = parseConfigSetPath(opts.path);
     const read = await readConfigFileSnapshotWithPluginMetadata({ observe: false });
-    const { snapshot, pluginMetadataSnapshot } = read;
+    const { snapshot, pluginMetadata } = read;
     if (!ensureValidConfigSnapshotForCli(snapshot, runtime, { json: opts.json })) {
       return;
     }
-    if (!pluginMetadataSnapshot) {
+    if (!pluginMetadata) {
       throw new Error("Config plugin metadata unavailable; refusing to display config values.");
     }
     const { schema, uiHints } = buildRuntimeConfigSchemaFromRegistry(
-      pluginMetadataSnapshot.manifestRegistry,
+      pluginMetadata.manifestRegistry,
     );
     const res = getAtPath(redactConfigObject(snapshot.config, uiHints), parsedPath);
     if (!res.found) {
@@ -269,10 +269,7 @@ export async function runConfigUnset(opts: {
         });
       }
       if (!cliOptions.dryRun) {
-        assertStrictConfigForMutation(
-          currentConfig,
-          mutationStart.writeOptions.basePluginMetadataSnapshot,
-        );
+        assertStrictConfigForMutation(currentConfig, mutationStart.writeOptions.basePluginMetadata);
       }
       runtime.error(danger(missingPathMessage));
       runtime.exit(1);
@@ -290,10 +287,7 @@ export async function runConfigUnset(opts: {
     }
     const nextConfig = normalizeConfigMutationModelRefs(structuredClone(next) as OpenClawConfig);
     if (isDeepStrictEqual(currentConfig, nextConfig)) {
-      assertStrictConfigForMutation(
-        nextConfig,
-        mutationStart.writeOptions.basePluginMetadataSnapshot,
-      );
+      assertStrictConfigForMutation(nextConfig, mutationStart.writeOptions.basePluginMetadata);
       runtime.log(info("No change"));
       return;
     }
@@ -356,10 +350,7 @@ async function runConfigValidate(opts: { json?: boolean; runtime?: RuntimeEnv } 
   let outputPath = CONFIG_PATH ?? "openclaw.json";
   try {
     const read = await readConfigFileSnapshotWithPluginMetadata({ observe: false });
-    const snapshot = strictlyValidateConfigSnapshotForCli(
-      read.snapshot,
-      read.pluginMetadataSnapshot,
-    );
+    const snapshot = strictlyValidateConfigSnapshotForCli(read.snapshot, read.pluginMetadata);
     outputPath = snapshot.path;
     const shortPath = shortenHomePath(outputPath);
     if (!snapshot.exists) {

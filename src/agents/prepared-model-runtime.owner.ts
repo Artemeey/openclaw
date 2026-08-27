@@ -3,6 +3,10 @@ import { toStringifiedError } from "@openclaw/normalization-core/error-coercion"
 import { tryResolveLegacyCompatibilityAgentId } from "../config/legacy.default-agent-owner.js";
 import { hashRuntimeConfigValue } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  getPluginMetadataWorkspaceSnapshot,
+  type PreparedPluginMetadata,
+} from "../plugins/plugin-metadata-collection.js";
 import { isReservedSystemAgentId } from "../system-agent/agent-id.js";
 import {
   listAgentIds,
@@ -439,8 +443,9 @@ export async function publishPreparedModelRuntimeOwnerBatch(params: {
   onBuildStats?: (stats: PreparedModelRuntimeBuildStats) => void;
   registerEntriesAfterBuildStart?: boolean;
   reusePluginGenerations?: boolean;
-  pluginMetadataSnapshot?: PreparedModelRuntimePluginGeneration["pluginMetadataSnapshot"];
+  pluginMetadata?: PreparedPluginMetadata;
 }): Promise<void> {
+  const pluginMetadata = params.pluginMetadata;
   const candidates = params.entries.map(({ owner, input }) => {
     owner.input = input;
     owner.environmentFingerprint = effectiveEnvironmentFingerprint(input);
@@ -525,7 +530,12 @@ export async function publishPreparedModelRuntimeOwnerBatch(params: {
                     ),
                   )
                 : undefined,
-              params.pluginMetadataSnapshot,
+              pluginMetadata
+                ? (input) =>
+                    getPluginMetadataWorkspaceSnapshot(pluginMetadata, {
+                      workspaceDir: input.workspaceDir,
+                    })
+                : undefined,
             );
             for (const candidate of currentGroup) {
               if (params.registerEntriesAfterBuildStart === true) {

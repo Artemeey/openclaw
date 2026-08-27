@@ -7,6 +7,9 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
+import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
+import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
+import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { getPluginRuntimeGenerationRegistry } from "../plugins/runtime/generation-scope.js";
 import {
@@ -36,6 +39,23 @@ describe("prepared reply dispatch runtime", () => {
     mocks.configuredAgentIds = ["default"];
     const firstConfig = {};
     const replacementConfig = { plugins: {} };
+    const metadataSnapshot = createPluginMetadataSnapshot({
+      config: firstConfig,
+      workspaceDir: "/tmp/unused-workspace",
+      manifestRegistry: { plugins: [], diagnostics: [] },
+    });
+    const pluginMetadata: PreparedPluginMetadata = {
+      workspaces: new Map([[metadataSnapshot.workspaceDir, metadataSnapshot]]),
+      configWorkspaceDirs: [metadataSnapshot.workspaceDir],
+      envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
+      selectedSnapshot: metadataSnapshot,
+      plugins: metadataSnapshot.plugins,
+      manifestRegistry: metadataSnapshot.manifestRegistry,
+      byPluginId: metadataSnapshot.byPluginId,
+      owners: metadataSnapshot.owners,
+      diagnostics: metadataSnapshot.diagnostics,
+      channelCatalog: { read: () => [] },
+    };
     const firstRegistry = createEmptyPluginRegistry();
     const replacementRegistry = createEmptyPluginRegistry();
     mocks.loadAgentRuntimePluginRegistryHandle.mockImplementation((params) => {
@@ -49,7 +69,7 @@ describe("prepared reply dispatch runtime", () => {
       gatewayLifecycle: true,
       catalogMode: "static",
       allowGatewaySubagentBinding: true,
-      pluginMetadataSnapshot: mocks.pluginMetadataSnapshot as never,
+      pluginMetadata,
     });
     const input = {
       agentId: "default",
@@ -69,10 +89,8 @@ describe("prepared reply dispatch runtime", () => {
       modelCatalog: firstSnapshot?.modelCatalog,
       inboundPluginRegistry: firstRegistry,
     });
-    expect(firstRuntime?.pluginGeneration?.pluginMetadataSnapshot).toBe(
-      mocks.pluginMetadataSnapshot,
-    );
-    expect(firstSnapshot?.metadataSnapshot).toBe(mocks.pluginMetadataSnapshot);
+    expect(firstRuntime?.pluginGeneration?.pluginMetadataSnapshot).toBe(metadataSnapshot);
+    expect(firstSnapshot?.metadataSnapshot).toBe(metadataSnapshot);
     expect(Object.isFrozen(firstRuntime)).toBe(true);
 
     const replacementCatalog = createDeferred<{ entries: [] }>();
@@ -80,7 +98,7 @@ describe("prepared reply dispatch runtime", () => {
     const refresh = refreshPreparedModelRuntimeSnapshots(replacementConfig, {
       catalogMode: "static",
       allowGatewaySubagentBinding: true,
-      pluginMetadataSnapshot: mocks.pluginMetadataSnapshot as never,
+      pluginMetadata,
     });
     await vi.waitFor(() =>
       expect(mocks.loadAgentRuntimePluginRegistryHandle).toHaveBeenCalledTimes(4),

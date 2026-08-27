@@ -216,6 +216,7 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
         }
         applyGatewayLaneConcurrency(laneConcurrency);
         runtimeCommitted = true;
+        publication?.onCommitted?.();
         onCommit?.();
         setGatewaySigusr1RestartPolicy({ allowExternal: isRestartEnabled(nextConfig) });
         if (plan.restartCron) {
@@ -530,6 +531,7 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
             nextConfig,
             // Without a managed publication, the direct caller's input is itself authored.
             sourceConfig: publication ? publication.sourceConfig : nextConfig,
+            pluginMetadata: publication?.pluginMetadata,
             changedPaths: plan.changedPaths,
             beforeReplace: stopChannelsBeforePluginReplace,
             commitRuntime,
@@ -616,7 +618,7 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
       await mrReload.refreshModelRuntimeAfterHotReload({
         config: nextConfig,
         agentIds: modelRuntimeAgentIds,
-        pluginMetadataSnapshot: params.getPluginMetadataSnapshot?.(),
+        pluginMetadata: params.getPluginMetadata?.(),
       });
     } catch (err) {
       scheduleRecoveryRestart("prepared model runtime reload", err);

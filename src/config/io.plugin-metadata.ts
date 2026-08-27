@@ -1,74 +1,77 @@
-import { listAgentWorkspaceDirs } from "../agents/workspace-dirs.js";
+import {
+  getCurrentPluginMetadataSnapshot,
+  isCurrentPluginMetadataSnapshotRuntimeGeneration,
+} from "../plugins/current-plugin-metadata-snapshot.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import {
-  resolvePluginMetadataSnapshot,
-  type PluginMetadataSnapshot,
-} from "../plugins/plugin-metadata-snapshot.js";
+  createPluginMetadataOwner,
+  getCurrentPluginMetadataOwner,
+  getScopedPluginMetadata,
+  projectConfigWidePluginMetadata,
+  type PreparedPluginMetadata,
+} from "../plugins/plugin-metadata-collection.js";
+import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
+import { projectPluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshotPluginIdScope } from "../plugins/plugin-metadata-snapshot.types.js";
-import { normalizePluginPolicyId } from "../plugins/plugin-policy-id.js";
 import type { OpenClawConfig } from "./types.openclaw.js";
 
-function mergeRegistries(registries: readonly PluginManifestRegistry[]): PluginManifestRegistry {
-  const grouped = new Map<
-    string,
-    { plugin: PluginManifestRegistry["plugins"][number]; sources: Set<string> }
-  >();
-  const diagnostics = registries.flatMap((registry) => registry.diagnostics);
-  for (const registry of registries) {
-    for (const plugin of registry.plugins) {
-      const id = normalizePluginPolicyId(plugin.id);
-      const group = grouped.get(id) ?? { plugin, sources: new Set<string>() };
-      group.plugin = plugin;
-      group.sources.add(plugin.source);
-      grouped.set(id, group);
-    }
-  }
-  const plugins = [...grouped.entries()].flatMap(([pluginId, group]) => {
-    if (group.sources.size === 1) {
-      return [group.plugin];
-    }
-    diagnostics.push({
-      level: "error",
-      pluginId,
-      message: `plugin id ${JSON.stringify(pluginId)} is present in multiple agent workspaces: ${[...group.sources].toSorted().join(", ")}`,
-    });
-    return [];
-  });
-  // Registry order carries origin precedence for channel schema ownership.
-  // Preserve first discovery order while deduplicating repeated workspace views.
-  return { plugins, diagnostics };
-}
-
 type ResolveConfigWidePluginMetadataParams = {
-  config: OpenClawConfig;
+  config?: OpenClawConfig;
   env?: NodeJS.ProcessEnv;
   stateDir?: string;
   allowCurrent?: boolean;
   pluginIds?: readonly string[];
   pluginIdScope?: PluginMetadataSnapshotPluginIdScope;
-  onSnapshotResolved?: (snapshot: PluginMetadataSnapshot) => void;
+  metadata?: PreparedPluginMetadata;
 };
 
 export function resolveConfigWidePluginManifestRegistry(
   params: ResolveConfigWidePluginMetadataParams,
 ): PluginManifestRegistry {
-  const env = params.env ?? process.env;
-  const dirs = listAgentWorkspaceDirs(params.config, env);
-  const workspaceDirs: Array<string | undefined> = dirs.length ? dirs : [undefined];
-  const resolveSnapshot = (workspaceDir: string | undefined) =>
-    resolvePluginMetadataSnapshot({
-      config: params.config,
-      ...(workspaceDir ? { workspaceDir } : {}),
-      ...(params.stateDir ? { stateDir: params.stateDir } : {}),
-      env,
-      allowCurrent: params.allowCurrent,
-      allowWorkspaceScopedCurrent: true,
-      ...(params.pluginIds !== undefined ? { pluginIds: params.pluginIds } : {}),
-      ...(params.pluginIdScope ? { pluginIdScope: params.pluginIdScope } : {}),
+  const canUsePrepared = params.allowCurrent !== false && params.stateDir === undefined;
+  const supplied = params.metadata;
+  if (
+    canUsePrepared &&
+    supplied &&
+    supplied.envFingerprint !== resolvePluginMetadataEnvFingerprint(params.env)
+  ) {
+    throw new Error("Config plugin metadata was prepared for a different environment");
+  }
+  if (canUsePrepared && !supplied) {
+    // A retained run's metadata is paired with its executable registry. An ordinary
+    // candidate scope may override that run, but a global union must never widen it.
+    const current = getCurrentPluginMetadataSnapshot({
+      env: params.env,
+      allowScopedSnapshot: true,
+      allowWorkspaceScopedSnapshot: true,
     });
-  const firstSnapshot = resolveSnapshot(workspaceDirs[0]);
-  const snapshots = [firstSnapshot, ...workspaceDirs.slice(1).map(resolveSnapshot)];
-  const manifestRegistry = mergeRegistries(snapshots.map((snapshot) => snapshot.manifestRegistry));
-  params.onSnapshotResolved?.(firstSnapshot);
-  return manifestRegistry;
+    if (current && isCurrentPluginMetadataSnapshotRuntimeGeneration(current)) {
+      return (
+        params.pluginIds !== undefined || params.pluginIdScope !== undefined
+          ? projectPluginMetadataSnapshot(current, params)
+          : current
+      ).manifestRegistry;
+    }
+  }
+  const scoped = canUsePrepared ? (supplied ?? getScopedPluginMetadata(params.env)) : undefined;
+  if (scoped) {
+    return projectConfigWidePluginMetadata(scoped, params).manifestRegistry;
+  }
+  const owner = canUsePrepared ? getCurrentPluginMetadataOwner() : undefined;
+  if (owner) {
+    if (params.config) {
+      const prepared = owner.readConfigWide({ ...params, config: params.config });
+      if (prepared) {
+        return prepared.manifestRegistry;
+      }
+    } else {
+      const active = owner.getActive();
+      if (active && active.envFingerprint === resolvePluginMetadataEnvFingerprint(params.env)) {
+        return projectConfigWidePluginMetadata(active, params).manifestRegistry;
+      }
+    }
+    throw new Error("Config plugin metadata must be prepared before runtime lookup");
+  }
+  const metadata = createPluginMetadataOwner().prepare({ ...params, config: params.config ?? {} });
+  return projectConfigWidePluginMetadata(metadata, params).manifestRegistry;
 }

@@ -176,7 +176,8 @@ export function createManagedReloadSecretHandlers(options: {
         }
         return {
           rollback: rollbackPublishedSource,
-          commit: () =>
+          commit: () => {
+            transactionOwnership.publishPluginMetadata?.(sourceOnlySnapshot.config);
             publishRuntimeSecretsStateTransition(
               params.activateRuntimeSecrets,
               sourceOnlySnapshot,
@@ -184,7 +185,8 @@ export function createManagedReloadSecretHandlers(options: {
                 sourceOnly: true,
                 expectedRevision: committedSecretsRevision,
               },
-            ),
+            );
+          },
         };
       }
       const preparation = await tryPrepareRuntimeSecrets(
@@ -265,8 +267,10 @@ export function createManagedReloadSecretHandlers(options: {
       }
       return {
         rollback: rollbackPublishedSource,
-        commit: () =>
-          publishRuntimeSecretsStateTransition(params.activateRuntimeSecrets, activated),
+        commit: () => {
+          transactionOwnership.publishPluginMetadata?.(activated.config);
+          publishRuntimeSecretsStateTransition(params.activateRuntimeSecrets, activated);
+        },
       };
     }
   };
@@ -381,6 +385,11 @@ export function createManagedReloadSecretHandlers(options: {
             ? { runtimeEnv: transactionOwnership.runtimeEnv.env }
             : {}),
           sourceConfig,
+          pluginMetadata: transactionOwnership.pluginMetadata,
+          onCommitted: () => {
+            runtimeCommitted = true;
+            transactionOwnership.markRuntimeCommitted(prepared.config, plan);
+          },
           prepareRestartRuntimeConfig: async () => {
             for (;;) {
               const restartPrepared = await tryPrepareRuntimeSecrets(
@@ -487,11 +496,6 @@ export function createManagedReloadSecretHandlers(options: {
                   }
                 }
                 throw err;
-              } finally {
-                if (isCommitted()) {
-                  runtimeCommitted = true;
-                  transactionOwnership.markRuntimeCommitted(prepared.config, plan);
-                }
               }
             };
             const activateIfCurrent =

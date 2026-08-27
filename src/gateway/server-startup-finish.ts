@@ -94,7 +94,8 @@ export async function finishGatewayStartup(params: {
     baseMethods,
     startupPluginIds,
     pluginManifestRecords,
-    pluginMetadataSnapshot,
+    pluginMetadata,
+    pluginMetadataOwner,
     pluginLookUpTable,
     ambientEnvTriggers,
     replaceAttachedPluginRuntime,
@@ -129,7 +130,7 @@ export async function finishGatewayStartup(params: {
     chatMetadataLifecycle,
     gatewayRequestContext,
     gatewayInstanceRuntime,
-    getPluginMetadataSnapshot,
+    getPluginMetadata,
   } = runtime;
   const startupPluginRuntimeClaim = kernel.pluginRuntimeGeneration.currentClaim();
   const unregisterGatewayLifetimeSidecar = (sidecar: GatewayPostReadySidecarHandle) => {
@@ -241,10 +242,10 @@ export async function finishGatewayStartup(params: {
         gatewayPluginConfigAtStart,
         activationSourceConfig: startupActivationSourceConfig,
         pluginManifestRecords,
-        ...(pluginMetadataSnapshot ? { pluginMetadataSnapshot } : {}),
+        ...(pluginMetadata ? { pluginMetadata } : {}),
         pluginRuntimeClaim: startupPluginRuntimeClaim,
         getCurrentPluginRegistry: () => pluginRuntime.registry,
-        getCurrentPluginMetadataSnapshot: getPluginMetadataSnapshot,
+        getCurrentPluginMetadata: getPluginMetadata,
         ambientEnvTriggers,
         pluginRegistry: pluginRuntime.registry,
         defaultWorkspaceDir,
@@ -352,6 +353,7 @@ export async function finishGatewayStartup(params: {
     resolveGatewayContext: resolvePluginGatewayContext,
     minimalTestGateway,
     initialConfig: cfgAtStart,
+    pluginMetadataOwner,
     initialCompareConfig: startupLastGoodSnapshot.sourceConfig,
     initialSnapshotRawHash: startupLastGoodSnapshot.exists
       ? (startupLastGoodSnapshot.hash ?? null)
@@ -376,6 +378,7 @@ export async function finishGatewayStartup(params: {
             reason: "reload",
             activate: false,
             env: candidate.runtimeEnv.env,
+            manifestRegistry: candidate.pluginMetadata.manifestRegistry,
             includeAuthStoreRefs: runtimeRefresh?.includeAuthStoreRefs,
           });
           return candidate;
@@ -393,7 +396,7 @@ export async function finishGatewayStartup(params: {
         cronStartState.handled = true;
       }
     },
-    getPluginMetadataSnapshot,
+    getPluginMetadata,
     startChannel,
     stopChannel,
     getChannelAutostartSuppression: channelManager.getAutostartSuppression,

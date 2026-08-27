@@ -59,6 +59,9 @@ type PreparedModelRuntimeCatalogAccess = Readonly<{
 type PreparedModelRuntimeBuildGuards =
   | ReadonlyMap<PreparedModelRuntimeInput, () => boolean>
   | (() => boolean);
+type PreparedModelRuntimeMetadataResolver = (
+  input: PreparedModelRuntimeInput,
+) => PreparedModelRuntimePluginGeneration["pluginMetadataSnapshot"];
 
 export type PreparedModelRuntimeBuildResult = Readonly<{
   snapshot: PreparedModelRuntimeSnapshot;
@@ -284,7 +287,7 @@ async function buildSnapshotBatch(
     PreparedModelRuntimeInput,
     PreparedModelRuntimePluginGeneration
   >,
-  pluginMetadataSnapshot?: PreparedModelRuntimePluginGeneration["pluginMetadataSnapshot"],
+  resolveMetadataSnapshot?: PreparedModelRuntimeMetadataResolver,
   onBuildStats?: (stats: PreparedModelRuntimeBuildStats) => void,
 ): Promise<PreparedModelRuntimeBuildResult[]> {
   const freshGroups = new Map<string, PreparedModelRuntimeInput[]>();
@@ -352,7 +355,7 @@ async function buildSnapshotBatch(
       { preferBuiltPluginArtifacts },
       prepareInboundPluginRegistry ? loadInboundPluginRegistry : undefined,
       pluginGeneration,
-      pluginMetadataSnapshot,
+      resolveMetadataSnapshot?.(groupInputs[0]!),
     );
     assertPreparedModelRuntimeInputsCurrent(groupInputs, buildGuards);
     runtimePluginMs += prepared.buildStats.runtimePluginMs;
@@ -553,7 +556,7 @@ export function startSerializedSnapshotBuildBatch(
     PreparedModelRuntimeInput,
     PreparedModelRuntimePluginGeneration
   > = new Map(),
-  pluginMetadataSnapshot?: PreparedModelRuntimePluginGeneration["pluginMetadataSnapshot"],
+  resolveMetadataSnapshot?: PreparedModelRuntimeMetadataResolver,
 ): {
   pending: Promise<PreparedModelRuntimeBuildResult[]>;
   completion: Promise<void>;
@@ -581,7 +584,7 @@ export function startSerializedSnapshotBuildBatch(
         buildGuards,
         inboundPluginRegistryInputs,
         reusablePluginGenerations,
-        pluginMetadataSnapshot,
+        resolveMetadataSnapshot,
         onBuildStats,
       ),
     };
@@ -636,7 +639,7 @@ export function startSerializedSnapshotBuild(
     undefined,
     prepareInboundPluginRegistry ? new Set([input]) : undefined,
     reusablePluginGeneration ? new Map([[input, reusablePluginGeneration]]) : undefined,
-    pluginMetadataSnapshot,
+    pluginMetadataSnapshot ? () => pluginMetadataSnapshot : undefined,
   );
   return {
     pending: build.pending.then((results) => results[0]!),

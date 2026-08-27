@@ -247,11 +247,12 @@ export function resolveConfigValidationMetadataPluginIds(params: {
   env: NodeJS.ProcessEnv;
   index: InstalledPluginIndex;
   platform?: NodeJS.Platform;
+  preparedState?: { bundledDiscoveryMode?: "compat" | "allowlist" };
 }): string[] | undefined {
   const lookup = createInstalledPluginIndexScopeLookup(params.index);
   const pluginsConfig = normalizePluginsConfigForInstalledIndex(params.config.plugins, lookup);
   if (
-    readStartupBundledDiscoveryMode(params.config, params.env) === "compat" ||
+    readStartupBundledDiscoveryMode(params.config, params.env, params.preparedState) === "compat" ||
     pluginsConfig.loadPaths.length > 0
   ) {
     return undefined;
@@ -315,6 +316,7 @@ export function createConfigValidationMetadataPluginIdScope(params: {
   config: OpenClawConfig;
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
+  preparedState?: { bundledDiscoveryMode?: "compat" | "allowlist" };
 }): PluginMetadataSnapshotPluginIdScope {
   const configuredChannelIds = collectConfigValidationChannelIds({
     config: params.config,
@@ -336,6 +338,7 @@ export function createConfigValidationMetadataPluginIdScope(params: {
         config: params.config,
         env: params.env,
         index,
+        preparedState: params.preparedState,
         ...(params.platform !== undefined ? { platform: params.platform } : {}),
       }),
   };

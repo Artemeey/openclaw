@@ -4,6 +4,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
+import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
+import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import "./server-startup-bootstrap.test-support.js";
 
@@ -43,6 +45,7 @@ const pluginManifestRegistry = vi.hoisted(
 const pluginMetadataSnapshot = vi.hoisted(
   (): PluginMetadataSnapshot => ({
     policyHash: "policy",
+    workspaceDir: "/workspace",
     index: {
       version: 1,
       hostContractVersion: "test",
@@ -80,6 +83,18 @@ const pluginMetadataSnapshot = vi.hoisted(
     },
   }),
 );
+const pluginMetadata: PreparedPluginMetadata = {
+  workspaces: new Map([["/workspace", pluginMetadataSnapshot]]),
+  configWorkspaceDirs: ["/workspace"],
+  envFingerprint: resolvePluginMetadataEnvFingerprint(),
+  selectedSnapshot: pluginMetadataSnapshot,
+  manifestRegistry: pluginMetadataSnapshot.manifestRegistry,
+  plugins: pluginMetadataSnapshot.plugins,
+  byPluginId: pluginMetadataSnapshot.byPluginId,
+  owners: pluginMetadataSnapshot.owners,
+  diagnostics: pluginMetadataSnapshot.diagnostics,
+  channelCatalog: { read: () => [] },
+};
 const pluginLookUpTableMetrics = vi.hoisted(() => ({
   registrySnapshotMs: 0,
   manifestRegistryMs: 0,
@@ -114,13 +129,6 @@ const migrateLegacyDevicePairingStore = vi.hoisted(() =>
 const migrateLegacyNodePairingStore = vi.hoisted(() =>
   vi.fn(async (_params: unknown) => undefined),
 );
-vi.mock("../agents/agent-scope.js", () => ({
-  resolveAgentWorkspaceDir: () => "/workspace",
-  resolveDefaultAgentId: () => "default",
-  tryResolveConfiguredAgentWorkspaceDir: () => "/workspace",
-  tryResolveSystemAgentWorkspaceDir: () => "/workspace",
-}));
-
 vi.mock("../agents/subagents/registry/subagent-registry.js", () => ({
   initSubagentRegistry: () => initSubagentRegistry(),
 }));
@@ -205,7 +213,7 @@ function slackConfig(): OpenClawConfig {
 async function prepareBootstrapWithRuntimeConfig(
   cfg: OpenClawConfig,
   options: {
-    pluginMetadataSnapshot?: PluginMetadataSnapshot;
+    pluginMetadata?: PreparedPluginMetadata;
     workerProviderIds?: readonly string[];
   } = {},
 ) {
@@ -214,6 +222,7 @@ async function prepareBootstrapWithRuntimeConfig(
 
   return await prepareGatewayPluginBootstrap({
     cfgAtStart: cfg,
+    pluginMetadata,
     minimalTestGateway: false,
     log,
     ...options,
@@ -399,7 +408,7 @@ describe("prepareGatewayPluginBootstrap startup plugins", () => {
     await prepareGatewayPluginBootstrap({
       cfgAtStart: runtimeConfig,
       activationSourceConfig: sourceConfig,
-      pluginMetadataSnapshot,
+      pluginMetadata,
       minimalTestGateway: false,
       log,
     });
@@ -449,6 +458,37 @@ describe("prepareGatewayPluginBootstrap startup plugins", () => {
     expect(lookupInput.workerProviderIds).toEqual(["static-ssh"]);
   });
 
+  it.each(["ops", undefined])(
+    "uses the prepared control-plane workspace for explicit system owner %s",
+    async (systemAgentId) => {
+      const workspaceDir = systemAgentId ? `/workspaces/${systemAgentId}` : undefined;
+      const selectedSnapshot = { ...pluginMetadataSnapshot, workspaceDir };
+      const metadata: PreparedPluginMetadata = {
+        ...pluginMetadata,
+        selectedSnapshot,
+        workspaces: new Map([[workspaceDir, selectedSnapshot]]),
+        configWorkspaceDirs: [workspaceDir],
+      };
+      const result = await prepareBootstrapWithRuntimeConfig(
+        {
+          agents: {
+            defaults: {
+              workspace: "/workspaces",
+              ...(systemAgentId ? { systemAgent: { agentId: systemAgentId } } : {}),
+            },
+            entries: { main: {}, ops: {} },
+          },
+        },
+        { pluginMetadata: metadata },
+      );
+
+      expect(result.pluginWorkspaceDir).toBe(workspaceDir);
+      expect(loadPluginLookUpTable).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceDir, metadataSnapshot: selectedSnapshot }),
+      );
+    },
+  );
+
   it("preserves an explicitly empty manifest snapshot for ambient channel planning", async () => {
     const emptyManifestRegistry: PluginManifestRegistry = { plugins: [], diagnostics: [] };
     loadPluginLookUpTable.mockReturnValueOnce({
@@ -464,6 +504,7 @@ describe("prepareGatewayPluginBootstrap startup plugins", () => {
     const { prepareGatewayPluginBootstrap } = await import("./server-startup-plugins.js");
     const result = await prepareGatewayPluginBootstrap({
       cfgAtStart: { channels: {} },
+      pluginMetadata,
       minimalTestGateway: false,
       ambientEnvTriggers: "suppress",
       log,
@@ -493,7 +534,7 @@ describe("prepareGatewayPluginBootstrap startup plugins", () => {
     } as OpenClawConfig;
 
     const result = await prepareBootstrapWithRuntimeConfig(cfg, {
-      pluginMetadataSnapshot,
+      pluginMetadata,
       workerProviderIds: ["static-ssh"],
     });
     expect(result.startupPluginIds).toEqual([]);

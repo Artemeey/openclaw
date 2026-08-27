@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { getPluginMetadataWorkspaceSnapshot } from "../plugins/plugin-metadata-collection.js";
 import {
   advancePreparedModelRuntimeOwnerConfig,
   listConfiguredOwnerInputs,
@@ -141,8 +142,11 @@ export function resolveSafeRefreshAgentIds(
       !owner.snapshot ||
       owner.needsRefresh ||
       owner.catalogMode !== (options.catalogMode ?? "live") ||
-      (options.pluginMetadataSnapshot &&
-        owner.snapshot.metadataSnapshot !== options.pluginMetadataSnapshot) ||
+      (options.pluginMetadata &&
+        owner.snapshot.metadataSnapshot !==
+          getPluginMetadataWorkspaceSnapshot(options.pluginMetadata, {
+            workspaceDir: input.workspaceDir,
+          })) ||
       ownerKey({ ...owner.input, config: input.config }) !== ownerKey(input)
     ) {
       return undefined;

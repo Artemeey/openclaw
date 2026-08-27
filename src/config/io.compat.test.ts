@@ -7,6 +7,7 @@ import { withTempDir } from "../test-utils/temp-dir.js";
 import { VERSION } from "../version.js";
 import { createConfigIO } from "./io.factory.js";
 import { normalizeExecSafeBinProfilesInConfig } from "./normalize-exec-safe-bin.js";
+import { createPluginMetadataSnapshot } from "./plugin-auto-enable.test-helpers.js";
 
 vi.mock("../commands/doctor/shared/legacy-config-compat.js", () => ({
   applyLegacyDoctorMigrations: () => {
@@ -30,14 +31,20 @@ vi.mock("../plugins/gateway-startup-plugin-ids.js", () => ({
   },
 }));
 
-vi.mock("../plugins/plugin-metadata-snapshot.js", () => ({
-  rebasePluginMetadataSnapshotManifestRegistry: () => {
-    throw new Error("config IO compatibility tests must not materialize metadata snapshots");
-  },
-  resolvePluginMetadataSnapshot: () => ({
-    manifestRegistry: { plugins: [], diagnostics: [] },
-  }),
-}));
+vi.mock("../plugins/plugin-metadata-snapshot.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../plugins/plugin-metadata-snapshot.js")>();
+  const loadSnapshot = (params: Parameters<typeof actual.loadPluginMetadataSnapshot>[0]) =>
+    createPluginMetadataSnapshot({
+      config: params.config,
+      workspaceDir: params.workspaceDir,
+      manifestRegistry: { plugins: [], diagnostics: [] },
+    });
+  return {
+    ...actual,
+    loadPluginMetadataSnapshot: loadSnapshot,
+    resolvePluginMetadataSnapshot: loadSnapshot,
+  };
+});
 
 function withTempHome<T>(run: (home: string) => Promise<T>): Promise<T> {
   return withTempDir("openclaw-config-compat-", run);

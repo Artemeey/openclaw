@@ -502,7 +502,7 @@ describe("loadPluginLookUpTable", () => {
     expect(table.startup.pluginIds).toEqual(["openai", "browser"]);
   });
 
-  it("rebuilds an unscoped provided snapshot for restrictive startup scopes", async () => {
+  it("projects a complete provided snapshot for restrictive startup scopes without discovery", async () => {
     const plugins = [
       createManifestRecord({
         id: "openai",
@@ -567,10 +567,7 @@ describe("loadPluginLookUpTable", () => {
       metadataSnapshot,
     });
 
-    expect(loadPluginManifestRegistryForInstalledIndex).toHaveBeenCalledOnce();
-    expect(loadPluginManifestRegistryForInstalledIndex.mock.calls[0]?.[0]).toMatchObject({
-      pluginIds: ["browser", "openai"],
-    });
+    expect(loadPluginManifestRegistryForInstalledIndex).not.toHaveBeenCalled();
     expect(table.pluginIds).toEqual(["browser", "openai"]);
     expect(table.metrics.indexPluginCount).toBe(3);
     expect(table.metrics.manifestPluginCount).toBe(2);
@@ -578,7 +575,7 @@ describe("loadPluginLookUpTable", () => {
     expect(table.startup.pluginIds).toEqual(["openai", "browser"]);
   });
 
-  it("reuses a scoped provided metadata snapshot when it covers the startup scope", async () => {
+  it("projects a larger provided scope without reloading manifests", async () => {
     const plugins = [
       createManifestRecord({
         id: "openai",
@@ -649,14 +646,15 @@ describe("loadPluginLookUpTable", () => {
     });
 
     expect(loadPluginManifestRegistryForInstalledIndex).not.toHaveBeenCalled();
-    expect(table.pluginIds).toEqual(["browser", "openai"]);
+    expect(table.pluginIds).toEqual(["openai"]);
     expect(table.metrics.indexPluginCount).toBe(3);
-    expect(table.metrics.manifestPluginCount).toBe(2);
+    expect(table.metrics.manifestPluginCount).toBe(1);
+    expect(table.byPluginId.has("browser")).toBe(false);
     expect(table.byPluginId.has("telegram")).toBe(false);
     expect(table.startup.pluginIds).toEqual(["openai"]);
   });
 
-  it("rebuilds a non-empty scoped provided snapshot for an empty startup scope", async () => {
+  it("projects a non-empty provided snapshot to an empty startup scope without discovery", async () => {
     const plugins = [
       createManifestRecord({
         id: "openai",
@@ -702,10 +700,7 @@ describe("loadPluginLookUpTable", () => {
       metadataSnapshot,
     });
 
-    expect(loadPluginManifestRegistryForInstalledIndex).toHaveBeenCalledOnce();
-    expect(loadPluginManifestRegistryForInstalledIndex.mock.calls[0]?.[0]).toMatchObject({
-      pluginIds: [],
-    });
+    expect(loadPluginManifestRegistryForInstalledIndex).not.toHaveBeenCalled();
     expect(table.pluginIds).toEqual([]);
     expect(table.metrics.manifestPluginCount).toBe(0);
     expect(table.startup.pluginIds).toEqual([]);

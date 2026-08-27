@@ -6,8 +6,6 @@ import {
 import type { ChannelId } from "../channels/plugins/types.public.js";
 import { getRuntimeConfig } from "../config/io.js";
 import type { createSubsystemLogger } from "../logging/subsystem.js";
-import { setCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
-import { completePluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import { isGatewayWorkAdmissionClosed } from "../process/gateway-work-admission.js";
 import { createAgentRuntimeApprovalAuthorityValidator } from "./agent-runtime-identity-token.js";
 import { restartRunningChannelAccounts } from "./channel-thaw-restart.js";
@@ -145,14 +143,13 @@ export async function startGatewayCoreRuntime(input: {
     coreGatewayMethodNames,
     pluginHostServices,
     baseMethods,
-    pluginWorkspaceDir,
+    pluginMetadataOwner,
     ambientEnvTriggers,
     resolvePluginGatewayContext,
     workerEnvironmentStartup,
     broadcastPluginEvent,
     activateRuntimeSecrets,
   } = runtime;
-  let currentPluginMetadataSnapshot = runtime.pluginMetadataSnapshot;
   if (desktopSessionRegistry) {
     kernel.addGatewayLifetimeSidecar({ stop: () => desktopSessionRegistry.stopAll() });
   }
@@ -499,15 +496,26 @@ export async function startGatewayCoreRuntime(input: {
       );
     const beforeChannelTargets = listAttachedChannelConfigTargets();
     const beforeChannelIds = new Set(beforeChannelTargets.keys());
+    const pluginMetadata =
+      params.pluginMetadata ??
+      pluginMetadataOwner.prepare({
+        config: params.sourceConfig,
+        env: params.env,
+      });
+    const pluginMetadataSnapshot = pluginMetadata.selectedSnapshot;
+    const pluginWorkspaceDir = pluginMetadataSnapshot.workspaceDir;
     const nextPluginActivationConfig = resolveGatewayStartupPluginActivationConfig({
       runtimeConfig: params.nextConfig,
       activationSourceConfig: params.sourceConfig,
       env: params.env,
+      manifestRegistry: pluginMetadata.manifestRegistry,
+      discovery: pluginMetadataSnapshot.discovery,
       ambientEnvTriggers,
     });
     const nextPluginLookUpTable = loadPluginLookUpTable({
       config: nextPluginActivationConfig,
       workspaceDir: pluginWorkspaceDir,
+      metadataSnapshot: pluginMetadataSnapshot,
       env: params.env,
       activationSourceConfig: params.sourceConfig,
       // Workers can be created after startup; reload planning needs the live durable set.
@@ -595,19 +603,6 @@ export async function startGatewayCoreRuntime(input: {
             ambientEnvTriggers,
             resolveGatewayContext: resolvePluginGatewayContext,
           });
-          const nextPluginMetadataSnapshot = completePluginMetadataSnapshot({
-            snapshot: nextPluginLookUpTable,
-            config: params.sourceConfig,
-            env: params.env,
-            workspaceDir: pluginWorkspaceDir,
-          });
-          setCurrentPluginMetadataSnapshot(nextPluginMetadataSnapshot, {
-            config: params.sourceConfig,
-            compatibleConfigs: [params.nextConfig],
-            env: params.env,
-            workspaceDir: pluginWorkspaceDir,
-          });
-          currentPluginMetadataSnapshot = nextPluginMetadataSnapshot;
           replaceAttachedPluginRuntime(loaded);
         }) ||
         !loaded
@@ -681,6 +676,6 @@ export async function startGatewayCoreRuntime(input: {
     loadGatewayModelCatalog,
     loadGatewayModelCatalogSnapshot,
     readPreparedGatewayModelCatalog,
-    getPluginMetadataSnapshot: () => currentPluginMetadataSnapshot,
+    getPluginMetadata: () => pluginMetadataOwner.getActive(),
   };
 }

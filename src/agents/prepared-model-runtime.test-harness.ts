@@ -1,4 +1,5 @@
 import { vi } from "vitest";
+import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import type { AuthStorageData } from "./sessions/auth-storage.js";
 
@@ -12,6 +13,7 @@ type StaticCatalogResolver = ReturnType<CreateStaticCatalogResolver>;
 
 const preparedModelRuntimeMocks = vi.hoisted(() => ({
   pluginMetadataSnapshot: {
+    discovery: { candidates: [], diagnostics: [] },
     plugins: [],
     pluginIds: [],
     index: { plugins: [] },
@@ -86,6 +88,28 @@ vi.mock("../plugins/plugin-metadata-snapshot.js", () => ({
   isPluginMetadataSnapshotCompatible: () => true,
   loadPluginMetadataSnapshot: () => preparedModelRuntimeMocks.pluginMetadataSnapshot,
   resolvePluginMetadataSnapshot: () => preparedModelRuntimeMocks.pluginMetadataSnapshot,
+  projectPluginMetadataSnapshot: (
+    snapshot: import("../plugins/plugin-metadata-snapshot.types.js").PluginMetadataSnapshot,
+  ) => snapshot,
+}));
+
+vi.mock("../plugins/plugin-metadata-collection.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../plugins/plugin-metadata-collection.js")>()),
+  preparePluginMetadata: ({
+    workspaceDir,
+    env,
+  }: {
+    workspaceDir?: string;
+    env?: NodeJS.ProcessEnv;
+  }) => ({
+    workspaces: new Map([[workspaceDir, preparedModelRuntimeMocks.pluginMetadataSnapshot]]),
+    configWorkspaceDirs: [workspaceDir],
+    envFingerprint: resolvePluginMetadataEnvFingerprint(env),
+    selectedSnapshot: preparedModelRuntimeMocks.pluginMetadataSnapshot,
+    manifestRegistry: preparedModelRuntimeMocks.pluginMetadataSnapshot.manifestRegistry,
+    plugins: preparedModelRuntimeMocks.pluginMetadataSnapshot.plugins,
+    owners: preparedModelRuntimeMocks.pluginMetadataSnapshot.owners,
+  }),
 }));
 
 vi.mock("./prepared-model-catalog-worker.js", () => ({

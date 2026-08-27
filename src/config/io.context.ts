@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import { collectManifestModelIdNormalizationPolicies } from "@openclaw/model-catalog-core/provider-model-id-normalization";
-import { tryResolveConfiguredAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { ensureOwnerDisplaySecret } from "../agents/owner-display.js";
 import { classifyOtelGrpcMigrationOwnership } from "../commands/doctor/shared/include-migration-ownership.js";
 import { applyLegacyDoctorMigrations } from "../commands/doctor/shared/legacy-config-compat.js";
@@ -13,15 +12,18 @@ import {
 import { createConfigValidationMetadataPluginIdScope } from "../plugins/gateway-startup-plugin-ids.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import {
-  rebasePluginMetadataSnapshotManifestRegistry,
-  resolvePluginMetadataSnapshot,
-} from "../plugins/plugin-metadata-snapshot.js";
+  createPluginMetadataOwner,
+  getCurrentPluginMetadataOwner,
+  getScopedPluginMetadata,
+  projectConfigWidePluginMetadata,
+  withPluginMetadataCollectionScope,
+  type PreparedPluginMetadata,
+} from "../plugins/plugin-metadata-collection.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import { DuplicateAgentDirError, findDuplicateAgentDirs } from "./agent-dirs.js";
 import { applyConfigEnvVars, cloneEnvWithPlatformSemantics } from "./config-env-vars.js";
 import { observeConfigSnapshotSync } from "./io.observe.js";
 import { retainGeneratedOwnerDisplaySecret } from "./io.owner-display-secret.js";
-import { resolveConfigWidePluginManifestRegistry } from "./io.plugin-metadata.js";
 import {
   coerceConfig,
   normalizeConfigIoDeps,
@@ -49,7 +51,7 @@ import { validateConfigObjectWithPlugins } from "./validation.js";
 type ValidationPluginMetadataSnapshotLoader = {
   load: (config: OpenClawConfig) => Pick<PluginMetadataSnapshot, "manifestRegistry">;
   getManifestRegistry: () => PluginManifestRegistry | undefined;
-  getSnapshot: () => PluginMetadataSnapshot | undefined;
+  getMetadata: () => PreparedPluginMetadata | undefined;
 };
 
 export type ConfigIoContext = {
@@ -59,7 +61,6 @@ export type ConfigIoContext = {
   observeLoadConfigSnapshot: (snapshot: ConfigFileSnapshot) => ConfigFileSnapshot;
   finalizeLoadedRuntimeConfig: (config: OpenClawConfig) => OpenClawConfig;
   createValidationPluginMetadataSnapshotLoader: (params: {
-    effectiveConfigRaw: unknown;
     env: NodeJS.ProcessEnv;
     allowCurrentPluginMetadata?: boolean;
   }) => ValidationPluginMetadataSnapshotLoader;
@@ -72,6 +73,12 @@ export type ConfigIoContext = {
 export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): ConfigIoContext {
   const deps = normalizeConfigIoDeps(options);
   const configPath = resolveConfigPathForDeps(deps);
+  const scopedMetadata = getScopedPluginMetadata(deps.env);
+  const metadataOwner =
+    options.pluginMetadataOwner ??
+    (scopedMetadata
+      ? createPluginMetadataOwner()
+      : (getCurrentPluginMetadataOwner() ?? createPluginMetadataOwner()));
 
   function observeLoadConfigSnapshot(snapshot: ConfigFileSnapshot): ConfigFileSnapshot {
     if (deps.observe) {
@@ -91,7 +98,7 @@ export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): Con
       loadShellEnvFallback({
         enabled: true,
         env: deps.env,
-        expectedKeys: resolveShellEnvExpectedKeys(deps.env),
+        expectedKeys: resolveShellEnvExpectedKeys(deps.env, cfg),
         logger: deps.logger,
         timeoutMs: cfg.env?.shellEnv?.timeoutMs ?? resolveShellEnvFallbackTimeoutMs(deps.env),
       });
@@ -115,54 +122,38 @@ export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): Con
   }
 
   function createValidationPluginMetadataSnapshotLoader(params: {
-    effectiveConfigRaw: unknown;
     env: NodeJS.ProcessEnv;
     allowCurrentPluginMetadata?: boolean;
   }): ValidationPluginMetadataSnapshotLoader {
-    let metadataConfig: OpenClawConfig | undefined;
     let manifestRegistry: PluginManifestRegistry | undefined;
-    let snapshot: PluginMetadataSnapshot | undefined;
-    let configWideSnapshot: PluginMetadataSnapshot | undefined;
-    const resolvePluginIdScope = (config: OpenClawConfig) =>
-      createConfigValidationMetadataPluginIdScope({
-        config,
-        env: params.env,
-      });
+    let metadata: PreparedPluginMetadata | undefined;
     return {
       load: (config) => {
         if (manifestRegistry) {
           return { manifestRegistry };
         }
-        metadataConfig = config;
-        manifestRegistry = resolveConfigWidePluginManifestRegistry({
+        metadata = metadataOwner.prepare({
           config,
           env: params.env,
           allowCurrent: params.allowCurrentPluginMetadata,
-          pluginIdScope: resolvePluginIdScope(config),
-          onSnapshotResolved: (resolved) => {
-            snapshot = resolved;
-          },
+          seed: scopedMetadata,
         });
+        manifestRegistry = withPluginMetadataCollectionScope(
+          metadata,
+          () =>
+            projectConfigWidePluginMetadata(metadata!, {
+              pluginIdScope: createConfigValidationMetadataPluginIdScope({
+                config,
+                env: params.env,
+                preparedState: metadata,
+              }),
+            }).manifestRegistry,
+          { config, env: params.env },
+        );
         return { manifestRegistry };
       },
       getManifestRegistry: () => manifestRegistry,
-      getSnapshot: () => {
-        if (!metadataConfig) {
-          return undefined;
-        }
-        snapshot ??= resolvePluginMetadataSnapshot({
-          config: metadataConfig,
-          workspaceDir: tryResolveConfiguredAgentWorkspaceDir(metadataConfig, params.env),
-          env: params.env,
-          allowCurrent: params.allowCurrentPluginMetadata,
-          allowWorkspaceScopedCurrent: true,
-          pluginIdScope: resolvePluginIdScope(metadataConfig),
-        });
-        configWideSnapshot ??= manifestRegistry
-          ? rebasePluginMetadataSnapshotManifestRegistry(snapshot, manifestRegistry)
-          : snapshot;
-        return configWideSnapshot;
-      },
+      getMetadata: () => metadata,
     };
   }
 
@@ -228,7 +219,6 @@ export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): Con
       const resolution = resolveConfigForRead(resolved, candidateEnv, deps.lowerPrecedenceEnv);
       const effectiveConfigRaw = resolution.resolvedConfigRaw;
       const pluginMetadata = createValidationPluginMetadataSnapshotLoader({
-        effectiveConfigRaw,
         env: candidateEnv,
       });
       const validated = validateConfigObjectWithPlugins(effectiveConfigRaw, {
@@ -274,6 +264,8 @@ export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): Con
   };
 }
 
-export function resolveModelIdNormalizationPolicies(snapshot: PluginMetadataSnapshot | undefined) {
+export function resolveModelIdNormalizationPolicies(
+  snapshot: Pick<PluginMetadataSnapshot, "plugins"> | undefined,
+) {
   return snapshot ? collectManifestModelIdNormalizationPolicies(snapshot.plugins) : undefined;
 }

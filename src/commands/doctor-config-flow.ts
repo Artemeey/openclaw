@@ -36,7 +36,7 @@ import {
 } from "./doctor/shared/config-mutation-state.js";
 import { isSingleTopLevelIncludeMigration } from "./doctor/shared/include-migration-ownership.js";
 import { normalizeCompatibilityConfigValues } from "./doctor/shared/legacy-config-core-migrate.js";
-import type { DoctorPluginMetadataSnapshotState } from "./doctor/shared/plugin-metadata-snapshot-scope.js";
+import type { DoctorPluginMetadataState } from "./doctor/shared/plugin-metadata-snapshot-scope.js";
 
 function collectInvalidHookTransformsDirWarnings(
   cfg: OpenClawConfig,
@@ -169,7 +169,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
         repairPrefixedConfig: shouldRepair,
         recoverCorruptTargetStore: shouldRepair,
         doctorOnlyStateMigrations: shouldRepair,
-        preparePluginMetadataSnapshot: true,
+        includePluginMetadata: true,
         measure: async (name, run) => {
           progress.setLabel(`${name.slice(name.lastIndexOf(".") + 1).replaceAll("-", " ")}…`);
           return await run();
@@ -178,19 +178,19 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
   );
   const snapshot = preflight.snapshot;
   const baseCfg = preflight.baseConfig;
-  const pluginMetadataSnapshotState: DoctorPluginMetadataSnapshotState = {
-    current: preflight.pluginMetadataSnapshot,
+  const pluginMetadataState: DoctorPluginMetadataState = {
+    current: preflight.pluginMetadata,
   };
   const { createDoctorPluginMetadataSnapshotScope } =
     await import("./doctor/shared/plugin-metadata-snapshot-scope.js");
   const pluginMetadataSnapshotScope = createDoctorPluginMetadataSnapshotScope({
-    getBaseSnapshot: () => pluginMetadataSnapshotState.current,
+    getBaseMetadata: () => pluginMetadataState.current,
     env: process.env,
   });
   const runWithPluginMetadataSnapshot = pluginMetadataSnapshotScope.run;
   const invalidatePluginMetadataSnapshot = () => {
     // Filesystem/install repairs replace the authoritative plugin generation.
-    pluginMetadataSnapshotState.current = undefined;
+    pluginMetadataState.current = undefined;
     pluginMetadataSnapshotScope.invalidate();
   };
   const runWithCurrentPluginMetadata = <T>(config: OpenClawConfig, run: () => T): T => {
@@ -508,7 +508,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
       doctorFixCommand,
       env: process.env,
       blockedCodexProviderPlan,
-      pluginMetadataSnapshotState,
+      pluginMetadataState,
       runWithPluginMetadataSnapshot,
       ...(prompter
         ? {
@@ -524,7 +524,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
         : {}),
     });
     state = repairSequence.state;
-    pluginMetadataSnapshotState.current = repairSequence.pluginMetadataSnapshot;
+    pluginMetadataState.current = repairSequence.pluginMetadata;
     openAICodexAuthProfileIdMap = repairSequence.openAICodexAuthProfileIdMap;
     if (repairSequence.authProfilesRepaired) {
       await refreshGatewayAuthStateAfterAuthProfileRepair();
@@ -662,9 +662,7 @@ export async function loadAndMaybeMigrateDoctorConfig(params: {
       ? { blockedCodexModelIdentities: blockedCodexProviderPlan.blockedModelIdentities }
       : {}),
     ...(openAICodexAuthProfileIdMap?.size ? { openAICodexAuthProfileIdMap } : {}),
-    ...(pluginMetadataSnapshotState.current
-      ? { pluginMetadataSnapshot: pluginMetadataSnapshotState.current }
-      : {}),
+    ...(pluginMetadataState.current ? { pluginMetadata: pluginMetadataState.current } : {}),
     runWithPluginMetadataSnapshot,
     invalidatePluginMetadataSnapshot,
   };

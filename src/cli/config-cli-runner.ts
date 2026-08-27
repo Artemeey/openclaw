@@ -381,10 +381,7 @@ export async function runConfigOperations(params: {
     errors.push(...pluginIntegrationErrors);
     if (requiresFullSchemaValidation) {
       errors.push(
-        ...collectDryRunSchemaErrors(
-          nextConfig,
-          mutationStart.writeOptions.basePluginMetadataSnapshot,
-        ),
+        ...collectDryRunSchemaErrors(nextConfig, mutationStart.writeOptions.basePluginMetadata),
       );
     }
     if (checksRefs) {
@@ -469,10 +466,7 @@ export async function runConfigOperations(params: {
     );
   }
   if (params.successMode === "set" && isDeepStrictEqual(currentConfig, nextConfig)) {
-    assertStrictConfigForMutation(
-      nextConfig,
-      mutationStart.writeOptions.basePluginMetadataSnapshot,
-    );
+    assertStrictConfigForMutation(nextConfig, mutationStart.writeOptions.basePluginMetadata);
     runtime.log(info("No change"));
     return;
   }

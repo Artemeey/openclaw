@@ -997,7 +997,7 @@ describe("normalizeCompatibilityConfigValues", () => {
     expect(result.config.agents?.list?.[1]?.model).toBe("anthropic/claude-sonnet-4-6");
   });
 
-  it("uses a retained metadata snapshot for plugin-owned providers", () => {
+  it("uses retained metadata for plugin-owned providers", () => {
     const config = {
       agents: {
         defaults: {
@@ -1015,7 +1015,7 @@ describe("normalizeCompatibilityConfigValues", () => {
         },
       ]),
     });
-    const pluginMetadataSnapshot = {
+    const pluginMetadata = {
       ...baseSnapshot,
       owners: {
         ...baseSnapshot.owners,
@@ -1024,7 +1024,7 @@ describe("normalizeCompatibilityConfigValues", () => {
     };
 
     const result = repairStaleAgentModelRefs(config, {
-      pluginMetadataSnapshot,
+      pluginMetadata,
       persistedProviderIdsByAgentId: new Map(),
     });
 
