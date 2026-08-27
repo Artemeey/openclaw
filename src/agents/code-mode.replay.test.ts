@@ -1,18 +1,23 @@
 /** Tests Code Mode restart-safe replay. */
 
 import { expectDefined } from "@openclaw/normalization-core";
+import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setPluginToolMeta } from "../plugins/tools.js";
-import { applyCodeModeCatalog } from "./code-mode.js";
+import { consumeUncertainCodeModeMutations } from "./code-mode-repair-provenance.js";
+import { applyCodeModeCatalog, createCodeModeTools } from "./code-mode.js";
 import {
   resetCodeModeTestState,
   fakeTool,
   pluginTool,
+  pluginToolWithExecute,
   mcpTool,
   resultDetails,
   createCodeModeHarness,
   runUntilCompleted,
 } from "./code-mode.test-support.js";
+import { createToolSearchCatalogRef } from "./tool-search.js";
+import { jsonResult } from "./tools/common.js";
 
 describe("Code Mode restart-safe replay", () => {
   beforeEach(() => {
@@ -253,6 +258,84 @@ describe("Code Mode restart-safe replay", () => {
     expect(failed.error).toContain("not proven replay-safe");
     expect(readTool.execute).toHaveBeenCalledTimes(1);
     expect(writeTool.execute).not.toHaveBeenCalled();
+  });
+
+  it("fences nested exec replay across host-derived yield budgets", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const config = {
+      tools: { codeMode: { enabled: true, timeoutMs: 10_000 } },
+    } as never;
+    const shellCalls: unknown[] = [];
+    const originalCode = 'return await exec({ command: "same", yieldMs: 4_000 });';
+
+    const createHarness = (mutationKeys?: readonly string[]) => {
+      const catalogRef = createToolSearchCatalogRef();
+      const ctx = {
+        config,
+        runtimeConfig: config,
+        sessionId: "session-code-mode",
+        sessionKey: "agent:main:main",
+        runId: "run-code-mode",
+        catalogRef,
+        ...(mutationKeys
+          ? { codeModeReconciliationReplayFence: { code: originalCode, mutationKeys } }
+          : {}),
+      };
+      const codeModeTools = createCodeModeTools(ctx);
+      const consumeBudget = pluginToolWithExecute(
+        "fake_consume_budget",
+        "Consume most of the shared Code Mode deadline",
+        async () => {
+          vi.advanceTimersByTime(9_600);
+          return jsonResult({ consumed: true });
+        },
+      );
+      const shell = pluginToolWithExecute("exec", "Run shell", async (_toolCallId, input) => {
+        shellCalls.push(input);
+        throw new Error("shell reply lost after dispatch");
+      });
+      shell.parameters = Type.Object({
+        command: Type.String(),
+        yieldMs: Type.Optional(Type.Number()),
+      });
+      applyCodeModeCatalog({
+        tools: [...codeModeTools, consumeBudget, shell],
+        config,
+        sessionId: ctx.sessionId,
+        sessionKey: ctx.sessionKey,
+        runId: ctx.runId,
+        catalogRef,
+      });
+      return { codeModeTools, consumeBudget };
+    };
+
+    const firstHarness = createHarness();
+    const first = resultDetails(
+      await expectDefined(firstHarness.codeModeTools[0], "Code Mode exec test invariant").execute(
+        "code-call-shell-first",
+        { code: originalCode },
+      ),
+    );
+    const mutationKeys = consumeUncertainCodeModeMutations(first);
+    expect(mutationKeys).toHaveLength(1);
+    expect(shellCalls).toEqual([{ command: "same", yieldMs: 4_000 }]);
+
+    const replayHarness = createHarness(mutationKeys);
+    const replay = resultDetails(
+      await expectDefined(replayHarness.codeModeTools[0], "Code Mode exec test invariant").execute(
+        "code-call-shell-replay",
+        {
+          code: 'await fake_consume_budget({}); return await exec({ command: "same" });',
+        },
+      ),
+    );
+
+    expect(replay).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("Blocked a replay"),
+    });
+    expect(replayHarness.consumeBudget.execute).toHaveBeenCalledOnce();
+    expect(shellCalls).toEqual([{ command: "same", yieldMs: 4_000 }]);
   });
 
   it("keeps host-forced restart safety when the model clears the exec flag", async () => {

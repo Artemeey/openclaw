@@ -10,11 +10,13 @@ export type CodeModeReconciliationReplayFence = {
   mutationKeys: readonly string[];
 };
 
-/** Identify the bridged operation independently of its guest JavaScript source. */
-export function codeModeMutationReplayKey(request: PendingBridgeRequest): string {
-  const args =
-    request.method === "callValue" ? [request.args[0], request.args[1] ?? {}] : request.args;
-  return `${request.method}:${sha256Hex(stableStringify(args))}`;
+export type CodeModeMutationIdentity =
+  | { kind: "tool"; id: string; input: unknown }
+  | { kind: "bridge"; method: PendingBridgeRequest["method"]; args: unknown[] };
+
+/** Identify the final host operation independently of its guest JavaScript surface. */
+export function codeModeMutationReplayKey(identity: CodeModeMutationIdentity): string {
+  return `${identity.kind}:${sha256Hex(stableStringify(identity))}`;
 }
 
 /** Attach host-only repair authority to one finalized Code Mode failure payload. */

@@ -94,6 +94,7 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
       appliedChanges.push("first hunk applied");
       throw new Error("second hunk is ambiguous");
     });
+    applyPatch.prepareBeforeToolCallParams = () => ({ value: "same mutation" });
     const write = pluginToolWithExecute("write", "Write a file", async () => jsonResult({}));
     const message = pluginToolWithExecute("message", "Send a message", async () => jsonResult({}));
     const shell = pluginToolWithExecute("shell_command", "Run a shell", async () => jsonResult({}));
@@ -144,7 +145,7 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
                       id: "replay",
                       name: "exec",
                       arguments: {
-                        code: "// harmless source rewrite\nreturn await apply_patch({});",
+                        code: '// harmless source rewrite\nreturn await apply_patch({ value: "same mutation" });',
                       },
                     },
                     {
@@ -159,7 +160,7 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
                       type: "toolCall",
                       id: "mutate",
                       name: "exec",
-                      arguments: { code: "return await apply_patch({});" },
+                      arguments: { code: 'return await apply_patch({ alias: "same mutation" });' },
                     },
                   ],
           );
@@ -197,8 +198,8 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
     });
 
     expect(firstAttempt.codeModeReconciliationCandidate).toEqual({
-      code: "return await apply_patch({});",
-      mutationKeys: [expect.stringMatching(/^callValue:/)],
+      code: 'return await apply_patch({ alias: "same mutation" });',
+      mutationKeys: [expect.stringMatching(/^tool:/)],
     });
     expect(appliedChanges).toEqual(["first hunk applied"]);
     expect(applyPatch.execute).toHaveBeenCalledOnce();

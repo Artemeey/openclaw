@@ -12,7 +12,10 @@ import { resolveSafeTimeoutDelayMs } from "../utils/timer-delay.js";
 import { redactCodeModeCatalogIds, type CodeModeCatalogProjection } from "./code-mode-catalog.js";
 import { boundCodeModeValue } from "./code-mode-json.js";
 import type { CodeModeNamespaceRuntime } from "./code-mode-namespaces.js";
-import { codeModeMutationReplayKey } from "./code-mode-repair-provenance.js";
+import {
+  codeModeMutationReplayKey,
+  type CodeModeMutationIdentity,
+} from "./code-mode-repair-provenance.js";
 import type { PendingBridgeRequest, SettledBridgeRequest } from "./code-mode-runtime.js";
 import { readCodeModeSkill } from "./code-mode-skills.js";
 import { consumeMcpCodeModeGuestResult } from "./mcp-content.js";
@@ -68,6 +71,8 @@ async function callNodesTool(params: {
   signal?: AbortSignal;
   onUpdate?: AgentToolUpdateCallback;
   input: Record<string, unknown>;
+  potentiallyMutating?: boolean;
+  preparePotentialMutation: (identity: CodeModeMutationIdentity) => void;
 }): Promise<unknown> {
   return await params.runtime.callValue(CODE_MODE_NODES_TOOL_ID, params.input, {
     includeMcp: false,
@@ -75,6 +80,19 @@ async function callNodesTool(params: {
     signal: params.signal,
     onUpdate: params.onUpdate,
     recoverySurface: "catalog",
+    ...(params.potentiallyMutating
+      ? {
+          onBeforeExecute: (input: unknown) =>
+            params.preparePotentialMutation({
+              kind: "tool",
+              id: CODE_MODE_NODES_TOOL_ID,
+              input: codeModeMutationIdentityInput({
+                toolId: CODE_MODE_NODES_TOOL_ID,
+                input,
+              }),
+            }),
+        }
+      : {}),
   });
 }
 
@@ -83,6 +101,7 @@ async function listCodeModeNodes(params: {
   parentToolCallId: string;
   signal?: AbortSignal;
   onUpdate?: AgentToolUpdateCallback;
+  preparePotentialMutation: (identity: CodeModeMutationIdentity) => void;
 }): Promise<NodeListNode[]> {
   return parseNodeList(
     await callNodesTool({
@@ -98,6 +117,7 @@ async function runNodesBridge(params: {
   request: PendingBridgeRequest;
   signal?: AbortSignal;
   onUpdate?: AgentToolUpdateCallback;
+  preparePotentialMutation: (identity: CodeModeMutationIdentity) => void;
 }): Promise<unknown> {
   const values = params.request.args;
   const action = values[0];
@@ -153,6 +173,7 @@ async function runNodesBridge(params: {
         invokeCommand: command,
         invokeParamsJson: JSON.stringify(values[3] ?? {}),
       },
+      potentiallyMutating: true,
     });
   }
   throw new ToolInputError("unsupported nodes bridge action.");
@@ -243,6 +264,7 @@ async function runAgentSpawnBridge(params: {
   ctx: ToolSearchToolContext;
   signal?: AbortSignal;
   onUpdate?: AgentToolUpdateCallback;
+  preparePotentialMutation: (identity: CodeModeMutationIdentity) => void;
 }) {
   requireCodeModeSwarmEnabled(params.ctx);
   const prompt = params.request.args[0];
@@ -319,6 +341,8 @@ async function runAgentSpawnBridge(params: {
     parentToolCallId: params.parentToolCallId,
     signal: params.signal,
     onUpdate: params.onUpdate,
+    onBeforeExecute: (input) =>
+      params.preparePotentialMutation({ kind: "tool", id: spawnEntry.id, input }),
   });
   const value =
     isRecord(called.result) && "details" in called.result ? called.result.details : called.result;
@@ -385,6 +409,58 @@ function runSwarmNoteBridge(params: {
   return { ok: true };
 }
 
+function prepareCodeModePotentialMutation(
+  params: {
+    ctx: ToolSearchToolContext;
+    onPotentialMutation?: (key: string) => void;
+  },
+  identity: CodeModeMutationIdentity,
+): void {
+  const key = codeModeMutationReplayKey(identity);
+  if (params.ctx.codeModeReconciliationReplayFence?.mutationKeys.includes(key)) {
+    const error = new ToolInputError(
+      "Blocked a replay of a Code Mode mutation with an uncertain outcome.",
+    );
+    registerTrustedToolNoStartError(error);
+    throw error;
+  }
+  params.onPotentialMutation?.(key);
+}
+
+function codeModeMutationIdentityInput(params: {
+  toolId: string;
+  input: unknown;
+  omitExecYieldMs?: boolean;
+}): unknown {
+  if (!isRecord(params.input)) {
+    return params.input;
+  }
+  const semanticInput = { ...params.input };
+  if (params.omitExecYieldMs) {
+    delete semanticInput.yieldMs;
+  }
+  if (params.toolId === CODE_MODE_NODES_TOOL_ID && semanticInput.action === "invoke") {
+    delete semanticInput.invokeTimeoutMs;
+    if (typeof semanticInput.node === "string") {
+      semanticInput.node = semanticInput.node.trim();
+    }
+    if (typeof semanticInput.invokeCommand === "string") {
+      semanticInput.invokeCommand = semanticInput.invokeCommand.trim();
+    }
+    if (semanticInput.invokeParamsJson === undefined) {
+      semanticInput.invokeParamsJson = {};
+    }
+    if (typeof semanticInput.invokeParamsJson === "string") {
+      try {
+        semanticInput.invokeParamsJson = JSON.parse(semanticInput.invokeParamsJson);
+      } catch {
+        // Keep invalid JSON exact; the tool will reject it before reaching the node.
+      }
+    }
+  }
+  return semanticInput;
+}
+
 export async function runBridgeRequest(params: {
   runtime: ToolSearchRuntime;
   catalogProjection: CodeModeCatalogProjection;
@@ -397,20 +473,12 @@ export async function runBridgeRequest(params: {
   request: PendingBridgeRequest;
   signal?: AbortSignal;
   onUpdate?: AgentToolUpdateCallback;
+  onPotentialMutation?: (key: string) => void;
 }): Promise<SettledBridgeRequest> {
   const catalogProjection = params.catalogProjection;
+  const preparePotentialMutation = (identity: CodeModeMutationIdentity) =>
+    prepareCodeModePotentialMutation(params, identity);
   try {
-    if (
-      params.ctx.codeModeReconciliationReplayFence?.mutationKeys.includes(
-        codeModeMutationReplayKey(params.request),
-      )
-    ) {
-      const error = new ToolInputError(
-        "Blocked a replay of a Code Mode mutation with an uncertain outcome.",
-      );
-      registerTrustedToolNoStartError(error);
-      throw error;
-    }
     const values = Array.isArray(params.request.args) ? params.request.args : [];
     let value: unknown;
     switch (params.request.method) {
@@ -464,10 +532,12 @@ export async function runBridgeRequest(params: {
           throw new ToolInputError(`Unknown catalog function: ${callableName}.`);
         }
         let input = values[1] ?? {};
-        if (
+        const omitExecYieldMs =
           binding.source === "openclaw" &&
           binding.name === "exec" &&
-          binding.input?.includes("yieldMs") === true &&
+          binding.input?.includes("yieldMs") === true;
+        if (
+          omitExecYieldMs &&
           isRecord(input) &&
           input.background !== true &&
           input.yieldMs === undefined
@@ -480,10 +550,23 @@ export async function runBridgeRequest(params: {
             yieldMs: Math.max(1, Math.min(1_000, Math.floor(params.remainingMs / 4))),
           };
         }
+        const onBeforeExecute = params.runtime.isReplaySafeExactId(binding.id)
+          ? undefined
+          : (preparedInput: unknown) =>
+              preparePotentialMutation({
+                kind: "tool",
+                id: binding.id,
+                input: codeModeMutationIdentityInput({
+                  toolId: binding.id,
+                  input: preparedInput,
+                  omitExecYieldMs,
+                }),
+              });
         const called = await params.runtime.callExactId(binding.id, input, {
           parentToolCallId: params.parentToolCallId,
           signal: params.signal,
           onUpdate: params.onUpdate,
+          onBeforeExecute,
         });
         value =
           isRecord(called.result) && "details" in called.result
@@ -492,10 +575,15 @@ export async function runBridgeRequest(params: {
         break;
       }
       case "nodes": {
-        value = await runNodesBridge(params);
+        value = await runNodesBridge({ ...params, preparePotentialMutation });
         break;
       }
       case "yield": {
+        preparePotentialMutation({
+          kind: "bridge",
+          method: params.request.method,
+          args: params.request.args,
+        });
         value = { status: "yielded", reason: values[0] ?? null };
         break;
       }
@@ -534,6 +622,8 @@ export async function runBridgeRequest(params: {
               parentToolCallId: params.parentToolCallId,
               signal: params.signal,
               onUpdate: params.onUpdate,
+              onBeforeExecute: (input) =>
+                preparePotentialMutation({ kind: "tool", id: entry.id, input }),
             });
             if (request.catalogId) {
               const guestResult = consumeMcpCodeModeGuestResult(called.result);
@@ -552,10 +642,15 @@ export async function runBridgeRequest(params: {
         break;
       }
       case "agentSpawn": {
-        value = await runAgentSpawnBridge(params);
+        value = await runAgentSpawnBridge({ ...params, preparePotentialMutation });
         break;
       }
       case "agentWait": {
+        preparePotentialMutation({
+          kind: "bridge",
+          method: params.request.method,
+          args: params.request.args,
+        });
         value = await runAgentWaitBridge(params);
         break;
       }
@@ -592,6 +687,11 @@ export async function runBridgeRequest(params: {
         break;
       }
       case "swarmNote": {
+        preparePotentialMutation({
+          kind: "bridge",
+          method: params.request.method,
+          args: params.request.args,
+        });
         value = runSwarmNoteBridge(params);
         break;
       }

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../../test/helpers/promise.js";
 import {
   createReplyOperation,
   expireStaleReplyOperation,
@@ -8,6 +9,7 @@ import {
   isAgentRunRestartAbortReason,
   isAgentRunSupersededAbortReason,
 } from "../../run-termination.js";
+import { attachInternalToolExecutionPreparer } from "../../runtime/internal-hooks.js";
 import {
   projectToolSearchTargetTranscriptMessages,
   type ToolSearchTargetTranscriptProjection,
@@ -460,6 +462,54 @@ describe("prepareEmbeddedAttemptStream", () => {
         },
       }),
     ]);
+  });
+
+  it("does not launch a prepared hidden tool after its run aborts", async () => {
+    const runAbortController = new AbortController();
+    const preparationStarted = createDeferred();
+    const releasePreparation = createDeferred();
+    const execute = vi.fn(async () => ({ content: [], details: { ok: true } }));
+    const dispose = vi.fn();
+    const onBeforeExecute = vi.fn();
+    const tool = attachInternalToolExecutionPreparer(
+      {
+        name: "delayed_mutation",
+        description: "Wait before mutation",
+        parameters: { type: "object", properties: {}, additionalProperties: false },
+        execute,
+      },
+      async () => {
+        preparationStarted.resolve();
+        await releasePreparation.promise;
+        return {
+          kind: "ready" as const,
+          args: { target: "same" },
+          execute,
+          dispose,
+        };
+      },
+    );
+    const prepared = prepareCatalogExecutor([], { runAbortController });
+    const call = prepared.toolSearchCatalogExecutor({
+      tool: tool as never,
+      toolName: tool.name,
+      source: "openclaw",
+      sourceName: "fixture-plugin",
+      toolCallId: "call-delayed-mutation",
+      parentToolCallId: "call-code-mode",
+      input: { alias: "same" },
+      onBeforeExecute,
+      acceptResultBeforeProjection: async (candidate) => candidate,
+    });
+
+    await preparationStarted.promise;
+    runAbortController.abort(new Error("run aborted during preparation"));
+    await expect(call).rejects.toThrow("Aborted");
+    releasePreparation.resolve();
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+
+    expect(onBeforeExecute).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("distinguishes an accepted abort from normal steering closure and sessions_yield", () => {

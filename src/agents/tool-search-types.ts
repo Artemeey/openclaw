@@ -54,6 +54,8 @@ export type ToolSearchCallOptions = CatalogVisibilityOptions &
     parentToolCallId?: string;
     signal?: AbortSignal;
     onUpdate?: AgentToolUpdateCallback;
+    /** Host-owned final prepared-input gate; throwing prevents implementation start. */
+    onBeforeExecute?: (input: unknown) => void;
   };
 
 export type ToolSearchCatalogToolExecutor = (params: {
@@ -66,6 +68,8 @@ export type ToolSearchCatalogToolExecutor = (params: {
   input: unknown;
   signal?: AbortSignal;
   onUpdate?: AgentToolUpdateCallback;
+  /** Forward the host gate to the final prepared execution boundary. */
+  onBeforeExecute?: (input: unknown) => void;
   acceptResultBeforeProjection: (
     result: AgentToolResult<unknown>,
   ) => Promise<AgentToolResult<unknown>>;

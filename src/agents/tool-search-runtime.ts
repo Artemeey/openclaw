@@ -559,6 +559,7 @@ export class ToolSearchRuntime {
       signal?: AbortSignal;
       onUpdate?: ToolSearchCallOptions["onUpdate"];
       recoverySurface?: UnknownToolRecoverySurface;
+      onBeforeExecute?: ToolSearchCallOptions["onBeforeExecute"];
     },
   ) => {
     const catalog = resolveCatalog(this.ctx);
@@ -614,6 +615,7 @@ export class ToolSearchRuntime {
       parentToolCallId?: string;
       signal?: AbortSignal;
       onUpdate?: ToolSearchCallOptions["onUpdate"];
+      onBeforeExecute?: ToolSearchCallOptions["onBeforeExecute"];
     },
   ) => {
     catalog.callCount += 1;
@@ -624,6 +626,7 @@ export class ToolSearchRuntime {
     const executeTool =
       this.ctx.executeTool ??
       (async (params: Parameters<ToolSearchCatalogToolExecutor>[0]) => {
+        params.onBeforeExecute?.(params.input);
         const result = await params.tool.execute(
           params.toolCallId,
           params.input,
@@ -668,6 +671,7 @@ export class ToolSearchRuntime {
           input: normalizedInput,
           signal,
           onUpdate: options?.onUpdate,
+          onBeforeExecute: options?.onBeforeExecute,
           acceptResultBeforeProjection,
         });
         if (networkInvocation && !preExecutionBlocked) {

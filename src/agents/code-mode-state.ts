@@ -8,7 +8,6 @@ import { runBridgeRequest } from "./code-mode-bridge.js";
 import type { CodeModeCatalogProjection } from "./code-mode-catalog.js";
 import { CODE_MODE_EXEC_TOOL_NAME, CODE_MODE_WAIT_TOOL_NAME } from "./code-mode-control-tools.js";
 import type { CodeModeNamespaceRuntime } from "./code-mode-namespaces.js";
-import { codeModeMutationReplayKey } from "./code-mode-repair-provenance.js";
 import {
   enforceSnapshotPayloadLimits,
   type CodeModeConfig,
@@ -93,11 +92,7 @@ export function codeModeMutationReplayKeys(
   return keys.length > 0 ? keys : undefined;
 }
 
-function recordPotentiallyMutatingCall(
-  state: CodeModeBridgeDispatchState,
-  request: PendingBridgeRequest,
-): string {
-  const key = codeModeMutationReplayKey(request);
+function recordPotentiallyMutatingCall(state: CodeModeBridgeDispatchState, key: string): void {
   const count = state.potentiallyMutatingCallKeys.get(key);
   if (count !== undefined) {
     state.potentiallyMutatingCallKeys.set(key, count + 1);
@@ -106,7 +101,6 @@ function recordPotentiallyMutatingCall(
   } else {
     state.mutationCallKeysComplete = false;
   }
-  return key;
 }
 
 function releasePotentiallyMutatingCall(state: CodeModeBridgeDispatchState, key: string): void {
@@ -411,21 +405,10 @@ export function createPendingBridgeStates(params: {
     const target = params.catalogProjection.byCallableName.get(String(request.args[0]));
     const yieldRunSignal = target?.name === "sessions_yield" ? params.ctx.abortSignal : undefined;
     const tracksDispatch = request.method !== "sleep";
-    // Discovery is read-only; replay-safe actions such as agentSpawn may still mutate.
-    const recoverySafe =
-      ["search", "describe", "skillsList", "skillsRead"].includes(request.method) ||
-      (["nodes", "callValue"].includes(request.method) &&
-        isPendingBridgeRequestReplaySafe(request, params.runtime, params.catalogProjection));
     if (tracksDispatch) {
       params.bridgeDispatch.started = true;
-      if (!recoverySafe) {
-        params.bridgeDispatch.potentiallyMutatingDispatches += 1;
-      }
     }
-    const mutationKey =
-      tracksDispatch && !recoverySafe
-        ? recordPotentiallyMutatingCall(params.bridgeDispatch, request)
-        : undefined;
+    const mutationKeys: string[] = [];
     const bridgeCall = runBridgeRequest({
       runtime: params.runtime,
       catalogProjection: params.catalogProjection,
@@ -438,6 +421,11 @@ export function createPendingBridgeStates(params: {
       request,
       signal,
       onUpdate: params.onUpdate,
+      onPotentialMutation: (key) => {
+        params.bridgeDispatch.potentiallyMutatingDispatches += 1;
+        recordPotentiallyMutatingCall(params.bridgeDispatch, key);
+        mutationKeys.push(key);
+      },
     });
     const completion = raceWithAbortSignal(bridgeCall, signal, yieldRunSignal).catch(
       (): SettledBridgeRequest => ({
@@ -450,12 +438,12 @@ export function createPendingBridgeStates(params: {
       ...request,
       promise: completion.then((settled) => {
         const trustedNoStart = tracksDispatch && consumeTrustedToolNoStartError(settled);
-        if (trustedNoStart && !recoverySafe) {
+        if (trustedNoStart) {
           params.bridgeDispatch.potentiallyMutatingDispatches = Math.max(
             0,
-            params.bridgeDispatch.potentiallyMutatingDispatches - 1,
+            params.bridgeDispatch.potentiallyMutatingDispatches - mutationKeys.length,
           );
-          if (mutationKey) {
+          for (const mutationKey of mutationKeys) {
             releasePotentiallyMutatingCall(params.bridgeDispatch, mutationKey);
           }
         }

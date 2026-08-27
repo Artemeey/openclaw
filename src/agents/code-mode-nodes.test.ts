@@ -44,6 +44,7 @@ const nodeSnapshot = [
 let applyCodeModeCatalog: typeof import("./code-mode.js").applyCodeModeCatalog;
 let createCodeModeTools: typeof import("./code-mode.js").createCodeModeTools;
 let consumeRepairableCodeModeFailure: typeof import("./code-mode-repair-provenance.js").consumeRepairableCodeModeFailure;
+let consumeUncertainCodeModeMutations: typeof import("./code-mode-repair-provenance.js").consumeUncertainCodeModeMutations;
 let createToolSearchCatalogRef: typeof import("./tool-search.js").createToolSearchCatalogRef;
 let createNodesTool: typeof import("./tools/nodes-tool.js").createNodesTool;
 let testing: typeof import("./code-mode.test-support.js").testing;
@@ -54,12 +55,15 @@ function resultDetails(result: { details?: unknown }): Record<string, unknown> {
   return result.details as Record<string, unknown>;
 }
 
-function createHarness() {
+function createHarness(
+  codeModeReconciliationReplayFence?: import("./code-mode-repair-provenance.js").CodeModeReconciliationReplayFence,
+) {
   const catalogRef = createToolSearchCatalogRef();
   const config = { tools: { codeMode: true } } as never;
   const nestedCalls: Parameters<ToolSearchCatalogToolExecutor>[0][] = [];
   const executeTool: ToolSearchCatalogToolExecutor = async (params) => {
     nestedCalls.push(params);
+    params.onBeforeExecute?.(params.input);
     const result = await params.tool.execute(
       params.toolCallId,
       params.input,
@@ -77,6 +81,7 @@ function createHarness() {
     runId: "run-code-mode-nodes",
     catalogRef,
     executeTool,
+    codeModeReconciliationReplayFence,
   };
   const codeModeTools = createCodeModeTools(ctx);
   const nodesTool = createNodesTool({ agentSessionKey: ctx.sessionKey });
@@ -115,7 +120,8 @@ describe("Code Mode nodes", () => {
   beforeAll(async () => {
     vi.resetModules();
     ({ applyCodeModeCatalog, createCodeModeTools } = await import("./code-mode.js"));
-    ({ consumeRepairableCodeModeFailure } = await import("./code-mode-repair-provenance.js"));
+    ({ consumeRepairableCodeModeFailure, consumeUncertainCodeModeMutations } =
+      await import("./code-mode-repair-provenance.js"));
     ({ createToolSearchCatalogRef } = await import("./tool-search.js"));
     ({ createNodesTool } = await import("./tools/nodes-tool.js"));
     ({ testing } = await import("./code-mode.test-support.js"));
@@ -325,5 +331,59 @@ describe("Code Mode nodes", () => {
       expect.anything(),
       expect.objectContaining({ nodeId: "node-1", command: "device.status" }),
     );
+  });
+
+  it.each([
+    {
+      label: "equivalent JSON",
+      specializedArgs: ', { detail: true, mode: "safe" }',
+      genericFields:
+        'invokeParamsJson: \'{ "mode": "safe", "detail": true }\', invokeTimeoutMs: 500,',
+    },
+    {
+      label: "default parameters",
+      specializedArgs: "",
+      genericFields: "",
+    },
+  ])("fences the same node mutation through $label catalog input", async (scenario) => {
+    let mutationCalls = 0;
+    gatewayMocks.callGatewayTool.mockImplementation(async (method, _options, _input) => {
+      if (method === "node.list") {
+        return { nodes: nodeSnapshot };
+      }
+      if (method === "node.invoke") {
+        mutationCalls += 1;
+        throw new Error("node reply lost after dispatch");
+      }
+      throw new Error(`unexpected gateway method: ${String(method)}`);
+    });
+
+    const originalCode = `
+      const node = await nodes.get("node-1");
+      return await node.invoke("device.status"${scenario.specializedArgs});
+    `;
+    const first = await runUntilCompleted({ ...createHarness(), code: originalCode });
+    const mutationKeys = consumeUncertainCodeModeMutations(first);
+    expect(mutationKeys).toHaveLength(1);
+    expect(mutationCalls).toBe(1);
+
+    const replay = await runUntilCompleted({
+      ...createHarness({ code: originalCode, mutationKeys: mutationKeys ?? [] }),
+      code: `
+        const [nodesTool] = await catalog.search("nodes");
+        return await nodesTool({
+          action: "invoke",
+          node: " node-1 ",
+          invokeCommand: " device.status ",
+          ${scenario.genericFields}
+        });
+      `,
+    });
+
+    expect(replay).toMatchObject({
+      status: "failed",
+      error: expect.stringContaining("Blocked a replay"),
+    });
+    expect(mutationCalls).toBe(1);
   });
 });

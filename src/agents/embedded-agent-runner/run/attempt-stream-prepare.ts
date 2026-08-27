@@ -363,6 +363,7 @@ export function prepareEmbeddedAttemptStream(input: {
               signal.throwIfAborted();
               const preparer = getInternalToolExecutionPreparer(toolParams.tool);
               if (!preparer) {
+                toolParams.onBeforeExecute?.(toolParams.input);
                 onImplementationStart();
                 return await toolParams.tool.execute(
                   toolParams.toolCallId,
@@ -385,6 +386,8 @@ export function prepareEmbeddedAttemptStream(input: {
                   }
                   return prepared.outcome.result;
                 }
+                signal.throwIfAborted();
+                toolParams.onBeforeExecute?.(prepared.args);
                 return await prepared.execute(onImplementationStart);
               } finally {
                 prepared.dispose();
