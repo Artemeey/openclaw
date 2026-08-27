@@ -186,6 +186,7 @@ export type ReplyOperationPhase =
   | "queued"
   | "waiting_for_deferred_maintenance"
   | "waiting_for_global_lane"
+  | "waiting_for_approval"
   | "preflight_compacting"
   | "memory_flushing"
   | "running"
@@ -252,6 +253,7 @@ export type ReplyOperation = {
       | "queued"
       | "waiting_for_deferred_maintenance"
       | "waiting_for_global_lane"
+      | "waiting_for_approval"
       | "preflight_compacting"
       | "memory_flushing"
       | "running",

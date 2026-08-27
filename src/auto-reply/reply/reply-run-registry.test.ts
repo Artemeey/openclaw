@@ -410,6 +410,29 @@ describe("reply run registry", () => {
     }
   });
 
+  it("keeps a reply alive while an operator approval is pending", async () => {
+    vi.useFakeTimers();
+    const operation = createTestReplyOperation({
+      sessionKey: "agent:main:telegram:direct:approval-wait",
+      sessionId: "session-approval-wait",
+    });
+    try {
+      operation.setPhase("running");
+      operation.setPhase("waiting_for_approval");
+
+      await vi.advanceTimersByTimeAsync(RUN_STALE_TAKEOVER_MS + 1);
+
+      expect(operation.phase).toBe("waiting_for_approval");
+      expect(isReplyRunEvidenceStale(operation)).toBe(false);
+
+      operation.setPhase("running");
+      expect(operation.phase).toBe("running");
+    } finally {
+      operation.complete();
+      vi.useRealTimers();
+    }
+  });
+
   it("clears deferred-maintenance operations immediately on user abort", () => {
     const operation = createTestReplyOperation({
       sessionId: "session-waiting-abort",

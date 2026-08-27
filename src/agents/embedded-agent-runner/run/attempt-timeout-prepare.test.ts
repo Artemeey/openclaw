@@ -4,7 +4,11 @@ import { emitAgentEvent } from "../../../infra/agent-events.js";
 import { createEmbeddedAttemptRunAbort } from "./attempt-finalize.js";
 import { prepareEmbeddedAttemptTimeout } from "./attempt-timeout-prepare.js";
 
-function createTimeoutHarness(options?: { pendingCompaction?: boolean; timeoutMs?: number }) {
+function createTimeoutHarness(options?: {
+  pendingCompaction?: boolean;
+  timeoutMs?: number;
+  setReplyPhase?: (phase: "waiting_for_approval" | "running") => void;
+}) {
   const state = {
     pendingCompaction: options?.pendingCompaction ?? false,
     streaming: false,
@@ -19,6 +23,9 @@ function createTimeoutHarness(options?: { pendingCompaction?: boolean; timeoutMs
       sessionId: "session-1",
       timeoutMs: options?.timeoutMs ?? 100,
       onAttemptTimeoutArmed,
+      ...(options?.setReplyPhase
+        ? { replyOperation: { setPhase: options.setReplyPhase } as never }
+        : {}),
     },
     activeSession: {
       isCompacting: false,
@@ -121,7 +128,8 @@ describe("prepareEmbeddedAttemptTimeout", () => {
   });
 
   it("pauses exactly the original run budget until all scoped approvals resolve", async () => {
-    const harness = createTimeoutHarness();
+    const setReplyPhase = vi.fn();
+    const harness = createTimeoutHarness({ setReplyPhase });
     const emitApproval = (
       phase: string,
       approvalId: string,
@@ -132,16 +140,20 @@ describe("prepareEmbeddedAttemptTimeout", () => {
     await vi.advanceTimersByTimeAsync(30);
     emitApproval("waiting-approval", "first");
     emitApproval("waiting-approval", "second");
+    expect(setReplyPhase).toHaveBeenCalledTimes(1);
+    expect(setReplyPhase).toHaveBeenLastCalledWith("waiting_for_approval");
     await vi.advanceTimersByTimeAsync(500);
     expect(harness.abortRun).not.toHaveBeenCalled();
 
     emitApproval("approval-resolved", "first", "another-run");
     emitApproval("approval-resolved", "first", "run-1", "another-session");
     emitApproval("approval-resolved", "first");
+    expect(setReplyPhase).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(100);
     expect(harness.abortRun).not.toHaveBeenCalled();
 
     emitApproval("approval-resolved", "second");
+    expect(setReplyPhase).toHaveBeenLastCalledWith("running");
     await vi.advanceTimersByTimeAsync(69);
     expect(harness.abortRun).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);

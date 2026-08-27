@@ -454,6 +454,33 @@ describe("stuck session recovery", () => {
       activeSessionId: "queued-reply-session",
     });
     expect(mocks.abortEmbeddedAgentRun).not.toHaveBeenCalled();
+    expect(mocks.resetCommandLane).not.toHaveBeenCalled();
+  });
+
+  it("keeps the lane while reply work waits for operator approval", async () => {
+    mocks.resolveActiveEmbeddedRunSessionId.mockReturnValue("approval-wait-session");
+    mocks.resolveActiveEmbeddedRunHandleSessionId.mockReturnValue(undefined);
+    mocks.resolveEmbeddedReplyActivity.mockReturnValue({
+      phase: "waiting_for_approval",
+      lastActivityAtMs: Date.now() - 15 * 60_000,
+    });
+    mocks.isEmbeddedAgentRunActive.mockReturnValue(true);
+
+    const outcome = await recoverStuckDiagnosticSession({
+      sessionId: "approval-wait-session",
+      sessionKey: "agent:main:main",
+      ageMs: 15 * 60_000,
+      queueDepth: 1,
+      allowActiveAbort: true,
+    });
+
+    expect(outcome).toMatchObject({
+      status: "skipped",
+      action: "keep_lane",
+      reason: "active_reply_work",
+      activeSessionId: "approval-wait-session",
+    });
+    expect(mocks.abortEmbeddedAgentRun).not.toHaveBeenCalled();
     expect(mocks.forceClearEmbeddedAgentRun).not.toHaveBeenCalled();
     expect(mocks.resetCommandLane).not.toHaveBeenCalled();
   });

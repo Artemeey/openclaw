@@ -212,13 +212,18 @@ export async function recoverStuckDiagnosticSession(
       activeReplyAgeMs !== undefined &&
       activeReplyAgeMs < staleActiveLaneTaskReleaseMs;
 
-    if (activeReplyPhase === "waiting_for_global_lane" || activeMaintenanceProtected) {
-      // Queued replies and configured maintenance own their lane until their
-      // producer finishes or the existing compaction safety window expires.
+    if (
+      activeReplyPhase === "waiting_for_global_lane" ||
+      activeReplyPhase === "waiting_for_approval" ||
+      activeMaintenanceProtected
+    ) {
+      // Healthy external waits own their lane until the producer resolves them;
+      // configured maintenance keeps its existing bounded safety window.
       return reportRecoveryOutcome({
         status: "skipped",
         action: "keep_lane",
-        reason: activeMaintenanceProtected ? "active_reply_work" : "global_lane_wait",
+        reason:
+          activeReplyPhase === "waiting_for_global_lane" ? "global_lane_wait" : "active_reply_work",
         sessionId: params.sessionId,
         sessionKey: params.sessionKey,
         activeSessionId: activeWorkSessionId,

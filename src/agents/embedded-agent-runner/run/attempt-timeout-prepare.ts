@@ -16,7 +16,7 @@ type AttemptCompactionState = {
 
 type EmbeddedAttemptTimeoutParams = Pick<
   EmbeddedRunAttemptParams,
-  "onAttemptTimeoutArmed" | "runId" | "sessionId" | "timeoutMs"
+  "onAttemptTimeoutArmed" | "replyOperation" | "runId" | "sessionId" | "timeoutMs"
 >;
 
 export function prepareEmbeddedAttemptTimeout(input: {
@@ -96,6 +96,7 @@ export function prepareEmbeddedAttemptTimeout(input: {
   };
 
   approvalWait.onChange = (pending) => {
+    attempt.replyOperation?.setPhase(pending ? "waiting_for_approval" : "running");
     if (pending) {
       // Human review consumes neither the run budget nor an active compaction grace window.
       pausedRemainingMs = Math.max(1, runAbortDeadlineAtMs - Date.now());
