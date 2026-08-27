@@ -117,6 +117,20 @@ describe("GitHub rate-limit retry timing", () => {
     });
   });
 
+  it("rejects malformed delta-seconds instead of interpreting exponent notation", async () => {
+    const now = Date.parse("2026-08-23T10:00:00Z");
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const response = new Response("rate limited", {
+      status: 429,
+      headers: { "retry-after": "1e2" },
+    });
+
+    await expect(readGitHubJsonResponse(response)).rejects.toMatchObject({
+      statusCode: 429,
+      retryAfterMs: 60_000,
+    });
+  });
+
   it("does not use the primary reset while secondary limiting leaves quota", async () => {
     const now = Date.parse("2026-08-23T10:00:00Z");
     vi.spyOn(Date, "now").mockReturnValue(now);

@@ -210,7 +210,7 @@ function boundedRateLimitDelay(delayMs: number): number | undefined {
 function githubRateLimitRetryAfterMs(response: Response, now = Date.now()): number {
   const retryAfter = response.headers.get("retry-after")?.trim();
   if (retryAfter) {
-    const seconds = Number(retryAfter);
+    const seconds = /^\d+$/u.test(retryAfter) ? Number(retryAfter) : Number.NaN;
     const secondsDelay = boundedRateLimitDelay(seconds * 1_000);
     if (secondsDelay !== undefined) {
       return secondsDelay;

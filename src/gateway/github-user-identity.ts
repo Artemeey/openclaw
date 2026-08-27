@@ -135,8 +135,8 @@ async function resolveGitHubUserIdentityByLogin(
     throw new TypeError("GitHub username is invalid");
   }
   return githubUserIdentityCoordinator.lookup({
-    allowStaleOnRateLimit: false,
     credentialScope: credential.cacheScope,
+    identityKind: "login",
     lookupKey: `login:${requestedLogin}`,
     request: async () => {
       const payload = await fetchGitHubIdentityPayload(
@@ -165,8 +165,8 @@ function resolveGitHubUserIdentityById(
   credential: GitHubApiCredentialScope,
 ): Promise<ResolvedGitHubUserIdentity> {
   return githubUserIdentityCoordinator.lookup({
-    allowStaleOnRateLimit: true,
     credentialScope: credential.cacheScope,
+    identityKind: "account-id",
     lookupKey: `id:${accountId}`,
     request: async () => {
       const payload = await fetchGitHubIdentityPayload(

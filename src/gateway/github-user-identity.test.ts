@@ -342,6 +342,100 @@ describe("authenticated GitHub identity sync", () => {
     });
   });
 
+  it("freshly verifies a mutable login before attaching a later connection", async () => {
+    await withOpenClawTestState({ scenario: "minimal" }, async () => {
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(githubResponse({ id: 1, login: "ada" }))
+        .mockResolvedValueOnce(githubResponse({ id: 2, login: "ada" }));
+      const createSync = () =>
+        createAuthenticatedGitHubIdentitySync({
+          authResult: {
+            ok: true,
+            method: "tailscale",
+            user: "ada@github",
+            tailscaleIdentity: { login: "ada@github", name: "Ada" },
+          },
+        });
+
+      const first = await createSync()?.();
+      const reassigned = await createSync()?.();
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(reassigned?.profileId).not.toBe(first?.profileId);
+      expect(getUserProfileListItem(reassigned!.profileId).githubIdentity).toMatchObject({
+        login: "ada",
+      });
+    });
+  });
+
+  it("rejects a distinct lookup when every coordinator slot is in flight", async () => {
+    let releaseRequests: (() => void) | undefined;
+    const requestGate = new Promise<void>((resolve) => {
+      releaseRequests = resolve;
+    });
+    const inFlight = Array.from({ length: 200 }, (_, index) =>
+      githubUserIdentityCoordinator.lookup({
+        credentialScope: "capacity-test",
+        identityKind: "login",
+        lookupKey: `login:user-${index}`,
+        request: async () => {
+          await requestGate;
+          return { accountId: index + 1, login: `user-${index}` };
+        },
+      }),
+    );
+    const overflowRequest = vi.fn().mockResolvedValue({ accountId: 201, login: "overflow" });
+
+    try {
+      await expect(
+        githubUserIdentityCoordinator.lookup({
+          credentialScope: "capacity-test",
+          identityKind: "login",
+          lookupKey: "login:overflow",
+          request: overflowRequest,
+        }),
+      ).rejects.toMatchObject({ statusCode: 429, retryAfterMs: 1_000 });
+      expect(overflowRequest).not.toHaveBeenCalled();
+    } finally {
+      releaseRequests?.();
+      await Promise.all(inFlight);
+    }
+  });
+
+  it("serializes distinct lookups that share a credential quota", async () => {
+    let resolveFirst: ((identity: { accountId: number; login: string }) => void) | undefined;
+    const firstRequest = vi.fn(
+      () =>
+        new Promise<{ accountId: number; login: string }>((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    const secondRequest = vi.fn().mockResolvedValue({ accountId: 2, login: "grace" });
+
+    const first = githubUserIdentityCoordinator.lookup({
+      credentialScope: "shared-quota",
+      identityKind: "login",
+      lookupKey: "login:ada",
+      request: firstRequest,
+    });
+    const second = githubUserIdentityCoordinator.lookup({
+      credentialScope: "shared-quota",
+      identityKind: "login",
+      lookupKey: "login:grace",
+      request: secondRequest,
+    });
+    await vi.waitFor(() => expect(firstRequest).toHaveBeenCalledOnce());
+    expect(secondRequest).not.toHaveBeenCalled();
+
+    resolveFirst?.({ accountId: 1, login: "ada" });
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { accountId: 1, login: "ada" },
+      { accountId: 2, login: "grace" },
+    ]);
+    expect(secondRequest).toHaveBeenCalledOnce();
+  });
+
   it("preserves verified identity after lookup failure and retries later", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async () => {
       let now = Date.parse("2026-08-23T10:00:00Z");
