@@ -505,6 +505,12 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       );
       return;
     }
+    const category =
+      p.category === undefined && spawnRequesterSessionKey
+        ? loadGatewaySessionEntryReadOnly(spawnRequesterSessionKey, {
+            agentId: sessionCreation.actor?.type === "agent" ? sessionCreation.actor.id : undefined,
+          }).entry?.category
+        : p.category;
     const allowExistingModelSelection = authorizeOperatorScopesForRequiredScope(
       ADMIN_SCOPE,
       clientScopes,
@@ -518,7 +524,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
       key: sessionKey,
       agentId: sessionAgentId,
       label: p.label,
-      category: p.category,
+      category,
       ...(catalogTarget ? { catalogTarget: catalogTarget.target } : { model: requestedModel }),
       contextWindow: p.contextWindow,
       thinkingLevel: p.thinkingLevel,
@@ -628,11 +634,7 @@ export const sessionCreateHandlers: GatewayRequestHandlers = {
     if (created.postCommit.status === "failed") {
       runError = errorShape(ErrorCodes.UNAVAILABLE, formatErrorMessage(created.postCommit.error));
     }
-    const createdCategory =
-      p.category === undefined && sessionCreation.via === "spawn"
-        ? created.entry.category
-        : p.category;
-    registerCreatedSessionCategory(normalizeOptionalString(createdCategory), context);
+    registerCreatedSessionCategory(category, context);
     const createdWorktree = sessionWorktree
       ? {
           id: sessionWorktree.id,

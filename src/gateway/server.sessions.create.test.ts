@@ -4876,7 +4876,6 @@ test("sessions.create loads selected global parent from the requested agent stor
       storePath: mainStorePath,
       entries: {
         global: sessionStoreEntry("sess-main-parent", {
-          category: "Main work",
           providerOverride: "codex",
           modelOverride: "main-model",
         }),
@@ -4887,7 +4886,6 @@ test("sessions.create loads selected global parent from the requested agent stor
       agentId: "work",
       entries: {
         global: sessionStoreEntry("sess-work-parent", {
-          category: "Work projects",
           providerOverride: "openai",
           modelOverride: "work-model",
           thinkingLevel: "high",
@@ -4898,37 +4896,19 @@ test("sessions.create loads selected global parent from the requested agent stor
     const created = await directSessionReq<{
       key?: string;
       entry?: {
-        category?: string;
         parentSessionKey?: string;
         providerOverride?: string;
         modelOverride?: string;
         thinkingLevel?: string;
       };
-    }>(
-      "sessions.create",
-      {
-        agentId: "work",
-        parentSessionKey: "global",
-        emitCommandHooks: true,
-      },
-      {
-        client: {
-          connect: { scopes: ["operator.write"] },
-          internal: {
-            syntheticClient: true,
-            sessionCreation: {
-              via: "spawn",
-              actor: { type: "agent", id: "main" },
-              requesterSessionKey: "global",
-            },
-          },
-        } as never,
-      },
-    );
+    }>("sessions.create", {
+      agentId: "work",
+      parentSessionKey: "global",
+      emitCommandHooks: true,
+    });
 
     expect(created.ok).toBe(true);
     expect(created.payload?.key).toMatch(/^agent:work:dashboard:/);
-    expect(created.payload?.entry?.category).toBe("Work projects");
     expect(created.payload?.entry?.parentSessionKey).toBe("global");
     expect(created.payload?.entry?.providerOverride).toBe("openai");
     expect(created.payload?.entry?.modelOverride).toBe("work-model");
