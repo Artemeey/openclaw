@@ -1,5 +1,6 @@
 import { html, nothing } from "lit";
 import { icons } from "../../components/icons.ts";
+import "../../components/tooltip.ts";
 import { t } from "../../i18n/index.ts";
 import {
   renderCloudProfileMenuItems,
@@ -188,22 +189,31 @@ export function renderWhereChip(params: {
         )}
         ${params.state.devices.length > 0
           ? html`
-              <div class="new-session-page__menu-title">${t("newSession.yourDevices")}</div>
-              ${renderSessionMenuItem(
-                {
-                  value: "auto-device",
-                  label: t("newSession.anyAvailableNode"),
-                  icon: icons.monitor,
-                  checked: params.autoDevice === true,
-                  disabled: Boolean(params.state.autoDeviceDisabledReason),
-                  title: params.state.autoDeviceDisabledReason,
-                  facts: params.state.autoDeviceDisabledReason
-                    ? [params.state.autoDeviceDisabledReason]
-                    : undefined,
-                  onSelect: params.onSelectAutoDevice,
-                },
-                params.submitting,
-              )}
+              <div class="new-session-page__menu-title new-session-page__menu-title--devices">
+                ${t("newSession.yourDevices")}
+              </div>
+              <openclaw-tooltip .content=${t("newSession.anyAvailableNodeHelp")}>
+                ${renderSessionMenuItem(
+                  {
+                    value: "auto-device",
+                    label: t("newSession.anyAvailableNode"),
+                    labelSuffix: html`<span
+                      class="new-session-page__menu-info-icon"
+                      aria-hidden="true"
+                      >${icons.info}</span
+                    >`,
+                    icon: icons.monitor,
+                    checked: params.autoDevice === true,
+                    disabled: Boolean(params.state.autoDeviceDisabledReason),
+                    title: params.state.autoDeviceDisabledReason,
+                    facts: params.state.autoDeviceDisabledReason
+                      ? [params.state.autoDeviceDisabledReason]
+                      : undefined,
+                    onSelect: params.onSelectAutoDevice,
+                  },
+                  params.submitting,
+                )}
+              </openclaw-tooltip>
               ${params.state.devices.map((device) => {
                 return renderSessionMenuItem(
                   {

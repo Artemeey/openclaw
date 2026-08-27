@@ -890,6 +890,8 @@ export const en: TranslationMap = {
     folderPlaceholder: "Agent workspace",
     yourDevices: "Your devices",
     anyAvailableNode: "Any available node",
+    anyAvailableNodeHelp:
+      "Automatically chooses an eligible connected node. OpenClaw sessions prefer the most free worker slots; Codex chooses by device ID. If unavailable during setup, it can try another node.",
     noSessionHosts: "No session hosts are paired. Connect a machine with session hosting enabled.",
     neverConnected: "Never connected",
     offlineFor: "Offline for {duration}",

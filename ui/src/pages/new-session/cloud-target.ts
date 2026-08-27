@@ -19,6 +19,7 @@ export async function requestPlaceCatalog(
 type SessionMenuItemOptions = {
   value: string;
   label: string;
+  labelSuffix?: unknown;
   icon?: unknown;
   sub?: string;
   facts?: readonly string[];
@@ -45,6 +46,7 @@ export function renderSessionMenuItem(params: SessionMenuItemOptions, submitting
         ? html`<span class="session-menu__icon" aria-hidden="true">${params.icon}</span>`
         : nothing}
       <span class="session-menu__text">${params.label}</span>
+      ${params.labelSuffix ?? nothing}
       ${params.sub ? html`<span class="session-menu__sub">${params.sub}</span>` : nothing}
       ${params.facts?.length
         ? html`<span class="new-session-page__menu-facts">

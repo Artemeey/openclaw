@@ -17,6 +17,67 @@ const deviceTargets = [
 ];
 
 suite.define(() => {
+  it("explains automatic device selection in the open picker", async () => {
+    const context = await suite.browser.newContext({ locale: "en-US", serviceWorkers: "block" });
+    const page = await context.newPage();
+    const gateway = await installMockGateway(page, {
+      operatorScopes: ["operator.read", "operator.write"],
+      workspace: WORKSPACE,
+      workspaceGit: true,
+      methodResponses: {
+        "environments.list": {
+          environments: [
+            {
+              id: "node:paired-runner",
+              type: "node",
+              label: "Paired runner",
+              status: "available",
+              sessionHost: true,
+              workerSlots: { total: 2, available: 1 },
+            },
+          ],
+          profiles: [],
+        },
+      },
+    });
+
+    try {
+      await page.goto(`${suite.server.baseUrl}new`);
+      await gateway.waitForRequest("environments.list");
+      await page.locator("#new-session-where-trigger").click();
+
+      const automatic = page.locator('[data-value="auto-device"]');
+      const infoIcon = automatic.locator(".new-session-page__menu-info-icon");
+      const tooltip = automatic.locator("xpath=..").locator("wa-tooltip");
+      const devicesHeading = page.locator(".new-session-page__menu-title--devices");
+      await automatic.waitFor({ state: "visible" });
+
+      expect(await automatic.getAttribute("aria-describedby")).toMatch(
+        /^openclaw-tooltip-\d+-description$/u,
+      );
+      const iconBox = await infoIcon.boundingBox();
+      expect(iconBox?.width).toBeGreaterThan(0);
+      expect(iconBox?.width).toBeLessThanOrEqual(16);
+      expect(iconBox?.height).toBeGreaterThan(0);
+      expect(iconBox?.height).toBeLessThanOrEqual(16);
+      expect(await devicesHeading.evaluate((element) => getComputedStyle(element).marginTop)).toBe(
+        await page.evaluate(() =>
+          getComputedStyle(document.documentElement).getPropertyValue("--space-2").trim(),
+        ),
+      );
+
+      await infoIcon.hover();
+      await expect.poll(() => tooltip.getAttribute("open")).not.toBeNull();
+      await expect
+        .poll(() => tooltip.textContent())
+        .toContain(
+          "Automatically chooses an eligible connected node. OpenClaw sessions prefer the most free worker slots; Codex chooses by device ID. If unavailable during setup, it can try another node.",
+        );
+    } finally {
+      await context.close();
+    }
+  });
+
   it.each(deviceTargets)("dispatches the $name device", async ({ value, target }) => {
     const context = await suite.browser.newContext({ locale: "en-US", serviceWorkers: "block" });
     const page = await context.newPage();

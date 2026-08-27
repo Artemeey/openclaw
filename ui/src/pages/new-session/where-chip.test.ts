@@ -85,11 +85,24 @@ describe("Where chip", () => {
     expect(state.devices[0]?.facts).toEqual(["Worker slots 1/2"]);
   });
 
+  it("renders automatic placement help for writers", () => {
+    const writer = renderPicker(false);
+    const automatic = writer.querySelector('[data-value="auto-device"]');
+    expect(automatic?.textContent).toContain("Any available node");
+    expect(automatic?.querySelector(".new-session-page__menu-info-icon svg")).not.toBeNull();
+    const tooltip = automatic?.closest("openclaw-tooltip") as
+      | (HTMLElement & { content?: string })
+      | null;
+    expect(tooltip?.content).toBe(
+      "Automatically chooses an eligible connected node. OpenClaw sessions prefer the most free worker slots; Codex chooses by device ID. If unavailable during setup, it can try another node.",
+    );
+    expect(
+      writer.querySelector(".new-session-page__menu-title--devices")?.textContent?.trim(),
+    ).toBe("Your devices");
+  });
+
   it("renders devices for writers while cloud and Connect remain admin-only", () => {
     const writer = renderPicker(false);
-    expect(writer.querySelector('[data-value="auto-device"]')?.textContent).toContain(
-      "Any available node",
-    );
     expect(writer.querySelector('[data-value="device:runner"]')).not.toBeNull();
     expect(writer.querySelector('[data-value="device:runner"] .session-menu__sub')).toBeNull();
     expect(

@@ -622,6 +622,31 @@ wa-popover.new-session-page__select::part(body) {
   text-transform: uppercase;
 }
 
+.new-session-page__menu-title--devices {
+  margin-top: var(--space-2);
+}
+
+.new-session-page__menu-info-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  margin-inline-start: 6px;
+  color: var(--muted);
+}
+
+.new-session-page__menu-info-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  stroke-width: 1.75;
+}
+
+.session-menu__item:hover .new-session-page__menu-info-icon,
+.session-menu__item:focus-visible .new-session-page__menu-info-icon {
+  color: var(--accent);
+}
+
 .new-session-page__project-search {
   display: block;
   padding: 4px 8px 6px;
