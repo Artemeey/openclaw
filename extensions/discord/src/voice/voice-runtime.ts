@@ -462,6 +462,10 @@ export class DiscordVoiceManager {
           await this.leave({ guildId, channelId });
           return waitingResult;
         }
+        // Speech can begin before readiness installs listeners; continuous packets emit no new start.
+        if (entry.transcripts) {
+          this.receive.captureCurrentSpeakers(entry);
+        }
       }
       return result;
     } finally {

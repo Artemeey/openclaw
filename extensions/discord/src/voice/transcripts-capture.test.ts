@@ -152,6 +152,9 @@ defineDiscordVoiceTests(
     );
 
     it("retires an uncommitted capture-only entry when its registration is replaced", async () => {
+      const connection = createConnectionMock();
+      connection.receiver.speaking.users.set("guest", Date.now());
+      joinVoiceChannelMock.mockReturnValueOnce(connection);
       const client = createClient();
       configureVoiceStateGateway(client, () => []);
       const manager = createManager(
@@ -167,6 +170,7 @@ defineDiscordVoiceTests(
       });
       expect(await startTranscripts(manager, firstUtterance)).toMatchObject({ ok: false });
       expect(await replacement).toMatchObject({ ok: true });
+      expect(connection.receiver.subscribe).not.toHaveBeenCalled();
       expectConnectedStatus(manager, "1001");
       await receiveRecordedSpeech(manager);
       expect(firstUtterance).not.toHaveBeenCalled();
