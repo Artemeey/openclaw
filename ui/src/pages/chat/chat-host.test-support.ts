@@ -59,13 +59,16 @@ function createPendingSettingsSessionCapability(
     }
     pendingBySession.delete(sessionKey);
     if (!(await pendingPatch)) {
-      return null;
+      return { kind: "failed", error: new Error("settings patch failed") };
     }
     return {
-      ok: true,
-      path: "",
-      key: sessionKey,
-      entry: { sessionId: "pending-settings-test" },
+      kind: "applied",
+      result: {
+        ok: true,
+        path: "",
+        key: sessionKey,
+        entry: { sessionId: "pending-settings-test" },
+      },
     };
   };
   return wrapped;

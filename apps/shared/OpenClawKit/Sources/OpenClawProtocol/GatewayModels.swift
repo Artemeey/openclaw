@@ -1621,6 +1621,38 @@ public struct WizardNotFoundErrorDetails: Codable, Sendable {
     }
 }
 
+public struct SessionChangedErrorDetails: Codable, Sendable {
+    public let code: String
+    public let successorsessionid: String?
+
+    public init(
+        code: String,
+        successorsessionid: String? = nil)
+    {
+        self.code = code
+        self.successorsessionid = successorsessionid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case code
+        case successorsessionid = "successorSessionId"
+    }
+}
+
+public struct SessionCompanionBusyErrorDetails: Codable, Sendable {
+    public let code: String
+
+    public init(
+        code: String)
+    {
+        self.code = code
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case code
+    }
+}
+
 public struct ProjectCloneErrorDetails: Codable, Sendable {
     public let code: String
     public let cause: String
@@ -20005,6 +20037,8 @@ public enum GatewayErrorDetails: Codable, Sendable {
     case projectCloneFailed(ProjectCloneErrorDetails)
     case unknownAgentId(UnknownAgentIdErrorDetails)
     case wizardNotFound(WizardNotFoundErrorDetails)
+    case sessionChanged(SessionChangedErrorDetails)
+    case sessionCompanionBusy(SessionCompanionBusyErrorDetails)
 
     public init(code: String, missingscope: String, requiredscopes: [String]) {
         self = .missingScope(
@@ -20024,6 +20058,8 @@ public enum GatewayErrorDetails: Codable, Sendable {
         case .projectCloneFailed(let value): value.code
         case .unknownAgentId(let value): value.code
         case .wizardNotFound(let value): value.code
+        case .sessionChanged(let value): value.code
+        case .sessionCompanionBusy(let value): value.code
         }
     }
 
@@ -20051,6 +20087,8 @@ public enum GatewayErrorDetails: Codable, Sendable {
         case "PROJECT_CLONE_FAILED": self = try .projectCloneFailed(ProjectCloneErrorDetails(from: decoder))
         case "UNKNOWN_AGENT_ID": self = try .unknownAgentId(UnknownAgentIdErrorDetails(from: decoder))
         case "WIZARD_NOT_FOUND": self = try .wizardNotFound(WizardNotFoundErrorDetails(from: decoder))
+        case "SESSION_CHANGED": self = try .sessionChanged(SessionChangedErrorDetails(from: decoder))
+        case "SESSION_COMPANION_BUSY": self = try .sessionCompanionBusy(SessionCompanionBusyErrorDetails(from: decoder))
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .discriminator,
@@ -20068,6 +20106,8 @@ public enum GatewayErrorDetails: Codable, Sendable {
         case .projectCloneFailed(let value): try value.encode(to: encoder)
         case .unknownAgentId(let value): try value.encode(to: encoder)
         case .wizardNotFound(let value): try value.encode(to: encoder)
+        case .sessionChanged(let value): try value.encode(to: encoder)
+        case .sessionCompanionBusy(let value): try value.encode(to: encoder)
         }
     }
 }

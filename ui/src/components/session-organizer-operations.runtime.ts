@@ -68,42 +68,31 @@ export async function patchSession(
   ) {
     return "failed";
   }
-  try {
-    const patched = await scope.sessions.patch(session.key, patch, {
-      agentId,
-      ...(typeof patch.archived === "boolean" ? { expectedSessionId: session.sessionId } : {}),
-      ...(refresh.deferListRefresh ? { deferListRefresh: true } : {}),
-    });
-    if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
-      return "stale";
-    }
-    if (!patched) {
-      if (scope.sessions.state.error) {
-        host.sessionData.publishSessionMutationError(scope, scope.sessions.state.error);
-      }
-      return "failed";
-    }
-    // Unpin from any surface (menu, pin button, drag) retires the session's
-    // persisted zone slot; leaving it would resurrect stale synced entries.
-    // Archiving implicitly unpins server-side (sessions-patch clears
-    // pinnedAt), so it retires the slot too.
-    if (patch.pinned === false || (patch.archived === true && session.pinned)) {
-      host.pruneSidebarSessionEntry(session.key);
-    }
-    if (!refresh.deferListRefresh && host.sidebarSessionStatusFilter() !== "active") {
-      await host.sessionData.refreshSidebarSessions(agentId);
-      if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
-        return "stale";
-      }
-    }
-    return "completed";
-  } catch (error) {
-    if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
-      return "stale";
-    }
-    host.sessionData.publishSessionMutationError(scope, error);
+  const patched = await scope.sessions.patch(session.key, patch, {
+    agentId,
+    ...(typeof patch.archived === "boolean" ? { expectedSessionId: session.sessionId } : {}),
+    ...(refresh.deferListRefresh ? { deferListRefresh: true } : {}),
+  });
+  if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
+    return "stale";
+  }
+  if (patched.kind !== "applied") {
     return "failed";
   }
+  // Unpin from any surface (menu, pin button, drag) retires the session's
+  // persisted zone slot; leaving it would resurrect stale synced entries.
+  // Archiving implicitly unpins server-side (sessions-patch clears
+  // pinnedAt), so it retires the slot too.
+  if (patch.pinned === false || (patch.archived === true && session.pinned)) {
+    host.pruneSidebarSessionEntry(session.key);
+  }
+  if (!refresh.deferListRefresh && host.sidebarSessionStatusFilter() !== "active") {
+    await host.sessionData.refreshSidebarSessions(agentId);
+    if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
+      return "stale";
+    }
+  }
+  return "completed";
 }
 
 export async function patchSessions(
@@ -301,45 +290,43 @@ export async function deleteSessionsBatch(
       return;
     }
   }
-  try {
-    const result = await scope.sessions.deleteMany(requests);
+  const outcomes = await scope.sessions.deleteMany(requests);
+  if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
+    return;
+  }
+  if (host.sidebarSessionStatusFilter() !== "active") {
+    await host.sessionData.refreshSidebarSessions(scope.selectedAgentId);
     if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
       return;
     }
-    if (host.sidebarSessionStatusFilter() !== "active") {
-      await host.sessionData.refreshSidebarSessions(scope.selectedAgentId);
-      if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
-        return;
-      }
+  }
+  const applied = outcomes.filter((outcome) => outcome.kind === "applied");
+  const preservedWorktrees = applied.flatMap((outcome) =>
+    outcome.worktreePreserved ? [outcome.worktreePreserved] : [],
+  );
+  if (preservedWorktrees.length > 0) {
+    window.alert(
+      t("sessionsView.deletePreservedWorktrees", {
+        count: String(preservedWorktrees.length),
+        branches: preservedWorktrees.map((worktree) => worktree.branch).join(", "),
+      }),
+    );
+    if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
+      return;
     }
-    if (result.preservedWorktrees.length > 0) {
-      window.alert(
-        t("sessionsView.deletePreservedWorktrees", {
-          count: String(result.preservedWorktrees.length),
-          branches: result.preservedWorktrees.map((worktree) => worktree.branch).join(", "),
+  }
+  const deleted = new Set(applied.flatMap((outcome) => (outcome.deleted ? [outcome.key] : [])));
+  const deletedActive = rows.find((row) => row.active && deleted.has(row.key));
+  if (deletedActive) {
+    host.replaceCurrentSession(
+      buildAgentMainSessionKey({
+        agentId: parseAgentSessionKey(deletedActive.key)?.agentId ?? scope.selectedAgentId,
+        mainKey: resolveUiConfiguredMainKey({
+          agentsList: scope.context.agents.state.agentsList,
+          hello: scope.gateway.snapshot.hello,
         }),
-      );
-      if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
-        return;
-      }
-    }
-    const deletedActive = rows.find((row) => row.active && result.deleted.includes(row.key));
-    if (deletedActive) {
-      host.replaceCurrentSession(
-        buildAgentMainSessionKey({
-          agentId: parseAgentSessionKey(deletedActive.key)?.agentId ?? scope.selectedAgentId,
-          mainKey: resolveUiConfiguredMainKey({
-            agentsList: scope.context.agents.state.agentsList,
-            hello: scope.gateway.snapshot.hello,
-          }),
-        }),
-      );
-    }
-    if (result.errors.length > 0) {
-      host.sessionData.publishSessionMutationError(scope, result.errors.join("; "));
-    }
-  } catch (error) {
-    host.sessionData.publishSessionMutationError(scope, error);
+      }),
+    );
   }
 }
 
@@ -588,82 +575,78 @@ export async function deleteSession(
   ) {
     return;
   }
-  try {
-    const outcome = await scope.sessions.delete(session.key, deleteParams);
+  const outcome = await scope.sessions.delete(session.key, deleteParams);
+  if (!host.sessionData.isSessionMutationScopeCurrent(scope) || outcome.kind !== "applied") {
+    return;
+  }
+  if (host.sidebarSessionStatusFilter() !== "active") {
+    await host.sessionData.refreshSidebarSessions(agentId);
     if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
       return;
     }
-    if (host.sidebarSessionStatusFilter() !== "active") {
-      await host.sessionData.refreshSidebarSessions(agentId);
+  }
+  // Dirty/unpushed checkouts survive deletion; offer explicit removal.
+  if (outcome.worktreePreserved) {
+    const preserved = outcome.worktreePreserved;
+    const removeAccess = readSessionMethodAccess(scope.gateway.snapshot, {
+      method: "worktrees.remove",
+      requiredScope: "operator.admin",
+    });
+    if (!removeAccess.allowed) {
+      window.alert(
+        t("sessionsView.deletePreservedWorktrees", {
+          count: "1",
+          branches: preserved.branch,
+        }),
+      );
       if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
         return;
       }
-    }
-    // Dirty/unpushed checkouts survive deletion; offer explicit removal.
-    if (outcome.worktreePreserved) {
-      const preserved = outcome.worktreePreserved;
-      const removeAccess = readSessionMethodAccess(scope.gateway.snapshot, {
-        method: "worktrees.remove",
-        requiredScope: "operator.admin",
+    } else {
+      const removeWorktree = await showConfirmDialog({
+        message: t("sessionsView.deletePreservedWorktreeConfirm", { branch: preserved.branch }),
+        confirmLabel: t("common.remove"),
+        danger: true,
+        signal: scope.signal,
       });
-      if (!removeAccess.allowed) {
-        window.alert(
-          t("sessionsView.deletePreservedWorktrees", {
+      // Cancel needs this guard too: the delete already landed, so a scope
+      // retired while the modal was open must not drive the navigation below.
+      // A retired scope leaves the worktree exactly like the no-access branch
+      // above, so it earns the same visible outcome instead of vanishing quietly.
+      if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
+        showToast({
+          message: t("sessionsView.deletePreservedWorktrees", {
             count: "1",
             branches: preserved.branch,
           }),
-        );
-        if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
-          return;
-        }
-      } else {
-        const removeWorktree = await showConfirmDialog({
-          message: t("sessionsView.deletePreservedWorktreeConfirm", { branch: preserved.branch }),
-          confirmLabel: t("common.remove"),
-          danger: true,
-          signal: scope.signal,
         });
-        // Cancel needs this guard too: the delete already landed, so a scope
-        // retired while the modal was open must not drive the navigation below.
-        // A retired scope leaves the worktree exactly like the no-access branch
-        // above, so it earns the same visible outcome instead of vanishing quietly.
-        if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
-          showToast({
-            message: t("sessionsView.deletePreservedWorktrees", {
-              count: "1",
-              branches: preserved.branch,
-            }),
+        return;
+      }
+      if (removeWorktree) {
+        try {
+          await scope.client.request("worktrees.remove", {
+            id: preserved.id,
+            force: true,
           });
-          return;
+        } catch (error) {
+          host.sessionData.publishSessionMutationError(scope, error);
         }
-        if (removeWorktree) {
-          try {
-            await scope.client.request("worktrees.remove", {
-              id: preserved.id,
-              force: true,
-            });
-          } catch (error) {
-            host.sessionData.publishSessionMutationError(scope, error);
-          }
-          if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
-            return;
-          }
+        if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
+          return;
         }
       }
     }
-    if (!outcome.deleted || !session.active) {
-      return;
-    }
-    host.replaceCurrentSession(
-      buildAgentMainSessionKey({
-        agentId,
-        mainKey: resolveUiConfiguredMainKey({
-          agentsList: scope.context.agents.state.agentsList,
-          hello: scope.gateway.snapshot.hello,
-        }),
-      }),
-    );
-  } catch (error) {
-    host.sessionData.publishSessionMutationError(scope, error);
   }
+  if (!outcome.deleted || !session.active) {
+    return;
+  }
+  host.replaceCurrentSession(
+    buildAgentMainSessionKey({
+      agentId,
+      mainKey: resolveUiConfiguredMainKey({
+        agentsList: scope.context.agents.state.agentsList,
+        hello: scope.gateway.snapshot.hello,
+      }),
+    }),
+  );
 }

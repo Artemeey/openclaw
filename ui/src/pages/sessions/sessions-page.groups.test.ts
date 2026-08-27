@@ -27,7 +27,10 @@ afterEach(() => {
 async function mountGroupsPage(groupsPut: () => Promise<SessionGroupMutationResult>) {
   const sessions = createSessions({
     groupsPut: vi.fn(groupsPut),
-    patch: vi.fn(async () => ({ key: SESSION_KEY })),
+    patch: vi.fn(async () => ({
+      kind: "applied",
+      result: { ok: true, key: SESSION_KEY, path: "", entry: {} },
+    })),
   } as unknown as Partial<SessionCapability>);
   const mutableGateway = createGateway({} as GatewayBrowserClient);
   mutableGateway.emit({

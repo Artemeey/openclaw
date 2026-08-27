@@ -624,7 +624,7 @@ describe("session list replacement options", () => {
 
     expect(sessions.state.modelOverrides[key]).toBe("openai/gpt-old");
     pendingPatch.resolve({ ok: true, path: "", key, entry: {} });
-    await expect(operation).resolves.toMatchObject({ ok: true, key });
+    await expect(operation).resolves.toMatchObject({ kind: "applied", result: { ok: true, key } });
     expect(sessions.state.modelOverrides[key]).toBe("openai/gpt-old");
     sessions.dispose();
   });
@@ -657,14 +657,22 @@ describe("session list replacement options", () => {
       ownsModelOverride = false;
       if (outcome === "resolve") {
         pendingPatch.resolve({ ok: true, path: "", key, entry: {} });
-        await expect(operation).resolves.toMatchObject({ ok: true, key });
+        await expect(operation).resolves.toMatchObject({
+          kind: "applied",
+          result: { ok: true, key },
+        });
       } else {
         pendingPatch.reject(new Error("agent A patch failed"));
-        await expect(operation).rejects.toThrow("agent A patch failed");
+        await expect(operation).resolves.toMatchObject({
+          kind: "failed",
+          error: expect.objectContaining({ message: "agent A patch failed" }),
+        });
       }
 
       expect(sessions.state.modelOverrides[key]).toBeUndefined();
-      expect(sessions.state.error).toBeNull();
+      expect(sessions.state.error).toBe(
+        outcome === "reject" ? "Error: agent A patch failed" : null,
+      );
       sessions.dispose();
     },
   );
@@ -697,14 +705,22 @@ describe("session list replacement options", () => {
       sessions.setModelOverride(key, "openai/gpt-shared");
       if (outcome === "resolve") {
         pendingPatch.resolve({ ok: true, path: "", key, entry: {} });
-        await expect(operation).resolves.toMatchObject({ ok: true, key });
+        await expect(operation).resolves.toMatchObject({
+          kind: "applied",
+          result: { ok: true, key },
+        });
       } else {
         pendingPatch.reject(new Error("agent A patch failed"));
-        await expect(operation).rejects.toThrow("agent A patch failed");
+        await expect(operation).resolves.toMatchObject({
+          kind: "failed",
+          error: expect.objectContaining({ message: "agent A patch failed" }),
+        });
       }
 
       expect(sessions.state.modelOverrides[key]).toBe("openai/gpt-shared");
-      expect(sessions.state.error).toBeNull();
+      expect(sessions.state.error).toBe(
+        outcome === "reject" ? "Error: agent A patch failed" : null,
+      );
       sessions.dispose();
     },
   );
@@ -742,11 +758,17 @@ describe("session list replacement options", () => {
     expect(sessions.state.modelOverrides[key]).toBe("openai/gpt-agent-b");
 
     agentBPatch.reject(new Error("agent B patch failed"));
-    await expect(agentBOperation).rejects.toThrow("agent B patch failed");
+    await expect(agentBOperation).resolves.toMatchObject({
+      kind: "failed",
+      error: expect.objectContaining({ message: "agent B patch failed" }),
+    });
     expect(sessions.state.modelOverrides[key]).toBeUndefined();
 
     agentAPatch.resolve({ ok: true, path: "", key, entry: {} });
-    await expect(agentAOperation).resolves.toMatchObject({ ok: true, key });
+    await expect(agentAOperation).resolves.toMatchObject({
+      kind: "applied",
+      result: { ok: true, key },
+    });
     expect(sessions.state.modelOverrides[key]).toBeUndefined();
     sessions.dispose();
   });

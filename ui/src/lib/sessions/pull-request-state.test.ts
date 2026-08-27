@@ -110,7 +110,7 @@ describe("session pull-request state", () => {
     const epoch = sessions.capturePullRequestEpoch(key);
     sessions.setPullRequestSummary(key, { numbers: [111532], state: "open" }, epoch);
 
-    await expect(sessions.delete(key)).resolves.toEqual({ deleted: true });
+    await expect(sessions.delete(key)).resolves.toEqual({ kind: "applied", deleted: true });
     expect(sessions.pullRequestSummary(key)).toBeUndefined();
 
     sessions.setPullRequestSummary(key, { numbers: [111532], state: "open" }, epoch);

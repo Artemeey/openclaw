@@ -21,7 +21,7 @@ import type { GatewayConnectionScope } from "../gateway-connection-lifecycle.ts"
 import type { SessionCreateOutcome, SessionCreateParams } from "./create.ts";
 import type { SessionGroupSettings } from "./custom-groups.ts";
 import type { SessionArchivedFilter } from "./navigation.ts";
-import type { SessionPatchRoute } from "./patch.ts";
+import type { SessionMutationResult, SessionPatchRoute } from "./patch.ts";
 import type {
   SessionChangedResult,
   SessionReconcileOptions,
@@ -88,17 +88,12 @@ export type SessionDeleteTarget = {
 };
 
 /** Dirty/unpushed checkouts survive session deletion; callers surface them. */
-export type SessionDeleteOutcome = {
+export type SessionDeleteOutcome = SessionMutationResult<{
   deleted: boolean;
   worktreePreserved?: { id: string; branch: string; path: string };
-};
+}>;
 
-export type SessionDeleteBatchResult = {
-  deleted: string[];
-  errors: string[];
-  /** Dirty/unpushed checkouts kept by the gateway during this batch. */
-  preservedWorktrees: Array<{ id: string; branch: string; path: string }>;
-};
+export type SessionDeleteBatchResult = Array<SessionDeleteOutcome & { key: string }>;
 
 export type SessionCompactResult = {
   ok?: boolean;
@@ -134,7 +129,7 @@ export type SessionRequestClient = Pick<GatewayBrowserClient, "request">;
 
 export type SessionDeleteResponse = {
   deleted: boolean;
-  worktreePreserved?: SessionDeleteOutcome["worktreePreserved"];
+  worktreePreserved?: { id: string; branch: string; path: string };
 };
 
 export type SessionConnectionScope = GatewayConnectionScope;

@@ -4,6 +4,7 @@ import {
   resolveSessionKey,
   type SessionCapability,
   type SessionPatch,
+  type SessionPatchResult,
   type SessionScopeHost,
 } from "../../lib/sessions/index.ts";
 import {
@@ -119,7 +120,7 @@ export function patchChatSessionSettings(
     ownsModelOverride?: () => boolean;
     reconcile?: (result: SessionsPatchResult) => Promise<void> | void;
   } = {},
-): Promise<SessionsPatchResult | null> {
+): Promise<SessionPatchResult> {
   const previous = getPendingChatPickerPatch(host, sessionKey, options.agentId);
   const operation = (async () => {
     // Model-dependent settings and sends share this canonical per-session tail.
@@ -131,18 +132,15 @@ export function patchChatSessionSettings(
       ownsModelOverride: options.ownsModelOverride,
       waitFor: previous,
     });
-    if (result) {
-      await options.reconcile?.(result);
+    if (result.kind === "applied") {
+      await options.reconcile?.(result.result);
     }
     return result;
   })();
   trackPendingChatSettingsPatch(
     host,
     sessionKey,
-    operation.then(
-      (result) => result !== null,
-      () => false,
-    ),
+    operation.then((result) => result.kind === "applied"),
     options.agentId,
   );
   return operation;
@@ -185,8 +183,5 @@ export async function patchChatCommandSessionSettings(
     patch,
     { ...selectedGlobalScope(sessionKey, context), ...options },
   );
-  if (!result) {
-    throw new Error("Session capability is unavailable");
-  }
   return result;
 }

@@ -293,10 +293,7 @@ export abstract class ChatPaneSessionMenu extends ChatPaneContext {
       this.publishHeaderError(access.reason);
       return;
     }
-    const owner = this.headerOutcomeOwner;
-    void patchChatSessionLabel(state, this.context.sessions, key, label).catch((error: unknown) =>
-      this.publishHeaderError(error, owner),
-    );
+    void patchChatSessionLabel(state, this.context.sessions, key, label);
   }
 
   protected async loadHeaderMenuData(

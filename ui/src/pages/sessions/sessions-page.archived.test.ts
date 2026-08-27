@@ -30,11 +30,9 @@ describe("sessions page archived deletion", () => {
         count: 2,
         sessions: archivedKeys.map((key) => ({ key, archived: true })),
       })) as unknown as SessionCapability["list"],
-      deleteMany: vi.fn(async () => ({
-        deleted: archivedKeys,
-        errors: [],
-        preservedWorktrees: [],
-      })),
+      deleteMany: vi.fn(async () =>
+        archivedKeys.map((key) => ({ kind: "applied" as const, key, deleted: true })),
+      ),
     });
     const mutableGateway = createGateway({} as GatewayBrowserClient);
     mutableGateway.emit({
@@ -108,7 +106,7 @@ describe("sessions page archived deletion", () => {
   it("aborts delete-all when an enumeration page fails", async () => {
     const sessions = createSessions({
       list: vi.fn(async () => null) as unknown as SessionCapability["list"],
-      deleteMany: vi.fn(async () => ({ deleted: [], errors: [], preservedWorktrees: [] })),
+      deleteMany: vi.fn(async () => []),
     });
     sessions.state.error = "list failed";
     const { gateway } = createGateway({} as GatewayBrowserClient);
@@ -148,11 +146,13 @@ describe("sessions page archived deletion", () => {
       });
     const sessions = createSessions({
       list: list as unknown as SessionCapability["list"],
-      deleteMany: vi.fn(async () => ({
-        deleted: [...pageOne, ...pageTwo],
-        errors: [],
-        preservedWorktrees: [],
-      })),
+      deleteMany: vi.fn(async () =>
+        [...pageOne, ...pageTwo].map((key) => ({
+          kind: "applied" as const,
+          key,
+          deleted: true,
+        })),
+      ),
     });
     const { gateway } = createGateway({} as GatewayBrowserClient);
     const page = await createRenderedPage(
@@ -217,11 +217,9 @@ describe("sessions page archived deletion", () => {
       });
     const sessions = createSessions({
       list: list as unknown as SessionCapability["list"],
-      deleteMany: vi.fn(async () => ({
-        deleted: keys,
-        errors: [],
-        preservedWorktrees: [],
-      })),
+      deleteMany: vi.fn(async () =>
+        keys.map((key) => ({ kind: "applied" as const, key, deleted: true })),
+      ),
     });
     const { gateway } = createGateway({} as GatewayBrowserClient);
     const page = await createRenderedPage(
@@ -262,7 +260,7 @@ describe("sessions page archived deletion", () => {
     }));
     const sessions = createSessions({
       list: list as unknown as SessionCapability["list"],
-      deleteMany: vi.fn(async () => ({ deleted: [key], errors: [], preservedWorktrees: [] })),
+      deleteMany: vi.fn(async () => [{ kind: "applied" as const, key, deleted: true }]),
     });
     const { gateway } = createGateway({} as GatewayBrowserClient);
     const page = await createRenderedPage(
@@ -291,7 +289,7 @@ describe("sessions page archived deletion", () => {
     }));
     const sessions = createSessions({
       list: list as unknown as SessionCapability["list"],
-      deleteMany: vi.fn(async () => ({ deleted: [key], errors: [], preservedWorktrees: [] })),
+      deleteMany: vi.fn(async () => [{ kind: "applied" as const, key, deleted: true }]),
     });
     const { gateway } = createGateway({} as GatewayBrowserClient);
     const page = await createRenderedPage(
@@ -323,11 +321,13 @@ describe("sessions page archived deletion", () => {
       });
       const sessions = createSessions({
         list: list as unknown as SessionCapability["list"],
-        deleteMany: vi.fn(async () => ({
-          deleted: [linked.key, other.key],
-          errors: [],
-          preservedWorktrees: [],
-        })),
+        deleteMany: vi.fn(async () =>
+          [linked.key, other.key].map((key) => ({
+            kind: "applied" as const,
+            key,
+            deleted: true,
+          })),
+        ),
       });
       const { gateway } = createGateway({} as GatewayBrowserClient);
       const context = createContext(gateway, sessions);

@@ -243,7 +243,11 @@ describe("AppSidebar session mutation feedback", () => {
 
   it("shows and dismisses a fixed sidebar error when a session patch is rejected", async () => {
     const { harness, sidebar } = await mountMutationHarness();
-    harness.patch.mockRejectedValueOnce(new Error("rename rejected by Gateway"));
+    harness.patch.mockImplementationOnce(async () => {
+      const error = new Error("rename rejected by Gateway");
+      harness.publishList({ error: String(error) });
+      return { kind: "failed", error };
+    });
     const menu = await openSessionMenu(sidebar, "agent:main:a");
     menu.querySelector<HTMLButtonElement>('[data-shortcut="r"]')?.click();
     await waitForFast(() => {
@@ -268,10 +272,13 @@ describe("AppSidebar session mutation feedback", () => {
 
   it("surfaces partial batch-delete errors", async () => {
     const { harness, sidebar } = await mountMutationHarness();
-    harness.deleteMany.mockResolvedValueOnce({
-      deleted: ["agent:main:a"],
-      errors: ["agent:main:b: permission denied"],
-      preservedWorktrees: [],
+    harness.deleteMany.mockImplementationOnce(async () => {
+      const error = new Error("permission denied");
+      harness.publishList({ error: String(error) });
+      return [
+        { kind: "applied", key: "agent:main:a", deleted: true },
+        { kind: "failed", key: "agent:main:b", error },
+      ];
     });
     selectSession(sidebar, "agent:main:a");
     selectSession(sidebar, "agent:main:b");
@@ -286,7 +293,7 @@ describe("AppSidebar session mutation feedback", () => {
 
     await waitForFast(() => {
       expect(sidebar.querySelector("[data-sidebar-session-error]")?.textContent).toContain(
-        "agent:main:b: permission denied",
+        "permission denied",
       );
     });
   });
@@ -326,7 +333,7 @@ describe("AppSidebar session mutation feedback", () => {
     expect(harness.refreshReplacement).toHaveBeenCalledOnce();
   });
 
-  it("suppresses a late rejection after a same-client reconnect", async () => {
+  it("suppresses a late failure after a same-client reconnect", async () => {
     const { gateway, harness, sidebar } = await mountMutationHarness();
     const pending = deferred<ReturnType<typeof successfulSessionPatch>>();
     harness.patch.mockImplementationOnce(() => pending.promise);
@@ -336,8 +343,8 @@ describe("AppSidebar session mutation feedback", () => {
 
     gateway.publish({ phase: "reconnecting" });
     gateway.publish({ phase: "connected" });
-    pending.reject(new Error("late old-connection rejection"));
-    await pending.promise.catch(() => undefined);
+    pending.resolve({ kind: "failed", error: new Error("late old-connection rejection") });
+    await pending.promise;
     await Promise.resolve();
     await sidebar.updateComplete;
 
@@ -417,6 +424,7 @@ describe("AppSidebar session mutation feedback", () => {
       request,
     } as unknown as GatewayBrowserClient);
     harness.deleteSession.mockResolvedValueOnce({
+      kind: "applied",
       deleted: true,
       worktreePreserved: { id: "wt-1", branch: "feature", path: "/tmp/worktree" },
     });

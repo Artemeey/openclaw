@@ -189,6 +189,9 @@ class SessionsPage extends OpenClawLightDomElement {
           const refreshCompleted = this.sharedSessionsLoading && !snapshot.loading;
           this.sharedSessionsResult = snapshot.result;
           this.sharedSessionsLoading = snapshot.loading;
+          if (snapshot.error) {
+            this.error = snapshot.error;
+          }
           if (snapshot.loading || !this.routeDataInitialized || this.sessionMutationPending) {
             return;
           }
@@ -789,42 +792,47 @@ class SessionsPage extends OpenClawLightDomElement {
     }
     this.sessionMutationPending = true;
     try {
-      const result = await scope.sessions.deleteMany(requests);
+      const outcomes = await scope.sessions.deleteMany(requests);
       if (!this.isRequestScopeCurrent(scope)) {
         return;
       }
+      const applied = outcomes.filter((outcome) => outcome.kind === "applied");
+      const deleted = applied.flatMap((outcome) => (outcome.deleted ? [outcome.key] : []));
+      const preservedWorktrees = applied.flatMap((outcome) =>
+        outcome.worktreePreserved ? [outcome.worktreePreserved] : [],
+      );
       // Dirty/unpushed checkouts survive deletion; point at the Worktrees page
       // instead of cascading one force-delete confirm per session.
-      if (result.preservedWorktrees.length > 0) {
+      if (preservedWorktrees.length > 0) {
         window.alert(
           t("sessionsView.deletePreservedWorktrees", {
-            count: String(result.preservedWorktrees.length),
-            branches: result.preservedWorktrees.map((worktree) => worktree.branch).join(", "),
+            count: String(preservedWorktrees.length),
+            branches: preservedWorktrees.map((worktree) => worktree.branch).join(", "),
           }),
         );
       }
-      if (result.deleted.length > 0) {
-        const deleted = new Set(result.deleted);
+      if (deleted.length > 0) {
+        const deletedSet = new Set(deleted);
         const selected = new Set(this.selectedKeys);
-        for (const key of result.deleted) {
+        for (const key of deleted) {
           selected.delete(key);
         }
         this.selectedKeys = selected;
         if (this.result) {
-          const sessions = this.result.sessions.filter((row) => !deleted.has(row.key));
+          const sessions = this.result.sessions.filter((row) => !deletedSet.has(row.key));
           this.result = {
             ...this.result,
             count: Math.max(0, this.result.count - (this.result.sessions.length - sessions.length)),
             sessions,
           };
         }
-        if (this.expandedSessionKey && deleted.has(this.expandedSessionKey)) {
+        if (this.expandedSessionKey && deletedSet.has(this.expandedSessionKey)) {
           this.expandedSessionKey = null;
         }
-        if (this.deepLinkSessionKey && deleted.has(this.deepLinkSessionKey)) {
+        if (this.deepLinkSessionKey && deletedSet.has(this.deepLinkSessionKey)) {
           this.deepLinkSessionKey = null;
         }
-        const deletedCurrent = result.deleted.find((key) =>
+        const deletedCurrent = deleted.find((key) =>
           areUiSessionKeysEquivalent(key, scope.gateway.snapshot.sessionKey),
         );
         if (deletedCurrent) {
@@ -845,13 +853,6 @@ class SessionsPage extends OpenClawLightDomElement {
             }),
           });
         }
-      }
-      if (result.errors.length > 0) {
-        this.error = result.errors.join("; ");
-      }
-    } catch (error) {
-      if (this.isRequestScopeCurrent(scope)) {
-        this.error = String(error);
       }
     } finally {
       if (this.isRequestScopeCurrent(scope)) {
@@ -1162,29 +1163,20 @@ class SessionsPage extends OpenClawLightDomElement {
     ) {
       return "failed";
     }
-    try {
-      const patched = await scope.sessions.patch(key, patch, {
-        agentId,
-        ...(typeof patch.archived === "boolean" ? { expectedSessionId } : {}),
-      });
-      if (!this.isRequestScopeCurrent(scope)) {
-        return "stale";
-      }
-      if (!patched) {
-        this.error = scope.sessions.state.error;
-        return "failed";
-      }
-      const selectedKeys = new Set(this.selectedKeys);
-      selectedKeys.delete(key);
-      this.selectedKeys = selectedKeys;
-      return "completed";
-    } catch (error) {
-      if (this.isRequestScopeCurrent(scope)) {
-        this.error = String(error);
-        return "failed";
-      }
+    const patched = await scope.sessions.patch(key, patch, {
+      agentId,
+      ...(typeof patch.archived === "boolean" ? { expectedSessionId } : {}),
+    });
+    if (!this.isRequestScopeCurrent(scope)) {
       return "stale";
     }
+    if (patched.kind !== "applied") {
+      return "failed";
+    }
+    const selectedKeys = new Set(this.selectedKeys);
+    selectedKeys.delete(key);
+    this.selectedKeys = selectedKeys;
+    return "completed";
   }
 
   private async archiveSessionWithUndo(row: GatewaySessionRow) {
@@ -1205,14 +1197,11 @@ class SessionsPage extends OpenClawLightDomElement {
       message: t("sessionsView.sessionArchived"),
       actionLabel: t("common.undo"),
       onAction: () => {
-        // The shared mutation store already publishes this failure.
-        void scope.sessions
-          .patch(
-            row.key,
-            { archived: false, ...(row.pinned === true ? { pinned: true } : {}) },
-            { agentId, expectedSessionId: row.sessionId },
-          )
-          .catch(() => {});
+        void scope.sessions.patch(
+          row.key,
+          { archived: false, ...(row.pinned === true ? { pinned: true } : {}) },
+          { agentId, expectedSessionId: row.sessionId },
+        );
       },
     });
   }

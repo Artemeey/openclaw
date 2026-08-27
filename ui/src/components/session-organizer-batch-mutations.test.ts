@@ -95,8 +95,8 @@ function createHarness(
   } as ApplicationGatewaySnapshot;
   const refreshReplacement = vi.fn(async () => undefined);
   const refreshTheme = vi.fn();
-  const deleteMany = vi.fn(async () => ({ deleted: [], errors: [], preservedWorktrees: [] }));
-  const deleteOne = vi.fn(async () => ({ deleted: true }));
+  const deleteMany = vi.fn(async () => []);
+  const deleteOne = vi.fn(async () => ({ kind: "applied" as const, deleted: true }));
   const groupsDelete = vi.fn(async () => "completed" as const);
   const scope = {
     epoch: 1,
@@ -537,6 +537,7 @@ describe("session organizer destructive confirmations", () => {
       methods: [...destructiveHarness.methods, "worktrees.remove"],
     });
     harness.deleteOne.mockResolvedValueOnce({
+      kind: "applied",
       deleted: true,
       worktreePreserved: { id: "wt-1", branch: "feature", path: "/tmp/worktree" },
     } as never);
@@ -592,6 +593,7 @@ describe("session organizer destructive confirmations", () => {
       name: "preserved worktree removal",
       run: (harness: OperationsHarness) => {
         harness.deleteOne.mockResolvedValueOnce({
+          kind: "applied",
           deleted: true,
           worktreePreserved: { id: "wt-1", branch: "feature", path: "/tmp/worktree" },
         } as never);

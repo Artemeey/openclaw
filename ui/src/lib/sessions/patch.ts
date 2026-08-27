@@ -1,5 +1,16 @@
 import type { FastMode, SessionsPatchResult } from "../../api/types.ts";
 
+export type SessionMutationRejection =
+  | { kind: "continued"; successorSessionId: string }
+  | { kind: "replaced" }
+  | { kind: "failed"; error: unknown };
+
+export type SessionMutationResult<T extends object = Record<never, never>> =
+  | ({ kind: "applied" } & T)
+  | SessionMutationRejection;
+
+export type SessionPatchResult = SessionMutationResult<{ result: SessionsPatchResult }>;
+
 export type SessionToolOverrides = {
   mcpServers?: Record<string, boolean>;
   mcpToolsDeny?: Record<string, string[]>;
@@ -45,4 +56,4 @@ export type SessionPatchRoute = (
   key: string,
   patch: SessionPatch,
   options?: SessionPatchOptions,
-) => Promise<SessionsPatchResult | null>;
+) => Promise<SessionPatchResult>;

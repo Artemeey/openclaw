@@ -61,6 +61,7 @@ describe("AppSidebar session delete access", () => {
     });
     await sidebar.updateComplete;
     harness.deleteSession.mockResolvedValueOnce({
+      kind: "applied",
       deleted: true,
       worktreePreserved: { id: "wt-1", branch: "feature", path: "/tmp/worktree" },
     });

@@ -60,7 +60,9 @@ describe("session-changed mutation rejections", () => {
     await sessions.refresh({ force: true });
     const before = listCalls();
 
-    await expect(sessions.patch(KEY, { pinned: true })).rejects.toThrow("changed before deletion");
+    await expect(sessions.patch(KEY, { pinned: true })).resolves.toEqual(
+      successorSessionId ? { kind: "continued", successorSessionId } : { kind: "replaced" },
+    );
 
     // The published row is provably stale, so the owner refreshes it rather than
     // leaving every caller to notice.
@@ -77,10 +79,70 @@ describe("session-changed mutation rejections", () => {
     await sessions.refresh({ force: true });
     const before = listCalls();
 
-    await expect(sessions.delete(KEY)).rejects.toThrow("changed before deletion");
+    await expect(sessions.delete(KEY)).resolves.toEqual({ kind: "replaced" });
 
     expect(listCalls()).toBeGreaterThan(before);
     expect(sessions.state.error).toContain("was replaced");
+    sessions.dispose();
+  });
+
+  it("treats an old Gateway rejection without structured details as a generic failure", async () => {
+    const error = new Error(`Session ${KEY} changed before deletion. Retry.`);
+    const { gateway, listCalls } = changedHarness("sessions.patch", error);
+    const sessions = createSessionCapability(gateway);
+
+    await sessions.refresh({ force: true });
+    const before = listCalls();
+
+    await expect(sessions.patch(KEY, { pinned: true })).resolves.toEqual({
+      kind: "failed",
+      error,
+    });
+    expect(listCalls()).toBe(before);
+    expect(sessions.state.error).toBe(String(error));
+    sessions.dispose();
+  });
+
+  it("preserves each result in a mixed delete batch", async () => {
+    const continuedKey = "agent:main:continued";
+    const replacedKey = "agent:main:replaced";
+    const failedKey = "agent:main:failed";
+    const failure = new Error("delete denied");
+    const request = vi.fn(async (method: string, params?: unknown) => {
+      if (method === "sessions.delete") {
+        const key = (params as { key?: string } | undefined)?.key;
+        if (key === continuedKey) {
+          throw changedError("sess-successor");
+        }
+        if (key === replacedKey) {
+          throw changedError();
+        }
+        if (key === failedKey) {
+          throw failure;
+        }
+        return { ok: true, deleted: true };
+      }
+      if (method === "sessions.list") {
+        return sessionsResult([], 2);
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    const { gateway } = createGatewayHarness({ request } as unknown as GatewayBrowserClient);
+    const sessions = createSessionCapability(gateway);
+
+    await expect(
+      sessions.deleteMany([
+        { key: KEY },
+        { key: continuedKey },
+        { key: replacedKey },
+        { key: failedKey },
+      ]),
+    ).resolves.toEqual([
+      { kind: "applied", key: KEY, deleted: true },
+      { kind: "continued", key: continuedKey, successorSessionId: "sess-successor" },
+      { kind: "replaced", key: replacedKey },
+      { kind: "failed", key: failedKey, error: failure },
+    ]);
     sessions.dispose();
   });
 });

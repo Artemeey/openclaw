@@ -38,7 +38,7 @@ describe("session model override lifecycle", () => {
     publish(true);
     stalePatch.resolve({});
 
-    await expect(operation).resolves.toBeNull();
+    await expect(operation).resolves.toMatchObject({ kind: "failed" });
     expect(sessions.state.modelOverrides).toEqual({});
     sessions.dispose();
   });
@@ -65,7 +65,8 @@ describe("session model override lifecycle", () => {
     const sessions = createSessionCapability(gateway);
 
     await expect(sessions.patch(key, { model: "openai/gpt-new" })).resolves.toMatchObject({
-      ok: true,
+      kind: "applied",
+      result: { ok: true },
     });
 
     // The refreshed row carries the confirmed selection; a retained local
@@ -108,7 +109,7 @@ describe("session model override lifecycle", () => {
     publish(true);
     priorPatch.resolve();
 
-    await expect(operation).resolves.toBeNull();
+    await expect(operation).resolves.toMatchObject({ kind: "failed" });
     expect(request).not.toHaveBeenCalledWith("sessions.patch", expect.anything());
     expect(sessions.state.modelOverrides[key]).toBeUndefined();
     sessions.dispose();

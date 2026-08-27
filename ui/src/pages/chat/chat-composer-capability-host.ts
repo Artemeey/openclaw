@@ -310,17 +310,20 @@ export class ChatComposerCapabilityHost {
       state.chatError = null;
     }
     this.notify();
+    const result = await patchChatSessionSettings(
+      state,
+      sessionKey,
+      { toolOverrides: next },
+      {
+        ...scopedAgentParamsForSession(state, sessionKey),
+      },
+    );
     try {
-      const result = await patchChatSessionSettings(
-        state,
-        sessionKey,
-        { toolOverrides: next },
-        {
-          ...scopedAgentParamsForSession(state, sessionKey),
-        },
-      );
-      if (!result) {
-        throw new Error(t("chat.composer.menu.offlineBlocked"));
+      if (result.kind !== "applied") {
+        return {
+          ok: false,
+          error: state.sessions.state.error ?? t("chat.composer.menu.offlineBlocked"),
+        };
       }
       return { ok: true };
     } catch (error) {

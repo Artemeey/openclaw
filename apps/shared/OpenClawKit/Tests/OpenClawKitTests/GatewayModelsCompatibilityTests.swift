@@ -90,6 +90,26 @@ struct GatewayModelsCompatibilityTests {
     }
 
     @Test
+    func `gateway error details decode session conflict variants`() throws {
+        let continued = try JSONDecoder().decode(
+            GatewayErrorDetails.self,
+            from: Data(#"{"code":"SESSION_CHANGED","successorSessionId":"successor"}"#.utf8))
+        let busy = try JSONDecoder().decode(
+            GatewayErrorDetails.self,
+            from: Data(#"{"code":"SESSION_COMPANION_BUSY"}"#.utf8))
+
+        guard case let .sessionChanged(details) = continued else {
+            Issue.record("Expected SESSION_CHANGED details")
+            return
+        }
+        #expect(details.successorsessionid == "successor")
+        guard case .sessionCompanionBusy = busy else {
+            Issue.record("Expected SESSION_COMPANION_BUSY details")
+            return
+        }
+    }
+
+    @Test
     func `session compaction checkpoint preserves canonical token version casing`() throws {
         let checkpoint = SessionCompactionCheckpoint(
             checkpointid: "checkpoint-1",

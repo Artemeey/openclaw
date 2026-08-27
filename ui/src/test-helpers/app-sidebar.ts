@@ -214,10 +214,13 @@ export function createSessionState(agentId: string, keys: string[]): SessionStat
 
 export function successfulSessionPatch(key: string) {
   return {
-    ok: true as const,
-    path: "",
-    key,
-    entry: { sessionId: key },
+    kind: "applied" as const,
+    result: {
+      ok: true as const,
+      path: "",
+      key,
+      entry: { sessionId: key },
+    },
   };
 }
 
@@ -244,15 +247,9 @@ export function createSessionsHarness(agentId: string, keys: string[]) {
     Promise.resolve(successfulSessionPatch(key)),
   );
   const deleteSession = vi.fn(
-    (): Promise<SessionDeleteResult> => Promise.resolve({ deleted: false }),
+    (): Promise<SessionDeleteResult> => Promise.resolve({ kind: "applied", deleted: false }),
   );
-  const deleteMany = vi.fn(() =>
-    Promise.resolve({
-      deleted: [] as string[],
-      errors: [] as string[],
-      preservedWorktrees: [] as Array<{ id: string; branch: string; path: string }>,
-    }),
-  );
+  const deleteMany = vi.fn(() => Promise.resolve([]));
   const refresh = vi.fn((_options?: Parameters<SessionCapability["refresh"]>[0]) =>
     Promise.resolve(),
   );

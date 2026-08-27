@@ -27,7 +27,5 @@ export function persistSessionBoardFace(
     return;
   }
   const agentId = parseAgentSessionKey(sessionKey)?.agentId;
-  void context.sessions
-    .patch(sessionKey, { boardFace: face }, agentId ? { agentId } : {})
-    .catch(() => undefined);
+  void context.sessions.patch(sessionKey, { boardFace: face }, agentId ? { agentId } : {});
 }

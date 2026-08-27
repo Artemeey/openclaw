@@ -39,7 +39,7 @@ export type {
   SessionListSnapshot,
   SessionMessageSubscription,
 } from "./session-capability.ts";
-export type { SessionPatch } from "./patch.ts";
+export type { SessionPatch, SessionPatchResult } from "./patch.ts";
 export { DEFAULT_SESSION_LIST_QUERY } from "./session-requests.ts";
 export { reconcileSessionRunTerminal, type SessionRunTerminal } from "./reconcile.ts";
 export { requestSessionCreate } from "./create.ts";

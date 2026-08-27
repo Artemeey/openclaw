@@ -114,7 +114,15 @@ async function patchSession(
     method: "sessions.patch",
     params,
   });
-  return await patchChatCommandSessionSettings(context, sessionKey, patch, options);
+  const result = await patchChatCommandSessionSettings(context, sessionKey, patch, options);
+  return result.kind === "applied" ? result.result : null;
+}
+
+function sessionPatchFailure(context: SlashCommandContext): SlashCommandResult {
+  return {
+    content: context.sessions.state.error ?? "Session update was not applied.",
+    failed: true,
+  };
 }
 
 function normalizeVerboseLevel(raw?: string | null): "off" | "on" | "full" | undefined {
@@ -309,7 +317,7 @@ async function executeModel(
       ? Promise.resolve(modelCatalog)
       : loadModelCatalog(client, agentId, { allowFailure: true });
     let resolvedOverride: ChatModelOverride | null = null;
-    await patchSession(
+    const patched = await patchSession(
       context,
       sessionKey,
       {
@@ -343,11 +351,13 @@ async function executeModel(
         },
       },
     );
-    return {
-      content: t("chat.commandResults.model.set", { model: `\`${requestedModel}\`` }),
-      action: "refresh",
-      sessionPatch: { modelOverride: resolvedOverride },
-    };
+    return patched
+      ? {
+          content: t("chat.commandResults.model.set", { model: `\`${requestedModel}\`` }),
+          action: "refresh",
+          sessionPatch: { modelOverride: resolvedOverride },
+        }
+      : sessionPatchFailure(context);
   } catch (err) {
     return {
       content: t("chat.commandResults.model.setFailed", { error: String(err) }),
@@ -389,13 +399,12 @@ async function executeThink(
 
   if (isSessionDefaultDirectiveValue(rawLevel)) {
     try {
-      await patchSession(context, sessionKey, {
+      const patched = await patchSession(context, sessionKey, {
         thinkingLevel: null,
       });
-      return {
-        content: t("chat.commandResults.thinking.reset"),
-        action: "refresh",
-      };
+      return patched
+        ? { content: t("chat.commandResults.thinking.reset"), action: "refresh" }
+        : sessionPatchFailure(context);
     } catch (err) {
       return {
         content: t("chat.commandResults.thinking.resetFailed", { error: String(err) }),
@@ -423,13 +432,15 @@ async function executeThink(
         }),
       };
     }
-    await patchSession(context, sessionKey, {
+    const patched = await patchSession(context, sessionKey, {
       thinkingLevel: level,
     });
-    return {
-      content: t("chat.commandResults.thinking.set", { level: `**${level}**` }),
-      action: "refresh",
-    };
+    return patched
+      ? {
+          content: t("chat.commandResults.thinking.set", { level: `**${level}**` }),
+          action: "refresh",
+        }
+      : sessionPatchFailure(context);
   } catch (err) {
     return {
       content: t("chat.commandResults.thinking.setFailed", { error: String(err) }),
@@ -473,13 +484,15 @@ async function executeVerbose(
   }
 
   try {
-    await patchSession(context, sessionKey, {
+    const patched = await patchSession(context, sessionKey, {
       verboseLevel: level,
     });
-    return {
-      content: t("chat.commandResults.verbose.set", { level: `**${level}**` }),
-      action: "refresh",
-    };
+    return patched
+      ? {
+          content: t("chat.commandResults.verbose.set", { level: `**${level}**` }),
+          action: "refresh",
+        }
+      : sessionPatchFailure(context);
   } catch (err) {
     return {
       content: t("chat.commandResults.verbose.setFailed", { error: String(err) }),
@@ -521,13 +534,12 @@ async function executeFast(
 
   if (isSessionDefaultDirectiveValue(rawMode)) {
     try {
-      await patchSession(context, sessionKey, {
+      const patched = await patchSession(context, sessionKey, {
         fastMode: null,
       });
-      return {
-        content: t("chat.commandResults.fast.reset"),
-        action: "refresh",
-      };
+      return patched
+        ? { content: t("chat.commandResults.fast.reset"), action: "refresh" }
+        : sessionPatchFailure(context);
     } catch (err) {
       return {
         content: t("chat.commandResults.fast.resetFailed", { error: String(err) }),
@@ -544,16 +556,22 @@ async function executeFast(
   }
 
   try {
-    await patchSession(context, sessionKey, {
+    const patched = await patchSession(context, sessionKey, {
       fastMode: nextMode,
     });
-    return {
-      content:
-        nextMode === "auto"
-          ? t("chat.commandResults.fast.setAuto")
-          : t(nextMode ? "chat.commandResults.fast.enabled" : "chat.commandResults.fast.disabled"),
-      action: "refresh",
-    };
+    return patched
+      ? {
+          content:
+            nextMode === "auto"
+              ? t("chat.commandResults.fast.setAuto")
+              : t(
+                  nextMode
+                    ? "chat.commandResults.fast.enabled"
+                    : "chat.commandResults.fast.disabled",
+                ),
+          action: "refresh",
+        }
+      : sessionPatchFailure(context);
   } catch (err) {
     return {
       content: t("chat.commandResults.fast.setFailed", { error: String(err) }),

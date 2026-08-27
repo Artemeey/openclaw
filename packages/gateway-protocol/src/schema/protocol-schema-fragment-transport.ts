@@ -20,6 +20,8 @@ export const TransportProtocolSchemas = {
   McpAppViewExpiredErrorDetails: errorCodes.McpAppViewExpiredErrorDetailsSchema,
   UnknownAgentIdErrorDetails: errorCodes.UnknownAgentIdErrorDetailsSchema,
   WizardNotFoundErrorDetails: errorCodes.WizardNotFoundErrorDetailsSchema,
+  SessionChangedErrorDetails: errorCodes.SessionChangedErrorDetailsSchema,
+  SessionCompanionBusyErrorDetails: errorCodes.SessionCompanionBusyErrorDetailsSchema,
   GatewayErrorDetails: errorCodes.GatewayErrorDetailsSchema,
   ProjectCloneErrorDetails: errorCodes.ProjectCloneErrorDetailsSchema,
   GatewaySuspendTaskBlocker: gatewaySuspend.GatewaySuspendTaskBlockerSchema,

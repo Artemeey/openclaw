@@ -26,11 +26,13 @@ function createSessionCapability(client: GatewayBrowserClient): SessionCapabilit
     list: (options = {}) => request("sessions.list", options),
     refresh: async () => undefined,
     create: async () => null,
-    patch: (key: string, patch: SessionPatch, options: SessionPatchOptions = {}) =>
-      request("sessions.patch", { key, agentId: options.agentId, ...patch }),
+    patch: async (key: string, patch: SessionPatch, options: SessionPatchOptions = {}) => ({
+      kind: "applied",
+      result: await request("sessions.patch", { key, agentId: options.agentId, ...patch }),
+    }),
     setModelOverride: () => undefined,
-    delete: async () => false,
-    deleteMany: async () => ({ deleted: [], errors: [], preservedWorktrees: [] }),
+    delete: async () => ({ kind: "applied", deleted: false }),
+    deleteMany: async () => [],
     reset: async () => true,
     compact: (key: string, options: { agentId?: string | null } = {}) =>
       request("sessions.compact", { key, ...options }),
@@ -166,11 +168,10 @@ describe("executeSlashCommand directives", () => {
 
   it("defers slash-command model cache publication to the captured chat owner", async () => {
     const client = { request: vi.fn() } as unknown as GatewayBrowserClient;
-    const patch = vi
-      .fn()
-      .mockResolvedValue(
-        createResolvedModelPatch(OPENAI_GPT5_MINI_MODEL.id, OPENAI_GPT5_MINI_MODEL.provider),
-      );
+    const patch = vi.fn().mockResolvedValue({
+      kind: "applied",
+      result: createResolvedModelPatch(OPENAI_GPT5_MINI_MODEL.id, OPENAI_GPT5_MINI_MODEL.provider),
+    });
     const setModelOverride = vi.fn();
     const ownsModelOverride = vi.fn(() => true);
     const sessions = {
@@ -209,11 +210,13 @@ describe("executeSlashCommand directives", () => {
     const setModelOverride = vi.fn();
     const sessions = {
       ...createSessionCapability(client),
-      patch: vi
-        .fn()
-        .mockResolvedValue(
-          createResolvedModelPatch(OPENAI_GPT5_MINI_MODEL.id, OPENAI_GPT5_MINI_MODEL.provider),
+      patch: vi.fn().mockResolvedValue({
+        kind: "applied",
+        result: createResolvedModelPatch(
+          OPENAI_GPT5_MINI_MODEL.id,
+          OPENAI_GPT5_MINI_MODEL.provider,
         ),
+      }),
       setModelOverride,
     } as SessionCapability;
 

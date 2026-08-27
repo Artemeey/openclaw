@@ -114,7 +114,10 @@ describe("session pin mutations", () => {
     expect(rowPinned(sessions.state.result, key)).toBe(false);
     expect(filteredRowPinned()).toBe(false);
 
-    await expect(operation).rejects.toThrow("pin rejected");
+    await expect(operation).resolves.toMatchObject({
+      kind: "failed",
+      error: expect.objectContaining({ message: "pin rejected" }),
+    });
     expect(rowPinned(sessions.state.result, key)).toBe(true);
     expect(filteredRowPinned()).toBe(true);
     expect(sessions.state.error).toContain("pin rejected");
@@ -156,7 +159,10 @@ describe("session pin mutations", () => {
     const operation = sessions.patch(key, { pinned: false });
     expect(filteredRow()?.pinned).toBe(false);
 
-    await expect(operation).rejects.toThrow("unpin rejected");
+    await expect(operation).resolves.toMatchObject({
+      kind: "failed",
+      error: expect.objectContaining({ message: "unpin rejected" }),
+    });
     expect(filteredRow()?.pinned).toBe(true);
     expect(filteredRow()?.pinnedAt).toBe(7);
     stopFiltered();
@@ -184,7 +190,10 @@ describe("session pin mutations", () => {
     expect(rowPinned(sessions.state.result, key)).toBe(false);
 
     unpinRejected.reject(new Error("unpin rejected"));
-    await expect(unpin).rejects.toThrow("unpin rejected");
+    await expect(unpin).resolves.toMatchObject({
+      kind: "failed",
+      error: expect.objectContaining({ message: "unpin rejected" }),
+    });
     expect(rowPinned(sessions.state.result, key)).toBe(true);
     expect(sessions.state.error).toContain("unpin rejected");
     sessions.dispose();

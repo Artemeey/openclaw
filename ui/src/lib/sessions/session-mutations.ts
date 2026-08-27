@@ -1,16 +1,17 @@
 import { readSessionChangedError } from "@openclaw/gateway-client/browser";
-import type {
-  GatewaySessionRow,
-  SessionsListResult,
-  SessionsPatchResult,
-} from "../../api/types.ts";
+import type { GatewaySessionRow, SessionsListResult } from "../../api/types.ts";
 import { t } from "../../i18n/index.ts";
 import {
   requestSessionCreate,
   resolveSessionCreateParams,
   type SessionCreateParams,
 } from "./create.ts";
-import type { SessionPatch, SessionPatchOptions } from "./patch.ts";
+import type {
+  SessionMutationRejection,
+  SessionPatch,
+  SessionPatchOptions,
+  SessionPatchResult,
+} from "./patch.ts";
 import { requestSessionRecovery } from "./recover.ts";
 import type {
   SessionConnectionOwner,
@@ -59,34 +60,41 @@ export function createSessionMutations(host: SessionMutationsHost) {
   const preparedWorkSessionKeys = new Set<string>();
 
   // Refresh stale rows centrally and publish failures for callers without an error surface.
-  const settleSessionChangedRejection = async (
+  const readMutationRejection = (error: unknown): SessionMutationRejection => {
+    const changed = readSessionChangedError(error);
+    if (!changed) {
+      return { kind: "failed", error };
+    }
+    return changed.successorSessionId
+      ? { kind: "continued", successorSessionId: changed.successorSessionId }
+      : { kind: "replaced" };
+  };
+
+  const mutationRejectionMessage = (key: string, rejection: SessionMutationRejection): string =>
+    rejection.kind === "continued"
+      ? t("sessionsView.sessionChangedContinued", { key })
+      : rejection.kind === "replaced"
+        ? t("sessionsView.sessionChangedReplaced", { key })
+        : String(rejection.error);
+
+  const settleMutationRejection = async (
     key: string,
     error: unknown,
     scope: Parameters<SessionConnectionOwner["isCurrent"]>[0],
     agentId?: string | null,
-  ): Promise<boolean> => {
-    const changed = readSessionChangedError(error);
-    if (!changed) {
-      return false;
+  ): Promise<SessionMutationRejection> => {
+    const rejection = readMutationRejection(error);
+    if (rejection.kind !== "failed") {
+      // The identity result remains authoritative even if refreshing the stale row fails.
+      await host.refreshReplacement(agentId).catch(() => {});
     }
-    // The refresh republishes state, so the outcome is published after it or the fresh
-    // list would immediately clear the error the operator still needs to read.
-    await host.refreshReplacement(agentId);
-    if (!host.connection.isCurrent(scope)) {
-      return true;
+    if (host.connection.isCurrent(scope)) {
+      host.publish(
+        { ...host.readState(), error: mutationRejectionMessage(key, rejection) },
+        "operation",
+      );
     }
-    host.publish(
-      {
-        ...host.readState(),
-        // A successor is named only when the Gateway proved lineage, so a replacement
-        // never invites the operator to retry onto a session they did not pick.
-        error: changed.successorSessionId
-          ? t("sessionsView.sessionChangedContinued", { key })
-          : t("sessionsView.sessionChangedReplaced", { key }),
-      },
-      "operation",
-    );
-    return true;
+    return rejection;
   };
 
   const setModelOverride = (key: string, value: string | null | undefined) => {
@@ -233,10 +241,10 @@ export function createSessionMutations(host: SessionMutationsHost) {
     key: string,
     patchParams: SessionPatch,
     options: SessionPatchOptions = {},
-  ): Promise<SessionsPatchResult | null> => {
+  ): Promise<SessionPatchResult> => {
     const scope = host.connection.capture();
     if (!scope) {
-      return null;
+      return { kind: "failed", error: new Error("Session capability is unavailable") };
     }
     const hasModelPatch = Object.hasOwn(patchParams, "model");
     const managesModelOverride = hasModelPatch && options.deferModelOverride !== true;
@@ -361,14 +369,14 @@ export function createSessionMutations(host: SessionMutationsHost) {
         await options.waitFor;
         if (!host.connection.isCurrent(scope)) {
           settleOptimisticPatch(false);
-          return null;
+          return { kind: "failed", error: new Error("Gateway connection changed") };
         }
       }
       startOptimisticPatch();
       const result = await requestSessionPatch(scope.client, key, patchParams, options);
       if (!host.connection.isCurrent(scope)) {
         settleOptimisticPatch(false);
-        return null;
+        return { kind: "failed", error: new Error("Gateway connection changed") };
       }
       if (archivedPresentationRow) {
         const archivedAt = result.entry?.archivedAt ?? Date.now();
@@ -410,23 +418,17 @@ export function createSessionMutations(host: SessionMutationsHost) {
         await host.refreshReplacement(options.agentId);
         if (!host.connection.isCurrent(scope)) {
           settleOptimisticPatch(false);
-          return null;
+          return { kind: "failed", error: new Error("Gateway connection changed") };
         }
       }
       settleOptimisticPatch(true);
-      return result;
+      return { kind: "applied", result };
     } catch (error) {
       settleOptimisticPatch(false);
       if (!host.connection.isCurrent(scope)) {
-        return null;
+        return { kind: "failed", error };
       }
-      if (await settleSessionChangedRejection(key, error, scope, options.agentId)) {
-        throw error;
-      }
-      if (ownsModelOverride()) {
-        host.publish({ ...host.readState(), error: String(error) }, "operation");
-      }
-      throw error;
+      return settleMutationRejection(key, error, scope, options.agentId);
     }
   };
 
@@ -436,12 +438,12 @@ export function createSessionMutations(host: SessionMutationsHost) {
   ): Promise<SessionDeleteOutcome> => {
     const scope = host.connection.capture();
     if (!scope) {
-      return { deleted: false };
+      return { kind: "failed", error: new Error("Session capability is unavailable") };
     }
     try {
       const response = await requestSessionDelete(scope.client, key, options);
       if (!host.connection.isCurrent(scope) || !confirmsSessionDeletion(response)) {
-        return { deleted: false };
+        return { kind: "applied", deleted: false };
       }
       host.retirePullRequestSummary(key);
       confirmedArchives.delete(key.trim());
@@ -450,17 +452,15 @@ export function createSessionMutations(host: SessionMutationsHost) {
       setModelOverride(key, undefined);
       await host.refreshReplacement(options.agentId);
       return {
+        kind: "applied",
         deleted: host.connection.isCurrent(scope),
         ...(response.worktreePreserved ? { worktreePreserved: response.worktreePreserved } : {}),
       };
     } catch (error) {
       if (!host.connection.isCurrent(scope)) {
-        return { deleted: false };
+        return { kind: "failed", error };
       }
-      if (!(await settleSessionChangedRejection(key, error, scope, options.agentId))) {
-        host.publish({ ...host.readState(), error: String(error) }, "operation");
-      }
-      throw error;
+      return settleMutationRejection(key, error, scope, options.agentId);
     }
   };
 
@@ -469,14 +469,9 @@ export function createSessionMutations(host: SessionMutationsHost) {
   ): Promise<SessionDeleteBatchResult> => {
     const scope = host.connection.capture();
     if (!scope || targets.length === 0) {
-      return { deleted: [], errors: [], preservedWorktrees: [] };
+      return [];
     }
-    const deleted: string[] = [];
-    const errors: string[] = [];
-    const preservedWorktrees: SessionDeleteBatchResult["preservedWorktrees"] = [];
-    // A changed identity leaves that row stale even when the batch deletes nothing, so
-    // the refresh below cannot be gated on `deleted` alone.
-    let sessionChanged = false;
+    const outcomes: SessionDeleteBatchResult = [];
     for (const target of targets) {
       if (!host.connection.isCurrent(scope)) {
         break;
@@ -487,16 +482,24 @@ export function createSessionMutations(host: SessionMutationsHost) {
           break;
         }
         if (confirmsSessionDeletion(response)) {
-          deleted.push(target.key);
-          if (response.worktreePreserved) {
-            preservedWorktrees.push(response.worktreePreserved);
-          }
+          outcomes.push({
+            kind: "applied",
+            key: target.key,
+            deleted: true,
+            ...(response.worktreePreserved
+              ? { worktreePreserved: response.worktreePreserved }
+              : {}),
+          });
+        } else {
+          outcomes.push({ kind: "applied", key: target.key, deleted: false });
         }
       } catch (error) {
-        sessionChanged ||= readSessionChangedError(error) !== null;
-        errors.push(String(error));
+        outcomes.push({ key: target.key, ...readMutationRejection(error) });
       }
     }
+    const deleted = outcomes.flatMap((outcome) =>
+      outcome.kind === "applied" && outcome.deleted ? [outcome.key] : [],
+    );
     if (deleted.length > 0 && host.connection.isCurrent(scope)) {
       for (const key of deleted) {
         host.retirePullRequestSummary(key);
@@ -511,12 +514,25 @@ export function createSessionMutations(host: SessionMutationsHost) {
         setModelOverride(key, undefined);
       }
     }
-    if ((deleted.length > 0 || sessionChanged) && host.connection.isCurrent(scope)) {
-      await host.refreshReplacement();
+    const rejections = outcomes.filter((outcome) => outcome.kind !== "applied");
+    if (
+      (deleted.length > 0 || rejections.some((outcome) => outcome.kind !== "failed")) &&
+      host.connection.isCurrent(scope)
+    ) {
+      await host.refreshReplacement().catch(() => {});
     }
-    return host.connection.isCurrent(scope)
-      ? { deleted, errors, preservedWorktrees }
-      : { deleted: [], errors: [], preservedWorktrees: [] };
+    if (rejections.length > 0 && host.connection.isCurrent(scope)) {
+      host.publish(
+        {
+          ...host.readState(),
+          error: rejections
+            .map((outcome) => mutationRejectionMessage(outcome.key, outcome))
+            .join("; "),
+        },
+        "operation",
+      );
+    }
+    return host.connection.isCurrent(scope) ? outcomes : [];
   };
 
   const reset = async (

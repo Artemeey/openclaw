@@ -380,7 +380,7 @@ export function switchChatFastMode(
           reconcile: async () => refreshCurrentChatSessionList(host),
         },
       );
-      if (!patched) {
+      if (patched.kind !== "applied") {
         rollback();
         return false;
       }
@@ -449,7 +449,7 @@ export async function switchChatModel(
           },
         },
       );
-      if (!patched) {
+      if (patched.kind !== "applied") {
         return false;
       }
       return true;
@@ -520,7 +520,7 @@ export function switchChatThinkingLevel(
           reconcile: async () => refreshCurrentChatSessionList(host),
         },
       );
-      if (!patched) {
+      if (patched.kind !== "applied") {
         rollback();
         return false;
       }

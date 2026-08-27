@@ -94,10 +94,8 @@ describe("sessions page lifecycle", () => {
   it("offers undo after archiving from the Sessions page", async () => {
     const key = "agent:main:pinned";
     const patch = vi.fn(async () => ({
-      ok: true as const,
-      path: "",
-      key,
-      entry: { sessionId: key },
+      kind: "applied" as const,
+      result: { ok: true as const, path: "", key, entry: { sessionId: key } },
     }));
     const sessions = createSessions({ patch });
     const mutableGateway = createGateway({} as GatewayBrowserClient);
@@ -134,10 +132,8 @@ describe("sessions page lifecycle", () => {
   it("keeps the archive Undo working after navigating off the Sessions page", async () => {
     const key = "agent:main:navigated";
     const patch = vi.fn(async () => ({
-      ok: true as const,
-      path: "",
-      key,
-      entry: { sessionId: key },
+      kind: "applied" as const,
+      result: { ok: true as const, path: "", key, entry: { sessionId: key } },
     }));
     const sessions = createSessions({ patch });
     const mutableGateway = createGateway({} as GatewayBrowserClient);
@@ -632,7 +628,7 @@ describe("sessions page lifecycle", () => {
   it("retargets the Gateway after deleting the current session", async () => {
     const key = "agent:writer:work";
     const sessions = createSessions({
-      deleteMany: vi.fn(async () => ({ deleted: [key], errors: [], preservedWorktrees: [] })),
+      deleteMany: vi.fn(async () => [{ kind: "applied" as const, key, deleted: true }]),
     });
     const mutableGateway = createGateway({} as GatewayBrowserClient);
     mutableGateway.emit({ sessionKey: key });
@@ -673,7 +669,7 @@ describe("sessions page lifecycle", () => {
   it("archive-gates a confirmed archived row-menu deletion", async () => {
     const key = "agent:main:work";
     const sessions = createSessions({
-      deleteMany: vi.fn(async () => ({ deleted: [key], errors: [], preservedWorktrees: [] })),
+      deleteMany: vi.fn(async () => [{ kind: "applied" as const, key, deleted: true }]),
     });
     const { gateway } = createGateway({} as GatewayBrowserClient);
     const page = await createPage(createContext(gateway, sessions));
@@ -696,7 +692,7 @@ describe("sessions page lifecycle", () => {
   ] as const)("keeps %s row-menu deletion admin-only", async (_state, archived) => {
     const key = `agent:main:${_state}`;
     const sessions = createSessions({
-      deleteMany: vi.fn(async () => ({ deleted: [], errors: [], preservedWorktrees: [] })),
+      deleteMany: vi.fn(async () => []),
     });
     const { gateway } = createGateway({} as GatewayBrowserClient);
     const page = await createPage(createContext(gateway, sessions));
@@ -718,11 +714,11 @@ describe("sessions page lifecycle", () => {
     const archivedKey = "agent:main:archived";
     const unknownKey = "agent:main:unknown";
     const sessions = createSessions({
-      deleteMany: vi.fn(async () => ({
-        deleted: [archivedKey],
-        errors: ["active denied", "unknown denied"],
-        preservedWorktrees: [],
-      })),
+      deleteMany: vi.fn(async () => [
+        { kind: "failed" as const, key: activeKey, error: new Error("active denied") },
+        { kind: "applied" as const, key: archivedKey, deleted: true },
+        { kind: "failed" as const, key: unknownKey, error: new Error("unknown denied") },
+      ]),
     });
     const { gateway } = createGateway({} as GatewayBrowserClient);
     const page = await createPage(createContext(gateway, sessions));
@@ -748,7 +744,7 @@ describe("sessions page lifecycle", () => {
       sessions: [{ key: activeKey, archived: false }],
     });
     expect(page.selectedKeys).toEqual(new Set([activeKey, unknownKey]));
-    expect(page.error).toBe("active denied; unknown denied");
+    expect(page.error).toBeNull();
   });
 
   it("stops an active cloud worker and refreshes the session roster", async () => {
@@ -850,11 +846,7 @@ describe("sessions page lifecycle", () => {
   });
 
   it("drops stale mutation state, errors, and navigation after disconnect", async () => {
-    const deleted = deferred<{
-      deleted: string[];
-      errors: string[];
-      preservedWorktrees: Array<{ id: string; branch: string; path: string }>;
-    }>();
+    const deleted = deferred<Awaited<ReturnType<SessionCapability["deleteMany"]>>>();
     const patched = deferred<unknown>();
     const forked = deferred<string | null>();
     const branched = deferred<{ key: string }>();
@@ -904,8 +896,8 @@ describe("sessions page lifecycle", () => {
     );
 
     mutableGateway.emit({ phase: "reconnecting", client });
-    deleted.resolve({ deleted: ["main"], errors: ["stale delete error"], preservedWorktrees: [] });
-    patched.resolve({ ok: true });
+    deleted.resolve([{ kind: "applied", key: "main", deleted: true }]);
+    patched.resolve({ kind: "applied", result: { ok: true } });
     forked.resolve("forked");
     branched.resolve({ key: "branched" });
     restored.reject(new Error("stale restore error"));

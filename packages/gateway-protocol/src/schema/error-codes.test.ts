@@ -8,6 +8,8 @@ import {
   McpAppViewExpiredErrorDetailsSchema,
   MissingScopeErrorDetailsSchema,
   ProjectCloneErrorDetailsSchema,
+  SessionChangedErrorDetailsSchema,
+  SessionCompanionBusyErrorDetailsSchema,
   missingScopeErrorShape,
   readMissingScopeError,
   readMissingScopeErrorDetails,
@@ -64,6 +66,22 @@ describe("gateway error details", () => {
     expect(Value.Check(ProjectCloneErrorDetailsSchema, { ...details, cause: "unknown" })).toBe(
       false,
     );
+  });
+
+  it("validates session identity and companion details", () => {
+    const changed = {
+      code: GatewayErrorDetailCodes.SESSION_CHANGED,
+      successorSessionId: "session-successor",
+    };
+    const busy = { code: GatewayErrorDetailCodes.SESSION_COMPANION_BUSY };
+
+    expect(Value.Check(SessionChangedErrorDetailsSchema, changed)).toBe(true);
+    expect(Value.Check(GatewayErrorDetailsSchema, changed)).toBe(true);
+    expect(
+      Value.Check(SessionChangedErrorDetailsSchema, { ...changed, successorSessionId: "" }),
+    ).toBe(false);
+    expect(Value.Check(SessionCompanionBusyErrorDetailsSchema, busy)).toBe(true);
+    expect(Value.Check(GatewayErrorDetailsSchema, busy)).toBe(true);
   });
 
   it("builds a distinct forbidden missing-scope response", () => {

@@ -190,20 +190,13 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
       return;
     }
     const guardKey = state.sessionKey;
-    void this.context.sessions.patch(row.key, { unread: false }, { agentId }).then(
-      (result) => {
-        // A null result means no request was sent (connection scope lost);
-        // unlatch like a failure or the badge stays lit until navigation.
-        if (result === null) {
-          this.unreadPatchGuard.patchFailed(guardKey);
-        }
-      },
-      () => {
+    void this.context.sessions.patch(row.key, { unread: false }, { agentId }).then((result) => {
+      if (result.kind !== "applied") {
         // Unlatch so later unread snapshots retry; the session capability
         // publishes the actionable error for the owning page.
         this.unreadPatchGuard.patchFailed(guardKey);
-      },
-    );
+      }
+    });
   }
 
   protected async restoreArchivedSession(sessionKey: string, expectedSessionId: string) {
@@ -222,25 +215,7 @@ export abstract class ChatPaneSession extends ChatPaneTaskSuggestions {
       return;
     }
     const agentId = parseAgentSessionKey(sessionKey)?.agentId ?? resolveChatAgentId(scope.state);
-    let failure: string | null = null;
-    try {
-      // The patch can resolve falsy on failure; the capability error explains it.
-      const patched = await scope.sessions.patch(
-        sessionKey,
-        { archived: false },
-        { agentId, expectedSessionId },
-      );
-      if (!patched) {
-        failure = scope.sessions.state.error;
-      }
-    } catch (error) {
-      failure = error instanceof Error ? error.message : String(error);
-    }
-    if (failure && this.isConnectionScopeCurrent(scope) && scope.state.sessionKey === sessionKey) {
-      scope.state.lastError = failure;
-      scope.state.chatError = failure;
-      scope.state.requestUpdate?.();
-    }
+    await scope.sessions.patch(sessionKey, { archived: false }, { agentId, expectedSessionId });
   }
 
   protected setPaneSessionKey(sessionKey: string): string | null {

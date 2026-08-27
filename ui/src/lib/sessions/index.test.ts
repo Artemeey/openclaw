@@ -364,7 +364,7 @@ describe("createSessionCapability", () => {
     const { gateway } = createGatewayHarness(client);
     const sessions = createSessionCapability(gateway);
 
-    await expect(sessions.delete(key)).resolves.toEqual({ deleted: false });
+    await expect(sessions.delete(key)).resolves.toEqual({ kind: "applied", deleted: false });
     expect(sessions.state.deletedSessions).toEqual([]);
     expect(request).toHaveBeenCalledTimes(1);
     sessions.dispose();
@@ -393,7 +393,10 @@ describe("createSessionCapability", () => {
 
     await expect(
       sessions.deleteMany([{ key: keptKey }, { key: deletedKey, archivedOnly: true }]),
-    ).resolves.toEqual({ deleted: [deletedKey], errors: [], preservedWorktrees: [] });
+    ).resolves.toEqual([
+      { kind: "applied", key: keptKey, deleted: false },
+      { kind: "applied", key: deletedKey, deleted: true },
+    ]);
     expect(deletedSnapshots.some((keys) => keys.includes(deletedKey))).toBe(true);
     expect(deletedSnapshots.some((keys) => keys.includes(keptKey))).toBe(false);
     expect(request).toHaveBeenCalledTimes(3);
