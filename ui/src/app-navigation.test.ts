@@ -235,7 +235,7 @@ describe("titleForRoute", () => {
       plugins: "Plugins",
       "skill-workshop": "Skill Workshop",
       devices: "Devices",
-      "cloud-workers": "Cloud workers",
+      "cloud-workers": "Cloud sessions",
       profile: "Profile",
       communications: "Communications",
       appearance: "Appearance",

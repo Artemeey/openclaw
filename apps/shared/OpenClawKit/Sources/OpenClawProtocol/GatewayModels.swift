@@ -12289,6 +12289,7 @@ public struct SystemAgentSetupAuthStartResult: Codable, Sendable {
     public let channels: [String]?
     public let accounts: [[String: AnyCodable]]?
     public let preparedmodelref: String?
+    public let cloudsessiontest: CloudSessionTestResult?
 
     public init(
         sessionid: String,
@@ -12298,7 +12299,8 @@ public struct SystemAgentSetupAuthStartResult: Codable, Sendable {
         error: String? = nil,
         channels: [String]? = nil,
         accounts: [[String: AnyCodable]]? = nil,
-        preparedmodelref: String? = nil)
+        preparedmodelref: String? = nil,
+        cloudsessiontest: CloudSessionTestResult? = nil)
     {
         self.sessionid = sessionid
         self.done = done
@@ -12308,6 +12310,7 @@ public struct SystemAgentSetupAuthStartResult: Codable, Sendable {
         self.channels = channels
         self.accounts = accounts
         self.preparedmodelref = preparedmodelref
+        self.cloudsessiontest = cloudsessiontest
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -12319,6 +12322,45 @@ public struct SystemAgentSetupAuthStartResult: Codable, Sendable {
         case channels
         case accounts
         case preparedmodelref = "preparedModelRef"
+        case cloudsessiontest = "cloudSessionTest"
+    }
+}
+
+public struct CloudSessionTestResult: Codable, Sendable {
+    public let sessionkey: String?
+    public let environmentid: String?
+    public let endedat: Int?
+    public let stage: AnyCodable
+    public let status: AnyCodable
+    public let cleanup: AnyCodable
+    public let message: String?
+
+    public init(
+        sessionkey: String? = nil,
+        environmentid: String? = nil,
+        endedat: Int? = nil,
+        stage: AnyCodable,
+        status: AnyCodable,
+        cleanup: AnyCodable,
+        message: String? = nil)
+    {
+        self.sessionkey = sessionkey
+        self.environmentid = environmentid
+        self.endedat = endedat
+        self.stage = stage
+        self.status = status
+        self.cleanup = cleanup
+        self.message = message
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionkey = "sessionKey"
+        case environmentid = "environmentId"
+        case endedat = "endedAt"
+        case stage
+        case status
+        case cleanup
+        case message
     }
 }
 
@@ -12327,6 +12369,9 @@ public struct WizardStartParams: Codable, Sendable {
     public let workspace: String?
     public let installDaemon: Bool?
     public let flow: AnyCodable?
+    public let profileid: String?
+    public let agentid: String?
+    public let model: String?
     public let channel: String?
 
     public init(
@@ -12334,13 +12379,30 @@ public struct WizardStartParams: Codable, Sendable {
         workspace: String? = nil,
         installDaemon: Bool? = nil,
         flow: AnyCodable? = nil,
+        profileid: String? = nil,
+        agentid: String? = nil,
+        model: String? = nil,
         channel: String? = nil)
     {
         self.mode = mode
         self.workspace = workspace
         self.installDaemon = installDaemon
         self.flow = flow
+        self.profileid = profileid
+        self.agentid = agentid
+        self.model = model
         self.channel = channel
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mode
+        case workspace
+        case installDaemon
+        case flow
+        case profileid = "profileId"
+        case agentid = "agentId"
+        case model
+        case channel
     }
 }
 
@@ -12456,6 +12518,7 @@ public struct WizardNextResult: Codable, Sendable {
     public let channels: [String]?
     public let accounts: [[String: AnyCodable]]?
     public let preparedmodelref: String?
+    public let cloudsessiontest: CloudSessionTestResult?
 
     public init(
         done: Bool,
@@ -12464,7 +12527,8 @@ public struct WizardNextResult: Codable, Sendable {
         error: String? = nil,
         channels: [String]? = nil,
         accounts: [[String: AnyCodable]]? = nil,
-        preparedmodelref: String? = nil)
+        preparedmodelref: String? = nil,
+        cloudsessiontest: CloudSessionTestResult? = nil)
     {
         self.done = done
         self.step = step
@@ -12473,6 +12537,7 @@ public struct WizardNextResult: Codable, Sendable {
         self.channels = channels
         self.accounts = accounts
         self.preparedmodelref = preparedmodelref
+        self.cloudsessiontest = cloudsessiontest
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -12483,6 +12548,7 @@ public struct WizardNextResult: Codable, Sendable {
         case channels
         case accounts
         case preparedmodelref = "preparedModelRef"
+        case cloudsessiontest = "cloudSessionTest"
     }
 }
 
@@ -12495,6 +12561,7 @@ public struct WizardStartResult: Codable, Sendable {
     public let channels: [String]?
     public let accounts: [[String: AnyCodable]]?
     public let preparedmodelref: String?
+    public let cloudsessiontest: CloudSessionTestResult?
 
     public init(
         sessionid: String,
@@ -12504,7 +12571,8 @@ public struct WizardStartResult: Codable, Sendable {
         error: String? = nil,
         channels: [String]? = nil,
         accounts: [[String: AnyCodable]]? = nil,
-        preparedmodelref: String? = nil)
+        preparedmodelref: String? = nil,
+        cloudsessiontest: CloudSessionTestResult? = nil)
     {
         self.sessionid = sessionid
         self.done = done
@@ -12514,6 +12582,7 @@ public struct WizardStartResult: Codable, Sendable {
         self.channels = channels
         self.accounts = accounts
         self.preparedmodelref = preparedmodelref
+        self.cloudsessiontest = cloudsessiontest
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -12525,19 +12594,29 @@ public struct WizardStartResult: Codable, Sendable {
         case channels
         case accounts
         case preparedmodelref = "preparedModelRef"
+        case cloudsessiontest = "cloudSessionTest"
     }
 }
 
 public struct WizardStatusResult: Codable, Sendable {
     public let status: AnyCodable
     public let error: String?
+    public let cloudsessiontest: CloudSessionTestResult?
 
     public init(
         status: AnyCodable,
-        error: String? = nil)
+        error: String? = nil,
+        cloudsessiontest: CloudSessionTestResult? = nil)
     {
         self.status = status
         self.error = error
+        self.cloudsessiontest = cloudsessiontest
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case error
+        case cloudsessiontest = "cloudSessionTest"
     }
 }
 
@@ -18861,6 +18940,367 @@ public struct QuestionListResult: Codable, Sendable {
     }
 }
 
+public struct WorkerSetupDescriptor: Codable, Sendable {
+    public let id: String
+    public let methods: [String: AnyCodable]
+
+    public init(
+        id: String,
+        methods: [String: AnyCodable])
+    {
+        self.id = id
+        self.methods = methods
+    }
+}
+
+public struct WorkerSetupDiagnostic: Codable, Sendable {
+    public let code: String
+    public let severity: AnyCodable
+    public let message: String
+    public let field: String?
+    public let action: AnyCodable?
+
+    public init(
+        code: String,
+        severity: AnyCodable,
+        message: String,
+        field: String? = nil,
+        action: AnyCodable? = nil)
+    {
+        self.code = code
+        self.severity = severity
+        self.message = message
+        self.field = field
+        self.action = action
+    }
+}
+
+public struct WorkerSetupDependency: Codable, Sendable {
+    public let state: AnyCodable
+    public let version: String?
+    public let requiredversion: String
+    public let managed: Bool
+
+    public init(
+        state: AnyCodable,
+        version: String? = nil,
+        requiredversion: String,
+        managed: Bool)
+    {
+        self.state = state
+        self.version = version
+        self.requiredversion = requiredversion
+        self.managed = managed
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case state
+        case version
+        case requiredversion = "requiredVersion"
+        case managed
+    }
+}
+
+public struct WorkerSetupCredential: Codable, Sendable {
+    public let key: String
+    public let label: String
+    public let required: Bool
+    public let description: String?
+    public let helpurl: String?
+
+    public init(
+        key: String,
+        label: String,
+        required: Bool,
+        description: String? = nil,
+        helpurl: String? = nil)
+    {
+        self.key = key
+        self.label = label
+        self.required = required
+        self.description = description
+        self.helpurl = helpurl
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case key
+        case label
+        case required
+        case description
+        case helpurl = "helpUrl"
+    }
+}
+
+public struct WorkerSetupProvider: Codable, Sendable {
+    public let id: String
+    public let label: String
+    public let compatibility: AnyCodable
+    public let reason: String?
+    public let settingsschema: [String: AnyCodable]
+    public let uihints: [String: AnyCodable]
+    public let defaults: [String: AnyCodable]
+    public let credentials: [WorkerSetupCredential]
+    public let machines: [[String: AnyCodable]]?
+
+    public init(
+        id: String,
+        label: String,
+        compatibility: AnyCodable,
+        reason: String? = nil,
+        settingsschema: [String: AnyCodable],
+        uihints: [String: AnyCodable],
+        defaults: [String: AnyCodable],
+        credentials: [WorkerSetupCredential],
+        machines: [[String: AnyCodable]]? = nil)
+    {
+        self.id = id
+        self.label = label
+        self.compatibility = compatibility
+        self.reason = reason
+        self.settingsschema = settingsschema
+        self.uihints = uihints
+        self.defaults = defaults
+        self.credentials = credentials
+        self.machines = machines
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case compatibility
+        case reason
+        case settingsschema = "settingsSchema"
+        case uihints = "uiHints"
+        case defaults
+        case credentials
+        case machines
+    }
+}
+
+public struct WorkerSetupConnection: Codable, Sendable {
+    public let connectionid: String
+    public let label: String
+    public let provider: String
+    public let credentials: [String: AnyCodable]
+    public let state: AnyCodable
+    public let profileids: [String]
+
+    public init(
+        connectionid: String,
+        label: String,
+        provider: String,
+        credentials: [String: AnyCodable],
+        state: AnyCodable,
+        profileids: [String])
+    {
+        self.connectionid = connectionid
+        self.label = label
+        self.provider = provider
+        self.credentials = credentials
+        self.state = state
+        self.profileids = profileids
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case connectionid = "connectionId"
+        case label
+        case provider
+        case credentials
+        case state
+        case profileids = "profileIds"
+    }
+}
+
+public struct WorkerSetupProfile: Codable, Sendable {
+    public let profileid: String
+    public let label: String
+    public let provider: String
+    public let connectionid: String?
+    public let suspendafter: String?
+    public let settings: [String: AnyCodable]
+
+    public init(
+        profileid: String,
+        label: String,
+        provider: String,
+        connectionid: String? = nil,
+        suspendafter: String? = nil,
+        settings: [String: AnyCodable])
+    {
+        self.profileid = profileid
+        self.label = label
+        self.provider = provider
+        self.connectionid = connectionid
+        self.suspendafter = suspendafter
+        self.settings = settings
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case profileid = "profileId"
+        case label
+        case provider
+        case connectionid = "connectionId"
+        case suspendafter = "suspendAfter"
+        case settings
+    }
+}
+
+public struct WorkerSetupDescribeParams: Codable, Sendable {}
+
+public struct WorkerSetupDescribeResult: Codable, Sendable {
+    public let dependency: WorkerSetupDependency
+    public let providers: [WorkerSetupProvider]
+    public let connections: [WorkerSetupConnection]
+    public let profiles: [WorkerSetupProfile]
+    public let diagnostics: [WorkerSetupDiagnostic]
+
+    public init(
+        dependency: WorkerSetupDependency,
+        providers: [WorkerSetupProvider],
+        connections: [WorkerSetupConnection],
+        profiles: [WorkerSetupProfile],
+        diagnostics: [WorkerSetupDiagnostic])
+    {
+        self.dependency = dependency
+        self.providers = providers
+        self.connections = connections
+        self.profiles = profiles
+        self.diagnostics = diagnostics
+    }
+}
+
+public struct WorkerSetupInstallParams: Codable, Sendable {}
+
+public struct WorkerSetupInstallResult: Codable, Sendable {
+    public let status: AnyCodable
+    public let dependency: WorkerSetupDependency
+    public let diagnostics: [WorkerSetupDiagnostic]
+
+    public init(
+        status: AnyCodable,
+        dependency: WorkerSetupDependency,
+        diagnostics: [WorkerSetupDiagnostic])
+    {
+        self.status = status
+        self.dependency = dependency
+        self.diagnostics = diagnostics
+    }
+}
+
+public struct WorkerSetupPrepareParams: Codable, Sendable {
+    public let connectionid: String
+    public let profileid: String
+    public let label: String
+    public let provider: String
+    public let settings: [String: AnyCodable]
+    public let credentials: [String: AnyCodable]
+
+    public init(
+        connectionid: String,
+        profileid: String,
+        label: String,
+        provider: String,
+        settings: [String: AnyCodable],
+        credentials: [String: AnyCodable])
+    {
+        self.connectionid = connectionid
+        self.profileid = profileid
+        self.label = label
+        self.provider = provider
+        self.settings = settings
+        self.credentials = credentials
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case connectionid = "connectionId"
+        case profileid = "profileId"
+        case label
+        case provider
+        case settings
+        case credentials
+    }
+}
+
+public struct WorkerSetupPrepareResult: Codable, Sendable {
+    public let status: String
+    public let saved: Bool
+    public let connectionid: String
+    public let profileid: String
+    public let patch: [String: AnyCodable]
+    public let restartrequired: Bool
+
+    public init(
+        status: String,
+        saved: Bool,
+        connectionid: String,
+        profileid: String,
+        patch: [String: AnyCodable],
+        restartrequired: Bool)
+    {
+        self.status = status
+        self.saved = saved
+        self.connectionid = connectionid
+        self.profileid = profileid
+        self.patch = patch
+        self.restartrequired = restartrequired
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case status
+        case saved
+        case connectionid = "connectionId"
+        case profileid = "profileId"
+        case patch
+        case restartrequired = "restartRequired"
+    }
+}
+
+public struct WorkerSetupCheckResult: Codable, Sendable {
+    public let connectionid: String?
+    public let profileid: String?
+    public let status: AnyCodable
+    public let allocation: String
+    public let credentials: AnyCodable
+    public let lifecycle: AnyCodable
+    public let endpoint: AnyCodable
+    public let realsession: String
+    public let diagnostics: [WorkerSetupDiagnostic]
+
+    public init(
+        connectionid: String? = nil,
+        profileid: String? = nil,
+        status: AnyCodable,
+        allocation: String,
+        credentials: AnyCodable,
+        lifecycle: AnyCodable,
+        endpoint: AnyCodable,
+        realsession: String,
+        diagnostics: [WorkerSetupDiagnostic])
+    {
+        self.connectionid = connectionid
+        self.profileid = profileid
+        self.status = status
+        self.allocation = allocation
+        self.credentials = credentials
+        self.lifecycle = lifecycle
+        self.endpoint = endpoint
+        self.realsession = realsession
+        self.diagnostics = diagnostics
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case connectionid = "connectionId"
+        case profileid = "profileId"
+        case status
+        case allocation
+        case credentials
+        case lifecycle
+        case endpoint
+        case realsession = "realSession"
+        case diagnostics
+    }
+}
+
 public struct HooksStatusParams: Codable, Sendable {
     public let agentid: String?
 
@@ -19010,6 +19450,7 @@ public struct PluginCatalogEntry: Codable, Sendable {
     public let error: String?
     public let category: String?
     public let removable: Bool?
+    public let workersetup: [WorkerSetupDescriptor]?
 
     public init(
         id: String,
@@ -19029,7 +19470,8 @@ public struct PluginCatalogEntry: Codable, Sendable {
         install: PluginCatalogInstallAction? = nil,
         error: String? = nil,
         category: String? = nil,
-        removable: Bool? = nil)
+        removable: Bool? = nil,
+        workersetup: [WorkerSetupDescriptor]? = nil)
     {
         self.id = id
         self.name = name
@@ -19049,6 +19491,7 @@ public struct PluginCatalogEntry: Codable, Sendable {
         self.error = error
         self.category = category
         self.removable = removable
+        self.workersetup = workersetup
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -19070,6 +19513,7 @@ public struct PluginCatalogEntry: Codable, Sendable {
         case error
         case category
         case removable
+        case workersetup = "workerSetup"
     }
 }
 

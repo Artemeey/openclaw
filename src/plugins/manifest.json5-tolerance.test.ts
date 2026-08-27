@@ -19,6 +19,38 @@ afterEach(() => {
 });
 
 describe("loadPluginManifest JSON5 tolerance", () => {
+  it.each([
+    { name: "owned", id: "compute", method: "demo.setup", valid: true },
+    { name: "foreign provider", id: "other", method: "demo.setup", valid: false },
+    { name: "foreign method", id: "compute", method: "other.setup", valid: false },
+    { name: "core method", id: "compute", method: "sessions.create", valid: false },
+  ])("validates $name worker setup ownership before runtime loading", ({ id, method, valid }) => {
+    const dir = makeTempDir();
+    const descriptor = {
+      id,
+      methods: {
+        describe: `${method}.describe`,
+        install: `${method}.install`,
+        prepare: `${method}.prepare`,
+        check: `${method}.check`,
+      },
+    };
+    fs.writeFileSync(
+      path.join(dir, "openclaw.plugin.json"),
+      JSON.stringify({
+        id: "demo",
+        configSchema: { type: "object" },
+        contracts: { workerProviders: ["compute"] },
+        setup: { workerProviders: [descriptor] },
+      }),
+    );
+    const result = loadPluginManifest(dir, false);
+    expect(result.ok).toBe(valid);
+    if (result.ok) {
+      expect(result.manifest.setup?.workerProviders).toEqual([descriptor]);
+    }
+  });
+
   it("parses a standard JSON manifest without issues", () => {
     const dir = makeTempDir();
     const manifest = {

@@ -3,10 +3,13 @@ import type { WorkerSessionPlacementStore } from "./worker-environments/placemen
 import type { WorkerEnvironmentService } from "./worker-environments/service.js";
 
 export function installWorkerPlacementReconcileGuard(params: {
-  placements: WorkerSessionPlacementStore;
-  environments: WorkerEnvironmentService;
+  placements: Pick<WorkerSessionPlacementStore, "list">;
+  environments: Pick<WorkerEnvironmentService, "get" | "installReconcileEnvironmentGuard">;
   dispatch: Pick<WorkerPlacementDispatchService, "resumeProvisioning">;
   isStopping: () => boolean;
+  deferReconciliation?: (
+    placement: NonNullable<ReturnType<WorkerSessionPlacementStore["get"]>>,
+  ) => boolean;
 }) {
   return params.environments.installReconcileEnvironmentGuard(
     async (environmentId, reconcileEnvironmentCore) => {
@@ -22,6 +25,11 @@ export function installWorkerPlacementReconcileGuard(params: {
       const owner = references[0];
       if (owner?.state === "provisioning") {
         await params.dispatch.resumeProvisioning(owner, reconcileEnvironmentCore);
+        return;
+      }
+      // Interrupted test placement recovery must read the recorded attachment
+      // before provider reconciliation can refresh credentials or bootstrap it.
+      if (owner && params.deferReconciliation?.(owner)) {
         return;
       }
       const environment = params.environments.get(environmentId);

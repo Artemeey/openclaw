@@ -1,6 +1,7 @@
 // Wizard session tests cover session creation and state transitions.
 
 import { describe, expect, test, vi } from "vitest";
+import { createDeferredCore } from "../shared/deferred.js";
 import { DEVICE_CODE_PHISHING_WARNING } from "./prompts.js";
 import { WizardSession, wizardStepAwaitsInput, type WizardStep } from "./session.js";
 
@@ -13,6 +14,23 @@ function noteRunner() {
 }
 
 describe("WizardSession", () => {
+  test.each([true, false, "true", "false", 1, {}, null, undefined])(
+    "only literal true confirms a wire answer (%j)",
+    async (answer) => {
+      let confirmed: boolean | undefined;
+      const session = new WizardSession(async (prompter) => {
+        confirmed = await prompter.confirm({ message: "Continue?", initialValue: false });
+      });
+      const step = (await session.next()).step;
+      if (!step) {
+        throw new Error("expected confirmation step");
+      }
+      await session.answer(step.id, answer);
+      await session.whenSettled();
+      expect(confirmed).toBe(answer === true);
+    },
+  );
+
   test.each([
     ["select", undefined, true],
     ["multiselect", undefined, true],
@@ -389,5 +407,64 @@ describe("WizardSession", () => {
     expect(await session.next()).toMatchObject({
       step: { type: "note", title: "Prepared", message: "Ready to use" },
     });
+  });
+});
+
+describe("cloud test wizard settlement", () => {
+  test("requires boolean consent and keeps running after progress consumption stops", async () => {
+    let allocated = false;
+    const session = new WizardSession(async (prompter, _signal, owner) => {
+      owner.setCloudSessionTest({
+        stage: "confirmation",
+        status: "running",
+        cleanup: "not-allocated",
+      });
+      if (!(await prompter.confirm({ message: "Cloud and model charges", initialValue: false }))) {
+        return;
+      }
+      allocated = true;
+      prompter.progress("Remote turn").update("Reclaiming worker");
+      owner.setCloudSessionTest({ stage: "finished", status: "passed", cleanup: "verified" });
+    });
+    const confirmation = await session.next();
+    expect(confirmation.step?.type).toBe("confirm");
+    expect(allocated).toBe(false);
+    expect(await session.answer(confirmation.step!.id, "false")).toContain("yes or no");
+    expect(allocated).toBe(false);
+    await session.answer(confirmation.step!.id, true);
+    // No browser polls or progress acknowledgements drive the runner.
+    await session.whenSettled();
+    expect(allocated).toBe(true);
+    expect(session.getCloudSessionTest()).toMatchObject({ status: "passed", cleanup: "verified" });
+  });
+
+  test("does not return a terminal cancellation result before cleanup settles", async () => {
+    const cleanup = createDeferredCore();
+    const entered = createDeferredCore();
+    const session = new WizardSession(async (_prompter, signal, owner) => {
+      owner.setCloudSessionTest({ stage: "running", status: "running", cleanup: "pending" });
+      entered.resolve();
+      await new Promise<void>((resolve) => {
+        signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      await cleanup.promise;
+      owner.setCloudSessionTest({ stage: "finished", status: "cancelled", cleanup: "verified" });
+    });
+    await entered.promise;
+    session.cancel();
+    const delivered = vi.fn();
+    const pending = session.next().then(delivered);
+    await Promise.resolve();
+    expect(delivered).not.toHaveBeenCalled();
+    expect(session.getCloudSessionTest()?.cleanup).toBe("pending");
+    cleanup.resolve();
+    await pending;
+    expect(delivered).toHaveBeenCalledWith(
+      expect.objectContaining({
+        done: true,
+        status: "cancelled",
+        cloudSessionTest: { stage: "finished", status: "cancelled", cleanup: "verified" },
+      }),
+    );
   });
 });

@@ -71,6 +71,7 @@ function readWizardStatus(session: WizardSession) {
   return {
     status: session.getStatus(),
     error: session.getError(),
+    ...(session.getCloudSessionTest() ? { cloudSessionTest: session.getCloudSessionTest() } : {}),
   };
 }
 
@@ -100,42 +101,59 @@ function findWizardSessionOrRespond(params: {
 
 /** Gateway handlers for the interactive setup wizard session lifecycle. */
 export const wizardHandlers: GatewayRequestHandlers = {
-  "wizard.start": async ({ params, respond, context }) => {
+  "wizard.start": async (options) => {
+    const { params, respond, context } = options;
     if (!assertValidParams(params, validateWizardStartParams, "wizard.start", respond)) {
       return;
     }
     const sessionId = randomUUID();
     const flow = params.flow ?? "setup";
+    if (flow === "cloud-session-test" && !params.profileId) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "cloud-session-test requires profileId"),
+      );
+      return;
+    }
     const createSession = () =>
-      flow === "channels"
-        ? new WizardSession((prompter, _signal, wizardSession) =>
-            runHostedWizard((runtime) =>
-              context.channelWizardRunner(
-                {
-                  channel: readStringValue(params.channel),
-                  onConfigured: (accounts) => wizardSession.setConfiguredAccounts(accounts),
-                  // Durable effects (plugin installs, config commit) must finish
-                  // even if the client cancels mid-write.
-                  beforePersistentEffect: async () => wizardSession.lockCancellation(),
-                },
-                runtime,
-                prompter,
-              ),
-            ),
+      flow === "cloud-session-test"
+        ? new WizardSession(
+            async (prompter, signal, wizard) => {
+              const { runCloudSessionTest } = await import("./cloud-session-test.js");
+              return runCloudSessionTest({ options, request: params, prompter, signal, wizard });
+            },
+            { timeoutMs: 10 * 60_000 },
           )
-        : new WizardSession((prompter) =>
-            runHostedWizard((runtime) =>
-              context.wizardRunner(
-                {
-                  mode: params.mode,
-                  workspace: readStringValue(params.workspace),
-                  installDaemon: params.installDaemon,
-                },
-                runtime,
-                prompter,
+        : flow === "channels"
+          ? new WizardSession((prompter, _signal, wizardSession) =>
+              runHostedWizard((runtime) =>
+                context.channelWizardRunner(
+                  {
+                    channel: readStringValue(params.channel),
+                    onConfigured: (accounts) => wizardSession.setConfiguredAccounts(accounts),
+                    // Durable effects (plugin installs, config commit) must finish
+                    // even if the client cancels mid-write.
+                    beforePersistentEffect: async () => wizardSession.lockCancellation(),
+                  },
+                  runtime,
+                  prompter,
+                ),
               ),
-            ),
-          );
+            )
+          : new WizardSession((prompter) =>
+              runHostedWizard((runtime) =>
+                context.wizardRunner(
+                  {
+                    mode: params.mode,
+                    workspace: readStringValue(params.workspace),
+                    installDaemon: params.installDaemon,
+                  },
+                  runtime,
+                  prompter,
+                ),
+              ),
+            );
     const session = await createAdmittedWizardSession(createSession, flow === "setup");
     if (!session) {
       respond(
@@ -196,7 +214,7 @@ export const wizardHandlers: GatewayRequestHandlers = {
     }
     respond(true, sanitizeWizardResultForClient(result), undefined);
   },
-  "wizard.cancel": ({ params, respond, context }) => {
+  "wizard.cancel": async ({ params, respond, context }) => {
     if (!assertValidParams(params, validateWizardCancelParams, "wizard.cancel", respond)) {
       return;
     }
@@ -206,6 +224,13 @@ export const wizardHandlers: GatewayRequestHandlers = {
       return;
     }
     const cancelled = session.cancel();
+    if (session.getCloudSessionTest()) {
+      await whenAdmittedWizardSessionSettled(session);
+      const settledStatus = readWizardStatus(session);
+      context.purgeWizardSession(sessionId);
+      respond(true, settledStatus, undefined);
+      return;
+    }
     const status = readWizardStatus(session);
     if (cancelled) {
       const purge = () => context.purgeWizardSession(sessionId);
@@ -224,9 +249,10 @@ export const wizardHandlers: GatewayRequestHandlers = {
     if (!session) {
       return;
     }
-    const status = readWizardStatus(session);
+    let status = readWizardStatus(session);
     if (status.status !== "running") {
       await whenAdmittedWizardSessionSettled(session);
+      status = readWizardStatus(session);
     }
     context.purgeWizardSession(sessionId);
     respond(true, status, undefined);

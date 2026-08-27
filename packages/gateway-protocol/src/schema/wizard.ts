@@ -19,7 +19,16 @@ export const WizardStartParamsSchema = closedObject({
   installDaemon: Type.Optional(Type.Boolean()),
   // "setup" (default) runs full onboarding; "channels" runs the guided
   // channel-setup flow (openclaw channels add) over the same step protocol.
-  flow: Type.Optional(Type.Union([Type.Literal("setup"), Type.Literal("channels")])),
+  flow: Type.Optional(
+    Type.Union([
+      Type.Literal("setup"),
+      Type.Literal("channels"),
+      Type.Literal("cloud-session-test"),
+    ]),
+  ),
+  profileId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  agentId: Type.Optional(NonEmptyString),
+  model: Type.Optional(NonEmptyString),
   // Preselected channel id for flow "channels" (e.g. "telegram").
   channel: Type.Optional(NonEmptyString),
 });
@@ -90,6 +99,36 @@ const WizardConfiguredAccountSchema = closedObject({
   accountId: NonEmptyString,
 });
 
+/** Proof stages are independent of the wizard transport and cancellation status. */
+export const CloudSessionTestResultSchema = closedObject({
+  sessionKey: Type.Optional(NonEmptyString),
+  environmentId: Type.Optional(NonEmptyString),
+  endedAt: Type.Optional(Type.Integer({ minimum: 0 })),
+  stage: Type.Union([
+    Type.Literal("confirmation"),
+    Type.Literal("creating"),
+    Type.Literal("allocating"),
+    Type.Literal("running"),
+    Type.Literal("verifying"),
+    Type.Literal("cleanup"),
+    Type.Literal("finished"),
+  ]),
+  status: Type.Union([
+    Type.Literal("running"),
+    Type.Literal("passed"),
+    Type.Literal("failed"),
+    Type.Literal("cancelled"),
+    Type.Literal("cleanup-pending"),
+  ]),
+  cleanup: Type.Union([
+    Type.Literal("not-allocated"),
+    Type.Literal("pending"),
+    Type.Literal("verified"),
+  ]),
+  message: Type.Optional(Type.String({ maxLength: 1024 })),
+});
+export type CloudSessionTestResult = Static<typeof CloudSessionTestResultSchema>;
+
 /** Common response fields for start and next calls. */
 const WizardResultFields = {
   done: Type.Boolean(),
@@ -105,6 +144,7 @@ const WizardResultFields = {
   // Exact model prepared by provider-owned setup. Clients must still run the
   // live activation step before presenting the route as ready.
   preparedModelRef: Type.Optional(NonEmptyString),
+  cloudSessionTest: Type.Optional(CloudSessionTestResultSchema),
 };
 
 /** Result after advancing a wizard session. */
@@ -120,6 +160,7 @@ export const WizardStartResultSchema = closedObject({
 export const WizardStatusResultSchema = closedObject({
   status: WizardRunStatusSchema,
   error: Type.Optional(Type.String()),
+  cloudSessionTest: Type.Optional(CloudSessionTestResultSchema),
 });
 
 // Wire types derive directly from local schema consts so public d.ts graphs never

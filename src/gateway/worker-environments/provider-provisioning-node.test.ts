@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { WorkerProvider } from "../../plugins/types.js";
+import type { WorkerNodeRuntime, WorkerProvider } from "../../plugins/types.js";
 import { admitWorkerConnection } from "./admission.js";
 import { hashWorkerCredential } from "./credential.js";
 import { REQUEST, seedActivePlacement } from "./placement-dispatch-test-fixtures.js";
@@ -7,8 +7,39 @@ import { createWorkerSessionPlacementStore } from "./placement-store.js";
 import { createWorkerSessionPlacementGate } from "./placement-worker-gate.js";
 import * as support from "./service.test-support.js";
 
+const NODE_RUNTIME: WorkerNodeRuntime = Object.freeze({
+  openclawVersion: "2026.8.1",
+  packageSpecs: Object.freeze(["openclaw@2026.8.1"]),
+});
+
 describe("node worker provider provisioning", () => {
   support.setupWorkerEnvironmentServiceSuite();
+
+  it.each(["nodeRuntime", "prepareNodeEnrollment"] as const)(
+    "does not call a node-enrolling provider without %s",
+    async (missing) => {
+      const provision = vi.fn<WorkerProvider["provision"]>();
+      const prepareNodeEnrollment = vi.fn(async () => {
+        throw new Error("Incomplete enrollment wiring must not issue credentials");
+      });
+      const service = support.createService(
+        support.createProvider({
+          requiresNodeEnrollment: true,
+          provisionBeforeInstallation: true,
+          provision,
+        }),
+        {
+          ...(missing !== "nodeRuntime" ? { nodeRuntime: NODE_RUNTIME } : {}),
+          ...(missing !== "prepareNodeEnrollment" ? { prepareNodeEnrollment } : {}),
+        },
+      );
+      await expect(service.create("development", "missing-enrollment-runtime")).rejects.toThrow(
+        "Worker node enrollment runtime is unavailable",
+      );
+      expect(provision).not.toHaveBeenCalled();
+      expect(prepareNodeEnrollment).not.toHaveBeenCalled();
+    },
+  );
 
   it("supplies replay-safe enrollment only to providers that require it", async () => {
     const prepareNodeEnrollment = vi.fn(async (record) => {
@@ -20,8 +51,7 @@ describe("node worker provider provisioning", () => {
         mode: "connect" as const,
         setupCode: "setup-code",
         setupId: enrolled.nodeSetupId,
-        openclawVersion: "2026.8.1",
-        packageSpecs: ["openclaw@2026.8.1"],
+        ...NODE_RUNTIME,
         displayName: "Cloud worker test",
         waitForDeviceId: async () => "cloud-device-1",
       };
@@ -29,6 +59,8 @@ describe("node worker provider provisioning", () => {
     const retireNodeEnrollment = vi.fn(async () => {});
     const provision = vi.fn<WorkerProvider["provision"]>(
       async (_profile, _operationId, options) => {
+        expect(options?.nodeRuntime).toBe(NODE_RUNTIME);
+        expect(prepareNodeEnrollment).not.toHaveBeenCalled();
         await expect(options?.beginNodeEnrollment?.()).resolves.toMatchObject({
           mode: "connect",
           setupId: expect.any(String),
@@ -48,6 +80,7 @@ describe("node worker provider provisioning", () => {
         provision,
       }),
       {
+        nodeRuntime: NODE_RUNTIME,
         prepareNodeEnrollment,
         retireNodeEnrollment,
         ensureNodeWorkerBundle: async () => structuredClone(support.BOOTSTRAP_RECEIPT),
@@ -94,8 +127,7 @@ describe("node worker provider provisioning", () => {
         mode: "connect" as const,
         setupCode: "setup-code",
         setupId: enrolled.nodeSetupId,
-        openclawVersion: "2026.8.1",
-        packageSpecs: ["openclaw@2026.8.1"],
+        ...NODE_RUNTIME,
         displayName: "Cloud worker destroy replay",
         waitForDeviceId: async () => deviceId,
       };
@@ -106,6 +138,7 @@ describe("node worker provider provisioning", () => {
         provisionBeforeInstallation: true,
         requiresNodeEnrollment: true,
         provision: async (_profile, operationId, options) => {
+          expect(options?.nodeRuntime).toBe(NODE_RUNTIME);
           operationIds.push(operationId);
           if (operationIds.length === 1) {
             await options?.beginNodeEnrollment?.();
@@ -121,6 +154,7 @@ describe("node worker provider provisioning", () => {
         destroy,
       }),
       {
+        nodeRuntime: NODE_RUNTIME,
         prepareNodeEnrollment,
         retireNodeEnrollment,
         ensureNodeWorkerBundle,
@@ -185,17 +219,25 @@ describe("node worker provider provisioning", () => {
 
   it("keeps paired-device roles when a node lease has no cloud enrollment owner", async () => {
     const retireNodeEnrollment = vi.fn(async () => {});
+    const prepareNodeEnrollment = vi.fn(async () => {
+      throw new Error("Paired devices must not request cloud enrollment");
+    });
     const workerService = support.createService(
       support.createProvider({
         supportedExecutionModes: ["worker-turn"],
         provisionBeforeInstallation: true,
-        provision: async () => ({
-          leaseId: "device-lease-1",
-          node: { deviceId: "paired-device-1" },
-          sharedHost: true,
-        }),
+        provision: async (_profile, _operationId, options) => {
+          expect(options).toBeUndefined();
+          return {
+            leaseId: "device-lease-1",
+            node: { deviceId: "paired-device-1" },
+            sharedHost: true,
+          };
+        },
       }),
       {
+        nodeRuntime: NODE_RUNTIME,
+        prepareNodeEnrollment,
         retireNodeEnrollment,
         ensureNodeWorkerBundle: async () => structuredClone(support.BOOTSTRAP_RECEIPT),
       },
@@ -212,6 +254,7 @@ describe("node worker provider provisioning", () => {
       state: "destroyed",
     });
     expect(retireNodeEnrollment).not.toHaveBeenCalled();
+    expect(prepareNodeEnrollment).not.toHaveBeenCalled();
   });
 
   it("commits an installed Gateway bundle receipt and credential for a node lease", async () => {

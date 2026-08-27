@@ -6,7 +6,6 @@ import {
   resolveChannelResetConfig,
   resolveSessionResetType,
   resolveSessionWorkStartError,
-  type SessionEntry,
 } from "../../config/sessions.js";
 import { resolveSessionEntryResetFreshness } from "../../config/sessions/entry-freshness.js";
 import {
@@ -18,7 +17,10 @@ import {
   type SessionTranscriptTurnExpectedState,
   type SessionTranscriptTurnLifecyclePatch,
 } from "../../config/sessions/session-accessor.js";
-import type { InternalSessionEntry } from "../../config/sessions/types.js";
+import {
+  hasCurrentCloudSessionTestCleanup,
+  type InternalSessionEntry,
+} from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { loadOrCreateProcessDeviceIdentity } from "../../infra/device-identity.js";
 import { findRestartRecoveryUnsafeChatAdmissionHook } from "../../plugins/restart-recovery-hook-safety.js";
@@ -53,7 +55,7 @@ export type RestartSafeChatTerminalState = {
   status: "failed" | "killed";
 };
 
-type RetryableUnadoptedChatClaim = SessionEntry & {
+type RetryableUnadoptedChatClaim = InternalSessionEntry & {
   abortedLastRun?: false;
   restartRecoveryDeliveryContext?: undefined;
   restartRecoveryDeliveryRequestFingerprint: string;
@@ -63,7 +65,7 @@ type RetryableUnadoptedChatClaim = SessionEntry & {
 };
 
 type DurableChatClaimResolution =
-  | { kind: "continue"; entry?: SessionEntry }
+  | { kind: "continue"; entry?: InternalSessionEntry }
   | { kind: "accepted" }
   | { kind: "pending"; message: string }
   | { kind: "rejected"; message: string; unavailable?: true };
@@ -120,7 +122,7 @@ export function createRestartSafeChatRequest(params: {
 }
 
 export function isRetryableUnadoptedChatClaim(
-  entry: SessionEntry | undefined,
+  entry: InternalSessionEntry | undefined,
   clientRunId: string,
 ): entry is RetryableUnadoptedChatClaim {
   return Boolean(
@@ -135,9 +137,9 @@ export function isRetryableUnadoptedChatClaim(
 }
 
 function isAdoptedRestartRecoveryClaim(
-  entry: SessionEntry | undefined,
+  entry: InternalSessionEntry | undefined,
   clientRunId: string,
-): entry is SessionEntry & {
+): entry is InternalSessionEntry & {
   restartRecoveryDeliveryRunId: string;
   restartRecoveryDeliverySourceRunId: string;
 } {
@@ -152,14 +154,20 @@ export async function resolveDurableChatClaim(params: {
   canonicalSessionKey: string;
   cfg: OpenClawConfig;
   clientRunId: string;
-  entry?: SessionEntry;
+  entry?: InternalSessionEntry;
   persistedSessionKey: string;
-  reloadEntry: () => SessionEntry | undefined;
+  reloadEntry: () => InternalSessionEntry | undefined;
   storePath: string;
   recoveryRuntime?: GatewayRecoveryRuntime;
   warn: (message: string) => void;
 }): Promise<DurableChatClaimResolution> {
   let entry = params.entry;
+  if (entry?.cloudSessionTestCleanup?.turn?.requestRunId === params.clientRunId) {
+    return {
+      kind: "rejected",
+      message: "Cloud test recovery only cleans up its worker; it never replays the test turn",
+    };
+  }
   if (
     isAdoptedRestartRecoveryClaim(entry, params.clientRunId) &&
     entry.status === "running" &&
@@ -221,13 +229,14 @@ export async function resolveDurableChatClaim(params: {
 }
 
 function isRestartSafeChatSession(params: {
-  entry?: SessionEntry;
+  entry?: InternalSessionEntry;
   requestedSessionId?: string;
   sessionKey: string;
 }): boolean {
   const entry = params.entry;
   return Boolean(
     entry?.sessionId &&
+    !hasCurrentCloudSessionTestCleanup(entry) &&
     params.sessionKey !== "global" &&
     entry.status !== "running" &&
     entry.abortedLastRun !== true &&
@@ -300,7 +309,7 @@ export function resolveRestartSafeChatAdmission(params: {
   cfg: OpenClawConfig;
   clientRunId: string;
   context: Pick<GatewayRequestContext, "chatAbortControllers" | "chatQueuedTurns">;
-  entry?: SessionEntry;
+  entry?: InternalSessionEntry;
   now: number;
   request?: RestartSafeChatRequest;
   requestedSessionId?: string;
@@ -334,7 +343,7 @@ export function resolveRestartSafeChatAdmission(params: {
   if (retryableClaim && entry.restartRecoveryDeliveryRequestFingerprint !== request.fingerprint) {
     throw new Error("chat retry does not match its durable admission");
   }
-  const mainRestartRecovery = (entry as InternalSessionEntry).mainRestartRecovery;
+  const mainRestartRecovery = entry.mainRestartRecovery;
   return {
     requestFingerprint: request.fingerprint,
     ...(retryableClaim

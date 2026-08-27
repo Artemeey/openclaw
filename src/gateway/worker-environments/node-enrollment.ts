@@ -7,7 +7,7 @@ import {
   resolveConfiguredPairingPublicUrl,
   resolvePairingSetupFromConfig,
 } from "../../pairing/setup-code.js";
-import type { WorkerNodeEnrollment } from "../../plugins/types.js";
+import type { WorkerNodeEnrollment, WorkerNodeRuntime } from "../../plugins/types.js";
 import { runCommandWithTimeout } from "../../process/exec.js";
 import { CLOUD_WORKER_PAIRING_SETUP_BOOTSTRAP_PROFILE } from "../../shared/device-bootstrap-profile.js";
 import { VERSION } from "../../version.js";
@@ -28,13 +28,14 @@ function enrollmentDisplayName(record: WorkerEnvironmentRecord): string {
   return `Cloud worker ${record.profileId}`.slice(0, 64);
 }
 
-function resolveEnrollmentPackageSpecs(): string[] {
-  return [`openclaw@${VERSION}`];
-}
+// Package discovery is metadata only; reading it must never mint enrollment credentials.
+const NODE_RUNTIME: WorkerNodeRuntime = Object.freeze({
+  openclawVersion: VERSION,
+  packageSpecs: Object.freeze([`openclaw@${VERSION}`]),
+});
 
 export function createWorkerNodeEnrollmentManager(options: WorkerNodeEnrollmentManagerOptions) {
   const now = options.now ?? Date.now;
-  const packageSpecs = resolveEnrollmentPackageSpecs();
   const controller = new AbortController();
   const { signal } = controller;
 
@@ -67,8 +68,7 @@ export function createWorkerNodeEnrollmentManager(options: WorkerNodeEnrollmentM
       return {
         mode: "resume",
         deviceId: current.nodeDeviceId,
-        openclawVersion: VERSION,
-        packageSpecs,
+        ...NODE_RUNTIME,
         displayName,
         signal,
         waitForDeviceId: wait,
@@ -90,8 +90,7 @@ export function createWorkerNodeEnrollmentManager(options: WorkerNodeEnrollmentM
       return {
         mode: "resume",
         deviceId: current.nodeDeviceId,
-        openclawVersion: VERSION,
-        packageSpecs,
+        ...NODE_RUNTIME,
         displayName,
         signal,
         waitForDeviceId: wait,
@@ -117,8 +116,7 @@ export function createWorkerNodeEnrollmentManager(options: WorkerNodeEnrollmentM
       mode: "connect",
       setupCode: encodePairingSetupCode(resolved.payload),
       setupId: current.nodeSetupId,
-      openclawVersion: VERSION,
-      packageSpecs,
+      ...NODE_RUNTIME,
       displayName,
       signal,
       waitForDeviceId: wait,
@@ -144,5 +142,5 @@ export function createWorkerNodeEnrollmentManager(options: WorkerNodeEnrollmentM
     await removePairedDeviceRole({ deviceId, role: "node" });
   };
 
-  return { begin, retire, stop: () => controller.abort() };
+  return { runtime: NODE_RUNTIME, begin, retire, stop: () => controller.abort() };
 }

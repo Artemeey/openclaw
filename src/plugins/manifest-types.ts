@@ -222,6 +222,8 @@ export type PluginManifestSetupProviderAuthEvidence = {
 };
 
 export type PluginManifestSetup = {
+  /** Plugin-owned worker setup RPCs, separate from worker lifecycle and model auth. */
+  workerProviders?: import("../../packages/gateway-protocol/src/schema/worker-setup.js").WorkerSetupDescriptor[];
   /** Cheap provider setup metadata exposed before runtime loads. */
   providers?: PluginManifestSetupProvider[];
   /** Setup-time backend ids available without full runtime activation. */

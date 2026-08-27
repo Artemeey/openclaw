@@ -1,6 +1,7 @@
 /** Resolves root CLI help from process-stable manifests before plugin code loads. */
 import { collectUniqueCommandDescriptors } from "../cli/program/command-descriptor-utils.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolvePluginActivationSourceConfig } from "./activation-source-config.js";
 import type { PluginCliLoaderOptions } from "./cli-registry-loader.js";
 import { normalizePluginsConfig, resolveMemorySlotDecision } from "./config-state.js";
 import { isInstalledPluginEnabled } from "./installed-plugin-index.js";
@@ -37,6 +38,7 @@ export async function getPluginCliCommandDescriptors(
     let selectedMemoryPluginId: string | null = null;
     const memorySlot = context.config.plugins?.slots?.memory;
     const normalizedConfig = normalizePluginsConfig(context.config.plugins);
+    const sourceConfig = resolvePluginActivationSourceConfig({ config: context.config });
 
     for (const plugin of snapshot.plugins) {
       if (seenPluginIds.has(plugin.id)) {
@@ -52,6 +54,9 @@ export async function getPluginCliCommandDescriptors(
           schema: plugin.configSchema,
           cacheKey: plugin.schemaCacheKey,
           value: pluginConfig,
+          sourceValue: plugin.configContracts?.secretInputs
+            ? sourceConfig.plugins?.entries?.[plugin.id]?.config
+            : undefined,
         }).ok
       ) {
         continue;

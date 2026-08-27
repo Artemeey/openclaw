@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.js";
+import { ensureDevicePairSetupBootstrapToken } from "../../infra/device-bootstrap.js";
 import { decodePairingSetupCode } from "../../pairing/setup-code.js";
 import {
   closeOpenClawStateDatabaseForTest,
@@ -47,6 +48,7 @@ describe("worker node enrollment", () => {
   let store: WorkerEnvironmentStore;
 
   beforeEach(async () => {
+    vi.mocked(ensureDevicePairSetupBootstrapToken).mockClear();
     root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), "openclaw-node-enrollment-"));
     database = openOpenClawStateDatabase({ env: { OPENCLAW_STATE_DIR: root } });
     store = createWorkerEnvironmentStore({ database, now: () => 1_000 });
@@ -82,7 +84,14 @@ describe("worker node enrollment", () => {
       resolveAvailability: async () => ({ available: false }),
     });
 
+    const runtime = manager.runtime;
+    expect(Object.isFrozen(runtime)).toBe(true);
+    expect(Object.isFrozen(runtime.packageSpecs)).toBe(true);
+    expect(runtime.packageSpecs).toEqual([`openclaw@${runtime.openclawVersion}`]);
+    expect(ensureDevicePairSetupBootstrapToken).not.toHaveBeenCalled();
     const enrollment = await manager.begin(record);
+    expect(enrollment.openclawVersion).toBe(runtime.openclawVersion);
+    expect(enrollment.packageSpecs).toBe(runtime.packageSpecs);
 
     expect(enrollment.mode).toBe("connect");
     if (enrollment.mode !== "connect") {
@@ -112,6 +121,8 @@ describe("worker node enrollment", () => {
     });
     expect(manager).toHaveProperty("stop");
     const enrollment = await manager.begin(record);
+    expect(enrollment.packageSpecs).toBe(manager.runtime.packageSpecs);
+    expect(ensureDevicePairSetupBootstrapToken).not.toHaveBeenCalled();
     const waiting = enrollment.waitForDeviceId();
     const waitRejected = expect(waiting).rejects.toMatchObject({ name: "AbortError" });
 

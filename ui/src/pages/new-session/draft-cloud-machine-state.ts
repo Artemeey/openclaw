@@ -3,6 +3,17 @@ import type { DraftCloudProfile } from "./discovery.ts";
 export class DraftCloudMachineState {
   private readonly overrides = new Map<string, string>();
 
+  capture(): Record<string, string> {
+    return Object.fromEntries(this.overrides);
+  }
+
+  restore(values: Record<string, string>) {
+    this.overrides.clear();
+    for (const [profileId, machine] of Object.entries(values)) {
+      this.overrides.set(profileId, machine);
+    }
+  }
+
   clear() {
     this.overrides.clear();
   }

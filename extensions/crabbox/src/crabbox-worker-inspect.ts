@@ -1,4 +1,39 @@
+import { WorkerProviderError } from "openclaw/plugin-sdk/plugin-entry";
+import { crabboxCommandError } from "./crabbox-worker-command-error.js";
+import {
+  isAuthoritativeLeaseAbsence,
+  runCrabboxCommand,
+  type CrabboxCommandRunner,
+} from "./crabbox-worker-command.js";
 import { nonEmptyString } from "./crabbox-worker-profile.js";
+import {
+  CRABBOX_MACHINE0_READY_WAIT_TIMEOUT,
+  resolveCrabboxLifecycleTimeoutMs,
+} from "./crabbox-worker-timeouts.js";
+
+// Stopped/archived machines can retain billed resources; only deletion evidence
+// can release ownership and skip provider teardown.
+const DESTROYED_STATES = new Set([
+  "deleted",
+  "destroyed",
+  "expired",
+  "missing",
+  "released",
+  "terminated",
+]);
+const UNUSABLE_PROVISION_STATES = new Set([
+  ...DESTROYED_STATES,
+  "stopped",
+  "stopped_with_code",
+  "archived",
+  "error",
+  "deleting",
+  "failed",
+]);
+
+export const isCrabboxLeaseDestroyed = (state: string) => DESTROYED_STATES.has(state.toLowerCase());
+export const isCrabboxLeaseUnusable = (state: string) =>
+  UNUSABLE_PROVISION_STATES.has(state.toLowerCase());
 
 type CrabboxInspect = {
   id?: unknown;
@@ -16,7 +51,7 @@ export type ParsedInspect = {
   tailscaleEnabled: boolean;
 };
 
-export function parseInspectJson(stdout: string): ParsedInspect {
+function parseInspectJson(stdout: string): ParsedInspect {
   let value: CrabboxInspect;
   try {
     const parsed: unknown = JSON.parse(stdout);
@@ -68,4 +103,58 @@ export function parseInspectJson(stdout: string): ParsedInspect {
     ...(awsInstanceProfileAttached !== undefined ? { awsInstanceProfileAttached } : {}),
     ...(typeof value.ready === "boolean" ? { ready: value.ready } : {}),
   };
+}
+
+export type CrabboxInspectResult =
+  | { status: "found"; inspect: ParsedInspect }
+  | { status: "unknown" };
+
+export async function inspectCrabboxLease(params: {
+  context: { binary: string; provider: string };
+  expectedLeaseId?: string;
+  id: string;
+  runCommand: CrabboxCommandRunner;
+  timeoutMs?: number;
+  waitForReady?: boolean;
+}): Promise<CrabboxInspectResult> {
+  const action = params.waitForReady ? "status" : "inspect";
+  const result = await runCrabboxCommand({
+    action,
+    args: [
+      action,
+      "--provider",
+      params.context.provider,
+      "--network",
+      "public",
+      "--id",
+      params.id,
+      ...(params.waitForReady
+        ? ["--wait", "--wait-timeout", CRABBOX_MACHINE0_READY_WAIT_TIMEOUT]
+        : []),
+      "--json",
+    ],
+    binary: params.context.binary,
+    runCommand: params.runCommand,
+    timeoutMs: params.timeoutMs ?? resolveCrabboxLifecycleTimeoutMs(params.context.provider),
+  });
+  if (result.termination === "exit" && result.code === 0) {
+    // A successful but malformed response cannot attest the fixed lease. Command failures and
+    // authoritative absence remain transient so Gateway replay can inspect the live lease later.
+    let inspect: ParsedInspect;
+    try {
+      inspect = parseInspectJson(result.stdout);
+    } catch (error) {
+      throw new WorkerProviderError(
+        error instanceof Error ? error.message : "Crabbox inspect returned invalid output",
+      );
+    }
+    if (params.expectedLeaseId && inspect.id !== params.expectedLeaseId) {
+      throw new WorkerProviderError("Crabbox inspect returned a different lease id");
+    }
+    return { status: "found", inspect };
+  }
+  if (result.termination === "exit" && isAuthoritativeLeaseAbsence(result, params.id)) {
+    return { status: "unknown" };
+  }
+  throw crabboxCommandError(action, result);
 }

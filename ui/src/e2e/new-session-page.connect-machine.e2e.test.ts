@@ -48,6 +48,7 @@ suite.define(() => {
     const secondJoinUrl = "https://gateway.example.com/j/second-code";
     const gateway = await installMockGateway(page, {
       methodResponses: {
+        "environments.list": { environments: [], profiles: [] },
         "device.pair.setupCode": {
           sequence: [
             {
@@ -79,6 +80,7 @@ suite.define(() => {
       await page.locator("#new-session-where-trigger").click();
       const connect = place.getByRole("button", { name: "Connect a machine…" });
       await connect.waitFor();
+      await place.getByRole("button", { name: "Set up cloud…" }).waitFor();
       await captureProof(page, "01-picker-foot.png");
       await connect.click();
 
@@ -123,6 +125,7 @@ suite.define(() => {
       await page.locator("#new-session-where-trigger").click();
       await place.getByRole("button", { name: "Local" }).waitFor();
       expect(await place.getByRole("button", { name: "Connect a machine…" }).count()).toBe(0);
+      expect(await place.getByRole("button", { name: "Set up cloud…" }).count()).toBe(0);
       expect(await gateway.getRequests("device.pair.setupCode")).toEqual([]);
     } finally {
       await context.close();

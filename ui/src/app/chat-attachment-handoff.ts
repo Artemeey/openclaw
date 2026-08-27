@@ -13,6 +13,7 @@ type PendingChatAttachmentHandoff = {
   attachments: ChatAttachment[];
   fallbacks: Record<string, ChatComposerMemoryFallback>;
   message: string;
+  newSessionDraft?: Parameters<ApplicationChatAttachmentHandoff["prepare"]>[0]["newSessionDraft"];
 };
 
 export function createChatAttachmentHandoff(): ApplicationChatAttachmentHandoff {
@@ -49,11 +50,24 @@ export function createChatAttachmentHandoff(): ApplicationChatAttachmentHandoff 
   };
 
   return {
-    prepare: ({ owner, paneId, scopeKey, attachments, fallbacks, message = "" }) => {
+    prepare: ({
+      owner,
+      paneId,
+      scopeKey,
+      attachments,
+      fallbacks,
+      message = "",
+      newSessionDraft,
+    }) => {
       const key = entryKey(paneId, scopeKey);
       const previous = take(key);
       const fallbackEntries = Object.entries(fallbacks);
-      if (!message && attachments.length === 0 && fallbackEntries.length === 0) {
+      if (
+        !message &&
+        !newSessionDraft &&
+        attachments.length === 0 &&
+        fallbackEntries.length === 0
+      ) {
         releaseHandoff(previous);
         return;
       }
@@ -77,6 +91,7 @@ export function createChatAttachmentHandoff(): ApplicationChatAttachmentHandoff 
         scopeKey,
         attachments: [...attachments],
         message,
+        newSessionDraft,
         fallbacks: Object.fromEntries(
           fallbackEntries.map(([fallbackKey, fallback]) => [
             fallbackKey,
@@ -99,6 +114,7 @@ export function createChatAttachmentHandoff(): ApplicationChatAttachmentHandoff 
       // retained session scopes under the same logical pane remain independent.
       if (match?.owner === owner) {
         return {
+          ...(match.newSessionDraft ? { newSessionDraft: match.newSessionDraft } : {}),
           attachments: match.attachments,
           fallbacks: match.fallbacks,
           ...(match.message ? { message: match.message } : {}),

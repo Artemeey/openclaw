@@ -69,6 +69,19 @@ describe("Crabbox plugin generation lifecycle", () => {
     vi.restoreAllMocks();
   });
 
+  it("registers setup before any profile exists without starting a CLI or allocating", () => {
+    const runCommand = vi.spyOn(processRuntime, "runCommandWithTimeout");
+    const methods = vi.fn();
+    plugin.register(createTestPluginApi({ id: "crabbox", registerGatewayMethod: methods }));
+    expect(methods.mock.calls.map(([name, , options]) => ({ name, options }))).toEqual(
+      ["describe", "install", "prepare", "check"].map((verb) => ({
+        name: `crabbox.setup.${verb}`,
+        options: { scope: "operator.admin", profileAccess: "independent" },
+      })),
+    );
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
   it("registers cleanup that fences pending heartbeats and late starts", async () => {
     vi.useFakeTimers();
     const runCommand = vi

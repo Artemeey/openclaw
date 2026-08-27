@@ -2,6 +2,7 @@ import type { DevicePlacementRequirement } from "../../agents/harness/types.js";
 import { getRuntimeConfig } from "../../config/config.js";
 import type { NodeWorkerSupervisorNodeProof } from "../node-registry-private.js";
 import { supportsWorkerExecutionContextLaunch } from "./admission.js";
+import type { CloudSessionTestPlacementLifecycle } from "./cloud-session-test-cleanup.js";
 import { resolveDevicePlacementEligibility } from "./device-placement-eligibility.js";
 import { DEVICE_WORKER_PROVIDER_ID } from "./device-provider-identity.js";
 import type {
@@ -19,6 +20,15 @@ import type {
 } from "./service-contract.js";
 import type { WorkerEnvironmentReconcileCore, WorkerEnvironmentService } from "./service.js";
 
+export type WorkerLocalDispatchBarrier = (params: {
+  sessionId: string;
+  sessionKey: string;
+  agentId: string;
+  executionMode: WorkerPlacementDispatchRequest["executionMode"];
+  authorize?: WorkerPlacementAuthorization;
+  startDispatch: () => WorkerDispatchPlacement;
+}) => Promise<WorkerDispatchPlacement>;
+
 export type WorkerPlacementRecoveryBarrier = (params: {
   sessionId: string;
   sessionKey: string;
@@ -26,6 +36,7 @@ export type WorkerPlacementRecoveryBarrier = (params: {
   executionMode: WorkerPlacementDispatchRequest["executionMode"];
   environmentId: string;
   expectedGeneration: number;
+  expectedState?: "provisioning" | "syncing" | "starting" | "active";
   run: (localPath: string) => Promise<void>;
 }) => Promise<void>;
 
@@ -89,6 +100,7 @@ function requireProvisionedEnvironment(
 }
 
 export function createWorkerPlacementDispatchStartup(options: {
+  testLifecycle?: CloudSessionTestPlacementLifecycle;
   placements: WorkerDispatchPlacementStore;
   environments: WorkerDispatchEnvironmentService;
   failure: PlacementFailureActions;
@@ -203,6 +215,11 @@ export function createWorkerPlacementDispatchStartup(options: {
     });
     options.reportTransition(params.onTransition, placement);
     const startingPlacement = placement;
+    if (startingPlacement.state !== "starting") {
+      throw new Error("Worker activation requires a starting placement");
+    }
+    await options.testLifecycle?.beforeActivation(startingPlacement, ownerEpoch, params.authorize);
+    params.authorize?.();
     const requireAttachedEnvironment = () => {
       const attachedEnvironment = environments.get(provisioned.environmentId);
       if (
@@ -273,6 +290,7 @@ export function createWorkerPlacementDispatchStartup(options: {
   ): Promise<void> => {
     const environmentId = placement.environmentId;
     let recoveryRunStarted = false;
+    let testRecoveryChecked = false;
     let recoveryOwnedPlacement: WorkerDispatchPlacement = placement;
     const handleRecoveryFailure = async (error: unknown): Promise<void> => {
       const current = placements.get(placement.sessionId);
@@ -319,6 +337,32 @@ export function createWorkerPlacementDispatchStartup(options: {
         environmentId,
         expectedGeneration: placement.generation,
         run: async (localPath) => {
+          // Test cleanup precedes provider replay. Hook errors fail closed;
+          // generic failure must not replace lost cleanup authority.
+          testRecoveryChecked = true;
+          if (
+            await options.testLifecycle?.recover(placement, {
+              retireClaim: async () => {
+                throw new Error("Provisioning test has no admitted turn");
+              },
+              reclaim: async () => {
+                throw new Error("Provisioning test cannot use active reclaim");
+              },
+              teardown: async (authorize) => {
+                const environment = environments.get(environmentId);
+                await failure.teardownEnvironment({
+                  placement,
+                  environmentId: environment?.environmentId ?? null,
+                  ownerEpoch: environment?.ownerEpoch ?? null,
+                  primaryError: new Error("Interrupted cloud session test"),
+                  authorize,
+                });
+              },
+            })
+          ) {
+            return;
+          }
+          testRecoveryChecked = false;
           recoveryRunStarted = true;
           try {
             const initialEnvironment = environments.get(environmentId);
@@ -384,6 +428,9 @@ export function createWorkerPlacementDispatchStartup(options: {
         },
       });
     } catch (error) {
+      if (testRecoveryChecked) {
+        throw error;
+      }
       await handleRecoveryFailure(error);
     }
   };

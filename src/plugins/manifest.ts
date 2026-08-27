@@ -284,6 +284,15 @@ export function loadPluginManifest(
     raw.autoEnableWhenConfiguredProviders,
   );
   const providers = normalizeTrimmedStringList(raw.providers);
+  const contracts = capabilityNormalizers.normalizeManifestContracts(raw.contracts);
+  const workerSetup = setupNormalizers.normalizeManifestWorkerSetup(
+    raw.setup,
+    id,
+    contracts?.workerProviders ?? [],
+  );
+  if (!workerSetup.ok) {
+    return cacheResult({ ok: false, error: workerSetup.error, manifestPath });
+  }
   const cliBackends = normalizeTrimmedStringList(raw.cliBackends);
   const rawDoctorContract = isRecord(raw.doctorContract) ? raw.doctorContract : undefined;
   const doctorContract = rawDoctorContract
@@ -348,7 +357,7 @@ export function loadPluginManifest(
     ),
     providerAuthChoices: setupNormalizers.normalizeProviderAuthChoices(raw.providerAuthChoices),
     activation: setupNormalizers.normalizeManifestActivation(raw.activation),
-    setup: setupNormalizers.normalizeManifestSetup(raw.setup),
+    setup: setupNormalizers.normalizeManifestSetup(raw.setup, workerSetup.workerProviders),
     doctorContract,
     sessionRouteStateOwners:
       raw.sessionRouteStateOwners === undefined
@@ -378,7 +387,7 @@ export function loadPluginManifest(
       icon: normalizeOptionalString(raw.icon),
       version: normalizeOptionalString(raw.version),
       uiHints: setupNormalizers.normalizeConfigUiHints(raw.uiHints),
-      contracts: capabilityNormalizers.normalizeManifestContracts(raw.contracts),
+      contracts,
       mediaUnderstandingProviderMetadata:
         capabilityNormalizers.normalizeMediaUnderstandingProviderMetadata(
           raw.mediaUnderstandingProviderMetadata,

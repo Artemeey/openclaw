@@ -333,10 +333,15 @@ export function loadRuntimePluginCandidate(params: {
       record.memorySlotSelected = true;
     }
   }
+  // Secret input schemas describe persisted references. A resolved runtime string is
+  // not a new plaintext config input; validate its source without weakening the schema.
   const validatedConfig = validatePluginConfig({
     schema: manifestRecord.configSchema,
     cacheKey: manifestRecord.schemaCacheKey,
     value: entry?.config,
+    sourceValue: manifestRecord.configContracts?.secretInputs
+      ? context.activationSourceConfig.plugins?.entries?.[pluginId]?.config
+      : undefined,
   });
   if (!validatedConfig.ok) {
     params.logger.error(
@@ -540,6 +545,26 @@ export function loadRuntimePluginCandidate(params: {
     // Non-activating snapshots are private until cached activation; rollback restores both.
     if (registrationPlan.runRuntimeCapabilityPolicy) {
       registerPluginDashboardCapabilities({ record, registry });
+      // Discovery can precede activation; do not publish an active plugin with setup RPCs
+      // borrowed from another owner, missing handlers, or weaker control-plane authority.
+      for (const setup of manifestRecord.setup?.workerProviders ?? []) {
+        for (const method of Object.values(setup.methods)) {
+          const descriptor = registry.gatewayMethodDescriptors.find(
+            (candidateDescriptor) => candidateDescriptor.name === method,
+          );
+          if (
+            descriptor?.owner.kind !== "plugin" ||
+            descriptor.owner.pluginId !== record.id ||
+            descriptor.scope !== "operator.admin" ||
+            descriptor.profileAccess !== "independent" ||
+            !registry.gatewayHandlers[method]
+          ) {
+            throw new Error(
+              `worker setup method ${method} must be registered by its owner with operator.admin and independent profile access`,
+            );
+          }
+        }
+      }
     }
     registry.plugins.push(record);
     state.seenIds.set(pluginId, candidate.origin);

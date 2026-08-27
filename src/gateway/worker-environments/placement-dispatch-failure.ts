@@ -171,12 +171,14 @@ export function createPlacementFailureActions(deps: {
     environmentId: string | null;
     ownerEpoch: number | null;
     primaryError: unknown;
+    authorize?: WorkerPlacementAuthorization;
   }): Promise<void> => {
     const environmentId = params.environmentId;
     const teardownErrors = environmentId
       ? await cleanupEnvironment({
           environmentId,
           ownerEpoch: params.ownerEpoch,
+          authorize: params.authorize,
         })
       : [];
     const recoveryError = [boundedError(params.primaryError), ...teardownErrors].join("; ");

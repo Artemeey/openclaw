@@ -83,6 +83,33 @@ describe("createPluginCandidatesFromManifestRegistry", () => {
 });
 
 describe("validatePluginConfig empty schema classification", () => {
+  it("validates secret input source refs while preserving resolved values and defaults", () => {
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        credential: {
+          type: "object",
+          required: ["source", "provider", "id"],
+          properties: {
+            source: { const: "store" },
+            provider: { type: "string" },
+            id: { type: "string" },
+          },
+        },
+        retries: { type: "integer", default: 2 },
+      },
+    };
+    const sourceValue = { credential: { source: "store", provider: "default", id: "KEY" } };
+    const value = { credential: "resolved-fixture-key" };
+    expect(validatePluginConfig({ schema, sourceValue, value })).toEqual({
+      ok: true,
+      value: { ...value, retries: 2 },
+    });
+    expect(validatePluginConfig({ schema, value })).toMatchObject({ ok: false });
+    expect(value).toEqual({ credential: "resolved-fixture-key" });
+  });
+
   it("validates pattern properties instead of requiring empty config", () => {
     const schema = {
       ...emptyObjectSchema,

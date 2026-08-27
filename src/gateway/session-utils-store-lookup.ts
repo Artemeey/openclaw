@@ -5,7 +5,6 @@ import {
   resolveAgentMainSessionKey,
   resolveExistingAgentSessionStoreTargetsSync,
   resolveSessionStorePathCore,
-  type SessionEntry,
   type SessionStoreTarget,
 } from "../config/sessions.js";
 import {
@@ -16,6 +15,7 @@ import {
   type SessionEntryListScope,
 } from "../config/sessions/session-accessor.js";
 import { canonicalSessionKeyMigrationRequiredError } from "../config/sessions/session-canonical-key.js";
+import type { InternalSessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   DEFAULT_AGENT_ID,
@@ -35,11 +35,11 @@ import type {
 } from "./session-utils-contracts.js";
 
 function findCanonicalStoreMatch(
-  store: Record<string, SessionEntry>,
+  store: Record<string, InternalSessionEntry>,
   candidates: readonly string[],
   onCanonicalError?: (error: Error) => void,
-): { entry: SessionEntry; key: string } | undefined {
-  const matches = new Map<string, { entry: SessionEntry; key: string }>();
+): { entry: InternalSessionEntry; key: string } | undefined {
+  const matches = new Map<string, { entry: InternalSessionEntry; key: string }>();
   for (const candidate of candidates) {
     const trimmed = normalizeOptionalString(candidate) ?? "";
     if (!trimmed) {
@@ -137,7 +137,7 @@ function resolveGatewaySessionStoreCandidates(
  * request, so cached stores are read-only to their holder; the cache is never
  * process-global, so it cannot serve a later request stale rows.
  */
-export type GatewaySessionStoreCache = Map<string, Record<string, SessionEntry>>;
+export type GatewaySessionStoreCache = Map<string, Record<string, InternalSessionEntry>>;
 
 /**
  * Sharing resolves every returned row, but store targets are stable within one request.
@@ -190,7 +190,7 @@ function loadGatewaySessionLookupStore(
     exactKeys?: readonly string[];
     projection?: SessionEntryListScope["projection"];
   } = {},
-): Record<string, SessionEntry> {
+): Record<string, InternalSessionEntry> {
   const cache = options.cache;
   const cacheKey = cache
     ? `${storePath}\u0000${agentId ?? ""}\u0000${clone === false ? "0" : "1"}\u0000${options.readOnly ? "1" : "0"}\u0000${options.projection ?? "full"}\u0000${options.exactKeys?.join("\u0001") ?? ""}`
@@ -215,10 +215,10 @@ function loadGatewaySessionLookupStoreUncached(
     readOnly?: boolean;
     projection?: SessionEntryListScope["projection"];
   } = {},
-): Record<string, SessionEntry> {
+): Record<string, InternalSessionEntry> {
   try {
     if (options.exactKeys) {
-      const store: Record<string, SessionEntry> = {};
+      const store: Record<string, InternalSessionEntry> = {};
       for (const sessionKey of options.exactKeys) {
         const match = loadExactSessionEntryReadOnly({
           ...(agentId ? { agentId } : {}),
@@ -254,7 +254,7 @@ function resolveGatewaySessionStoreLookup(params: {
   canonicalKey: string;
   agentId: string;
   clone?: boolean;
-  initialStore?: Record<string, SessionEntry>;
+  initialStore?: Record<string, InternalSessionEntry>;
   projection?: SessionEntryListScope["projection"];
   readOnly?: boolean;
   exactRead?: boolean;
@@ -263,8 +263,8 @@ function resolveGatewaySessionStoreLookup(params: {
   targetDiscoveryCache?: GatewaySessionStoreDiscoveryCache;
 }): {
   storePath: string;
-  store: Record<string, SessionEntry>;
-  match: { entry: SessionEntry; key: string } | undefined;
+  store: Record<string, InternalSessionEntry>;
+  match: { entry: InternalSessionEntry; key: string } | undefined;
   canonicalValidationError?: Error;
 } {
   const scanTargets = buildGatewaySessionStoreScanTargets(params);
@@ -385,8 +385,8 @@ function resolveExplicitDeletedLegacyMainStoreTarget(params: {
   let best:
     | {
         storePath: string;
-        store: Record<string, SessionEntry>;
-        match: { entry: SessionEntry; key: string };
+        store: Record<string, InternalSessionEntry>;
+        match: { entry: InternalSessionEntry; key: string };
       }
     | undefined;
   const { existing } = resolveGatewaySessionStoreCandidates(
@@ -459,7 +459,7 @@ export function resolveGatewaySessionStoreTargetWithStore(params: {
   exactRead?: boolean;
   deferCanonicalValidation?: boolean;
   includeStoreChildEntries?: boolean;
-  store?: Record<string, SessionEntry>;
+  store?: Record<string, InternalSessionEntry>;
   storeCache?: GatewaySessionStoreCache;
   targetDiscoveryCache?: GatewaySessionStoreDiscoveryCache;
 }): GatewaySessionStoreTargetWithStore {
@@ -586,7 +586,7 @@ export function resolveGatewaySessionStoreTarget(params: {
   key: string;
   agentId?: string;
   clone?: boolean;
-  store?: Record<string, SessionEntry>;
+  store?: Record<string, InternalSessionEntry>;
 }): GatewaySessionStoreTarget {
   const { store: _store, ...target } = resolveGatewaySessionStoreTargetWithStore(params);
   return target;

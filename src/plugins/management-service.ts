@@ -3,6 +3,7 @@ import path from "node:path";
 import { asSafeIntegerInRange } from "@openclaw/normalization-core/number-coercion";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
+import type { WorkerSetupDescriptor } from "../../packages/gateway-protocol/src/schema/worker-setup.js";
 import { MANIFEST_KEY } from "../compat/legacy-names.js";
 import { collectChangedPaths } from "../config/config-change-paths.js";
 import {
@@ -122,6 +123,7 @@ type ManagedPluginCatalogEntry = {
   error?: string;
   category?: string;
   removable?: boolean;
+  workerSetup?: WorkerSetupDescriptor[];
 };
 
 type ManagedPluginCatalog = {
@@ -849,6 +851,9 @@ export async function listManagedPlugins(params: {
       state: error ? "error" : record.enabled ? "enabled" : "disabled",
       removable,
     };
+    if (manifest?.setup?.workerProviders) {
+      plugin.workerSetup = manifest.setup.workerProviders;
+    }
     if (record.packageName) {
       plugin.packageName = record.packageName;
     }

@@ -8,6 +8,7 @@ import type {
   RestartRecoveryRun,
 } from "../../config/sessions.js";
 import { hasRestartRecoveryTerminalRun } from "../../config/sessions/restart-recovery-state.js";
+import { hasCurrentCloudSessionTestCleanup } from "../../config/sessions/types.js";
 import {
   isAcpSessionKey,
   isCronSessionKey,
@@ -99,7 +100,12 @@ function validateRecoveryAdmission(
   if (entry.sessionId !== command.sessionId) {
     return "session_replaced";
   }
-  if (entry.status !== "running" || entry.abortedLastRun !== true || !state) {
+  if (
+    hasCurrentCloudSessionTestCleanup(entry) ||
+    entry.status !== "running" ||
+    entry.abortedLastRun !== true ||
+    !state
+  ) {
     return "not_interrupted";
   }
   if (
@@ -130,6 +136,11 @@ function recordLifecycleFence(entry: SessionEntry, run: RestartRecoveryRun): voi
 }
 
 export function isMainRestartRecoveryCandidate(entry: SessionEntry, sessionKey: string): boolean {
+  // Test cleanup owns interruption, including terminal settlement before the
+  // marker is cleared. Neither startup nor shutdown may schedule another turn.
+  if (hasCurrentCloudSessionTestCleanup(entry)) {
+    return false;
+  }
   if (typeof entry.spawnDepth === "number" && entry.spawnDepth > 0) {
     return false;
   }
@@ -324,6 +335,9 @@ export function transitionMainSessionRecovery(
 ): MainSessionRecoveryTransitionResult {
   switch (command.kind) {
     case "mark_interrupted": {
+      if (hasCurrentCloudSessionTestCleanup(entry)) {
+        return { kind: "no_change" };
+      }
       const state = entry.mainRestartRecovery;
       if (!state) {
         entry.mainRestartRecovery = createCycle(command.cycleId);
@@ -413,7 +427,11 @@ export function transitionMainSessionRecovery(
         return { kind: "rejected", reason: conflict };
       }
       const state = entry.mainRestartRecovery!;
-      if (entry.status !== "running" || entry.abortedLastRun !== true) {
+      if (
+        hasCurrentCloudSessionTestCleanup(entry) ||
+        entry.status !== "running" ||
+        entry.abortedLastRun !== true
+      ) {
         return { kind: "rejected", reason: "not_interrupted" };
       }
       if (state.tombstone) {

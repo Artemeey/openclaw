@@ -3,6 +3,7 @@ import type { Static } from "typebox";
 import { Type } from "typebox";
 import { closedObject } from "./closed-object.js";
 import { NonEmptyString } from "./primitives.js";
+import { WorkerSetupDescriptorSchema } from "./worker-setup.js";
 
 /**
  * Plugin control-surface protocol schemas.
@@ -120,6 +121,8 @@ export const PluginCatalogEntrySchema = closedObject({
   category: Type.Optional(NonEmptyString),
   /** True when the plugin has an install record and can be removed via plugins.uninstall. */
   removable: Type.Optional(Type.Boolean()),
+  /** Manifest-first worker setup discovery, including disabled installed plugins. */
+  workerSetup: Type.Optional(Type.Array(WorkerSetupDescriptorSchema, { maxItems: 16 })),
 });
 
 /** Empty request payload for the cold plugin catalog. */

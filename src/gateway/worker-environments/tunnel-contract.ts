@@ -4,6 +4,7 @@ import type { SpawnResult } from "../../process/exec.js";
 import type { WorkerLaunchPlan } from "../../worker/launch-descriptor.js";
 import type { NodeWorkerWorkspaceTransferInput } from "../../worker/node-workspace-transfer-protocol.js";
 import type { WorkerSessionTurnClaim } from "./placement-record.js";
+import type { WorkerWorkspaceManifest } from "./workspace-manifest.js";
 import type {
   WorkerWorkspaceApplyResult,
   WorkerWorkspaceReconciliationJournalAdapter,
@@ -79,6 +80,8 @@ export type WorkerWorkspaceReconcileRequest = {
 
 export type WorkerWorkspaceReconcileResult = {
   manifestRef: string;
+  /** Inbound remote snapshot, before merging or publishing any Gateway-local edits. */
+  sourceManifest?: WorkerWorkspaceManifest;
   changed: boolean;
   /** Re-read the remote workspace after local acceptance, immediately before teardown. */
   verifyStable(): Promise<void>;

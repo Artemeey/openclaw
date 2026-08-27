@@ -111,18 +111,22 @@ export type WorkerDesktopEndpoint = {
 /** Placement execution modes a worker provider can carry. */
 export type WorkerExecutionMode = "worker-turn" | "remote-exec";
 
+/** Exact owner-selected package sources, available before issuing enrollment credentials. */
+export type WorkerNodeRuntime = {
+  readonly openclawVersion: string;
+  readonly packageSpecs: readonly string[];
+};
+
 /** Replay-safe node enrollment prepared only after a provider has allocated its machine. */
-export type WorkerNodeEnrollment = {
-  openclawVersion: string;
-  packageSpecs: readonly string[];
+export type WorkerNodeEnrollment = WorkerNodeRuntime & {
   displayName: string;
   /** Gateway shutdown cancels enrollment without releasing its replay-owned provider lease. */
   signal?: AbortSignal;
   waitForDeviceId: () => Promise<string>;
 } & (
-  | { mode: "connect"; setupCode: string; setupId: string }
-  | { mode: "resume"; deviceId: string }
-);
+    | { mode: "connect"; setupCode: string; setupId: string }
+    | { mode: "resume"; deviceId: string }
+  );
 
 /** Durable lease identity and endpoint returned by a successful provision operation. */
 export type WorkerLease = {
@@ -214,6 +218,7 @@ export type WorkerProvider = {
     options?: {
       executionMode?: WorkerExecutionMode;
       machineClass?: string;
+      nodeRuntime?: WorkerNodeRuntime;
       beginNodeEnrollment?: () => Promise<WorkerNodeEnrollment>;
     },
   ) => Promise<WorkerLease>;

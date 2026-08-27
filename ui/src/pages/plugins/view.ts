@@ -103,6 +103,7 @@ type PluginsViewProps = {
   onRefresh: () => void;
   onIconError: (pluginId: string) => void;
   onShowDetails: (pluginId: string | null) => void;
+  onConfigureCloud: (pluginId: string) => void;
   onSetEnabled: (pluginId: string, enabled: boolean, rowKey: string) => void;
   onInstall: (request: PluginInstallRequest, installIdentity: string) => void;
   onDismissMessage: (rowKey: string) => void;
@@ -1265,6 +1266,15 @@ function renderDetailOverlay(props: PluginsViewProps) {
           <p class="plugins-detail__description">
             ${plugin.description || t("pluginsPage.optionalCapability")}
           </p>
+          ${plugin.workerSetup?.length
+            ? html`<button
+                type="button"
+                class="btn btn--sm"
+                @click=${() => props.onConfigureCloud(plugin.id)}
+              >
+                ${t("cloudSetup.configure")}
+              </button>`
+            : nothing}
           <div class="plugins-detail__actions">
             ${props.pendingRemoval[key]
               ? renderRemoveConfirm(plugin, props, busy, key)

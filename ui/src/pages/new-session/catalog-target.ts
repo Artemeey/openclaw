@@ -17,7 +17,10 @@ function draftRouteKey(requestedAgentId: string, catalogId: string, group: strin
  * and reports it empty until the roster arrives, so keying on the resolved id
  * would make that fill-in look like a navigation and discard the draft.
  */
-export function routeKey(data?: NewSessionRouteData): string {
+export function routeKey(data?: NewSessionRouteData, fallbackSearch?: string): string {
+  if (!data && fallbackSearch) {
+    return routeKeyFromSearch(fallbackSearch);
+  }
   return draftRouteKey(data?.requestedAgentId ?? "", data?.catalogId ?? "", data?.group ?? "");
 }
 

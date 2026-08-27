@@ -1,6 +1,7 @@
 // Wizard session helpers track onboarding session ids and state.
 import { randomUUID } from "node:crypto";
 import type { WizardStep as ProtocolWizardStep } from "../../packages/gateway-protocol/src/index.js";
+import type { CloudSessionTestResult } from "../../packages/gateway-protocol/src/schema/wizard.js";
 import { createDeferredCore, type Deferred } from "../shared/deferred.js";
 import {
   DEVICE_CODE_PHISHING_WARNING,
@@ -60,6 +61,7 @@ type WizardNextResult = {
   channels?: string[];
   accounts?: Array<{ channel: string; accountId: string }>;
   preparedModelRef?: string;
+  cloudSessionTest?: CloudSessionTestResult;
 };
 
 function normalizeTextAnswer(value: unknown): string | undefined {
@@ -217,7 +219,8 @@ class WizardSessionPrompter implements WizardPrompter {
       initialValue: params.initialValue,
       executor: "client",
     });
-    return Boolean(res);
+    // Answers cross the wire as unknown values; truthy strings are not consent.
+    return res === true;
   }
 
   progress(label: string): WizardProgress {
@@ -286,6 +289,7 @@ export class WizardSession {
   private error: string | undefined;
   private configuredAccounts: Array<{ channel: string; accountId: string }> | undefined;
   private preparedModelRef: string | undefined;
+  private cloudSessionTest: CloudSessionTestResult | undefined;
 
   constructor(
     private runner: (
@@ -304,13 +308,28 @@ export class WizardSession {
   }
 
   async next(): Promise<WizardNextResult> {
+    // Cancellation requests abort the runner; only its finally block can prove
+    // teardown. Never publish a terminal test snapshot while cleanup is running.
+    if (this.cloudSessionTest && this.status !== "running") {
+      await this.whenSettled();
+    }
     const progressStep = this.progressSteps.shift();
     if (progressStep) {
       this.rememberDeliveredProgressStep(progressStep.id);
-      return { done: false, step: progressStep, status: this.status };
+      return {
+        done: false,
+        step: progressStep,
+        status: this.status,
+        ...(this.cloudSessionTest ? { cloudSessionTest: this.getCloudSessionTest() } : {}),
+      };
     }
     if (this.currentStep) {
-      return { done: false, step: this.currentStep, status: this.status };
+      return {
+        done: false,
+        step: this.currentStep,
+        status: this.status,
+        ...(this.cloudSessionTest ? { cloudSessionTest: this.getCloudSessionTest() } : {}),
+      };
     }
     if (this.pendingTerminalResolution) {
       this.pendingTerminalResolution = false;
@@ -323,8 +342,16 @@ export class WizardSession {
       this.stepDeferred = createDeferredCore();
     }
     const step = await this.stepDeferred.promise;
+    if (this.cloudSessionTest && this.status !== "running") {
+      await this.whenSettled();
+    }
     if (step) {
-      return { done: false, step, status: this.status };
+      return {
+        done: false,
+        step,
+        status: this.status,
+        ...(this.cloudSessionTest ? { cloudSessionTest: this.getCloudSessionTest() } : {}),
+      };
     }
     return this.terminalResult();
   }
@@ -334,6 +361,7 @@ export class WizardSession {
       done: true,
       status: this.status,
       error: this.error,
+      ...(this.cloudSessionTest ? { cloudSessionTest: this.getCloudSessionTest() } : {}),
       ...(this.configuredAccounts
         ? {
             channels: [...new Set(this.configuredAccounts.map((entry) => entry.channel))],
@@ -356,6 +384,14 @@ export class WizardSession {
     this.preparedModelRef = modelRef;
   }
 
+  setCloudSessionTest(result: CloudSessionTestResult) {
+    this.cloudSessionTest = { ...result };
+  }
+
+  getCloudSessionTest(): CloudSessionTestResult | undefined {
+    return this.cloudSessionTest ? { ...this.cloudSessionTest } : undefined;
+  }
+
   async answer(stepId: string, value: unknown): Promise<string | undefined> {
     const pending = this.answerDeferred.get(stepId);
     if (!pending) {
@@ -368,6 +404,13 @@ export class WizardSession {
       throw new Error("wizard: no pending step");
     }
     const normalizedValue = pending.text ? normalizeTextAnswer(value) : value;
+    if (
+      this.cloudSessionTest &&
+      this.currentStep?.type === "confirm" &&
+      typeof value !== "boolean"
+    ) {
+      return "Choose yes or no to confirm cloud and model charges";
+    }
     if (pending.text && normalizedValue === undefined) {
       return "wizard: text answer must be a scalar value";
     }

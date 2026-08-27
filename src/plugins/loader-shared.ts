@@ -12,6 +12,7 @@ import {
   resolveMemoryDreamingConfig,
   resolveMemoryDreamingPluginConfig,
 } from "../memory-host-sdk/dreaming.js";
+import { applyJsonSchemaDefaults } from "../shared/json-schema-defaults.js";
 import { recordPluginCandidateInstallOwner } from "./candidate-install-owner.js";
 import {
   resolveEffectiveEnableState,
@@ -202,6 +203,7 @@ export function validatePluginConfig(params: {
   schema?: Record<string, unknown>;
   cacheKey?: string;
   value?: unknown;
+  sourceValue?: unknown;
 }): Result<Record<string, unknown> | undefined, string[]> {
   const { schema, value } = params;
   if (!schema) {
@@ -225,11 +227,17 @@ export function validatePluginConfig(params: {
   const result = validateJsonSchemaValue({
     schema,
     cacheKey: params.cacheKey ?? JSON.stringify(schema),
-    value: value ?? {},
+    value: params.sourceValue ?? value ?? {},
     applyDefaults: true,
   });
   return result.ok
-    ? ok(result.value as Record<string, unknown> | undefined)
+    ? ok(
+        (params.sourceValue === undefined
+          ? result.value
+          : applyJsonSchemaDefaults(schema, structuredClone(value ?? {}))) as
+          | Record<string, unknown>
+          | undefined,
+      )
     : resultError(result.errors.map((error) => error.text));
 }
 

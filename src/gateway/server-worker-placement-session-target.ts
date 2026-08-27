@@ -1,9 +1,18 @@
 import type { managedWorktrees } from "../agents/worktrees/service.js";
+import { clearSessionQueues } from "../auto-reply/reply/queue/cleanup.js";
+import { runExclusiveSessionStoreWrite } from "../config/sessions/store-writer.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { runExclusiveSessionLifecycleMutation } from "../sessions/session-lifecycle-admission.js";
+import {
+  interruptSessionWorkAdmissions,
+  runExclusiveSessionLifecycleMutation,
+  SESSION_WORK_ADMISSION_DRAIN_TIMEOUT_MS,
+} from "../sessions/session-lifecycle-admission.js";
+import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import type * as sessionUtils from "./session-utils.js";
+import type { WorkerLocalDispatchBarrier } from "./worker-environments/placement-dispatch-startup.js";
 import type { WorkerPlacementExecutionMode } from "./worker-environments/placement-record.js";
 import type * as placementSessionRuntime from "./worker-environments/placement-session-runtime.js";
+import type { WorkerSessionPlacementStore } from "./worker-environments/placement-store.js";
 
 export class WorkerDispatchTargetChangedError extends Error {
   readonly code = "invalid_state";
@@ -153,4 +162,111 @@ export function resolveWorkerPlacementSessionTarget<
     throw targetChangedError();
   }
   return { config: params.config, target, entry, worktree };
+}
+
+const loadWorkerWorkspacePreflight = createLazyRuntimeModule(async () => {
+  const { preflightWorkerWorkspace } =
+    await import("./worker-environments/workspace-sync-preflight.js");
+  return preflightWorkerWorkspace;
+});
+
+/** Prepare and drain local work under the same session fence that starts dispatch. */
+export async function runWorkerPlacementLocalDispatchBarrier({
+  sessionRuntime,
+  getConfig,
+  placements,
+  revokeSessionAuthority,
+  sessionId,
+  sessionKey,
+  agentId,
+  executionMode,
+  authorize,
+  startDispatch,
+}: Parameters<WorkerLocalDispatchBarrier>[0] & {
+  sessionRuntime: WorkerPlacementSessionRuntime;
+  getConfig: () => OpenClawConfig;
+  placements: Pick<WorkerSessionPlacementStore, "waitForTurnClaimRelease">;
+  revokeSessionAuthority: (request: { sessionId: string; sessionKeys: readonly string[] }) => void;
+}): ReturnType<WorkerLocalDispatchBarrier> {
+  const {
+    resolveWorkerPlacementExecutionMode,
+    resolveGatewaySessionStoreTargetWithStore,
+    resolveWorkerPlacementSessionRuntime,
+  } = sessionRuntime;
+  const target = resolveGatewaySessionStoreTargetWithStore({
+    cfg: getConfig(),
+    key: sessionKey,
+    agentId,
+    clone: false,
+  });
+  const lifecycleIdentities = [sessionKey, target.canonicalKey, ...target.storeKeys, sessionId];
+  let placement: ReturnType<typeof startDispatch> | undefined;
+  await runExclusiveSessionLifecycleMutation({
+    scope: target.storePath,
+    identities: lifecycleIdentities,
+    prepare: async () => {
+      const {
+        config: currentConfig,
+        target: currentTarget,
+        entry: currentEntry,
+        worktree,
+      } = resolveWorkerPlacementSessionTarget({
+        sessionRuntime,
+        config: getConfig(),
+        sessionId,
+        sessionKey,
+        agentId,
+        expectedTarget: target,
+        errorMessage: `Session ${sessionKey} changed before cloud worker dispatch. Retry.`,
+      });
+      if (currentEntry.archivedAt !== undefined) {
+        throw new WorkerDispatchTargetChangedError(
+          `Session ${sessionKey} was archived before cloud worker dispatch. Retry.`,
+        );
+      }
+      const currentRuntime = resolveWorkerPlacementSessionRuntime({
+        cfg: currentConfig,
+        entry: currentEntry,
+        agentId: currentTarget.agentId,
+        sessionKey: currentTarget.canonicalKey,
+      });
+      if (resolveWorkerPlacementExecutionMode(currentRuntime) !== executionMode) {
+        throw new WorkerDispatchTargetChangedError(
+          `Session ${sessionKey} runtime changed to ${currentRuntime} before cloud worker dispatch. Retry.`,
+        );
+      }
+      const preflightWorkerWorkspace = await loadWorkerWorkspacePreflight();
+      await preflightWorkerWorkspace({ localPath: worktree.path });
+      authorize?.();
+      placement = startDispatch();
+      clearSessionQueues(lifecycleIdentities);
+      revokeSessionAuthority({
+        sessionId,
+        sessionKeys: lifecycleIdentities,
+      });
+      const released = await interruptSessionWorkAdmissions({
+        scope: target.storePath,
+        identities: lifecycleIdentities,
+        timeoutMs: SESSION_WORK_ADMISSION_DRAIN_TIMEOUT_MS,
+      });
+      if (!released) {
+        throw new Error(`Session ${sessionKey} is still active; dispatch stopped`);
+      }
+      await placements.waitForTurnClaimRelease(sessionId, {
+        timeoutMs: SESSION_WORK_ADMISSION_DRAIN_TIMEOUT_MS,
+      });
+      await runExclusiveSessionStoreWrite(target.storePath, async () => {}, {
+        reentrant: true,
+      });
+    },
+    run: async () => {
+      if (!placement) {
+        throw new Error(`Session ${sessionKey} dispatch barrier did not start`);
+      }
+    },
+  });
+  if (!placement) {
+    throw new Error(`Session ${sessionKey} dispatch barrier did not complete`);
+  }
+  return placement;
 }

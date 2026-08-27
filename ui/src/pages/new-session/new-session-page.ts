@@ -188,7 +188,7 @@ export class NewSessionPage extends OpenClawLightDomElement {
               return;
             }
             if (isPlaceTopologyEvent(event.event)) {
-              this.refreshPlaceTopology();
+              void this.gateway.refreshCloudProfiles();
               return;
             }
             const presence = event.event === "presence" ? readPresenceEntries(event.payload) : null;
@@ -198,7 +198,7 @@ export class NewSessionPage extends OpenClawLightDomElement {
             const signature = presenceStateSignature(presence);
             if (signature !== this.presenceSignature) {
               this.presenceSignature = signature;
-              this.refreshPlaceTopology();
+              void this.gateway.refreshCloudProfiles();
             }
           });
         },
@@ -222,10 +222,6 @@ export class NewSessionPage extends OpenClawLightDomElement {
       );
   }
 
-  private refreshPlaceTopology() {
-    void this.gateway.refreshCloudProfiles();
-  }
-
   handleEvent(event: Event) {
     handleSessionPickerEvent(this, event);
   }
@@ -241,7 +237,7 @@ export class NewSessionPage extends OpenClawLightDomElement {
     document.removeEventListener("keydown", this, true);
     document.removeEventListener("pointerdown", this, true);
     window.removeEventListener("beforeunload", this.flushDraft);
-    retainDraft(this.context, this.submission, this.openedFor, this.messageOwnerKey);
+    retainDraft(this.context, this.submission, this.openedFor, this.messageOwnerKey, this.place);
     this.subscriptions.clear();
     this.gateway.invalidateDiscovery(
       true,
@@ -274,7 +270,7 @@ export class NewSessionPage extends OpenClawLightDomElement {
       agentsReady && this.place.agentId ? (this.place.selectedAgent()?.id ?? "") : "",
       this.context?.config.current.cliAgentsEnabled === true && !catalog.isTarget(this.data),
     );
-    const openKey = this.routeOwnerKey();
+    const openKey = catalog.routeKey(this.data, window.location.search);
     const resolvedAgentId = this.data?.agentId ?? "";
     const groupDefaults = catalog.groupDefaultsKey(this.data);
     if (this.openedFor !== openKey) {
@@ -284,7 +280,13 @@ export class NewSessionPage extends OpenClawLightDomElement {
       this.openedAgentId = resolvedAgentId;
       this.place.setAgentsHydrated(agentsReady);
       this.resetDraft();
-      this.messageOwnerKey = restoreDraft(this.context, this.submission, openKey, ownedMessage);
+      this.messageOwnerKey = restoreDraft(
+        this.context,
+        this.submission,
+        openKey,
+        ownedMessage,
+        this.place,
+      );
       return;
     }
     if (this.openedGroupDefaults !== groupDefaults) {
@@ -332,12 +334,6 @@ export class NewSessionPage extends OpenClawLightDomElement {
     this.browser.close();
     this.connectMachine.close();
     this.place.adoptAgentDefaults();
-  }
-
-  private routeOwnerKey(): string {
-    return this.data
-      ? catalog.routeKey(this.data)
-      : catalog.routeKeyFromSearch(window.location.search);
   }
 
   private setMessage(message: string, ownerKey = catalog.routeKey(this.data)) {
@@ -447,6 +443,14 @@ export class NewSessionPage extends OpenClawLightDomElement {
           () => this.requestUpdate(),
         ),
       onConnectMachine: () => this.openConnectMachine(),
+      onSetupCloud: () => {
+        if (!this.place.isAdmin() || submitting || pendingPlacement) {
+          return;
+        }
+        this.context?.navigate("cloud-workers", {
+          search: drafts.cloudSetupSearch(window.location.search),
+        });
+      },
     })}${renderProjectChip({
       state: projectState,
       browseAvailable: this.place.browseAvailable(),
@@ -540,7 +544,7 @@ export class NewSessionPage extends OpenClawLightDomElement {
     const worktreeNameInvalid =
       this.place.worktree && !isWorktreeNameValid(this.place.worktreeName);
     const capabilities = this.submission.capabilities;
-    const voiceControl = this.dictation.render(this.routeOwnerKey());
+    const voiceControl = this.dictation.render(catalog.routeKey(this.data, window.location.search));
     const dictationLocked = this.dictation.active;
     return html`
       <div class="new-session-page__draft" aria-busy=${String(this.submission.submitting)}>
@@ -574,7 +578,7 @@ export class NewSessionPage extends OpenClawLightDomElement {
           dictationStatus: this.dictation.renderStatus(),
           context: this.context,
           isCatalogTarget: catalog.isTarget(this.data),
-          draftOwnerKey: this.routeOwnerKey(),
+          draftOwnerKey: catalog.routeKey(this.data, window.location.search),
           message: this.submission.message,
           visibility: this.submission.visibility,
           draftAvailable: capabilities.canStartAsDraft(this.context),

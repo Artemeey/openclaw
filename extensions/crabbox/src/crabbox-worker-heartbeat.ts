@@ -1,5 +1,6 @@
 import type { SpawnResult } from "openclaw/plugin-sdk/process-runtime";
 import { crabboxCommandError } from "./crabbox-worker-command-error.js";
+import type { CrabboxCommandRunner } from "./crabbox-worker-command.js";
 
 const CRABBOX_HEARTBEAT_UPGRADE = "upgrade Crabbox to v0.44.0 or newer for `crabbox heartbeat`";
 
@@ -10,6 +11,7 @@ type HeartbeatContext = {
   id: string;
   idleTimeout: string;
   provider: string;
+  runCommand?: CrabboxCommandRunner;
 };
 
 type HeartbeatEntry = HeartbeatContext & {

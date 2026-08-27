@@ -81,6 +81,53 @@ afterEach(globalAfterEach0);
 afterAll(globalAfterAll1);
 
 describe("loadOpenClawPlugins", () => {
+  it.each([
+    { scope: "operator.admin", profileAccess: "independent", omit: false, loaded: true },
+    { scope: "operator.read", profileAccess: "independent", omit: false, loaded: false },
+    { scope: "operator.admin", profileAccess: "required", omit: false, loaded: false },
+    { scope: "operator.admin", profileAccess: "independent", omit: true, loaded: false },
+  ])(
+    "validates worker setup RPC ownership and authority: $scope/$profileAccess omit=$omit",
+    ({ scope, profileAccess, omit, loaded }) => {
+      useNoBundledPlugins();
+      const plugin = writePlugin({
+        id: "worker-setup",
+        body: `module.exports = {
+      id: "worker-setup", register(api) {
+        for (const verb of ${JSON.stringify(omit ? ["describe", "prepare", "check"] : ["describe", "install", "prepare", "check"])}) {
+          api.registerGatewayMethod("worker-setup." + verb, () => {}, { scope: ${JSON.stringify(scope)}, profileAccess: ${JSON.stringify(profileAccess)} });
+        }
+      }
+    };`,
+      });
+      updatePluginManifest(plugin, {
+        contracts: { workerProviders: ["compute"] },
+        setup: {
+          workerProviders: [
+            {
+              id: "compute",
+              methods: {
+                describe: "worker-setup.describe",
+                install: "worker-setup.install",
+                prepare: "worker-setup.prepare",
+                check: "worker-setup.check",
+              },
+            },
+          ],
+        },
+      });
+      const registry = loadRegistryFromSinglePlugin({
+        plugin,
+        pluginConfig: { allow: ["worker-setup"] },
+        options: { onlyPluginIds: ["worker-setup"] },
+      });
+      expect(registry.plugins.find((entry) => entry.id === "worker-setup")?.status).toBe(
+        loaded ? "loaded" : "error",
+      );
+      expect(Boolean(registry.gatewayHandlers["worker-setup.describe"])).toBe(loaded);
+    },
+  );
+
   it("rejects a repeated named legacy hook before adding another executable handler", () => {
     useNoBundledPlugins();
     const plugin = writePlugin({

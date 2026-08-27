@@ -10,6 +10,7 @@ import {
   getSessionEntry,
   listSessionEntries,
   patchSessionEntry,
+  updateSessionStore,
   updateSessionStoreEntry,
   upsertSessionEntry,
   type SessionEntry,
@@ -155,5 +156,62 @@ describe("session-store-runtime recovery boundary", () => {
     expect(
       loadInternalSessionEntry({ sessionKey: upsertSessionKey, storePath }),
     ).not.toHaveProperty("pendingProjectGitUrl");
+  });
+
+  it("retains cloud cleanup intent through public rewrites and rotation without accepting injected intent", async () => {
+    const sessionKey = "agent:main:cloud-test";
+    const cloudSessionTestCleanup = {
+      operationId: "test-operation",
+      sessionId: "test-session",
+      environmentId: "test-environment",
+      owner: "[null,null,null]",
+      binding: { stage: "pending" as const },
+    };
+    await replaceInternalSessionEntry(
+      { sessionKey, storePath },
+      { sessionId: "test-session", updatedAt: 10, cloudSessionTestCleanup },
+    );
+    expect(getSessionEntry({ sessionKey, storePath })).not.toHaveProperty(
+      "cloudSessionTestCleanup",
+    );
+    await updateSessionStore(storePath, (store) => {
+      const entry = store[sessionKey];
+      if (!entry) {
+        throw new Error("Cloud test proof session is missing before the public rewrite");
+      }
+      expect(entry).not.toHaveProperty("cloudSessionTestCleanup");
+      store[sessionKey] = { ...entry, label: "Test proof" };
+    });
+    // Default maintenance runs here: even an old proof row must retain its
+    // unresolved cleanup intent until the worker lifecycle verifies teardown.
+    expect(loadInternalSessionEntry({ sessionKey, storePath })).toMatchObject({
+      sessionId: "test-session",
+      label: "Test proof",
+      cloudSessionTestCleanup,
+    });
+    await upsertSessionEntry({
+      sessionKey,
+      storePath,
+      entry: {
+        sessionId: "test-session",
+        updatedAt: 20,
+        cloudSessionTestCleanup: { ...cloudSessionTestCleanup, environmentId: "injected" },
+      } as unknown as SessionEntry,
+    });
+    expect(loadInternalSessionEntry({ sessionKey, storePath })?.cloudSessionTestCleanup).toEqual(
+      cloudSessionTestCleanup,
+    );
+    await patchSessionEntry({
+      sessionKey,
+      storePath,
+      replaceEntry: true,
+      update: () => ({ sessionId: "replacement-session", updatedAt: 30 }),
+    });
+    // Rotation cannot turn stale intent into teardown permission or silently
+    // claim that the old paid resource is gone.
+    expect(loadInternalSessionEntry({ sessionKey, storePath })).toMatchObject({
+      sessionId: "replacement-session",
+      cloudSessionTestCleanup,
+    });
   });
 });

@@ -33,6 +33,28 @@ import type {
 } from "./types.js";
 import { assertValidParams } from "./validation.js";
 
+const privateSendAdmissions = new WeakMap<
+  GatewayRequestHandlerOptions["req"],
+  () => Promise<boolean>
+>();
+
+/** Bind a host continuation to this exact request object, never to wire parameters. */
+export async function withSessionSendAdmission<T>(
+  request: GatewayRequestHandlerOptions["req"],
+  onAdmissionOwned: () => Promise<boolean>,
+  run: () => Promise<T>,
+): Promise<T> {
+  if (privateSendAdmissions.has(request)) {
+    throw new Error("Session send admission already bound");
+  }
+  privateSendAdmissions.set(request, onAdmissionOwned);
+  try {
+    return await run();
+  } finally {
+    privateSendAdmissions.delete(request);
+  }
+}
+
 async function createAgentMainSessionForSend(params: {
   req: GatewayRequestHandlerOptions["req"];
   canonicalKey: string;
@@ -260,7 +282,8 @@ async function handleSessionSend(params: {
     return;
   }
 
-  const onAdmissionOwned =
+  const privateAdmission = privateSendAdmissions.get(params.req);
+  const onInterruptAdmission =
     params.queueMode === "interrupt"
       ? async (): Promise<boolean> => {
           try {
@@ -277,6 +300,14 @@ async function handleSessionSend(params: {
           return true;
         }
       : undefined;
+  const onAdmissionOwned = privateAdmission
+    ? async () => {
+        if (onInterruptAdmission && !(await onInterruptAdmission())) {
+          return false;
+        }
+        return await privateAdmission();
+      }
+    : onInterruptAdmission;
 
   let sendAcked = false;
   let sendPayload: unknown;

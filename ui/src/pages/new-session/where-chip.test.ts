@@ -56,6 +56,7 @@ function renderPicker(isAdmin: boolean) {
       onSelectAutoDevice: vi.fn(),
       onSelectCloudProfile: vi.fn(),
       onConnectMachine: vi.fn(),
+      onSetupCloud: vi.fn(),
     }),
     container,
   );
@@ -145,6 +146,7 @@ describe("Where chip", () => {
         onSelectAutoDevice: () => undefined,
         onSelectCloudProfile: () => undefined,
         onConnectMachine: () => undefined,
+        onSetupCloud: vi.fn(),
       }),
       container,
     );
@@ -183,6 +185,7 @@ describe("Where chip", () => {
         onSelectAutoDevice: vi.fn(),
         onSelectCloudProfile: vi.fn(),
         onConnectMachine: vi.fn(),
+        onSetupCloud: vi.fn(),
       }),
       emptyContainer,
     );
@@ -244,6 +247,7 @@ describe("Where chip", () => {
         onSelectAutoDevice: vi.fn(),
         onSelectCloudProfile: vi.fn(),
         onConnectMachine: vi.fn(),
+        onSetupCloud: vi.fn(),
       }),
       container,
     );
@@ -326,6 +330,7 @@ describe("Where chip", () => {
           onSelectAutoDevice: vi.fn(),
           onSelectCloudProfile: vi.fn(),
           onConnectMachine: vi.fn(),
+          onSetupCloud: vi.fn(),
         }),
         container,
       );

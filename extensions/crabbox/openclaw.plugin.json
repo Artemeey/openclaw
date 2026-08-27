@@ -3,14 +3,195 @@
   "name": "Crabbox Worker Provider",
   "description": "Cloud worker provider backed by the Crabbox CLI.",
   "activation": {
-    "onStartup": false
+    "onStartup": true
   },
   "contracts": {
-    "workerProviders": ["crabbox"]
+    "workerProviders": [
+      "crabbox"
+    ]
   },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "connections": {
+        "type": "object",
+        "maxProperties": 128,
+        "propertyNames": {
+          "pattern": "^(?!constructor$|prototype$)[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$"
+        },
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label",
+            "provider",
+            "credentials"
+          ],
+          "properties": {
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "provider": {
+              "type": "string",
+              "enum": [
+                "daytona"
+              ]
+            },
+            "credentials": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "apiKey"
+              ],
+              "properties": {
+                "apiKey": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "source",
+                        "provider",
+                        "id"
+                      ],
+                      "properties": {
+                        "source": {
+                          "const": "env"
+                        },
+                        "provider": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                        },
+                        "id": {
+                          "type": "string",
+                          "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "source",
+                        "provider",
+                        "id"
+                      ],
+                      "properties": {
+                        "source": {
+                          "const": "store"
+                        },
+                        "provider": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                        },
+                        "id": {
+                          "type": "string",
+                          "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "source",
+                        "provider",
+                        "id"
+                      ],
+                      "properties": {
+                        "source": {
+                          "const": "exec"
+                        },
+                        "provider": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                        },
+                        "id": {
+                          "type": "string",
+                          "pattern": "^(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9][A-Za-z0-9._:/#-]{0,255}$"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "source",
+                        "provider",
+                        "id"
+                      ],
+                      "properties": {
+                        "source": {
+                          "const": "file"
+                        },
+                        "provider": {
+                          "type": "string",
+                          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                        },
+                        "id": {
+                          "type": "string",
+                          "anyOf": [
+                            {
+                              "const": "value"
+                            },
+                            {
+                              "allOf": [
+                                {
+                                  "pattern": "^/"
+                                },
+                                {
+                                  "not": {
+                                    "pattern": "~(?:[^01]|$)"
+                                  }
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "enabledByDefault": false,
+  "setup": {
+    "workerProviders": [
+      {
+        "id": "crabbox",
+        "methods": {
+          "describe": "crabbox.setup.describe",
+          "install": "crabbox.setup.install",
+          "prepare": "crabbox.setup.prepare",
+          "check": "crabbox.setup.check"
+        }
+      }
+    ]
+  },
+  "configContracts": {
+    "secretInputs": {
+      "bundledDefaultEnabled": false,
+      "paths": [
+        {
+          "path": "connections.*.credentials.apiKey",
+          "expected": "string",
+          "ownerKind": "route"
+        }
+      ]
+    }
+  },
+  "uiHints": {
+    "connections.*.credentials.apiKey": {
+      "label": "API key reference",
+      "sensitive": true
+    }
   }
 }

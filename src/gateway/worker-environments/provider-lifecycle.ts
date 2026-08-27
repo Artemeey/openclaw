@@ -254,7 +254,8 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
           ? record.profileSnapshot.machineClass
           : undefined;
       const prepareNodeEnrollment = options.prepareNodeEnrollment;
-      if (provider.requiresNodeEnrollment === true && !prepareNodeEnrollment) {
+      const nodeRuntime = options.nodeRuntime;
+      if (provider.requiresNodeEnrollment === true && (!prepareNodeEnrollment || !nodeRuntime)) {
         throw new Error("Worker node enrollment runtime is unavailable");
       }
       const provisionOptions =
@@ -262,8 +263,11 @@ export function createWorkerProviderLifecycle(options: WorkerProviderLifecycleOp
           ? {
               ...(machineClass ? { machineClass } : {}),
               ...(executionMode ? { executionMode } : {}),
-              ...(provider.requiresNodeEnrollment === true && prepareNodeEnrollment
-                ? { beginNodeEnrollment: async () => await prepareNodeEnrollment(record) }
+              ...(provider.requiresNodeEnrollment === true && prepareNodeEnrollment && nodeRuntime
+                ? {
+                    nodeRuntime,
+                    beginNodeEnrollment: async () => await prepareNodeEnrollment(record),
+                  }
                 : {}),
             }
           : undefined;

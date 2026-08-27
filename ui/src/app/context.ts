@@ -8,7 +8,9 @@ import type { ChatAttachment, ChatComposerMemoryFallback } from "../lib/chat/cha
 import type { RuntimeConfigCapability } from "../lib/config/runtime-config-capability.ts";
 import type { SessionCapability } from "../lib/sessions/index.ts";
 import type { WorkboardCapability } from "../lib/workboard/capability.ts";
+import type { NewSessionNavigationDraft } from "../pages/new-session/draft-navigation-handoff.ts";
 import type { AgentSelectionCapability } from "./agent-selection.ts";
+import type { ApplicationCloudSessionTest } from "./cloud-session-test.ts";
 import type { ApplicationConfigCapability } from "./config.ts";
 import type { ScopeUpgradeCapability } from "./device-scope-upgrade.ts";
 import type { ApplicationGateway } from "./gateway.ts";
@@ -75,12 +77,14 @@ export type ApplicationChatAttachmentHandoff = {
       attachments: readonly ChatAttachment[];
       fallbacks: Readonly<Record<string, ChatComposerMemoryFallback>>;
       message?: string;
+      newSessionDraft?: NewSessionNavigationDraft;
     },
   ): void;
   consume(handoff: ChatAttachmentHandoffKey): {
     attachments: ChatAttachment[];
     fallbacks: Record<string, ChatComposerMemoryFallback>;
     message?: string;
+    newSessionDraft?: NewSessionNavigationDraft;
   } | null;
   clearPane(paneId: string): void;
   dispose(): void;
@@ -109,6 +113,7 @@ export type ApplicationContext<TRouteId extends string = string> = {
   readonly skillWorkshopRevisionAdmissions: ApplicationSkillWorkshopRevisionAdmissions;
   readonly initialUserMessage: ApplicationInitialUserMessageHandoff;
   readonly chatAttachmentHandoff: ApplicationChatAttachmentHandoff;
+  readonly cloudSessionTest: ApplicationCloudSessionTest;
   readonly navigate: (routeId: TRouteId, options?: ApplicationNavigationOptions) => void;
   /** Navigates and resolves after any route-specific handoff completes. */
   readonly navigateAndWait: (

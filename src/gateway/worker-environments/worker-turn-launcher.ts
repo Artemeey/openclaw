@@ -20,7 +20,7 @@ import {
   StaleWorkerBuildError,
   supportsWorkerExecutionContextLaunch,
 } from "./admission.js";
-import { placementTurnOwner, sameWorkerSessionTurnClaim } from "./placement-record.js";
+import { sameWorkerSessionTurnClaim } from "./placement-record.js";
 import { createRemoteExecPlacementSandbox } from "./placement-sandbox.js";
 import type {
   WorkerSessionPlacementRecord,
@@ -541,43 +541,21 @@ export function createWorkerSessionTurnPlacementProvider(options: WorkerTurnLaun
       // workspace path, but remote results must only reconcile into that canonical root.
       const localWorkspaceDir = await options.resolveWorkspacePath(identity);
       const remoteExec = placement.executionMode === "remote-exec";
-      let turnClaim: WorkerSessionTurnClaim;
-      if (remoteExec) {
-        turnClaim = options.placements.claimTurn({
-          ...identity,
-          claimId: randomUUID(),
-          runId: claim.runId,
-          owner: placementTurnOwner(placement),
-        });
-        const refreshed = options.placements.get(claim.sessionId);
-        if (
-          refreshed?.state !== "active" ||
-          refreshed.executionMode !== "remote-exec" ||
-          refreshed.environmentId !== placement.environmentId ||
-          refreshed.activeOwnerEpoch !== placement.activeOwnerEpoch ||
-          refreshed.generation !== turnClaim.placementGeneration
-        ) {
-          await releaseClaimIfOwned(options.placements, turnClaim);
-          throw new Error("Remote-exec placement changed during turn admission");
-        }
-        placement = refreshed;
-      } else {
-        const admitted = await claimWorkerTurn({
-          placements: options.placements,
-          identity,
-          placement,
-          runId: claim.runId,
-          isCancellationRequested: (activeClaim) => {
-            const active = activeWorkerTurns.get(activeClaim.sessionId);
-            return Boolean(
-              active?.signal?.aborted && sameWorkerSessionTurnClaim(active.claim, activeClaim),
-            );
-          },
-          ...(turn.abortSignal ? { signal: turn.abortSignal } : {}),
-        });
-        placement = admitted.placement;
-        turnClaim = admitted.turnClaim;
-      }
+      const admitted = await claimWorkerTurn({
+        placements: options.placements,
+        identity,
+        placement,
+        runId: claim.runId,
+        isCancellationRequested: (activeClaim) => {
+          const active = activeWorkerTurns.get(activeClaim.sessionId);
+          return Boolean(
+            active?.signal?.aborted && sameWorkerSessionTurnClaim(active.claim, activeClaim),
+          );
+        },
+        ...(turn.abortSignal ? { signal: turn.abortSignal } : {}),
+      });
+      placement = admitted.placement;
+      const turnClaim = admitted.turnClaim;
       const activeWorkerTurn: ActiveWorkerTurn | undefined = !remoteExec
         ? { claim: turnClaim, sessionKey: placement.sessionKey, signal: turn.abortSignal }
         : undefined;

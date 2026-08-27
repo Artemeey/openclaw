@@ -13,6 +13,8 @@ export type CrabboxCommandRunner = (
   options: {
     killProcessTree: boolean;
     env?: NodeJS.ProcessEnv;
+    baseEnv?: NodeJS.ProcessEnv;
+    cwd?: string;
     input?: string | Uint8Array;
     maxOutputBytes: number;
     signal?: AbortSignal;
@@ -39,7 +41,13 @@ export async function runCrabboxCommand(params: {
       ...(params.input === undefined ? {} : { input: params.input }),
       ...(params.signal ? { signal: params.signal } : {}),
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof WorkerProviderError) {
+      throw error;
+    }
+    // Spawn errors may retain arguments, output, or child credentials. Only typed
+    // provider errors above may cross this boundary; never retain the raw cause.
+    // oxlint-disable-next-line preserve-caught-error -- Deliberate subprocess credential redaction.
     throw new Error(`Crabbox ${params.action} could not start`);
   }
 }
@@ -50,13 +58,15 @@ export function provisionProfileError(result: SpawnResult): WorkerProviderError 
   }
   const output = `${result.stderr}\n${result.stdout}`;
   if (
-    /\bprovider=\S+\s+does not support fixed idempotent lease IDs\b/u.test(output) ||
     /(?:unknown|unrecognized) (?:flag|option)[^\r\n]*--lease-id/iu.test(output) ||
     /flag provided but not defined:\s*-lease-id/iu.test(output)
   ) {
     return new WorkerProviderError(
       "Crabbox 0.41.1 or newer with fixed lease ID support is required",
     );
+  }
+  if (/\bprovider=\S+\s+does not support fixed idempotent lease IDs\b/u.test(output)) {
+    return permanentCrabboxCommandError("warmup", result);
   }
   if (
     /\blease_id_conflict\b/u.test(output) &&
@@ -136,14 +146,12 @@ export async function stopCrabboxLease(params: {
   if (result.termination === "exit" && result.code === 0) {
     return;
   }
-  const alreadyStopped =
+  const alreadyDestroyed =
     `${result.stderr}\n${result.stdout}`.includes(params.id) &&
-    /\balready (?:destroyed|released|stopped|terminated)\b/iu.test(
-      `${result.stderr}\n${result.stdout}`,
-    );
+    /\balready (?:destroyed|released|terminated)\b/iu.test(`${result.stderr}\n${result.stdout}`);
   if (
     result.termination === "exit" &&
-    (isAuthoritativeLeaseAbsence(result, params.id) || alreadyStopped)
+    (isAuthoritativeLeaseAbsence(result, params.id) || alreadyDestroyed)
   ) {
     return;
   }

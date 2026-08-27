@@ -684,10 +684,47 @@ Supported evidence entries:
 | `credentialMarker` | Yes      | `string`   | Non-secret marker returned when the evidence is present.                                                       |
 | `source`           | No       | `string`   | User-facing source label for auth/status output.                                                               |
 
+### setup.workerProviders reference
+
+Worker plugins can expose guided cloud setup without provider-specific UI code. Discovery projects these descriptors through `plugins.list` even before the plugin is enabled; executable methods become available through normal plugin activation.
+
+```json validate=false
+{
+  "contracts": {
+    "workerProviders": ["example-worker"]
+  },
+  "setup": {
+    "workerProviders": [
+      {
+        "id": "example-worker",
+        "methods": {
+          "describe": "example.setup.describe",
+          "install": "example.setup.install",
+          "prepare": "example.setup.prepare",
+          "check": "example.setup.check"
+        }
+      }
+    ]
+  }
+}
+```
+
+The example belongs to plugin `example`. Each descriptor id must be unique and declared in that plugin's `contracts.workerProviders`; it need not equal the plugin id. Every method must use the declaring plugin's namespace and be registered by that same plugin with `scope: "operator.admin"` and `profileAccess: "independent"`. Invalid ownership, missing handlers, or weaker authorization reject registration. A manifest supports at most 16 worker setup descriptors.
+
+| Method         | Responsibility                                                                                                                                                                                                                   |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `describe({})` | Return bounded dependency state, provider-owned settings schemas and hints, connection SecretRefs, configured profiles, and diagnostics. Never return resolved credentials.                                                      |
+| `install({})`  | Perform an explicitly confirmed local dependency installation. Do not allocate cloud resources.                                                                                                                                  |
+| `prepare(...)` | Validate provider choices and already-saved credential references; return a minimal config patch with `saved: false`. The caller applies it through the existing config CAS, fenced to the source revision used for preparation. |
+| `check(...)`   | Check a selected profile or connection without allocation. Report credential, lifecycle, and endpoint evidence separately; `realSession` remains `not_tested`.                                                                   |
+
+The shared `WorkerSetup*` types and input validators are available through `openclaw/plugin-sdk/gateway-runtime`. Credential descriptors may include a bounded HTTPS `helpUrl` linking to the provider's key setup page; the UI opens it without a referrer. Setup methods do not own a second provisioning or teardown engine. An explicitly confirmed real test uses the core `wizard.start` flow `cloud-session-test`, then ordinary session creation, placement, execution, workspace reconciliation, and reclaim. A read-only check must never claim that this test passed.
+
 ### setup fields
 
 | Field              | Required | Type       | What it means                                                                                                                                  |
 | ------------------ | -------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workerProviders`  | No       | `object[]` | Worker-provider setup descriptors with plugin-owned admin RPCs; see the worker setup contract above.                                           |
 | `providers`        | No       | `object[]` | Provider setup descriptors exposed during setup and onboarding.                                                                                |
 | `cliBackends`      | No       | `string[]` | Setup-time backend ids used for descriptor-first setup lookup. Keep normalized ids globally unique.                                            |
 | `configMigrations` | No       | `string[]` | Config migration ids owned by this plugin's setup surface.                                                                                     |
@@ -800,6 +837,8 @@ Provider plugins that implement both `resolveUsageAuth` and `fetchUsageSnapshot`
 Embedding providers must declare `contracts.embeddingProviders` for each adapter registered with `api.registerEmbeddingProvider(...)`. The same generic contract serves reusable vector generation and memory search. The retired `contracts.memoryEmbeddingProviders` key is no longer accepted.
 
 Worker providers must declare each `api.registerWorkerProvider(...)` id in `contracts.workerProviders`. Core persists durable intent before calling `provision`; providers validate their settings and optional per-dispatch `machineClass` and `executionMode` before external allocation, and repeated calls with the same operation id must adopt the same lease without changing the selected mode. Providers may implement asynchronous `listMachineOptions(profile)` to expose process-stable picker metadata; omit it when machine selection is not meaningful. Machine options contain only `id`, `label`, optional positive-integer `cpu` and `memoryGb`, and optional `default`. Session-placement providers declare a closed, unique, canonically ordered `supportedExecutionModes` tuple: `["worker-turn"]`, `["remote-exec"]`, or `["worker-turn", "remote-exec"]`. Empty lists, duplicates, unknown values, and noncanonical ordering are rejected. `worker-turn` requires a node lease; `remote-exec` accepts a node lease or an SSH lease. Omission advertises no session-placement modes while leaving direct lifecycle operations available. A direct environment create supplies no session execution mode; providers use their documented default, which is `worker-turn` for Crabbox. Providers whose bounded provisioning exceeds core's five-minute default may implement `resolveProvisionTimeoutMs(profile)` and include acquisition, provider-owned setup, and cleanup in the returned positive millisecond budget. Core also persists that validated settings snapshot and passes it with `leaseId` to `inspect({ leaseId, profile })` and `destroy({ leaseId, profile })`, including after the named profile is changed or removed. Destruction is idempotent, inspection returns the closed `active` / `destroyed` / `unknown` status union, and SSH private-key material is referenced only through `SecretRef`. Provisioned SSH endpoints must also include a public `hostKey` from trusted provisioning output as exactly `algorithm base64`, without a hostname or comment, so core can pin the host before connecting. They may include up to 10 ordered, unique `fallbackPorts`, excluding the primary `port`; core persists those candidates and rotates among them only for idempotent probes, content-addressed transfers, receipt/lock-guarded artifact installation, convergent managed-worktree mirroring, and tunnel reconnects. Ambiguous unguarded stateful commands fail closed and are not replayed across candidates. A lease may set `sharedHost: true` when the SSH account also owns unrelated processes; core then avoids host-wide process freezing during workspace reconciliation. Omitted or `false` means a dedicated worker host. Active inspection repeats this fact so core can reconcile provider-owned isolation for leases persisted before the field existed; tunnel startup waits for that first authoritative inspection. Optional desktop metadata may advertise up to eight unique closed apps: `browser` with an absolute `executablePath` and a CDP port from 1 through 65535, or `terminal` with an absolute `executablePath`. Core rejects unknown app ids and fields and persists the validated metadata with the existing desktop record. Providers that mint dynamic identity refs may implement authoritative `resolveSshIdentity({ leaseId, profile, keyRef })`; providers without it use core's generic secret resolver. An authoritative `unknown` orphans an active local record; after a persisted destroy request it confirms teardown.
+
+Providers declaring `requiresNodeEnrollment` receive a frozen `nodeRuntime` descriptor in their provision options, with the exact Gateway `openclawVersion` and `packageSpecs`. Use it to prepare runtime artifacts before calling `beginNodeEnrollment`. Reading this descriptor issues no credentials; it is package metadata, not enrollment authority. Fresh provisioning and replay receive the same owner-selected runtime metadata. Providers without node enrollment receive neither this descriptor nor an enrollment callback.
 
 `contracts.gatewayMethodDispatch` currently accepts `"authenticated-request"`. It is an API hygiene gate for native plugin HTTP routes that intentionally dispatch Gateway control-plane methods in-process, not a sandbox against malicious native plugins. Use it only for tightly reviewed bundled/operator surfaces that already require Gateway HTTP auth. An entitled route remains reachable while Gateway root-work admission is closed only when it also declares `auth: "gateway"` and the route-specific `gatewayRuntimeScopeSurface: "trusted-operator"`; ordinary sibling routes from the same plugin remain behind the admission boundary. This keeps suspension status and resume reachable without granting the whole plugin an admission bypass. Keep parsing and response shaping bounded outside dispatch; substantive or mutating work must go through Gateway method dispatch, which owns admission and scope enforcement.
 

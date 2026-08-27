@@ -6,6 +6,7 @@ import type { SessionRunStatus } from "../../packages/gateway-protocol/src/schem
 import { isAgentLifecycleYieldedWaiting } from "../agents/agent-lifecycle-parent-state.js";
 import {
   buildAgentRunTerminalOutcomeFromLifecycleEvent,
+  buildAgentRunTerminalOutcome,
   classifyAgentRunTerminalOutcome,
   type AgentRunTerminalOutcome,
 } from "../agents/agent-run-terminal-outcome.js";
@@ -15,8 +16,14 @@ import {
   projectMainSessionRecoveryLifecycle,
 } from "../agents/main-session-recovery/main-session-recovery-lifecycle.js";
 import type { InternalSessionEntry as SessionEntry } from "../config/sessions.js";
+import { mergeRestartRecoveryTerminalRunIds } from "../config/sessions/restart-recovery-state.js";
 import { updateSessionEntry } from "../config/sessions/session-accessor.js";
 import { getAgentEventLifecycleGeneration, type AgentEventPayload } from "../infra/agent-events.js";
+import {
+  getAgentRunContextOwnership,
+  listAgentRunsForSession,
+} from "../infra/agent-run-registry.js";
+import { redactSensitiveText } from "../logging/redact.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { parseCronRunScopeSuffix } from "../sessions/session-key-utils.js";
 import { loadSessionEntry } from "./session-utils.js";
@@ -71,6 +78,7 @@ type PersistedLifecycleSessionShape = Pick<
   | "restartRecoveryRuns"
   | "mainRestartRecovery"
   | "lifecycleRunId"
+  | "cloudSessionTestCleanup"
 >;
 
 type GatewaySessionLifecycleSnapshot = Partial<Pick<SessionEntry, keyof LifecycleSessionShape>>;
@@ -248,15 +256,143 @@ function derivePersistedSessionLifecyclePatch(params: {
   const phase = resolveLifecyclePhase(params.event);
   const runId = normalizeLifecycleRunId(params.event.runId);
   const clientRunId = normalizeLifecycleRunId(params.event.clientRunId) ?? runId;
+  const intent = params.entry?.cloudSessionTestCleanup;
+  const turn = intent?.turn;
+  const testEvent =
+    intent &&
+    turn &&
+    runId &&
+    runId.length <= 128 &&
+    clientRunId === turn.requestRunId &&
+    params.event.sessionId === intent.sessionId &&
+    params.event.lifecycleGeneration === turn.lifecycleGeneration &&
+    (!turn.sourceRunId || turn.sourceRunId === runId);
+  const terminal = testEvent ? resolveSettledLifecycleTerminalOutcome(params.event) : undefined;
   // Run ownership follows the durable running projection. Terminal settlement
   // releases it; yielded parents retain it for their continuation lifecycle.
   return {
     ...projection.patch,
+    ...(testEvent
+      ? {
+          cloudSessionTestCleanup: {
+            ...intent,
+            turn: {
+              ...turn,
+              sourceRunId: runId,
+              terminal: undefined,
+              ...(terminal
+                ? {
+                    terminal: {
+                      ...terminal,
+                      ...(terminal.stopReason
+                        ? { stopReason: terminal.stopReason.slice(0, 128) }
+                        : {}),
+                      ...(terminal.livenessState
+                        ? { livenessState: terminal.livenessState.slice(0, 128) }
+                        : {}),
+                      ...(terminal.error
+                        ? {
+                            error: truncateUtf16Safe(
+                              redactSensitiveText(
+                                renderUserFacingText(terminal.error, {
+                                  errorContext: true,
+                                }),
+                                { mode: "tools" },
+                              ),
+                              1024,
+                            ),
+                          }
+                        : {}),
+                    },
+                  }
+                : {}),
+            },
+          },
+        }
+      : {}),
     ...(phase === "start"
       ? { lifecycleRunId: runId, lastRunId: undefined }
       : projection.patch.status && projection.patch.status !== "running"
         ? { lifecycleRunId: undefined, lastRunId: clientRunId }
         : {}),
+  };
+}
+
+/** Cleanup retires a past test lifecycle through the same terminal projection as live runs. */
+export function retireCloudSessionTestLifecycle(
+  entry: SessionEntry,
+  sessionKey: string,
+): Partial<SessionEntry> {
+  const intent = entry.cloudSessionTestCleanup;
+  if (!intent || entry.sessionId !== intent.sessionId) {
+    throw new Error("Cloud test session changed before terminal settlement");
+  }
+  const turn = intent.turn;
+  if (
+    listAgentRunsForSession({ sessionKey, sessionId: entry.sessionId }).some(
+      ({ runId }) => (getAgentRunContextOwnership(runId)?.claimIds.size ?? 0) > 0,
+    )
+  ) {
+    throw new Error("Cloud test still has a live run owner");
+  }
+  if (!turn) {
+    if (entry.status === "running" || entry.lifecycleRunId || entry.activeWriterRunId) {
+      throw new Error("Cloud test has no recorded source lifecycle; cleanup remains pending");
+    }
+    return {};
+  }
+  // Before the source emits its first lifecycle event, the admitted chat run is
+  // the recorded owner. A different source must be bound by that event producer.
+  const sourceRunId = turn.sourceRunId ?? turn.requestRunId;
+  if (
+    (entry.lifecycleRunId && entry.lifecycleRunId !== sourceRunId) ||
+    (entry.lastRunId &&
+      entry.lastRunId !== turn.requestRunId &&
+      entry.lastRunId !== turn.sourceRunId) ||
+    (entry.activeWriterRunId &&
+      entry.activeWriterRunId !== turn.sourceRunId &&
+      entry.activeWriterRunId !== turn.requestRunId) ||
+    entry.mainRestartRecovery ||
+    entry.restartRecoveryRuns?.length ||
+    entry.restartRecoveryDeliveryRunId
+  ) {
+    throw new Error("Cloud test terminal settlement found a different run owner");
+  }
+  // Use the existing bounded terminal registry so durable browser retries also
+  // recognize this exact request after its cleanup marker is gone.
+  const retiredRuns = {
+    restartRecoveryTerminalRunIds: mergeRestartRecoveryTerminalRunIds(
+      entry.restartRecoveryTerminalRunIds,
+      [turn.requestRunId, sourceRunId],
+    ),
+  };
+  if (entry.status && entry.status !== "running" && entry.lastRunId === turn.requestRunId) {
+    return retiredRuns;
+  }
+  if (!turn.terminal && turn.lifecycleGeneration === getAgentEventLifecycleGeneration()) {
+    throw new Error("Cloud test terminal lifecycle has not settled");
+  }
+  const terminal =
+    turn.terminal ??
+    buildAgentRunTerminalOutcome({
+      status: "error",
+      stopReason: "restart",
+      startedAt: entry.startedAt,
+      endedAt: Date.now(),
+    });
+  return {
+    ...retiredRuns,
+    ...derivePersistedSessionLifecyclePatch({
+      entry,
+      event: {
+        sessionId: intent.sessionId,
+        runId: sourceRunId,
+        clientRunId: turn.requestRunId,
+        lifecycleGeneration: turn.lifecycleGeneration,
+        ts: terminal.endedAt ?? Date.now(),
+        data: { ...terminal, phase: terminal.status === "ok" ? "end" : "error" },
+      },
+    }),
   };
 }
 
@@ -267,6 +403,7 @@ export function deriveGatewaySessionLifecycleProjectionPatch(params: {
   const {
     restartRecoveryRuns: _restartRecoveryRuns,
     lifecycleRunId: _lifecycleRunId,
+    cloudSessionTestCleanup: _cloudSessionTestCleanup,
     ...patch
   } = derivePersistedSessionLifecyclePatch(params);
   return patch;

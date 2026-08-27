@@ -15,7 +15,7 @@ import {
 } from "../../sessions/session-key-utils.js";
 import { sessionDeliveryOrigin } from "../../utils/delivery-context.shared.js";
 import type { SessionMaintenanceConfig, SessionMaintenanceMode } from "../types.base.js";
-import type { SessionEntry } from "./types.js";
+import type { InternalSessionEntry, SessionEntry } from "./types.js";
 
 const log = createSubsystemLogger("sessions/store");
 
@@ -544,10 +544,15 @@ function isProtectedSessionMaintenanceEntry(
 
 export function shouldPreserveMaintenanceEntry(params: {
   key: string;
-  entry: SessionEntry | undefined;
+  entry: InternalSessionEntry | undefined;
   preserveKeys?: ReadonlySet<string>;
   preserveRecentMs?: number | null;
 }): boolean {
+  // Retention cannot erase unresolved paid-resource cleanup, including stale
+  // ownership diagnostics. Only verified lifecycle teardown releases this marker.
+  if (params.entry?.cloudSessionTestCleanup) {
+    return true;
+  }
   // Archived and pinned sessions are user-retained; only an explicit user action may release them.
   if (params.entry?.archivedAt !== undefined || params.entry?.pinnedAt !== undefined) {
     return true;

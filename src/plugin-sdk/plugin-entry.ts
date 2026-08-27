@@ -136,6 +136,7 @@ export type {
   WorkerLease,
   WorkerLeaseStatus,
   WorkerMachineOption,
+  WorkerNodeRuntime,
   WorkerProfile,
   WorkerProvider,
   WorkerSshEndpoint,

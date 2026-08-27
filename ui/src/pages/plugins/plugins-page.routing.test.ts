@@ -6,6 +6,7 @@ import {
   createClient,
   createContext,
   createGateway,
+  createPlugin,
   createPluginsRouteData,
   createPluginsRouteLocation,
   createResult,
@@ -138,5 +139,37 @@ describe("PluginsPage routing", () => {
     };
     await page.updateComplete;
     expect(page.activeTab).toBe("discover");
+  });
+
+  it("routes descriptor-backed plugin setup to Cloud sessions", async () => {
+    const result = createResult(
+      createPlugin({
+        workerSetup: [
+          {
+            id: "workboard",
+            methods: {
+              describe: "workboard.setup.describe",
+              install: "workboard.setup.install",
+              prepare: "workboard.setup.prepare",
+              check: "workboard.setup.check",
+            },
+          },
+        ],
+      }),
+    );
+    const { client } = createClient(async () => result);
+    const harness = createGateway(client);
+    const context = createContext(harness.gateway);
+    const { page } = await mountPage(context, createPluginsRouteData(harness.gateway, result));
+    page
+      .querySelector<HTMLButtonElement>('[data-plugin-id="workboard"] .plugins-item__detail-button')
+      ?.click();
+    await page.updateComplete;
+    const configure = [...page.querySelectorAll<HTMLButtonElement>(".plugins-detail button")].find(
+      (button) => button.textContent?.includes("Configure cloud sessions"),
+    );
+    expect(configure).toBeDefined();
+    configure?.click();
+    expect(context.navigate).toHaveBeenCalledWith("cloud-workers", { search: "?plugin=workboard" });
   });
 });

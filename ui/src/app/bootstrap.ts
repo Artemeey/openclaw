@@ -36,6 +36,7 @@ import { isBrowserPanelAvailable } from "./app-shell-chrome.ts";
 import { resolveControlUiDocumentMode, type ControlUiDocumentMode } from "./approval-deep-link.ts";
 import { createBrowserHistory, resolveControlUiPaths } from "./browser.ts";
 import { createChatAttachmentHandoff } from "./chat-attachment-handoff.ts";
+import { createApplicationCloudSessionTest } from "./cloud-session-test.ts";
 import { createApplicationConfigCapability } from "./config.ts";
 import type {
   ApplicationNavigationOptions,
@@ -428,6 +429,7 @@ export function bootstrapApplication(
     initialUserMessage,
   });
   const chatAttachmentHandoff = createChatAttachmentHandoff();
+  const cloudSessionTest = createApplicationCloudSessionTest(gateway);
   const router = createApplicationRouter();
   let routerStarted = false;
   // Pre-start navigations are invisible to history; retain the latest request so
@@ -555,6 +557,7 @@ export function bootstrapApplication(
     skillWorkshopRevisionAdmissions,
     initialUserMessage,
     chatAttachmentHandoff,
+    cloudSessionTest,
     navigate: (routeId, options) => {
       void navigateAndWait(routeId, options);
     },
@@ -676,6 +679,7 @@ export function bootstrapApplication(
       skillWorkshopRevisionAdmissions.dispose();
       initialUserMessage.clear();
       chatAttachmentHandoff.dispose();
+      cloudSessionTest.dispose();
     },
   };
 }

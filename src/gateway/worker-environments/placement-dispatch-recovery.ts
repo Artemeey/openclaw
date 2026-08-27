@@ -176,6 +176,9 @@ export function createPlacementRecoveryActions(deps: PlacementRecoveryDeps) {
       if (placement.state === "local" || placement.state === "reclaimed") {
         continue;
       }
+      if (await deps.recoverTestPlacement?.(placement)) {
+        continue;
+      }
       if (placement.state === "provisioning") {
         const environment = placement.environmentId
           ? environments.get(placement.environmentId)
@@ -255,6 +258,9 @@ export function createPlacementRecoveryActions(deps: PlacementRecoveryDeps) {
         continue;
       }
       if (environmentId !== undefined && placement.environmentId !== environmentId) {
+        continue;
+      }
+      if (await deps.recoverTestPlacement?.(placement)) {
         continue;
       }
       if (isFailedPlacement(placement)) {

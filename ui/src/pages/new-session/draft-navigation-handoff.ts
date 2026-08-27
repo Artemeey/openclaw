@@ -1,6 +1,55 @@
 import type { ApplicationContext } from "../../app/context.ts";
 import * as catalog from "./catalog-target.ts";
+import type { DraftPlaceState } from "./draft-place-state.ts";
 import type { DraftSubmissionFlow } from "./draft-submission-flow.ts";
+
+export type NewSessionNavigationDraft = {
+  place: ReturnType<typeof capturePlaceDraft>;
+  visibility: DraftSubmissionFlow["visibility"];
+  toolOverrides: DraftSubmissionFlow["capabilities"]["toolOverrides"];
+  permissionMode: DraftSubmissionFlow["permission"]["value"];
+};
+
+function capturePlaceDraft(place: DraftPlaceState) {
+  return {
+    agentId: place.agentId,
+    folder: place.folder,
+    deviceId: place.deviceId,
+    autoDevice: place.autoDevice,
+    profileId: place.cloudProfileId,
+    machines: place.cloudMachines.capture(),
+    projectId: place.browser.projectId,
+    remoteProject: place.browser.remoteProject,
+    worktree: place.worktree,
+    baseRef: place.baseRef,
+    worktreeName: place.worktreeName,
+    model: place.modelControl.selected,
+    thinkingLevel: place.modelControl.thinkingLevel,
+    contextWindow: place.modelControl.contextWindow,
+  };
+}
+
+/** Only route identity crosses the URL boundary; draft contents stay in the handoff. */
+export function cloudSetupSearch(search: string): string {
+  const params = new URLSearchParams(cloudSetupSessionSearch(search));
+  params.set("returnTo", "new-session");
+  return `?${params}`;
+}
+
+export function cloudSetupSessionSearch(search: string, profileId?: string): string {
+  const source = new URLSearchParams(search);
+  const params = new URLSearchParams();
+  for (const key of ["agent", "catalog", "group"]) {
+    const value = source.get(key);
+    if (value) {
+      params.set(key, value);
+    }
+  }
+  if (profileId) {
+    params.set("cloudProfile", profileId);
+  }
+  return params.size ? `?${params}` : "";
+}
 
 const NEW_SESSION_DRAFT_PANE_ID = "new-session-draft";
 
@@ -9,6 +58,7 @@ export function retainDraft(
   submission: DraftSubmissionFlow,
   openedFor: string | null,
   messageOwnerKey: string,
+  place: DraftPlaceState,
 ) {
   submission.draftPersistence.persistNow();
   const owner = context?.gateway.snapshot.client;
@@ -23,6 +73,12 @@ export function retainDraft(
     message: messageOwnerKey === routeKey ? submission.message : "",
     attachments: submission.attachmentDraft.take(),
     fallbacks: {},
+    newSessionDraft: {
+      place: capturePlaceDraft(place),
+      visibility: submission.visibility,
+      toolOverrides: submission.capabilities.toolOverrides,
+      permissionMode: submission.permission.value,
+    },
   });
 }
 
@@ -31,6 +87,7 @@ export function restoreDraft(
   submission: DraftSubmissionFlow,
   routeKey: string,
   ownedMessage: string,
+  place: DraftPlaceState,
 ) {
   submission.draftPersistence.selectRoute(routeKey);
   const owner = context?.gateway.snapshot.client;
@@ -46,11 +103,23 @@ export function restoreDraft(
     submission.restoreDraftState({
       message: ownedMessage || draft.message || "",
       attachments: draft.attachments,
-      visibility: submission.visibility,
+      visibility: draft.newSessionDraft?.visibility ?? submission.visibility,
+      ...(draft.newSessionDraft
+        ? {
+            toolOverrides: draft.newSessionDraft.toolOverrides,
+            permissionMode: draft.newSessionDraft.permissionMode,
+          }
+        : {}),
     });
+    if (draft.newSessionDraft) {
+      place.restoreNavigationState(draft.newSessionDraft.place);
+    }
   } else if (ownedMessage) {
     submission.restoreMessage(ownedMessage);
   }
+  place.restoreCloudSetupDestination(
+    new URLSearchParams(window.location.search).get("cloudProfile") ?? "",
+  );
   activateDraft(submission, routeKey);
   return routeKey;
 }

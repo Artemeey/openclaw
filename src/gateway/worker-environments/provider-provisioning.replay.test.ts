@@ -111,6 +111,10 @@ describe("worker environment service provision replay", () => {
   });
 
   it("replays one node lease once across overlapping reconciliation and activates once", async () => {
+    const nodeRuntime = Object.freeze({
+      openclawVersion: "2026.8.19",
+      packageSpecs: Object.freeze(["openclaw@2026.8.19"]),
+    });
     const events: string[] = [];
     const operationIds: string[] = [];
     const physicalLeases = new Set<string>();
@@ -126,6 +130,7 @@ describe("worker environment service provision replay", () => {
       requiresNodeEnrollment: true,
       provision: async (_profile, operationId, options) => {
         provisionCalls += 1;
+        expect(options?.nodeRuntime).toBe(nodeRuntime);
         events.push(`provision:${provisionCalls}`);
         operationIds.push(operationId);
         if (!physicalLeases.has("lease-node-replay")) {
@@ -173,6 +178,7 @@ describe("worker environment service provision replay", () => {
       patch: { environmentId: intent.environmentId },
     });
     const first = support.createService(provider, {
+      nodeRuntime,
       ensureNodeWorkerBundle: async () => ({
         ...support.BOOTSTRAP_RECEIPT,
         protocolFeatures: [WORKER_EXECUTION_CONTEXT_PROTOCOL_FEATURE],
@@ -228,6 +234,7 @@ describe("worker environment service provision replay", () => {
       stopAll: vi.fn(async () => {}),
     };
     const restarted = support.createService(provider, {
+      nodeRuntime,
       ensureNodeWorkerBundle: async () => ({
         ...support.BOOTSTRAP_RECEIPT,
         protocolFeatures: [WORKER_EXECUTION_CONTEXT_PROTOCOL_FEATURE],
@@ -238,8 +245,7 @@ describe("worker environment service provision replay", () => {
           mode: "connect" as const,
           setupCode: "setup-code",
           setupId: enrolled.nodeSetupId!,
-          openclawVersion: "2026.8.19",
-          packageSpecs: ["openclaw@2026.8.19"],
+          ...nodeRuntime,
           displayName: "Cloud worker replay",
           waitForDeviceId: async () => await enrollmentConnected.promise,
         };

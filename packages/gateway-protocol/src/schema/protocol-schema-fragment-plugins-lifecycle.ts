@@ -5,8 +5,25 @@ import * as hooks from "./hooks.js";
 import * as logsChat from "./logs-chat.js";
 import * as pluginApprovals from "./plugin-approvals.js";
 import * as plugins from "./plugins.js";
+import * as workerSetup from "./worker-setup.js";
 
 export const PluginLifecycleProtocolSchemas = {
+  WorkerSetupDescriptor: workerSetup.WorkerSetupDescriptorSchema,
+  WorkerSetupDiagnostic: workerSetup.WorkerSetupDiagnosticSchema,
+  WorkerSetupDependency: workerSetup.WorkerSetupDependencySchema,
+  WorkerSetupCredential: workerSetup.WorkerSetupCredentialSchema,
+  WorkerSetupProvider: workerSetup.WorkerSetupProviderSchema,
+  WorkerSetupConnection: workerSetup.WorkerSetupConnectionSchema,
+  WorkerSetupProfile: workerSetup.WorkerSetupProfileSchema,
+  WorkerSetupDescribeParams: workerSetup.WorkerSetupDescribeParamsSchema,
+  WorkerSetupDescribeResult: workerSetup.WorkerSetupDescribeResultSchema,
+  WorkerSetupInstallParams: workerSetup.WorkerSetupInstallParamsSchema,
+  WorkerSetupInstallResult: workerSetup.WorkerSetupInstallResultSchema,
+  WorkerSetupPrepareParams: workerSetup.WorkerSetupPrepareParamsSchema,
+  WorkerSetupPrepareResult: workerSetup.WorkerSetupPrepareResultSchema,
+  WorkerSetupCheckParams: workerSetup.WorkerSetupCheckParamsSchema,
+  WorkerSetupCheckResult: workerSetup.WorkerSetupCheckResultSchema,
+
   HooksStatusParams: hooks.HooksStatusParamsSchema,
   PluginApprovalRequestParams: pluginApprovals.PluginApprovalRequestParamsSchema,
   PluginApprovalResolveParams: pluginApprovals.PluginApprovalResolveParamsSchema,

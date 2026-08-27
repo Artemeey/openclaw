@@ -168,6 +168,7 @@ export function createService(
       | "providerCallTimeoutMs"
       | "resolveSshIdentity"
       | "ensureNodeWorkerBundle"
+      | "nodeRuntime"
       | "prepareNodeEnrollment"
       | "retireNodeEnrollment"
       | "stopNodeEnrollmentWaits"

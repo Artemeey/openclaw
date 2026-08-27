@@ -464,6 +464,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
           });
         }
         return {
+          sourceManifest: uploaded.current,
           get manifestRef() {
             return expectedRemoteRef;
           },

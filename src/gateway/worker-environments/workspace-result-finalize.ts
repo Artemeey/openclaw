@@ -4,6 +4,7 @@ import type { SessionPlacementTurnParams } from "../../agents/session-placement-
 import { SessionManager } from "../../agents/sessions/session-manager.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { redactSensitiveText } from "../../logging/redact.js";
+import { observeCloudSessionTestWorkspaceResult } from "./cloud-session-test-cleanup.js";
 import type {
   WorkerSessionPlacementRecord,
   WorkerSessionPlacementStore,
@@ -183,6 +184,11 @@ export async function reconcileWorkspaceAfterTurn(params: {
           await params.prepareAcceptedWorkspacePublication(params.turnClaim).catch(() => undefined);
         }
         params.placements.acceptWorkspaceResult(params.turnClaim);
+        observeCloudSessionTestWorkspaceResult(
+          params.turnClaim,
+          reconciliation.sourceManifest,
+          applied?.conflictPaths ?? [],
+        );
         const recordedStagedResultRef = params.placements
           .listPendingWorkspaceResults()
           .find(

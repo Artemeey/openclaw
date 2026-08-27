@@ -290,6 +290,7 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     bootstrapWorker: options.bootstrapWorker,
     resolveSshIdentity: options.resolveSshIdentity,
     ensureNodeWorkerBundle: options.ensureNodeWorkerBundle,
+    nodeRuntime: options.nodeRuntime,
     prepareNodeEnrollment: options.prepareNodeEnrollment,
     retireNodeEnrollment: options.retireNodeEnrollment,
     providerCallTimeoutMs: options.providerCallTimeoutMs,

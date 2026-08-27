@@ -125,6 +125,7 @@ export function renderWhereChip(params: {
   onSelectCloudProfile: (profileId: string) => void;
   onSelectCloudMachine?: (machineId: string) => void;
   onConnectMachine: () => void;
+  onSetupCloud: () => void;
 }) {
   const icon = params.state.kind === "cloud" ? icons.server : icons.monitor;
   const gatewayTitle = params.gatewayName
@@ -262,6 +263,19 @@ export function renderWhereChip(params: {
                 onSelect: params.onSelectCloudMachine ?? (() => undefined),
               })}
             `
+          : nothing}
+        ${params.isAdmin
+          ? renderSessionMenuItem(
+              {
+                value: "setup-cloud",
+                checked: false,
+                label: t("newSession.setupCloud"),
+                icon: icons.server,
+                disabled: params.submitting || params.pendingPlacement,
+                onSelect: params.onSetupCloud,
+              },
+              params.submitting,
+            )
           : nothing}
         ${params.isAdmin
           ? renderConnectMachineMenuItem({

@@ -625,6 +625,31 @@ export interface SessionEntry extends SessionEntryCore {}
 
 /** Internal durable fields excluded from public/plugin session projections. */
 export type InternalSessionEntryCore = SessionEntryCore & {
+  /** Gateway-owned cleanup intent; never grants execution authority or crosses plugin projections. */
+  cloudSessionTestCleanup?: {
+    operationId: string;
+    sessionId: string;
+    environmentId: string;
+    owner: string;
+    cleanupIssue?: "ownership-changed" | "session-work-pending" | "teardown-pending";
+    turn?: {
+      requestRunId: string;
+      lifecycleGeneration: string;
+      sourceRunId?: string;
+      claimId?: string;
+      terminal?: import("../../agents/agent-run-terminal-outcome.types.js").AgentRunTerminalOutcome;
+    };
+    binding:
+      | { stage: "pending" }
+      | {
+          stage: "provisioning";
+          generation: number;
+          syncingGeneration: number;
+          startingGeneration: number;
+        }
+      | { stage: "activating"; generation: number; activeGeneration: number; ownerEpoch: number }
+      | { stage: "active"; generation: number; ownerEpoch: number; testRunId?: string };
+  };
   /** Run that owns the current non-terminal Gateway lifecycle projection. */
   lifecycleRunId?: string;
   /** Exact run that produced the latest terminal Gateway lifecycle projection. */
@@ -639,6 +664,28 @@ export type InternalSessionEntryCore = SessionEntryCore & {
 };
 
 export interface InternalSessionEntry extends InternalSessionEntryCore {}
+
+/** A copied cleanup marker must not suppress an unrelated replacement run's recovery. */
+export function hasCurrentCloudSessionTestCleanup(
+  entry: InternalSessionEntry | undefined,
+): boolean {
+  const intent = entry?.cloudSessionTestCleanup;
+  if (!entry || !intent || entry.sessionId !== intent.sessionId) {
+    return false;
+  }
+  // Replay exclusion is diagnostic, not cleanup authority: changing the session
+  // owner cannot make this same interrupted test run safe to replay.
+  const turn = intent.turn;
+  return (
+    (!entry.lifecycleRunId || entry.lifecycleRunId === (turn?.sourceRunId ?? turn?.requestRunId)) &&
+    (!entry.activeWriterRunId ||
+      entry.activeWriterRunId === turn?.requestRunId ||
+      entry.activeWriterRunId === turn?.sourceRunId) &&
+    (!entry.lastRunId ||
+      entry.lastRunId === turn?.requestRunId ||
+      entry.lastRunId === turn?.sourceRunId)
+  );
+}
 
 export function isTerminalSessionStatus(
   status: unknown,

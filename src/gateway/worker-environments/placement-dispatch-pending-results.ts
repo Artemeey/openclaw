@@ -62,6 +62,7 @@ export type PlacementRecoveryDeps = {
     agentId: string;
   }) => Promise<WorkerWorkspaceResultConflict | undefined>;
   recoverPlacementMoves?: () => Promise<Set<string>>;
+  recoverTestPlacement?: (placement: WorkerDispatchPlacement) => Promise<boolean>;
   prepareAcceptedWorkspacePublication?: (claim: WorkerSessionTurnClaim) => Promise<void>;
   publishAcceptedWorkspace?: (claim: WorkerSessionTurnClaim) => Promise<void>;
 };

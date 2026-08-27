@@ -43,6 +43,26 @@ export { startGatewayClientWhenEventLoopReady } from "../gateway/client-start-re
 export { createOperatorApprovalsGatewayClient } from "../gateway/operator-approvals-client.js";
 
 export { ErrorCodes, errorShape } from "../../packages/gateway-protocol/src/schema/error-codes.js";
+export type {
+  WorkerSetupCheckParams,
+  WorkerSetupCheckResult,
+  WorkerSetupConnection,
+  WorkerSetupDependency,
+  WorkerSetupDescribeResult,
+  WorkerSetupDiagnostic,
+  WorkerSetupInstallResult,
+  WorkerSetupPrepareParams,
+  WorkerSetupPrepareResult,
+  WorkerSetupProfile,
+  WorkerSetupProvider,
+} from "../../packages/gateway-protocol/src/schema/worker-setup.js";
+export {
+  validateWorkerSetupCheckParams,
+  validateWorkerSetupDescribeParams,
+  validateWorkerSetupInstallParams,
+  validateWorkerSetupPrepareParams,
+} from "../../packages/gateway-protocol/src/worker-setup-validators.js";
+export { resolveConfiguredPairingPublicUrl } from "../pairing/setup-code.js";
 
 export type { GatewayRequestHandlerOptions } from "../gateway/server-methods/types.js";
 

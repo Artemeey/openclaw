@@ -409,6 +409,7 @@ export class DraftGatewayState {
   persistPreference(agentIdValue: string, workspace: string, patch: NewSessionPreference) {
     const snapshot = this.read();
     if (
+      snapshot.visibility === "incognito" ||
       catalog.isTarget(snapshot.data) ||
       snapshot.data?.group ||
       snapshot.pendingPlacement.sessionKey

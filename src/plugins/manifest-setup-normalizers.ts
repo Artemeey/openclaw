@@ -1,3 +1,8 @@
+import { Value } from "typebox/value";
+import {
+  WorkerSetupDescriptorSchema,
+  type WorkerSetupDescriptor,
+} from "../../packages/gateway-protocol/src/schema/worker-setup.js";
 import { normalizeOptionalString } from "../../packages/normalization-core/src/string-coerce.js";
 import { normalizeTrimmedStringList } from "../../packages/normalization-core/src/string-normalization.js";
 import type { ChannelConfigRuntimeSchema } from "../channels/plugins/types.config.js";
@@ -173,7 +178,10 @@ function normalizeManifestSetupProviderAuthEvidence(
   return normalized.length > 0 ? normalized : undefined;
 }
 
-export function normalizeManifestSetup(value: unknown): PluginManifestSetup | undefined {
+export function normalizeManifestSetup(
+  value: unknown,
+  workerProviders?: WorkerSetupDescriptor[],
+): PluginManifestSetup | undefined {
   if (!isRecord(value)) {
     return undefined;
   }
@@ -183,12 +191,47 @@ export function normalizeManifestSetup(value: unknown): PluginManifestSetup | un
   const requiresRuntime =
     typeof value.requiresRuntime === "boolean" ? value.requiresRuntime : undefined;
   const setup = {
+    ...(workerProviders?.length ? { workerProviders } : {}),
     ...(providers ? { providers } : {}),
     ...(cliBackends.length > 0 ? { cliBackends } : {}),
     ...(configMigrations.length > 0 ? { configMigrations } : {}),
     ...(requiresRuntime !== undefined ? { requiresRuntime } : {}),
   } satisfies PluginManifestSetup;
   return Object.keys(setup).length > 0 ? setup : undefined;
+}
+
+export function normalizeManifestWorkerSetup(
+  value: unknown,
+  pluginId: string,
+  ownedIds: readonly string[],
+): { ok: true; workerProviders?: WorkerSetupDescriptor[] } | { ok: false; error: string } {
+  if (!isRecord(value) || value.workerProviders === undefined) {
+    return { ok: true };
+  }
+  if (!Array.isArray(value.workerProviders) || value.workerProviders.length > 16) {
+    return { ok: false, error: "setup.workerProviders must be an array of at most 16 descriptors" };
+  }
+  const seen = new Set<string>();
+  const workerProviders: WorkerSetupDescriptor[] = [];
+  for (const entry of value.workerProviders) {
+    if (
+      !Value.Check(WorkerSetupDescriptorSchema, entry) ||
+      !ownedIds.includes(entry.id) ||
+      seen.has(entry.id)
+    ) {
+      return {
+        ok: false,
+        error:
+          "setup.workerProviders must contain unique descriptors owned by contracts.workerProviders",
+      };
+    }
+    if (Object.values(entry.methods).some((method) => !method.startsWith(`${pluginId}.`))) {
+      return { ok: false, error: "worker setup methods must use the declaring plugin's namespace" };
+    }
+    seen.add(entry.id);
+    workerProviders.push(entry);
+  }
+  return { ok: true, workerProviders };
 }
 
 export function normalizeManifestQaRunners(value: unknown): PluginManifestQaRunner[] | undefined {

@@ -184,6 +184,31 @@ describe("plugin management service", () => {
     ]);
   });
 
+  it("advertises worker setup from a disabled plugin without requiring runtime activation", async () => {
+    const snapshot = metadataSnapshot({ enabled: false, id: "compute" });
+    const workerSetup = [
+      {
+        id: "compute",
+        methods: {
+          describe: "compute.describe",
+          install: "compute.install",
+          prepare: "compute.prepare",
+          check: "compute.check",
+        },
+      },
+    ];
+    const manifest = { ...snapshot.plugins[0]!, setup: { workerProviders: workerSetup } };
+    mocks.metadata.mockReturnValue({
+      ...snapshot,
+      plugins: [manifest],
+      byPluginId: new Map([["compute", manifest]]),
+    });
+    const catalog = await listManagedPlugins({ config: {}, env: {} });
+    expect(catalog.plugins).toEqual([
+      expect.objectContaining({ id: "compute", enabled: false, state: "disabled", workerSetup }),
+    ]);
+  });
+
   it("normalizes package-shaped hosted rows and deduplicates their runtime id", async () => {
     mocks.metadata.mockReturnValue(emptyMetadataSnapshot());
     mockHostedOfficialCatalog([hostedFeedDiffsEntry]);

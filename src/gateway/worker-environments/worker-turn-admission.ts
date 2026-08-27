@@ -5,7 +5,8 @@ import {
 } from "../../agents/session-placement-admission.js";
 import { SessionManager } from "../../agents/sessions/session-manager.js";
 import { SESSION_WORK_ADMISSION_DRAIN_TIMEOUT_MS } from "../../sessions/session-lifecycle-admission.js";
-import { projectWorkerSessionTurnClaim } from "./placement-record.js";
+import { bindCloudSessionTestPlacementTurn } from "./cloud-session-test-cleanup.js";
+import { placementTurnOwner, projectWorkerSessionTurnClaim } from "./placement-record.js";
 import type {
   WorkerSessionPlacementRecord,
   WorkerSessionPlacementStore,
@@ -208,17 +209,54 @@ export async function claimWorkerTurn(params: {
   isCancellationRequested: (claim: WorkerSessionTurnClaim) => boolean;
   signal?: AbortSignal;
 }): Promise<{ placement: ActiveWorkerPlacement; turnClaim: WorkerSessionTurnClaim }> {
+  const claimId = randomUUID();
+  // Persist the producer-selected claim before installing it: a crash must
+  // never leave an allocated test worker with an unbound execution claim.
+  await bindCloudSessionTestPlacementTurn(
+    params.placement,
+    {
+      sessionId: params.identity.sessionId,
+      claimId,
+      runId: params.runId,
+      placementGeneration: params.placement.generation,
+      owner: placementTurnOwner(params.placement),
+    },
+    () => {
+      params.signal?.throwIfAborted();
+      const current = params.placements.get(params.identity.sessionId);
+      if (
+        current?.state !== "active" ||
+        current.generation !== params.placement.generation ||
+        current.environmentId !== params.placement.environmentId ||
+        current.activeOwnerEpoch !== params.placement.activeOwnerEpoch ||
+        current.turnClaim
+      ) {
+        throw new Error("Cloud test placement changed before turn admission");
+      }
+    },
+  );
   const claim = () =>
     params.placements.claimTurn({
       ...params.identity,
-      claimId: randomUUID(),
+      claimId,
       runId: params.runId,
-      owner: {
-        kind: "worker",
-        environmentId: params.placement.environmentId,
-        ownerEpoch: params.placement.activeOwnerEpoch,
-      },
+      owner: placementTurnOwner(params.placement),
     });
+  if (params.placement.executionMode === "remote-exec") {
+    const turnClaim = claim();
+    const refreshed = params.placements.get(params.identity.sessionId);
+    if (
+      refreshed?.state !== "active" ||
+      refreshed.executionMode !== "remote-exec" ||
+      refreshed.environmentId !== params.placement.environmentId ||
+      refreshed.activeOwnerEpoch !== params.placement.activeOwnerEpoch ||
+      refreshed.generation !== turnClaim.placementGeneration
+    ) {
+      await releaseClaimIfOwned(params.placements, turnClaim);
+      throw new Error("Remote-exec placement changed during turn admission");
+    }
+    return { placement: refreshed, turnClaim };
+  }
   try {
     return { placement: params.placement, turnClaim: claim() };
   } catch (error) {

@@ -649,6 +649,7 @@ export function createWorkerWorkspaceActions(
         );
       }
       return {
+        sourceManifest: current,
         get manifestRef() {
           return expectedRemoteRef();
         },

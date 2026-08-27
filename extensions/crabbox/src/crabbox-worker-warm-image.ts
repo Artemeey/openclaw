@@ -11,9 +11,11 @@ import {
   buildCrabboxWarmupArgs,
   nonEmptyString,
   type parseCrabboxProfile,
+  type resolveCrabboxProvisionProfile,
 } from "./crabbox-worker-profile.js";
 
 type CrabboxProfile = ReturnType<typeof parseCrabboxProfile>;
+type WarmImageProfile = CrabboxProfile & { class: string };
 type WarmImageRecord = {
   checkpointId: string;
   kind: string;
@@ -21,9 +23,14 @@ type WarmImageRecord = {
   createdAtMs: number;
   lastUsedAtMs: number;
 };
-type LeaseContext = { binary: string; id: string; provider: string };
+type LeaseContext = {
+  binary: string;
+  id: string;
+  provider: string;
+  runCommand?: CrabboxCommandRunner;
+};
 type AllocationContext = LeaseContext & {
-  profile: CrabboxProfile;
+  profile: ReturnType<typeof resolveCrabboxProvisionProfile>["profile"];
   slug: string;
   timeoutMs: () => number;
 };
@@ -54,7 +61,7 @@ fi
 rm -rf "$worker_root"
 `;
 
-function crabboxWarmImageKey(profile: CrabboxProfile): string {
+function crabboxWarmImageKey(profile: WarmImageProfile): string {
   return createHash("sha256")
     .update(
       JSON.stringify({
@@ -150,7 +157,7 @@ export function createCrabboxWarmImageManager(dependencies: {
       action: action === "scrub" ? action : `checkpoint ${action}`,
       args,
       binary: context.binary,
-      runCommand: dependencies.runCommand,
+      runCommand: context.runCommand ?? dependencies.runCommand,
       timeoutMs,
       ...(input === undefined ? {} : { input }),
     });
@@ -231,7 +238,9 @@ export function createCrabboxWarmImageManager(dependencies: {
       ]),
     );
 
-  const forkImage = async (context: AllocationContext): Promise<boolean> => {
+  const forkImage = async (
+    context: AllocationContext & { profile: WarmImageProfile },
+  ): Promise<boolean> => {
     try {
       await collectExpiredImages(context);
       const key = crabboxWarmImageKey(context.profile);
@@ -291,7 +300,7 @@ export function createCrabboxWarmImageManager(dependencies: {
   };
 
   return {
-    async capture(context: LeaseContext & { profile: CrabboxProfile; eligible: boolean }) {
+    async capture(context: LeaseContext & { profile: WarmImageProfile }) {
       const key = crabboxWarmImageKey(context.profile);
       let reservation: WarmImageRecord | undefined;
       try {
@@ -316,7 +325,7 @@ export function createCrabboxWarmImageManager(dependencies: {
             await deleteImage(context, key, existing);
           }
         }
-        if (!context.eligible || !(await makeRoomForCapture(context))) {
+        if (!(await makeRoomForCapture(context))) {
           return;
         }
         const now = Date.now();
@@ -373,7 +382,10 @@ export function createCrabboxWarmImageManager(dependencies: {
     },
 
     async allocate(context: AllocationContext): Promise<void> {
-      if (context.profile.warmImage && (await forkImage(context))) {
+      if (
+        context.profile.warmImage &&
+        (await forkImage({ ...context, profile: context.profile }))
+      ) {
         return;
       }
       // Fork failure before create-intent permits cold warmup on the same fixed lease.
@@ -383,7 +395,7 @@ export function createCrabboxWarmImageManager(dependencies: {
         action: "warmup",
         args: buildCrabboxWarmupArgs(context.profile, context.id, context.slug),
         binary: context.binary,
-        runCommand: dependencies.runCommand,
+        runCommand: context.runCommand ?? dependencies.runCommand,
         timeoutMs: context.timeoutMs(),
       });
       if (result.termination === "exit" && result.code === 0) {

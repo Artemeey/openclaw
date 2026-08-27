@@ -70,6 +70,9 @@ export function generationValidPrivateFieldsForSameSession(
     return undefined;
   }
   const state: Partial<InternalSessionEntry> = {
+    ...(existingEntry.cloudSessionTestCleanup
+      ? { cloudSessionTestCleanup: existingEntry.cloudSessionTestCleanup }
+      : {}),
     ...(existingEntry.activeWriterRunId !== undefined
       ? { activeWriterRunId: existingEntry.activeWriterRunId }
       : {}),
@@ -105,6 +108,11 @@ export function clearGenerationPrivateFieldsForRotatedSessionPatch(
         ...publicPatch,
         ...SESSION_ENTRY_PRIVATE_CLEAR_PATCH,
         ...MAIN_SESSION_RECOVERY_CLEAR_PATCH,
+        // Cleanup intent survives rotation as a stale diagnostic. Only the
+        // worker lifecycle may clear it after proving physical teardown.
+        ...(existingEntry.cloudSessionTestCleanup
+          ? { cloudSessionTestCleanup: existingEntry.cloudSessionTestCleanup }
+          : {}),
       }
     : publicPatch;
 }
@@ -135,6 +143,9 @@ export function reconcilePluginSessionStore(params: {
           ...projectedEntry,
           ...SESSION_ENTRY_PRIVATE_CLEAR_PATCH,
           ...MAIN_SESSION_RECOVERY_CLEAR_PATCH,
+          ...(existingEntry.cloudSessionTestCleanup
+            ? { cloudSessionTestCleanup: existingEntry.cloudSessionTestCleanup }
+            : {}),
         }
       : existingPrivateFields
         ? { ...projectedEntry, ...existingPrivateFields }

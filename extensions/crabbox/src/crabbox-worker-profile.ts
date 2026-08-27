@@ -7,6 +7,7 @@ import {
   type WorkerProfile,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { normalizeOptionalString as nonEmptyString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { CRABBOX_CONNECTION_ID } from "./crabbox-connections.js";
 import { CRABBOX_HEARTBEAT_TIMEOUT_MS } from "./crabbox-worker-timeouts.js";
 
 export { nonEmptyString };
@@ -14,11 +15,15 @@ export { nonEmptyString };
 const PROFILE_KEYS = new Set([
   "binary",
   "class",
+  "connectionId",
   "desktop",
   "idleTimeout",
+  "organizationId",
   "provider",
   "setup",
   "setupEnv",
+  "snapshot",
+  "target",
   "ttl",
   "warmImage",
 ]);
@@ -39,7 +44,11 @@ const DURATION_UNIT_NANOSECONDS: Readonly<Record<string, bigint>> = {
 
 type CrabboxProfile = {
   binary?: string;
-  class: string;
+  class?: string;
+  connectionId?: string;
+  organizationId?: string;
+  snapshot?: string;
+  target?: string;
   desktop?: boolean;
   heartbeatIntervalMs: number;
   heartbeatTimeoutMs: number;
@@ -51,7 +60,6 @@ type CrabboxProfile = {
   warmImage: boolean;
 };
 
-const CRABBOX_FALLBACK_MACHINE_CLASSES = ["standard", "fast", "large", "beast"] as const;
 const MAX_CRABBOX_MACHINE_CLASS_LENGTH = 128;
 const MAX_CRABBOX_MACHINE_OPTIONS = 32;
 const CRABBOX_DESKTOP_PROVIDERS = new Set(["aws", "hetzner"]);
@@ -115,7 +123,7 @@ function heartbeatIntervalMs(idleTimeoutMs: number): number {
   return Math.min(referenceIntervalMs, Math.max(1, Math.floor(idleTimeoutMs / 2)));
 }
 
-export function parseCrabboxProfile(profile: WorkerProfile): CrabboxProfile {
+export function parseCrabboxProfile(profile: Readonly<Record<string, unknown>>): CrabboxProfile {
   for (const key of Object.keys(profile)) {
     if (!PROFILE_KEYS.has(key)) {
       throw new WorkerProviderError(`unknown Crabbox profile setting: ${key}`);
@@ -124,10 +132,17 @@ export function parseCrabboxProfile(profile: WorkerProfile): CrabboxProfile {
 
   const provider = nonEmptyString(profile.provider)?.toLowerCase();
   const machineClass = nonEmptyString(profile.class);
+  const connectionId = nonEmptyString(profile.connectionId);
+  if (
+    profile.connectionId !== undefined &&
+    (!connectionId || !CRABBOX_CONNECTION_ID.test(connectionId))
+  ) {
+    throw new WorkerProviderError("Crabbox profile connectionId is invalid");
+  }
   if (!provider) {
     throw new WorkerProviderError("Crabbox profile provider must be a non-empty string");
   }
-  if (!machineClass) {
+  if (profile.class !== undefined && !machineClass) {
     throw new WorkerProviderError("Crabbox profile class must be a non-empty string");
   }
   const { duration: ttl } = requirePositiveDuration(profile.ttl, "ttl");
@@ -165,6 +180,11 @@ export function parseCrabboxProfile(profile: WorkerProfile): CrabboxProfile {
       if (name === "CRABBOX_ENV_ALLOW") {
         throw new WorkerProviderError(`Crabbox profile setupEnv name ${name} is reserved`);
       }
+      if (connectionId && (name.startsWith("CRABBOX_") || name.startsWith("DAYTONA_"))) {
+        throw new WorkerProviderError(
+          "Crabbox connection control variables cannot be forwarded to workers",
+        );
+      }
       return name;
     });
     if (new Set(setupEnv).size !== setupEnv.length) {
@@ -187,9 +207,37 @@ export function parseCrabboxProfile(profile: WorkerProfile): CrabboxProfile {
   if (warmImage !== undefined && typeof warmImage !== "boolean") {
     throw new WorkerProviderError("Crabbox profile warmImage must be a boolean");
   }
+  if (connectionId && (provider !== "daytona" || warmImage === true)) {
+    throw new WorkerProviderError(
+      "This named connection does not support the selected provider or warm images",
+    );
+  }
+  for (const key of ["organizationId", "snapshot", "target"] as const) {
+    const value = profile[key];
+    if (
+      value !== undefined &&
+      (!connectionId || typeof value !== "string" || !value.trim() || value.length > 256)
+    ) {
+      throw new WorkerProviderError(
+        `Crabbox profile ${key} requires a named connection and a bounded non-empty value`,
+      );
+    }
+  }
+  if (
+    connectionId &&
+    (!nonEmptyString(profile.organizationId) || !nonEmptyString(profile.snapshot))
+  ) {
+    throw new WorkerProviderError(
+      "Named Crabbox profiles require an explicit organizationId and snapshot before allocation",
+    );
+  }
   return {
     binary,
     class: machineClass,
+    connectionId,
+    organizationId: nonEmptyString(profile.organizationId),
+    snapshot: nonEmptyString(profile.snapshot),
+    target: nonEmptyString(profile.target),
     desktop,
     heartbeatIntervalMs: heartbeatIntervalMs(idleTimeoutMs),
     heartbeatTimeoutMs: Math.min(
@@ -225,7 +273,10 @@ function resolveCrabboxProfileSetupEnv(
 export function resolveCrabboxProvisionProfile(
   profile: WorkerProfile,
   requestedClassValue: unknown,
-): { profile: CrabboxProfile; forwardedEnv?: Record<string, string> } {
+): {
+  profile: CrabboxProfile & ({ class: string } | { warmImage: false });
+  forwardedEnv?: Record<string, string>;
+} {
   const configured = parseCrabboxProfile(profile);
   const requestedClass = nonEmptyString(requestedClassValue);
   if (
@@ -236,32 +287,41 @@ export function resolveCrabboxProvisionProfile(
       "Crabbox machine class must be a non-empty string of at most 128 characters",
     );
   }
-  const resolved = requestedClass ? { ...configured, class: requestedClass } : configured;
+  const machineClass = requestedClass ?? configured.class;
+  // Image identity must use the effective placement class, before any provider command.
+  if (configured.warmImage && !machineClass) {
+    throw new WorkerProviderError(
+      "Crabbox warmImage requires a configured class or an explicit machine class",
+    );
+  }
+  const resolved = machineClass
+    ? { ...configured, class: machineClass }
+    : { ...configured, warmImage: false as const };
   return { profile: resolved, forwardedEnv: resolveCrabboxProfileSetupEnv(resolved.setupEnv) };
 }
 
 export function listCrabboxMachineOptions(
-  configuredClass: string,
-  shapes: readonly CrabboxMachineShape[] | undefined,
+  configuredClass: string | undefined,
+  shapes: readonly CrabboxMachineShape[] = [],
 ): readonly WorkerMachineOption[] {
   const seen = new Set<string>();
-  const reportedShapes = shapes?.filter((shape) => {
+  const candidates = shapes.filter((shape) => {
     if (shape.class.length > MAX_CRABBOX_MACHINE_CLASS_LENGTH || seen.has(shape.class)) {
       return false;
     }
     seen.add(shape.class);
     return true;
   });
-  const candidates: readonly CrabboxMachineShape[] = reportedShapes?.length
-    ? reportedShapes
-    : CRABBOX_FALLBACK_MACHINE_CLASSES.map((machineClass) => ({ class: machineClass }));
-  const catalogLimit = candidates
-    .slice(0, MAX_CRABBOX_MACHINE_OPTIONS)
-    .some((shape) => shape.class === configuredClass)
-    ? MAX_CRABBOX_MACHINE_OPTIONS
-    : MAX_CRABBOX_MACHINE_OPTIONS - 1;
-  // Built by assignment rather than conditional spread: oxlint's no-map-spread
-  // rejects spreading to shape objects inside a map callback.
+  if (candidates.length === 0) {
+    return [];
+  }
+  const catalogLimit =
+    !configuredClass ||
+    candidates
+      .slice(0, MAX_CRABBOX_MACHINE_OPTIONS)
+      .some((shape) => shape.class === configuredClass)
+      ? MAX_CRABBOX_MACHINE_OPTIONS
+      : MAX_CRABBOX_MACHINE_OPTIONS - 1;
   const options = candidates.slice(0, catalogLimit).map((shape) => {
     const id = shape.class;
     const result: {
@@ -271,10 +331,10 @@ export function listCrabboxMachineOptions(
       memoryGb?: number;
       default?: boolean;
     } = { id, label: id.replace(/^./u, (initial) => initial.toUpperCase()) };
-    if (shape?.cpu !== undefined) {
+    if (shape.cpu !== undefined) {
       result.cpu = shape.cpu;
     }
-    if (shape?.memoryGb !== undefined) {
+    if (shape.memoryGb !== undefined) {
       result.memoryGb = shape.memoryGb;
     }
     if (id === configuredClass) {
@@ -282,17 +342,14 @@ export function listCrabboxMachineOptions(
     }
     return result;
   });
-  if (options.some((option) => option.id === configuredClass)) {
-    return options;
-  }
-  return [
-    ...options,
-    {
+  if (configuredClass && !options.some((option) => option.id === configuredClass)) {
+    options.push({
       id: configuredClass,
       label: configuredClass,
       default: true,
-    },
-  ];
+    });
+  }
+  return options;
 }
 
 export function buildCrabboxWarmupArgs(
@@ -307,8 +364,7 @@ export function buildCrabboxWarmupArgs(
     "--network",
     "public",
     "--tailscale=false",
-    "--class",
-    profile.class,
+    ...(profile.class ? ["--class", profile.class] : []),
     "--ttl",
     profile.ttl,
     "--idle-timeout",
@@ -362,6 +418,7 @@ export function findCrabboxBinary(params: {
   openclawRoot: string;
   pathEnv?: string;
   platform?: NodeJS.Platform;
+  includeSibling?: boolean;
 }): string | undefined {
   const platform = params.platform ?? process.platform;
   const isExecutable =
@@ -370,7 +427,9 @@ export function findCrabboxBinary(params: {
     return isExecutable(params.explicit) ? params.explicit : undefined;
   }
   const siblingBase = path.resolve(params.openclawRoot, "../crabbox/bin/crabbox");
-  for (const candidate of binaryCandidates(siblingBase, platform)) {
+  for (const candidate of params.includeSibling === false
+    ? []
+    : binaryCandidates(siblingBase, platform)) {
     if (isExecutable(candidate)) {
       return candidate;
     }

@@ -1018,6 +1018,10 @@ class PluginsPage extends OpenClawLightDomElement {
           onShowDetails: (pluginId) => {
             this.detailPluginId = pluginId;
           },
+          onConfigureCloud: (pluginId) =>
+            this.context.navigate("cloud-workers", {
+              search: `?${new URLSearchParams({ plugin: pluginId })}`,
+            }),
           onSetEnabled: (pluginId, enabled, rowKey) =>
             void this.updateEnabled(pluginId, enabled, rowKey),
           onInstall: (request, installIdentity) => void this.install(request, installIdentity),

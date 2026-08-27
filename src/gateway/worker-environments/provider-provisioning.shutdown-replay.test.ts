@@ -6,6 +6,7 @@ import {
 } from "../../../packages/gateway-protocol/src/client-info.js";
 import { WORKER_EXECUTION_CONTEXT_PROTOCOL_FEATURE } from "../../../packages/gateway-protocol/src/schema/worker-admission.js";
 import { NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE } from "../../infra/node-runner-inventory.js";
+import type { WorkerNodeRuntime } from "../../plugins/types.js";
 import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
@@ -27,6 +28,7 @@ describe("worker node provisioning shutdown replay", () => {
     const deviceId = "device-node-shutdown-replay";
     const leaseId = "lease-node-shutdown-replay";
     const operationIds: string[] = [];
+    const runtimes: WorkerNodeRuntime[] = [];
     const physicalLeases = new Set<string>();
     const destroy = vi.fn(async ({ leaseId: destroyedLeaseId }: { leaseId: string }) => {
       physicalLeases.delete(destroyedLeaseId);
@@ -37,6 +39,8 @@ describe("worker node provisioning shutdown replay", () => {
       provisionBeforeInstallation: true,
       requiresNodeEnrollment: true,
       provision: async (_profile, operationId, options) => {
+        const runtime = expectDefined(options?.nodeRuntime, "runtime metadata before enrollment");
+        runtimes.push(runtime);
         operationIds.push(operationId);
         if (!physicalLeases.has(leaseId)) {
           physicalLeases.add(leaseId);
@@ -46,6 +50,8 @@ describe("worker node provisioning shutdown replay", () => {
         if (!enrollment) {
           throw new Error("node enrollment was not prepared");
         }
+        expect(enrollment.openclawVersion).toBe(runtime.openclawVersion);
+        expect(enrollment.packageSpecs).toBe(runtime.packageSpecs);
         return {
           leaseId,
           node: { deviceId: await enrollment.waitForDeviceId() },
@@ -97,6 +103,7 @@ describe("worker node provisioning shutdown replay", () => {
       protocolFeatures: [WORKER_EXECUTION_CONTEXT_PROTOCOL_FEATURE],
     };
     const first = support.createService(provider, {
+      nodeRuntime: firstEnrollment.runtime,
       prepareNodeEnrollment: firstEnrollment.begin,
       stopNodeEnrollmentWaits: firstEnrollment.stop,
       ensureNodeWorkerBundle: async () => receipt,
@@ -198,6 +205,7 @@ describe("worker node provisioning shutdown replay", () => {
       stopAll: vi.fn(async () => {}),
     };
     const restarted = support.createService(provider, {
+      nodeRuntime: restartedEnrollment.runtime,
       prepareNodeEnrollment: restartedEnrollment.begin,
       stopNodeEnrollmentWaits: restartedEnrollment.stop,
       ensureNodeWorkerBundle: async () => receipt,
@@ -246,6 +254,9 @@ describe("worker node provisioning shutdown replay", () => {
       provisionOperationId: intent.provisionOperationId,
     });
     expect(operationIds).toEqual([intent.provisionOperationId, intent.provisionOperationId]);
+    expect(runtimes).toHaveLength(2);
+    expect(runtimes[0]).toBe(firstEnrollment.runtime);
+    expect(runtimes[1]).toBe(restartedEnrollment.runtime);
     expect(physicalAllocations).toBe(1);
     expect(physicalLeases).toEqual(new Set([leaseId]));
     expect(syncWorkspace).toHaveBeenCalledOnce();

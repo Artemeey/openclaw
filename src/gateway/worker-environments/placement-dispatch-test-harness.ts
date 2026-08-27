@@ -18,7 +18,10 @@ import {
 import { createWorkerPlacementDispatchService } from "./placement-dispatch.js";
 import { createWorkerPlacementRunnerAvailabilityReader } from "./placement-projector.js";
 import { completeReclaimedWorkspaceTeardown } from "./placement-teardown.js";
-import { WorkerTunnelOwnerDisconnectedError } from "./tunnel-contract.js";
+import {
+  WorkerTunnelOwnerDisconnectedError,
+  type WorkerWorkspaceSyncResult,
+} from "./tunnel-contract.js";
 import type { WorkerTunnelHandle } from "./tunnel.js";
 import type { WorkerWorkspaceRecoveryFailureReport } from "./workspace-conflicts.js";
 import {
@@ -29,6 +32,8 @@ import {
 export function createHarness(
   placementStore: PlacementStore,
   options: {
+    testLifecycle?: Parameters<typeof createWorkerPlacementDispatchService>[0]["testLifecycle"];
+    environmentService?: WorkerDispatchEnvironmentService;
     failAt?: DispatchStage;
     destroyFails?: boolean;
     destroyFailureCount?: number;
@@ -45,6 +50,7 @@ export function createHarness(
     localVerifyFails?: boolean;
     resumeFails?: boolean;
     workspacePath?: string;
+    workspaceSyncResult?: WorkerWorkspaceSyncResult;
     priorWorkspaceResultConflict?: { paths: string[]; stagedResultRef: string };
     reconcileConflictPaths?: string[];
     workspaceOperations?: WorkerWorkspaceOperationCoordinator;
@@ -313,11 +319,13 @@ export function createHarness(
     })),
     syncWorkspace: vi.fn(async () => {
       fail("sync");
-      return {
-        mode: "git" as const,
-        remoteWorkspaceDir: "/worker/workspace",
-        manifestRef: MANIFEST_REF,
-      };
+      return (
+        options.workspaceSyncResult ?? {
+          mode: "git" as const,
+          remoteWorkspaceDir: "/worker/workspace",
+          manifestRef: MANIFEST_REF,
+        }
+      );
     }),
     stop: vi.fn(async () => {}),
   });
@@ -386,8 +394,9 @@ export function createHarness(
     }),
   };
   const service = createWorkerPlacementDispatchService({
+    testLifecycle: options.testLifecycle,
     placements,
-    environments,
+    environments: options.environmentService ?? environments,
     runnerAvailability: createWorkerPlacementRunnerAvailabilityReader({
       environments,
       hasCurrentDeviceRunner: () => options.deviceRunnerAvailable === true,

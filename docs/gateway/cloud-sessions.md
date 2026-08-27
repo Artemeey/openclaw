@@ -37,9 +37,11 @@ See [Nodes](/nodes) for pairing, capacity, isolation, and offline behavior, and 
 
 ## Cloud workers: rented machines through Crabbox
 
-Configure a profile under `cloudWorkers.profiles` and the bundled Crabbox plugin provisions machines on demand across cloud backends (AWS, Hetzner, and others), runs your setup command, enrolls the box as a temporary node, and tears everything down when the session stops. The machine is disposable by design: no standing credentials live on it, and the durable state stays with the Gateway.
+Open **Settings → Connections → Cloud sessions** or choose **Set up cloud…** in New Session's Place picker. Guided setup enables the bundled optional Crabbox plugin, installs its CLI after confirmation when needed, and saves the provider API key through the existing protected SQLite secret store. Configuration keeps only the SecretRef. Saving and checking a connection do not allocate a machine; a separately confirmed test session can incur cloud and model charges.
 
-See [Cloud Workers](/gateway/cloud-workers) for profiles, requirements, dispatching, moving sessions between destinations, and the security model.
+The plugin provisions machines on demand, prepares the runtime, enrolls the box as a temporary node, and tears it down when the session stops. The machine is disposable by design: no standing cloud or model credentials live on it, and durable state stays with the Gateway. Existing manual `cloudWorkers.profiles` configurations remain editable through **Advanced**.
+
+See [Cloud Workers](/gateway/cloud-workers#connect-a-cloud-provider-in-settings) for guided setup, provider capability requirements, test cleanup, dispatching, moving sessions, and the security model.
 
 ## Automatic load balancing across devices
 

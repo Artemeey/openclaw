@@ -3,6 +3,7 @@ import type { OpenClawConfig } from "../../config/types.js";
 import type { SecretRef } from "../../config/types.secrets.js";
 import type {
   WorkerNodeEnrollment,
+  WorkerNodeRuntime,
   WorkerProfile,
   WorkerProvider,
   WorkerSshEndpoint,
@@ -39,6 +40,7 @@ export type WorkerProviderLifecycleInputOptions = {
     keyRef: SecretRef;
   }) => Promise<WorkerSshIdentity>;
   ensureNodeWorkerBundle?: (deviceId: string) => Promise<WorkerAdmissionHandshake>;
+  nodeRuntime?: WorkerNodeRuntime;
   prepareNodeEnrollment?: (record: WorkerEnvironmentRecord) => Promise<WorkerNodeEnrollment>;
   retireNodeEnrollment?: (record: WorkerEnvironmentRecord) => Promise<void>;
   providerCallTimeoutMs?: number;

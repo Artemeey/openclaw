@@ -63,6 +63,7 @@ function createProps(overrides: Partial<PluginsViewProps> = {}): PluginsViewProp
     onRefresh: () => undefined,
     onIconError: () => undefined,
     onShowDetails: () => undefined,
+    onConfigureCloud: () => undefined,
     onSetEnabled: () => undefined,
     onInstall: () => undefined,
     onDismissMessage: () => undefined,

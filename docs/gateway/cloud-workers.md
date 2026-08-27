@@ -14,7 +14,7 @@ Enrollment is environment-owned and replay-safe. The Gateway persists one setup 
 When the work is done (or the box dies), the machine is discarded. The durable state — transcript, last-reconciled workspace files, and placement records — lives with the Gateway.
 
 <Note>
-Cloud workers are opt-in. Until you configure a profile, clients hide the Cloud destination and profile dispatch is unavailable. `sessions.dispatch` may still be advertised for eligible paired-device targets. The `cloudWorkers` config schema and the read-only `environments.list` and `environments.status` methods remain available for configuration and environment discovery.
+Cloud workers are opt-in. Until you configure a profile, no Cloud destination is selectable and profile dispatch is unavailable. Administrators can still choose **Set up cloud…** in the New Session Place picker. `sessions.dispatch` may remain available for eligible paired-device targets. The `cloudWorkers` config schema and the read-only `environments.list` and `environments.status` methods remain available for configuration and environment discovery.
 </Note>
 
 ## What runs where
@@ -35,11 +35,29 @@ OpenClaw `worker-turn` sessions can open [portals](/gateway/portals) on node-bac
 
 For a loopback Gateway behind public HTTPS ingress, set `gateway.publicOrigin` to the proxy's bare origin. Node enrollment uses it as the default external pairing endpoint; `plugins.entries.device-pair.config.publicUrl` remains the pairing-specific override. If either URL is behind a reverse proxy, including cloudflared, nginx, or externally managed Tailscale Serve, `gateway.trustedProxies` must include the proxy's source address (typically loopback for a same-host proxy). Otherwise, forwarded client headers cause node enrollment to fail with `proxy_attribution_required`.
 
+## Connect a cloud provider in Settings
+
+Open **Settings → Connections → Cloud sessions**, then choose **Add cloud provider**. You can also choose **Set up cloud…** in the New Session Place picker; the draft stays intact, and **Start session** returns with the saved profile selected.
+
+1. Enable the bundled Crabbox plugin. It ships with OpenClaw but is optional; no separate plugin download is needed.
+2. If requested, confirm installation of the Crabbox CLI on the Gateway host. OpenClaw verifies the pinned release artifact before installing it privately. A compatible existing executable can remain operator-managed.
+3. Choose a guided provider, name the connection, enter its API key, and select the provider's machine settings. Daytona uses an explicit Linux snapshot, not an invented machine class.
+4. Save, then let the Gateway apply the configuration and restart when required. New keys become protected entries in the existing SQLite secret store; configuration contains only SecretRefs.
+5. Run the read-only connection check. It distinguishes credential access, lifecycle compatibility, and configured-but-unproven Gateway connectivity. It does not create a worker.
+6. Optionally choose **Run test session** and explicitly confirm the cloud and model charges. Only this step allocates a test worker.
+
+The test creates an ordinary managed-worktree session, runs a real agent turn, verifies a file roundtrip, and reclaims the worker. A pass requires verified teardown, not just a successful credential check or a session appearing in the sidebar. Navigating away does not cancel server-owned cleanup. Cancellation can remain **cleanup pending** until release is verified. After a Gateway restart, the test is interrupted rather than replayed; durable cleanup intent allows the Gateway to reclaim only that exact test placement. An interrupted test never becomes a pass merely because its environment disappears.
+
+Saved keys are write-only through the secret-store API, but the SQLite store is **not encrypted at rest**. Protect the Gateway's state directory and backups. Cloud control credentials are resolved only for the selected connection's local Crabbox commands; they are not forwarded to worker setup or agent tools. See [Secrets](/gateway/secrets).
+
+Use **Advanced** for existing manual profiles and provider configurations without guided setup. Removing a profile also removes project defaults that reference it, but retains its connection and secret so outstanding workers can still be cleaned up.
+
 ## Requirements
 
-- A worker provider plugin. The bundled `crabbox` plugin drives the [Crabbox](https://github.com/openclaw/crabbox) CLI, which brokers leases across cloud backends (AWS, Hetzner, and others). Install Crabbox 0.41.1 or newer for the operating-system user that runs the Gateway and put it on that user's `PATH`, or set `settings.binary` to its absolute path. Keeping placed workers alive also requires a release that includes `crabbox heartbeat` (added after v0.43.0). Versions through 0.43.0 can allocate fixed-ID worker leases but lack heartbeat support; OpenClaw continues operating with one warning, and the coordinator may reap a placed worker after its `idleTimeout`.
+- A worker provider plugin and compatible provider tooling. The bundled `crabbox` plugin drives the [Crabbox](https://github.com/openclaw/crabbox) CLI. Settings can install the pinned CLI after confirmation; alternatively, put a compatible version on the Gateway user's `PATH` or set `settings.binary` to its absolute path. Capability checks are provider-specific: a working CLI alone does not prove a backend supports repeatable lease IDs or the required setup transport.
+- A public TLS Gateway endpoint reachable from the worker. A configured URL is not a connectivity test; the real test session verifies the outbound node path. Configure trusted proxy sources as described above when using an HTTPS reverse proxy.
+- A Linux snapshot capable of running supported Node.js. The plugin prepares a supported Node runtime and the exact released OpenClaw version before enrollment. Automatic Node installation requires Linux x64 or arm64, compatible glibc, and `curl`, `sha256sum`, `tar`, and `mktemp`. Other images need an idempotent `settings.setup` command.
 - For Crabbox AWS workers, the effective `aws.instanceProfile` must be empty. The provider checks `crabbox config show --json` before allocation, then requires `crabbox inspect --json` to report `providerMetadata.instanceProfileAttached: false` from EC2 `DescribeInstances`. Leases with an instance role or without authoritative metadata are stopped and rejected.
-- Node.js on the leased machine. Bare cloud images usually lack it — install it in the profile's `setup` command.
 - A live, registry-owned session managed worktree (create one with `worktree: true`). Cloud dispatch does not accept an arbitrary plain directory. After dispatch admission, the workspace transport may use manifest mirroring if Git metadata later becomes unavailable; this transport behavior does not make plain directories dispatchable.
 
 ### Coordinator-backed Crabbox
@@ -84,24 +102,48 @@ Keep the token out of repository config and shell arguments.
 
 ### Daytona
 
-The bundled Crabbox provider can also lease [Daytona](https://www.daytona.io) sandboxes as cloud workers (`settings.provider: "daytona"`). Unlike AWS, Daytona needs no separate `crabbox login` step: export `DAYTONA_API_KEY` (from the [Daytona dashboard](https://app.daytona.io/dashboard/keys)) in the Gateway process's environment before Crabbox allocates a lease. Verify it without provisioning anything:
+For [Daytona](https://www.daytona.io), use guided Settings setup with a key from the [Daytona dashboard](https://app.daytona.io/dashboard/keys), the organization ID for that account, and an explicit Linux snapshot. The organization ID binds repeatable lease operations to the intended account; the current API-key metadata endpoint does not expose it, so an empty account cannot discover it from inventory. The snapshot determines machine sizing; direct Daytona does not accept synthetic Crabbox classes. It must provide Bash. Do not assume it includes Node.js or OpenClaw merely from its name.
 
-```bash
-DAYTONA_API_KEY=<key> crabbox doctor --provider daytona --json
-```
+<Warning>
+Direct Daytona requires a Crabbox build that supports fixed-ID allocation and script execution for that backend. Releases through 0.46.0 do not support the complete flow. Settings checks the selected executable's capabilities and reports unsupported lifecycle support separately from successful credential access. Saving a connection does not remove that dependency requirement.
+</Warning>
 
-A `daytona-fallback auth=ready control_plane=ready inventory=ready` finding confirms the key authenticates; `mutation=false` means the check is read-only. Daytona leases are Linux-only (`target: linux`) and reachable over SSH like any other Crabbox `ssh-lease` provider. Crabbox's default Daytona snapshot already ships Node.js and `npx`, so `settings.setup` is optional here — keep it only if your own snapshot needs it, as an idempotent guard like the AWS example above.
+This example references an existing protected secret named `DAYTONA_API_KEY`; it contains no key value:
 
 ```json
 {
+  "plugins": {
+    "entries": {
+      "crabbox": {
+        "enabled": true,
+        "config": {
+          "connections": {
+            "daytona": {
+              "label": "Daytona",
+              "provider": "daytona",
+              "credentials": {
+                "apiKey": {
+                  "source": "store",
+                  "provider": "default",
+                  "id": "DAYTONA_API_KEY"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
   "cloudWorkers": {
     "profiles": {
       "daytona": {
         "provider": "crabbox",
-        "install": "bundle",
+        "suspendAfter": "15m",
         "settings": {
           "provider": "daytona",
-          "class": "beast",
+          "connectionId": "daytona",
+          "organizationId": "<daytona-organization-id>",
+          "snapshot": "<linux-snapshot>",
           "ttl": "8h",
           "idleTimeout": "45m"
         }
@@ -111,11 +153,21 @@ A `daytona-fallback auth=ready control_plane=ready inventory=ready` finding conf
 }
 ```
 
-`class` defaults to `beast` (Crabbox's own default for this provider) when omitted; `crabbox providers describe daytona --json` lists the full flag set. Provide `DAYTONA_API_KEY` as an environment variable on the Gateway process (for example through a systemd `EnvironmentFile`), the same way other credential-bearing provider secrets are supplied — never in `openclaw.json` itself.
+`connectionId` selects the protected credential context. `organizationId`, `snapshot`, and optional native `target` are nonsecret settings retained with the profile. The plugin supplies the organization through the selected child's native environment input, not the Gateway's global environment. Named connections never fall back to ambient credentials or a saved CLI login. A missing or unresolved reference makes that connection unavailable without disabling unrelated connections.
+
+Keep Crabbox's claim store stable across commands and Gateway restarts: temporary per-command configuration is safe, but replacing its home/state directory each time would lose allocation intents and release tombstones. Direct and coordinator-backed Daytona are different backend paths; proof for one does not establish the other's capabilities.
+
+For named connections, run **Check connection** in Settings or call the plugin's read-only method:
+
+```bash
+openclaw gateway call crabbox.setup.check --params '{"profileId":"daytona"}'
+```
+
+An ordinary `crabbox doctor` command does not read OpenClaw's protected secret store. Existing profiles without `connectionId` continue using their operator-managed Crabbox configuration and credential environment; keep those credentials out of `settings.setup` and plaintext OpenClaw configuration.
 
 ## Configuration
 
-Manage profiles in the Control UI under **Settings → Connections → Cloud workers**, or edit `cloudWorkers.profiles` directly in `openclaw.json` — both write the same config keys. The settings page lists each profile's backend, class, lifetime, and idle-stop in plain language, and shows whether it is advertised to `environments.list` or waiting on a Gateway restart. With no profiles configured it explains the feature, links back to this page, and starts the add flow.
+Manage connections and profiles under **Settings → Connections → Cloud sessions**. Guided setup and the **Advanced** configuration editor write the same `cloudWorkers.profiles` keys. The profile list also includes manual profiles and profiles whose plugin has no guided setup descriptor. A configured or advertised profile is not evidence of a successful cloud session.
 
 Add a profile under `cloudWorkers.profiles` in `openclaw.json`:
 
@@ -132,8 +184,7 @@ Add a profile under `cloudWorkers.profiles` in `openclaw.json`:
           "class": "standard",
           "ttl": "8h",
           "idleTimeout": "45m",
-          "warmImage": true,
-          "setup": "test -x /usr/bin/node || (curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs)"
+          "warmImage": true
         }
       }
     }
@@ -165,7 +216,7 @@ Use `cloudWorkers.projectProfiles` to select a default profile from a managed se
 }
 ```
 
-An explicit `profileId` or `deviceId` in `sessions.dispatch` always wins. A target-less project-profile lookup requires `operator.admin`. Deleting a profile from the Cloud workers settings also removes project defaults that reference it. If a manually configured mapping names a profile that is not present in `cloudWorkers.profiles`, dispatch fails closed and names both the repository key and missing profile. A worktree with no `origin` or no matching mapping returns a typed `INVALID_REQUEST` without provisioning or falling back to another target.
+An explicit `profileId` or `deviceId` in `sessions.dispatch` always wins. A target-less project-profile lookup requires `operator.admin`. Deleting a profile from Cloud sessions settings also removes project defaults that reference it, while retaining its connection and credentials for outstanding cleanup. If a manually configured mapping names a profile that is not present in `cloudWorkers.profiles`, dispatch fails closed and names both the repository key and missing profile. A worktree with no `origin` or no matching mapping returns a typed `INVALID_REQUEST` without provisioning or falling back to another target.
 
 The enrolled node stores its identity, durable device token, endpoint, worker bundles, and workspaces under an isolated per-lease state directory on the disposable box. Provision replay first adopts the fixed Crabbox lease, then either resumes that node state or reuses the still-pending setup credential. It never mints a second environment identity for the same operation.
 
@@ -173,24 +224,17 @@ OpenClaw derives one canonical `cbx_...` lease ID from the durable provision ope
 
 ### The setup command
 
-`settings.setup` runs on the leased box after Crabbox reports it ready and before ephemeral node enrollment. It runs on **every** provision attempt, including replay after an interrupted dispatch, so it must be idempotent — guard installs with a `command -v`/`test -x` check as in the example. At minimum, the resulting machine needs Node.js and `npx`. If setup or enrollment fails, the provider stops the lease and the dispatch fails closed; no half-configured paid box is hidden behind terminal state.
+`settings.setup` is an optional, provider-owned preparation command. It runs after the lease becomes ready and before automatic runtime preparation and ephemeral node enrollment. It runs on **every** provision attempt, including replay, so make it idempotent. Use it for project tooling, image prerequisites, or an exact unpublished runtime candidate, not for cloud or model API keys.
 
-The example profile above prepares OpenClaw worker turns only. To make the same profile Codex-ready, run the following on the Gateway host. It preserves the existing setup, captures the Gateway version, installs that exact OpenClaw release on each cloud node, and installs the matching Codex plugin through the trusted official npm path:
+The plugin then reuses a supported Node installation or prepares a checksum-verified official Linux runtime in the private lease directory, without `sudo` or global installation. It selects an exact-version OpenClaw executable or installs the Gateway's exact released package into that directory. Codex placements additionally prepare the exact official Codex plugin and verify its pinned native executable. Enrollment only validates and launches those prepared bits; it does not start an installing `npx` fallback.
 
-```bash
-gateway_version="$(openclaw --version | awk '{print $2}')"
-existing_setup="$(openclaw config get cloudWorkers.profiles.aws.settings.setup)"
-openclaw config set cloudWorkers.profiles.aws.settings.setup \
-  "${existing_setup}; sudo npm install -g openclaw@${gateway_version}; openclaw plugins install npm:@openclaw/codex@${gateway_version} --pin --force"
-```
-
-`--force` allows setup replay to converge when the plugin is already installed. After upgrading the Gateway, update both appended package versions to match it while preserving the rest of the setup. Unreleased source builds require exact locally packed packages instead of registry versions.
+If preparation or enrollment fails, the provider stops the lease and the dispatch fails closed. Cleanup failures remain visible rather than being reported as successful release.
 
 ### Bundle installation
 
 The setup bootstrap first reuses an installed `openclaw` binary when its version exactly matches the Gateway, then tries the exact `openclaw@<version>` registry package. For an unreleased source build, install a locally packed candidate with the same version in `settings.setup`; the provider will select it before touching the registry. After the node connects and publishes its session-host inventory, the Gateway pushes one content-addressed worker bundle through the paired channel. The node verifies and publishes those exact bytes without installing the normal OpenClaw package dependency tree. A stale Gateway build retires the environment and reprovisions against the current bundle rather than downgrading the execution-context protocol.
 
-Codex remote execution additionally requires `settings.setup` or the cloud image to install the exact official npm `@openclaw/codex` plugin matching the Gateway version, including its pinned platform-native `@openai/codex` dependency. An exact-version bundled plugin is also accepted. Enrollment preserves the plugin's official npm or bundled provenance in the node's isolated per-lease state; it does not install plugins from npm or accept an untrusted local plugin path. A missing, mismatched, or untrusted plugin fails before the node starts.
+For Codex remote execution, preparation reuses or installs the exact official npm `@openclaw/codex` plugin matching the Gateway version, including its pinned platform-native `@openai/codex` dependency. An exact-version bundled plugin is also accepted. Unpublished source builds must supply a trusted matching plugin and native runtime through the image or `settings.setup`; automatic preparation cannot manufacture an unpublished registry package. Enrollment preserves official npm or bundled provenance and rejects a missing, mismatched, or untrusted plugin before the node starts.
 
 ### Verify the profile
 
@@ -203,7 +247,7 @@ openclaw plugins inspect crabbox --runtime --json
 
 Changes under `cloudWorkers.profiles` require a Gateway restart. The default `gateway.reload.mode: "hybrid"` watches the config and performs that restart automatically; with reload watching disabled, run `openclaw gateway restart`.
 
-To use the same profile with Codex, enable the Codex plugin on the Gateway, prepare its exact trusted installation in the cloud profile or image, and explicitly add `codex.exec-server.stdio.v1` to `gateway.nodes.commands.allow`. Crabbox activates that prepared plugin inside the cloud node's isolated state only when a Codex session selects the profile. Persistent command enablement does not replace the separate critical allow-once approval required for each exec-server attempt.
+To use the same profile with Codex, enable the Codex plugin on the Gateway and explicitly add `codex.exec-server.stdio.v1` to `gateway.nodes.commands.allow`. Crabbox prepares and activates the exact trusted plugin inside the cloud node's isolated state only when a Codex session selects the profile. Source builds need the matching candidate prepared as described above. Persistent command enablement does not replace the separate critical allow-once approval required for each exec-server attempt.
 
 After the Gateway is back, prove the profile is advertised and compare it with Crabbox's read-only lease inventory:
 
@@ -298,7 +342,7 @@ openclaw gateway call sessions.dispatch \
 
 ### Choose a machine class per session
 
-A worker profile's `settings.class` remains its default. In the Control UI, selecting a **Cloud · profile** destination in the Place picker reveals a machine section listing the profile's advertised classes, with reported vCPU and RAM when available and the default marked; picking one updates the place chip (for example `hetzner · Fast`) and carries the choice into dispatch. To choose a different size for one new placement over RPC instead, pass `machineClass` with `profileId`:
+A worker profile's optional `settings.class` selects its default; omission delegates sizing to Crabbox or the provider snapshot. In the Control UI, selecting a **Cloud · profile** destination in the Place picker reveals a machine section listing the profile's advertised classes, with reported vCPU and RAM when available and the default marked; picking one updates the place chip (for example `hetzner · Fast`) and carries the choice into dispatch. To choose a different size for one new placement over RPC instead, pass `machineClass` with `profileId`:
 
 ```bash
 openclaw gateway call sessions.dispatch \
@@ -306,7 +350,7 @@ openclaw gateway call sessions.dispatch \
   --params '{"key":"agent:main:big-refactor","profileId":"aws","machineClass":"large"}'
 ```
 
-The bundled Crabbox provider advertises whatever machine classes the configured Crabbox binary reports for the selected backend, preserving Crabbox's size order. For example, a catalog containing `tiny`, `small`, `standard`, `fast`, `large`, and `beast` produces those six picker rows in that order; if Crabbox reports `standard` as 32 vCPU · 64 GB, that shape appears beside the class. Older binaries that publish no matching class catalog retain the label-only `standard`, `fast`, `large`, and `beast` fallback. You can also pass a provider-native server or instance type such as `c7a.24xlarge`; Crabbox treats any other non-empty class as that exact type. The selected value is fixed for that placement and reused by safe provisioning retries. `machineClass` is valid only with `profileId`, not `deviceId`.
+The bundled Crabbox provider advertises the machine classes reported for the selected backend, preserving Crabbox's size order. An explicitly empty or unmapped catalog offers no machine-class picker; failed or missing catalog results do not invent choices. Missing class metadata also means no override choices. A backend that supports native types can also accept a value such as `c7a.24xlarge`; Crabbox validates the explicit choice. Unsupported requests fail instead of silently selecting another size. The chosen value is fixed for that placement and reused by safe provisioning retries. `machineClass` is valid only with `profileId`, not `deviceId`.
 
 `sessions.dispatch` closes local turn admission, drains active work, validates the eligible Git workspace inventory, provisions the lease for the selected execution mode, runs setup, enrolls the node, pushes the required pinned Gateway bundle, syncs the workspace, and returns once the placement reaches `active` ownership. Inventory validation happens before provider allocation and reports an invalid request with an actionable size or entry limit when the workspace cannot be dispatched. Budget several minutes for the first cloud dispatch; leases and content-addressed bundles are reused where safe. After that, talk to the session as usual. OpenClaw turns route to the worker process; Codex native operations run on the authorized cloud node, paired device, or supported SSH-backed provider.
 
@@ -405,15 +449,15 @@ The desktop never gains public ingress. The node reads `/var/lib/crabbox/vnc.pas
 - **No cloud profile is advertised** — run the `operator.read`-scoped `openclaw gateway call environments.list --params '{}'`. If the response has no `profiles`, ask an administrator to validate `cloudWorkers.profiles`, inspect the provider plugin, and restart the Gateway. This is a configuration or provider-activation problem, not an authorization result.
 - **Cloud destinations are hidden or an RPC is denied** — cloud profile dispatch and profile-target moves require `operator.admin`. `operator.write` can dispatch or move to an eligible paired device, move to the Gateway, and reclaim a placement; `operator.read` alone can discover profiles but cannot start, stop, or move a session. Profile configuration, infrastructure pairing, Connect machine, raw environment lifecycle, direct `execNode` execution, incognito sessions, and arbitrary host or node paths remain `operator.admin`.
 - **The selected runtime lacks cloud placement support** — choose a model whose advertised runtime supports cloud placement. The bundled OpenClaw and Codex runtimes are supported; undeclared runtimes remain local-only.
-- **Codex cannot use a cloud profile** — verify that the profile advertises `remote-exec`, its setup installs the exact official `npm:@openclaw/codex@<gateway-version>` plugin, the Gateway enables the Codex plugin, and `gateway.nodes.commands.allow` includes `codex.exec-server.stdio.v1` without a matching deny rule. Approve the exact node invocation when prompted. Codex does not require an available OpenClaw worker slot; a missing plugin or denied command must be corrected rather than bypassed with Gateway or SSH execution.
+- **Codex cannot use a cloud profile** — verify that the profile advertises `remote-exec`, runtime preparation can obtain the exact official `npm:@openclaw/codex@<gateway-version>` plugin, the Gateway enables the Codex plugin, and `gateway.nodes.commands.allow` includes `codex.exec-server.stdio.v1` without a matching deny rule. Approve the exact node invocation when prompted. Codex does not require an available OpenClaw worker slot; a missing plugin or denied command must be corrected rather than bypassed with Gateway or SSH execution.
 - **The portal tool is unavailable on a worker** — confirm the session uses OpenClaw `worker-turn` on an enrolled node that advertises portal-stream support. Update older node bundles when necessary. SSH-backed `remote-exec` placements, including Codex sessions, do not run the OpenClaw worker tool loop; move the session back to the Gateway with `sessions.move` when a Gateway-hosted portal is needed.
-- **"Worker bootstrap requires Node.js on the leased host"** — add a Node install to `settings.setup` (see above).
+- **Runtime preparation fails** — read the named preparation phase. Automatic Node installation needs a compatible Linux image and the listed download/extraction utilities. Exact OpenClaw installation needs npm connectivity; an unpublished Gateway version requires a matching packed candidate through the image or `settings.setup`. Do not substitute `latest` or a different release.
 - **AWS instance-role attestation fails** — clear `aws.instanceProfile` (and `CRABBOX_AWS_INSTANCE_PROFILE`, if set). Install Crabbox 0.41.1 or newer; older binaries do not satisfy the fixed-ID and authoritative `providerMetadata.instanceProfileAttached` contracts required for AWS admission.
 - **Dispatch or workspace recovery fails** — inspect `environments.list` and `sessions.describe`. A failed environment exposes its bounded environment error. A failed placement exposes `recoveryError` plus its durable per-session `terminalReason`; the selected Control UI chat shows that terminal reason above the composer. When deeper diagnosis is necessary, an operator on the Gateway host can inspect the durable worker state read-only. Do not edit the state database to bypass lifecycle fencing.
 - **Crabbox setup cannot reach the lease** — compare the Gateway host's current outbound IPv4 with an explicitly configured `aws.sshCIDRs` policy in `crabbox config show --json`. If the matching `/32` is absent, correct Crabbox's configuration and rerun `crabbox doctor --provider aws --json` before retrying. An empty configured list is valid when Crabbox discovers and injects the caller's `/32` for the request.
 - **Session shows a reclaimed or suspended badge after being idle** — this is expected when its profile sets `suspendAfter`. The next message provisions a replacement worker, warm when an image exists.
 - **A warm image was stale or missing** — dispatch falls back to normal cold provisioning automatically. This is expected behavior and does not require a retry.
-- **Node enrollment times out** — inspect the package selection, node process state, and bounded node-log tail included in the enrollment error. Verify that profile setup installed Node.js and `npx` and that the box can reach the Gateway's advertised TLS URL and public worker/node WebSocket route. If the error contains `proxy_attribution_required`, add the reverse proxy's source address to `gateway.trustedProxies`.
+- **Node enrollment times out** — inspect the package selection, node process state, and bounded node-log tail included in the enrollment error. Verify that runtime preparation completed and that the box can reach the Gateway's advertised TLS URL and public worker/node WebSocket route. If the error contains `proxy_attribution_required`, add the reverse proxy's source address to `gateway.trustedProxies`.
 - **Client timeout while dispatching** — `openclaw gateway call` defaults to a 10s timeout; pass `--timeout` generously. Dispatch keeps running server-side either way, and an identical retry on the same Gateway joins that in-flight operation instead of provisioning another worker. A retry with a different profile or session identity is rejected.
 - **Direct AWS authorization fails after `doctor` passes** — `doctor` proves read-only AWS access, not the complete mutation policy. Inspect the named denied action and grant only Crabbox's required provisioning/cleanup actions, or configure coordinator-backed Crabbox instead. A fresh direct AWS lease normally needs key-pair import before `RunInstances`; an authorization failure there creates no instance.
 - **Worker reclaimed after upgrading from a 2026.7.2 beta** — those betas used the older worker launch contract. On restart, OpenClaw destroys an idle incompatible worker, keeps the session and workspace, marks the placement reclaimed, and provisions a current worker on the next dispatch or turn. A beta worker interrupted while still starting is marked failed after cleanup; retry the dispatch to provision it with the current contract.

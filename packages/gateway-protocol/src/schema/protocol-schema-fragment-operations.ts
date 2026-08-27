@@ -76,6 +76,7 @@ export const OperationsProtocolSchemas = {
   SystemAgentSetupActivateResult: openclaw.SystemAgentSetupActivateResultSchema,
   SystemAgentSetupAuthStartParams: openclaw.SystemAgentSetupAuthStartParamsSchema,
   SystemAgentSetupAuthStartResult: openclaw.SystemAgentSetupAuthStartResultSchema,
+  CloudSessionTestResult: wizard.CloudSessionTestResultSchema,
   WizardStartParams: wizard.WizardStartParamsSchema,
   WizardNextParams: wizard.WizardNextParamsSchema,
   WizardCancelParams: wizard.WizardCancelParamsSchema,
