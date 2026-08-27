@@ -51,10 +51,7 @@ import {
   resolveActiveMemoryBackendConfig,
 } from "../plugins/memory-runtime.js";
 import { loadPluginManifestRegistryForPluginRegistry } from "../plugins/plugin-registry.js";
-import {
-  resolveProviderPolicySurface,
-  resolveTrustedExternalProviderPolicyOwner,
-} from "../plugins/provider-public-artifacts.js";
+import { resolveTrustedExternalProviderPolicyArtifacts } from "../plugins/provider-public-artifacts.js";
 import { defaultSlotIdForKey } from "../plugins/slots.js";
 import { getProviderEnvVars } from "../secrets/provider-env-vars.js";
 import { resolveUserPath } from "../utils.js";
@@ -613,20 +610,22 @@ async function noteMemorySearchHealthForAgent(
       env,
       includeDisabled: true,
     });
-    const installedOwner = resolveTrustedExternalProviderPolicyOwner(provider, manifestRegistry);
-    if (!installedOwner) {
+    const policyArtifacts = resolveTrustedExternalProviderPolicyArtifacts(
+      provider,
+      manifestRegistry,
+    );
+    if (!policyArtifacts) {
       noteFn(getMissingLocalMemoryEmbeddingProviderMessage(), "Memory search");
       return;
     }
+    const { owner: installedOwner, surface: providerPolicy } = policyArtifacts;
     const ownerPolicyBlock = resolveManifestOwnerBasePolicyBlock({
       plugin: installedOwner,
       normalizedConfig: normalizePluginsConfig(cfg.plugins),
     });
     const inspectSetup = ownerPolicyBlock
       ? undefined
-      : resolveProviderPolicySurface(provider, {
-          manifestRegistry,
-        })?.inspectEmbeddingProviderSetup;
+      : providerPolicy?.inspectEmbeddingProviderSetup;
     const setup = inspectSetup ? await inspectSetup({ config: cfg, env, agentId, provider }) : null;
     const setupReason = setup?.reason.trim();
     const setupFix = setup?.fixHint?.trim();

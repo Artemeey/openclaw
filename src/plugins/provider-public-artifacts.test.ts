@@ -9,7 +9,7 @@ import { resolveDirectBundledProviderPolicySurface } from "./provider-policy-sur
 import {
   resolveBundledProviderPolicySurface,
   resolveProviderPolicySurface,
-  resolveTrustedExternalProviderPolicyOwner,
+  resolveTrustedExternalProviderPolicyArtifacts,
 } from "./provider-public-artifacts.js";
 
 function writeExternalPolicyFixture(): string {
@@ -259,7 +259,10 @@ describe("provider public artifacts", () => {
       } as never;
       const manifestRegistry = { plugins: [plugin] };
 
-      expect(resolveTrustedExternalProviderPolicyOwner("local", manifestRegistry)).toBe(plugin);
+      expect(resolveTrustedExternalProviderPolicyArtifacts("local", manifestRegistry)).toEqual({
+        owner: plugin,
+        surface: null,
+      });
       expect(resolveProviderPolicySurface("local", { manifestRegistry })).toBeNull();
     } finally {
       fs.rmSync(pluginRoot, { recursive: true, force: true });
@@ -286,10 +289,13 @@ describe("provider public artifacts", () => {
         plugins: [owner("a-missing-policy", missingPolicyRoot), owner("b-policy", policyRoot)],
       };
 
-      expect(
-        resolveProviderPolicySurface("fixture-embedding", { manifestRegistry })
-          ?.inspectEmbeddingProviderSetup,
-      ).toBeTypeOf("function");
+      const artifacts = resolveTrustedExternalProviderPolicyArtifacts(
+        "fixture-embedding",
+        manifestRegistry,
+      );
+
+      expect(artifacts?.owner.id).toBe("b-policy");
+      expect(artifacts?.surface?.inspectEmbeddingProviderSetup).toBeTypeOf("function");
     } finally {
       fs.rmSync(missingPolicyRoot, { recursive: true, force: true });
       fs.rmSync(policyRoot, { recursive: true, force: true });
