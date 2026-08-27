@@ -111,6 +111,29 @@ struct CLIInstallerTests {
         ])
     }
 
+    @Test func `candidate installer sends a staged package through the normal npm installer`() {
+        let target = CLIInstaller.InstallTarget.candidate(
+            packagePath: "/private/tmp/openclaw-current.tgz",
+            expectedVersion: "2026.8.1")
+        let command = CLIInstaller.installScriptCommand(
+            target: target,
+            prefix: "/Users/Test User/.openclaw",
+            scriptPath: "/Applications/OpenClaw.app/Contents/Resources/install-cli.sh",
+            compatibleWith: "2026.8.1")
+
+        #expect(command == [
+            "/bin/bash",
+            "/Applications/OpenClaw.app/Contents/Resources/install-cli.sh",
+            "--json",
+            "--no-onboard",
+            "--prefix",
+            "/Users/Test User/.openclaw",
+            "--version",
+            "/private/tmp/openclaw-current.tgz",
+        ])
+        #expect(target.expectedVersion == "2026.8.1")
+    }
+
     @Test func `dev source installs allow a full cold build`() {
         #expect(CLIInstaller.installWatchdogTimeout(for: .channel(.dev)) == 7200)
         #expect(CLIInstaller.installWatchdogTimeout(for: .channel(.stable)) == 900)
