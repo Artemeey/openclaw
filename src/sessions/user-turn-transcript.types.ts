@@ -1,6 +1,10 @@
 // User-turn transcript type contracts shared by runtime and queue option types.
 import type { AgentMessage } from "../../packages/agent-core/src/types.js";
 import type {
+  SessionTurnMutation,
+  SessionTurnMutationResult,
+} from "../config/sessions/session-accessor.types.js";
+import type {
   SessionTranscriptTurnExpectedState,
   SessionTranscriptTurnLifecyclePatch,
 } from "../config/sessions/session-transcript-turn-lifecycle.types.js";
@@ -63,6 +67,15 @@ export type UserTurnInput = {
     replyToId?: string;
     threadId?: string;
   };
+  /** Host-owned structured meaning for this human-visible turn. */
+  sessionGoalStart?: {
+    goalId: string;
+    kind: "session-goal-start";
+    operationId: string;
+    sourceRunId: string;
+    sourceTurnId: string;
+    version: 1;
+  };
 };
 
 export type UserTurnTranscriptUpdateMode = "inline" | "none";
@@ -111,6 +124,7 @@ export type UserTurnTranscriptPersistResult = {
   messageId: string;
   message: PersistedUserTurnMessage;
   admission: UserTurnTranscriptAdmissionReceipt;
+  sessionTurnMutation?: SessionTurnMutationResult;
 };
 
 export type UserTurnTranscriptTargetResolver =
@@ -135,6 +149,7 @@ export type PersistUserTurnTranscriptParams = {
   beforeMessageWrite?: UserTurnBeforeMessageWrite;
   expectedSessionState?: SessionTranscriptTurnExpectedState;
   sessionLifecyclePatch?: SessionTranscriptTurnLifecyclePatch;
+  sessionTurnMutation?: SessionTurnMutation;
 };
 
 type UserTurnInputResolver = () => UserTurnInput | undefined | Promise<UserTurnInput | undefined>;
@@ -151,6 +166,7 @@ export type CreateUserTurnTranscriptRecorderParams = {
   onMessagePersisted?: (message: PersistedUserTurnMessage) => void | Promise<void>;
   expectedSessionState?: SessionTranscriptTurnExpectedState;
   sessionLifecyclePatch?: SessionTranscriptTurnLifecyclePatch;
+  sessionTurnMutation?: SessionTurnMutation;
 };
 
 export type UserTurnTranscriptRecorder = {
@@ -181,6 +197,7 @@ export type UserTurnTranscriptRecorder = {
     expectedSessionId?: string;
     expectedSessionState?: SessionTranscriptTurnExpectedState;
     sessionLifecyclePatch?: SessionTranscriptTurnLifecyclePatch;
+    sessionTurnMutation?: SessionTurnMutation;
     /** Allow a later explicit persistence attempt when this attempt appends nothing. */
     retryIfUnpersisted?: boolean;
   }) => Promise<UserTurnTranscriptPersistResult | undefined>;

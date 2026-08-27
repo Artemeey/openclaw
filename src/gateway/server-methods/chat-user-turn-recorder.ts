@@ -37,6 +37,7 @@ export function createGatewayChatUserTurnController(params: {
   session: PreparedChatSendSession;
   startedAt: number;
   warn: (message: string) => void;
+  assertCommitAllowed?: () => void;
 }): GatewayChatUserTurnController {
   const { admission, request, session } = params;
   const sender = gatewayClientSenderFields(params.client).sender;
@@ -48,6 +49,7 @@ export function createGatewayChatUserTurnController(params: {
     ...(sender ? { sender } : {}),
     ...(hasGatewayAdminScope(params.client) ? { senderIsOwner: true } : {}),
     ...(request.systemInputProvenance ? { provenance: request.systemInputProvenance } : {}),
+    ...(request.structuredGoalStart ? { sessionGoalStart: request.structuredGoalStart } : {}),
   };
   const replyContextFieldsPromise = request.p.replyToId
     ? resolveChatSendReplyContext({
@@ -105,6 +107,23 @@ export function createGatewayChatUserTurnController(params: {
           clientRunId: session.clientRunId,
           startedAt: params.startedAt,
         })
+      : {}),
+    ...(session.structuredGoalStart
+      ? {
+          sessionTurnMutation: {
+            ...session.structuredGoalStart,
+            ...(params.assertCommitAllowed
+              ? { assertCommitAllowed: params.assertCommitAllowed }
+              : {}),
+            now: session.now,
+            objective: request.rawMessage,
+            result: {
+              runId: session.clientRunId,
+              goalId: session.structuredGoalStart.goalId,
+              status: "started" as const,
+            },
+          },
+        }
       : {}),
     errorContext: "gateway chat user turn transcript",
     beforeMessageWrite: runAgentHarnessBeforeMessageWriteHook,

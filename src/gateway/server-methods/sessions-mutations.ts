@@ -27,12 +27,14 @@ import { projectAssignableSessionOwner, projectSessionActor } from "../session-u
 import { gatewayClientSessionCreator } from "./gateway-client-identity.js";
 import { emitSessionsChanged } from "./session-change-event.js";
 import { resolveOperatorSessionCreation } from "./session-creation-provenance.js";
+import { sessionGoalHandlers } from "./sessions-goals.js";
 import { executeSessionPatch, executeSessionPatchMany } from "./sessions-patch-engine.js";
 import { loadSessionsRuntimeModule, requireSessionKey } from "./sessions-shared.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { assertValidParams } from "./validation.js";
 
 export const sessionMutationHandlers: GatewayRequestHandlers = {
+  ...sessionGoalHandlers,
   "sessions.patchMany": async ({
     params,
     respond,

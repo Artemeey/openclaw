@@ -183,7 +183,7 @@ function buildChatSendMessageContext(params: {
   };
 }
 
-/** Assemble transcript media and the portable inbound context after chat.send ACK. */
+/** Assemble transcript media and the portable inbound context before persistence or dispatch. */
 export function prepareChatSendUserTurn(params: {
   request: Pick<
     NormalizedChatSendRequest,
@@ -193,7 +193,8 @@ export function prepareChatSendUserTurn(params: {
     | "systemInputProvenance"
     | "systemProvenanceReceipt"
     | "toolBindings"
-  >;
+  > &
+    Partial<Pick<NormalizedChatSendRequest, "rawMessage" | "structuredGoalStart">>;
   session: Pick<PreparedChatSendSession, "agentId" | "clientRunId" | "sessionKey"> &
     Partial<Pick<PreparedChatSendSession, "cfg">>;
   admission: Pick<AdmittedChatSend, "originatingRoute">;
@@ -246,7 +247,9 @@ export function prepareChatSendUserTurn(params: {
     mediaPathOffloadTypes: attachments.mediaPathOffloadTypes,
     mediaPathOffloadWorkspaceDir: attachments.mediaPathOffloadWorkspaceDir,
     originatingRoute: admission.originatingRoute,
-    parsedMessage: attachments.parsedMessage,
+    parsedMessage: request.structuredGoalStart
+      ? (request.rawMessage ?? attachments.parsedMessage)
+      : attachments.parsedMessage,
     sessionKey: session.sessionKey,
     suppressCommandInterpretation: request.suppressCommandInterpretation,
     systemInputProvenance: request.systemInputProvenance,

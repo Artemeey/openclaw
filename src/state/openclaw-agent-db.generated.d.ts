@@ -306,6 +306,17 @@ export interface SessionProgressCards {
   updated_at: number;
 }
 
+export interface SessionRpcReceipts {
+  created_at: number;
+  method: string;
+  operation_id: string;
+  request_fingerprint: string;
+  result_bytes: number;
+  result_json: string;
+  sequence: Generated<number>;
+  session_id: string;
+}
+
 export interface SessionSuggestions {
   author_id: string;
   author_label: string | null;
@@ -522,6 +533,7 @@ export interface DB {
   session_nodes: SessionNodes;
   session_participants: SessionParticipants;
   session_progress_cards: SessionProgressCards;
+  session_rpc_receipts: SessionRpcReceipts;
   session_suggestions: SessionSuggestions;
   session_transcript_active_events: SessionTranscriptActiveEvents;
   session_transcript_archives: SessionTranscriptArchives;

@@ -278,6 +278,7 @@ async function persistUserTurnTranscript(
       ...(params.sessionLifecyclePatch
         ? { sessionLifecyclePatch: params.sessionLifecyclePatch }
         : {}),
+      ...(params.sessionTurnMutation ? { sessionTurnMutation: params.sessionTurnMutation } : {}),
       updateMode: params.updateMode ?? "inline",
       messages: [
         {
@@ -318,6 +319,7 @@ async function persistUserTurnTranscript(
     },
     sessionEntry: turn.sessionEntry,
     sessionFile: params.sessionKey,
+    ...(turn.sessionTurnMutation ? { sessionTurnMutation: turn.sessionTurnMutation } : {}),
   };
 }
 
@@ -480,6 +482,7 @@ export function createUserTurnTranscriptRecorder(
     expectedSessionId?: string;
     expectedSessionState?: SessionTranscriptTurnPersistOptions["expectedSessionState"];
     sessionLifecyclePatch?: SessionTranscriptTurnPersistOptions["sessionLifecyclePatch"];
+    sessionTurnMutation?: SessionTranscriptTurnPersistOptions["sessionTurnMutation"];
     retryIfUnpersisted?: boolean;
   }): Promise<UserTurnTranscriptPersistResult | undefined> => {
     if (options.skipWhenBlocked && blocked) {
@@ -529,6 +532,9 @@ export function createUserTurnTranscriptRecorder(
                 sessionLifecyclePatch:
                   options.sessionLifecyclePatch ?? params.sessionLifecyclePatch,
               }
+            : {}),
+          ...((options.sessionTurnMutation ?? params.sessionTurnMutation)
+            ? { sessionTurnMutation: options.sessionTurnMutation ?? params.sessionTurnMutation }
             : {}),
           ...((options.expectedSessionState ?? params.expectedSessionState)
             ? {
@@ -682,6 +688,7 @@ export function createUserTurnTranscriptRecorder(
         expectedSessionId: options?.expectedSessionId,
         expectedSessionState: options?.expectedSessionState,
         sessionLifecyclePatch: options?.sessionLifecyclePatch,
+        sessionTurnMutation: options?.sessionTurnMutation,
         retryIfUnpersisted: options?.retryIfUnpersisted,
       }),
     persistBlocked: async (blockedMessage, options) => {

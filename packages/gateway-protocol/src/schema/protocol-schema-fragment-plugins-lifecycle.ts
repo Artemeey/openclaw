@@ -76,6 +76,7 @@ export const PluginLifecycleProtocolSchemas = {
   ChatMessageGetResult: logsChat.ChatMessageGetResultSchema,
   ChatToolTitlesParams: logsChat.ChatToolTitlesParamsSchema,
   ChatToolTitlesResult: logsChat.ChatToolTitlesResultSchema,
+  ChatSendIntent: logsChat.ChatSendIntentSchema,
   ChatSendParams: logsChat.ChatSendParamsSchema,
   ChatAbortParams: logsChat.ChatAbortParamsSchema,
   ChatInjectParams: logsChat.ChatInjectParamsSchema,

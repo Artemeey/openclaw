@@ -24,9 +24,11 @@ type PreRegisteredAgentDedupePayload = {
   controlUiVisible?: unknown;
   dedupeKeys?: unknown;
   expiresAtMs?: unknown;
+  goalId?: unknown;
   ownerConnId?: unknown;
   ownerDeviceId?: unknown;
   runId?: unknown;
+  requestIdentity?: unknown;
   sessionKey?: unknown;
   sessionKeyAliases?: unknown;
   status?: unknown;

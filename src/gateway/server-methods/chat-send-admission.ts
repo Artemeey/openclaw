@@ -18,6 +18,7 @@ import {
   beginSessionWorkAdmission,
   interruptSessionWorkAdmissions,
   isCompetingSessionWorkAdmissionActive,
+  isSessionWorkAdmissionActive,
 } from "../../sessions/session-lifecycle-admission.js";
 import { setGatewayDedupeEntry } from "../agent-turn/agent-job.js";
 import { registerChatAbortController, resolveChatRunExpiresAtMs } from "../chat-abort.js";
@@ -29,7 +30,6 @@ import {
   readPreRegisteredRun,
   writePreRegisteredChatAbort,
 } from "./chat-abort-authorization.js";
-import { resolveChatSendOriginatingRoute } from "./chat-origin-routing.js";
 import {
   hasRestartRecoveryTerminalRun,
   isRetryableUnadoptedChatClaim,
@@ -37,8 +37,11 @@ import {
 } from "./chat-restart-recovery.js";
 import {
   ACTIVE_LEAF_CHANGED_ERROR_REASON,
+  hasQueuedSessionGoalWork,
   respondChatActiveLeafChanged,
+  respondChatSessionGoalBusy,
   respondChatSessionRoutingChanged,
+  SESSION_GOAL_BUSY_ERROR_REASON,
 } from "./chat-send-pre-admission.js";
 import type { NormalizedChatSendRequest } from "./chat-send-request.js";
 import type { PreparedChatSendSession } from "./chat-send-session.js";
@@ -62,7 +65,6 @@ export async function admitChatSend(params: {
     clientRunId,
     pendingChatSendKey,
     sessionLoadOptions,
-    cfg,
     storePath,
     entry,
     sessionKey,
@@ -76,7 +78,9 @@ export async function admitChatSend(params: {
     activeRunScopeKey,
     timeoutMs,
     now,
+    originatingRoute,
     restartSafeRequest,
+    structuredGoalStart,
     expectedLeafEntryId,
   } = session;
   const chatSendTraceAttributes = {
@@ -89,15 +93,6 @@ export async function admitChatSend(params: {
     hasExplicitOrigin: explicitOrigin !== undefined,
     hasConnectedClient: client?.connect !== undefined,
   };
-  const originatingRoute = resolveChatSendOriginatingRoute({
-    client: request.clientInfo,
-    deliver: p.deliver,
-    entry,
-    explicitOrigin,
-    hasConnectedClient: client?.connect !== undefined,
-    mainKey: cfg.session?.mainKey,
-    sessionKey,
-  });
   const lifecycleGeneration = getAgentEventLifecycleGeneration();
   const pendingAttemptId = randomUUID();
   const pendingExpiresAtMs = resolveChatRunExpiresAtMs({ now, timeoutMs });
@@ -117,6 +112,12 @@ export async function admitChatSend(params: {
       ownerDeviceId: normalizeOptionalChatText(client?.connect?.device?.id),
       expiresAtMs: pendingExpiresAtMs,
       turnKind,
+      ...(structuredGoalStart
+        ? {
+            goalId: structuredGoalStart.goalId,
+            requestIdentity: structuredGoalStart.requestFingerprint,
+          }
+        : {}),
     },
   });
   const clearPendingChatSendReservation = () => {
@@ -145,6 +146,15 @@ export async function admitChatSend(params: {
   const assertChatWorkAdmissionAllowed = (commitOutcome: boolean) => {
     if (context.chatRunState.hasAbortMarker(clientRunId)) {
       return;
+    }
+    const goalWorkIdentities = [sessionKey, backingSessionId, entry?.sessionId];
+    if (
+      structuredGoalStart &&
+      !commitOutcome &&
+      (isSessionWorkAdmissionActive(storePath, goalWorkIdentities) ||
+        hasQueuedSessionGoalWork(goalWorkIdentities))
+    ) {
+      throw new Error(SESSION_GOAL_BUSY_ERROR_REASON);
     }
     const pendingReservation = readPreRegisteredRun({
       key: pendingChatSendKey,
@@ -272,7 +282,11 @@ export async function admitChatSend(params: {
         supersedingResult = {
           ts: Date.now(),
           ok: true,
-          payload: { runId: clientRunId, status: "ok" as const },
+          payload: {
+            runId: clientRunId,
+            status: "ok" as const,
+            ...(structuredGoalStart ? { goalId: structuredGoalStart.goalId } : {}),
+          },
         };
       }
       return;
@@ -298,6 +312,9 @@ export async function admitChatSend(params: {
       sessionKey: latestSession.canonicalKey,
       storePath: latestSession.storePath,
     });
+    if (structuredGoalStart && !restartSafeAdmission) {
+      throw new Error("session Goal start requires an idle restart-safe session");
+    }
     if (retryableClaim && !restartSafeAdmission) {
       throw new Error("chat retry does not match its durable admission");
     }
@@ -343,6 +360,10 @@ export async function admitChatSend(params: {
     }
     if (err instanceof Error && err.message === ACTIVE_LEAF_CHANGED_ERROR_REASON) {
       respondChatActiveLeafChanged(respond);
+      return { ok: false as const };
+    }
+    if (err instanceof Error && err.message === SESSION_GOAL_BUSY_ERROR_REASON) {
+      respondChatSessionGoalBusy(respond);
       return { ok: false as const };
     }
     respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, formatForLog(err)));

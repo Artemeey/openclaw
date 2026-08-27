@@ -13,6 +13,32 @@ const REPLY_PREVIEW_TEXT_MAX_CHARS = 2000;
 const REPLY_PREVIEW_SENDER_MAX_CHARS = 200;
 const STEER_TARGET_RUN_ID_MAX_CHARS = 512;
 
+function normalizeSessionGoalStartMetadata(
+  value: unknown,
+): UserTurnInput["sessionGoalStart"] | undefined {
+  const record = asOptionalRecord(value);
+  if (record?.kind !== "session-goal-start" || record.version !== 1) {
+    return undefined;
+  }
+  const goalId = normalizeOptionalString(record.goalId);
+  const operationId = normalizeOptionalString(record.operationId);
+  const sourceRunId = normalizeOptionalString(record.sourceRunId);
+  const sourceTurnId = normalizeOptionalString(record.sourceTurnId);
+  if (
+    !goalId ||
+    goalId.length > 64 ||
+    !operationId ||
+    operationId.length > 256 ||
+    !sourceRunId ||
+    sourceRunId.length > 256 ||
+    !sourceTurnId ||
+    sourceTurnId.length > 512
+  ) {
+    return undefined;
+  }
+  return { kind: "session-goal-start", version: 1, goalId, operationId, sourceRunId, sourceTurnId };
+}
+
 export function normalizePersistedSteerTargetRunId(value: unknown): string | undefined {
   const normalized = normalizeOptionalString(value);
   return normalized && normalized.length <= STEER_TARGET_RUN_ID_MAX_CHARS ? normalized : undefined;
@@ -67,6 +93,9 @@ export function buildPersistedUserTurnMetadata(
         }
       : {}),
     ...(input.transport ? { transport: input.transport } : {}),
+    ...(input.sessionGoalStart
+      ? { sessionGoalStart: normalizeSessionGoalStartMetadata(input.sessionGoalStart) }
+      : {}),
     ...(normalizedMedia.length > 0 ? { media: normalizedMedia } : {}),
     ...(input.mediaImageLayout
       ? {
@@ -170,6 +199,7 @@ export function preparePersistedUserTurnMessageForTranscriptWrite(
   // place. Snapshot transport correlation before handing them that reference.
   const originalTransportRecord = asOptionalRecord(originalTransport);
   const transport = originalTransportRecord ? { ...originalTransportRecord } : undefined;
+  const sessionGoalStart = normalizeSessionGoalStartMetadata(originalMeta?.sessionGoalStart);
   const nextMessage = params.beforeMessageWrite({
     message,
     ...(params.agentId ? { agentId: params.agentId } : {}),
@@ -191,10 +221,15 @@ export function preparePersistedUserTurnMessageForTranscriptWrite(
     ...(replyToId ? { replyToId } : {}),
     ...(replyToPreview ? { replyToPreview } : {}),
     ...(transport ? { transport } : {}),
+    ...(sessionGoalStart ? { sessionGoalStart } : {}),
     ...(lateMedia ? { lateMedia: true } : {}),
     ...(media === undefined ? {} : { media }),
     ...(mediaImageLayout === undefined ? {} : { mediaImageLayout }),
   };
+  delete protectedMeta.sessionGoalStart;
+  if (sessionGoalStart) {
+    protectedMeta.sessionGoalStart = sessionGoalStart;
+  }
   delete protectedMeta.steerTargetRunId;
   if (steerTargetRunId) {
     protectedMeta.steerTargetRunId = steerTargetRunId;

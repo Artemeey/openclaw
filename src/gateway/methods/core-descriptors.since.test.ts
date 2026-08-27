@@ -123,6 +123,8 @@ const CURRENT_TRAIN_METHODS = [
   "tools.github.authorize.poll",
   "tools.github.authorize.cancel",
   "session.members.listEvidence",
+  "sessions.goal.update",
+  "sessions.goal.clear",
 ] as const;
 
 describe("core gateway method release trains", () => {

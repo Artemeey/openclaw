@@ -286,6 +286,24 @@ CREATE INDEX IF NOT EXISTS idx_agent_session_suggestions_session_state_created
 CREATE INDEX IF NOT EXISTS idx_agent_session_suggestions_author_created
   ON session_suggestions(author_id, created_at, id);
 
+CREATE TABLE IF NOT EXISTS session_rpc_receipts (
+  sequence INTEGER PRIMARY KEY,
+  session_id TEXT NOT NULL CHECK (length(session_id) BETWEEN 1 AND 1024),
+  method TEXT NOT NULL CHECK (length(method) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 256),
+  request_fingerprint TEXT NOT NULL CHECK (
+    length(request_fingerprint) = 71 AND
+    substr(request_fingerprint, 1, 7) = 'sha256:'
+  ),
+  result_json TEXT NOT NULL CHECK (json_valid(result_json)),
+  result_bytes INTEGER NOT NULL CHECK (
+    result_bytes BETWEEN 1 AND 16384 AND
+    result_bytes = length(CAST(result_json AS BLOB))
+  ),
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  UNIQUE (session_id, operation_id)
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS board_tabs (
   session_key TEXT NOT NULL,
   tab_id TEXT NOT NULL,

@@ -46,6 +46,7 @@ import { resolveInstalledPluginIndexPolicyHash } from "../plugins/installed-plug
 import { rebasePluginMetadataSnapshotManifestRegistry } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import {
+  beginSessionWorkAdmission,
   isSessionWorkAdmissionActive,
   runExclusiveSessionLifecycleMutation,
 } from "../sessions/session-lifecycle-admission.js";
@@ -3458,6 +3459,134 @@ describe("gateway server chat", () => {
       );
     } finally {
       dispatchRelease.resolve(undefined);
+      resetDirectChatSession();
+    }
+  });
+
+  test("chat.send atomically starts and exactly replays a structured session Goal", async () => {
+    const { storePath } = openDirectChatSession();
+    const runId = "idem-structured-goal-start";
+    const objective = "/ship this\nwithout command interpretation";
+    try {
+      await writeStoredMainSession(makeDoneSessionEntry());
+      const send = async (context: GatewayRequestContext) => {
+        const responses: CapturedChatResponse[] = [];
+        await callDirectChat("chat.send", {
+          id: runId,
+          params: makeChatSendParams({
+            idempotencyKey: runId,
+            message: objective,
+            intent: { kind: "session-goal-start", version: 1 },
+          }),
+          client: createControlUiClient(["operator.write"]),
+          respond: captureChatResponse(responses),
+          context,
+        });
+        return responses[0];
+      };
+      const firstContext = createDirectChatContext();
+      dispatchInboundMessageMock.mockResolvedValueOnce(undefined);
+      const first = await send(firstContext);
+      const goalId = (first?.payload as { goalId?: string } | undefined)?.goalId;
+
+      expect(first).toMatchObject({
+        ok: true,
+        payload: { runId, goalId: expect.any(String), status: "started" },
+      });
+      await waitForFast(() => expect(firstContext.removeChatRun).toHaveBeenCalledOnce());
+      expect(dispatchInboundMessageMock).toHaveBeenCalledOnce();
+      const dispatched = dispatchInboundMessageMock.mock.calls[0]?.[0] as
+        | { ctx?: Record<string, unknown>; replyOptions?: GetReplyOptions }
+        | undefined;
+      expect(dispatched?.ctx).toMatchObject({
+        Body: objective,
+        CommandAuthorized: false,
+        CommandInterpretationSuppressed: true,
+        CommandTurn: { kind: "normal", body: objective },
+      });
+      expect(dispatched?.replyOptions?.suppressNextUserMessagePersistence).toBe(true);
+      expect(loadSessionEntry(makeMainSessionScope(storePath))?.goal).toMatchObject({
+        id: goalId,
+        objective,
+        status: "active",
+      });
+      expect(loadTranscriptEventsSync(makeMainSessionScope(storePath))).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "message",
+            message: expect.objectContaining({
+              content: objective,
+              idempotencyKey: `${runId}:user`,
+              __openclaw: expect.objectContaining({
+                sessionGoalStart: {
+                  kind: "session-goal-start",
+                  version: 1,
+                  goalId,
+                  operationId: runId,
+                  sourceRunId: runId,
+                  sourceTurnId: `${runId}:user`,
+                },
+              }),
+            }),
+          }),
+        ]),
+      );
+
+      const replay = await send(createDirectChatContext());
+      expect(replay).toMatchObject({
+        ok: true,
+        payload: { runId, goalId, status: "started" },
+      });
+      expect(dispatchInboundMessageMock).toHaveBeenCalledOnce();
+      expect(
+        loadTranscriptEventsSync(makeMainSessionScope(storePath)).filter(
+          (event) =>
+            typeof event === "object" &&
+            event !== null &&
+            "message" in event &&
+            (event.message as { idempotencyKey?: unknown }).idempotencyKey === `${runId}:user`,
+        ),
+      ).toHaveLength(1);
+    } finally {
+      resetDirectChatSession();
+    }
+  });
+
+  test("chat.send rejects structured Goal start while the session has active work", async () => {
+    const { storePath } = openDirectChatSession();
+    let admission: Awaited<ReturnType<typeof beginSessionWorkAdmission>> | undefined;
+    try {
+      await writeStoredMainSession(makeDoneSessionEntry());
+      admission = await beginSessionWorkAdmission({
+        scope: storePath,
+        identities: ["agent:main:main", "sess-main"],
+        assertAllowed: () => {},
+      });
+      const responses: CapturedChatResponse[] = [];
+      await callDirectChat("chat.send", {
+        id: "busy-structured-goal",
+        params: makeChatSendParams({
+          idempotencyKey: "busy-structured-goal",
+          intent: { kind: "session-goal-start", version: 1 },
+        }),
+        client: createControlUiClient(["operator.write"]),
+        respond: captureChatResponse(responses),
+        context: createDirectChatContext(),
+      });
+
+      expect(responses[0]).toMatchObject({
+        ok: false,
+        error: {
+          code: "UNAVAILABLE",
+          message: "session has active or queued work",
+          retryable: true,
+        },
+      });
+      expect(dispatchInboundMessageMock).not.toHaveBeenCalled();
+      expect(loadSessionEntry(makeMainSessionScope(storePath))?.goal).toBeUndefined();
+      expect(loadTranscriptEventsSync(makeMainSessionScope(storePath))).toEqual([]);
+    } finally {
+      admission?.release();
       resetDirectChatSession();
     }
   });

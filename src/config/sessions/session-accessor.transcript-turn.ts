@@ -357,6 +357,7 @@ async function persistExpectedSessionTranscriptTurn(
             message: attachSessionTranscriptRunId(append.message, options.runId),
           })),
           sessionLifecyclePatch: options.sessionLifecyclePatch,
+          sessionTurnMutation: options.sessionTurnMutation,
           sessionFile: target.sessionKey!,
           touchSessionEntry: options.touchSessionEntry,
         },
@@ -393,6 +394,7 @@ async function persistExpectedSessionTranscriptTurn(
     appendedCount: countAppendedTranscriptMessages(turn.appendedMessages),
     messages: turn.appendedMessages,
     sessionEntry: turn.sessionEntry ?? scope.sessionEntry,
+    sessionTurnMutation: turn.sessionTurnMutation,
   };
 }
 

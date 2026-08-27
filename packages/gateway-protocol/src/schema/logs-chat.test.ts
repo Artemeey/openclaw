@@ -8,6 +8,7 @@ import {
   ChatHistoryDeltaResultSchema,
   ChatHistoryParamsSchema,
   ChatHistoryResetResultSchema,
+  ChatSendIntentSchema,
   ChatSendParamsSchema,
   ChatStatusEventSchema,
   type ChatHistoryCursorResult,
@@ -15,6 +16,7 @@ import {
   type ChatHistoryParams,
   type ChatHistoryResetResult,
 } from "./logs-chat.js";
+import { ProtocolSchemas } from "./protocol-schemas.js";
 
 const statusEvent = {
   runId: "run-1",
@@ -102,5 +104,22 @@ describe("ChatSendParamsSchema", () => {
       }),
     ).toBe(true);
     expect(Value.Check(ChatSendParamsSchema, { ...send, unknown: true })).toBe(false);
+  });
+
+  it("accepts only the closed session Goal start intent", () => {
+    expect(ProtocolSchemas.ChatSendIntent).toBe(ChatSendIntentSchema);
+    expect(
+      Value.Check(ChatSendParamsSchema, {
+        ...send,
+        intent: { kind: "session-goal-start", version: 1 },
+      }),
+    ).toBe(true);
+    for (const intent of [
+      { kind: "session-goal-start", version: 2 },
+      { kind: "session-goal-update", version: 1 },
+      { kind: "session-goal-start", version: 1, objective: "duplicate" },
+    ]) {
+      expect(Value.Check(ChatSendParamsSchema, { ...send, intent })).toBe(false);
+    }
   });
 });

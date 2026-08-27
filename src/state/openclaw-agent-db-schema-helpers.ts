@@ -38,6 +38,7 @@ import {
 } from "./openclaw-agent-progress-card-schema.js";
 import { OPENCLAW_AGENT_SCHEMA_SQL } from "./openclaw-agent-schema.js";
 import { SESSION_PARTICIPANTS_TABLE } from "./openclaw-agent-session-participants-schema.js";
+import { SESSION_RPC_RECEIPTS_TABLE } from "./openclaw-agent-session-rpc-receipt-schema.js";
 import {
   AGENT_V14_ADDITIVE_SCHEMA_SQL,
   AGENT_V14_CORE_SCHEMA_SQL,
@@ -67,6 +68,7 @@ const AGENT_SCHEMA_COMPATIBILITY = {
     MESSAGE_TOOL_RUN_OUTCOMES_TABLE,
     SESSION_PARTICIPANTS_TABLE,
     SESSION_PROGRESS_CARDS_TABLE,
+    SESSION_RPC_RECEIPTS_TABLE,
     SESSION_TRANSCRIPT_ARCHIVES_TABLE,
     STANDING_INTENTS_TABLE,
     STANDING_INTENTS_FTS_TABLE,

@@ -1,9 +1,13 @@
 // chat.send owns admission, ACK timing, and detached dispatch handoff.
 import { performance } from "node:perf_hooks";
+import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
 import { createAgentRunRestartAbortError } from "../../agents/run-termination.js";
 import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
+import { clearAgentRunContext } from "../../infra/agent-run-registry.js";
 import { emitDiagnosticsTimelineEvent } from "../../infra/diagnostics-timeline.js";
+import { recordSessionGoalChanged } from "../../sessions/session-state-events.js";
 import type { SkillWorkshopProposalRevisionConstraint } from "../../skills/workshop/types.js";
+import { SessionRpcReceiptConflictError } from "../../state/openclaw-agent-session-rpc-receipts.js";
 import { discardPreparedInboundMedia } from "../chat-attachments.js";
 import type { ChatRunTiming } from "../server-chat-state.js";
 import {
@@ -27,6 +31,7 @@ import {
   shouldIncludeChatSendAckServerTiming,
 } from "./chat-server-timing.js";
 import { createGatewayChatUserTurnController } from "./chat-user-turn-recorder.js";
+import { emitSessionsChanged } from "./session-change-event.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
 type ChatSendInternalOptions = {
@@ -36,11 +41,12 @@ type ChatSendInternalOptions = {
 };
 
 async function handleChatSendWithOptions(
-  { params, respond, context, client }: GatewayRequestHandlerOptions,
+  requestOptions: GatewayRequestHandlerOptions,
   onAdmissionOwned?: () => Promise<boolean>,
   externalAuthorityAdmission?: ChatSendExternalAuthorityAdmission,
   options?: ChatSendInternalOptions,
 ): Promise<void> {
+  const { params, respond, context, client } = requestOptions;
   const setup = await prepareAndAdmitChatSend(
     { params, respond, context, client },
     onAdmissionOwned,
@@ -140,6 +146,7 @@ async function handleChatSendWithOptions(
       session: preparedSession.value,
       startedAt: admissionStartedAt,
       warn: (message) => context.logGateway.warn(message),
+      assertCommitAllowed: requestOptions.sessionMutationAuthorization?.assertCurrent,
     });
     const {
       persist: persistGatewayUserTurnTranscript,
@@ -147,16 +154,57 @@ async function handleChatSendWithOptions(
       replyContextFieldsPromise,
     } = userTurn;
     preparedMediaRecorder = userTurnRecorder;
+    const preparedUserTurn = prepareChatSendUserTurn({
+      request: normalizedRequest.value,
+      session: preparedSession.value,
+      admission: admitted.value,
+      attachments: preparedAttachments.value,
+      client,
+      logGateway: context.logGateway,
+      userTurn,
+    });
     if (restartSafeAdmission) {
       const persistedUserTurn = await persistGatewayUserTurnTranscript();
       // A matching idempotency row and lifecycle claim commit atomically, so
       // retries adopt the durable turn without submitting it twice.
+      if (
+        preparedSession.value.structuredGoalStart &&
+        persistedUserTurn?.sessionTurnMutation?.status === "replay"
+      ) {
+        admitted.value.cleanupAdmittedRun({ force: true });
+        clearAgentRunContext(clientRunId, lifecycleGeneration);
+        context.removeChatRun(clientRunId, clientRunId, sessionKey);
+        respond(true, persistedUserTurn.sessionTurnMutation.result, undefined, {
+          cached: true,
+          runId: clientRunId,
+        });
+        return;
+      }
       if (
         !persistedUserTurn ||
         persistedUserTurn.sessionEntry?.status !== "running" ||
         persistedUserTurn.sessionEntry.restartRecoveryDeliveryRunId !== clientRunId
       ) {
         throw new Error("chat turn was not durably admitted");
+      }
+      if (
+        preparedSession.value.structuredGoalStart &&
+        persistedUserTurn.sessionTurnMutation?.status !== "inserted"
+      ) {
+        throw new Error("session Goal start was not durably committed");
+      }
+      if (preparedSession.value.structuredGoalStart) {
+        recordSessionGoalChanged({
+          sessionKey,
+          entry: persistedUserTurn.sessionEntry,
+          agentId: preparedSession.value.agentId,
+          summary: "goal created",
+        });
+        emitSessionsChanged(context, {
+          sessionKey,
+          agentId: preparedSession.value.agentId,
+          reason: "goal",
+        });
       }
       if (lifecycleGeneration !== getAgentEventLifecycleGeneration()) {
         if (activeRunAbort.entry) {
@@ -185,15 +233,6 @@ async function handleChatSendWithOptions(
       }
     }
 
-    const preparedUserTurn = prepareChatSendUserTurn({
-      request: normalizedRequest.value,
-      session: preparedSession.value,
-      admission: admitted.value,
-      attachments: preparedAttachments.value,
-      client,
-      logGateway: context.logGateway,
-      userTurn,
-    });
     const { ctx, isInternalTextSlashCommandTurn } = preparedUserTurn;
     const beginCapturedMessageInjection = createChatSendMessageInjectionStarter({
       target: messageInjectionTarget,
@@ -252,6 +291,9 @@ async function handleChatSendWithOptions(
     });
     const ackPayload = {
       runId: clientRunId,
+      ...(preparedSession.value.structuredGoalStart
+        ? { goalId: preparedSession.value.structuredGoalStart.goalId }
+        : {}),
       status: "started" as const,
       ...(interruptedActiveRun ? { interruptedActiveRun: true } : {}),
       ...(serverTiming ? { serverTiming } : {}),
@@ -303,6 +345,27 @@ async function handleChatSendWithOptions(
       userTurn,
     });
   } catch (err) {
+    if (
+      preparedSession.value.structuredGoalStart &&
+      (err instanceof SessionRpcReceiptConflictError ||
+        (err instanceof Error && err.message === "goal already exists"))
+    ) {
+      admitted.value.cleanupAdmittedRun({ force: true });
+      clearAgentRunContext(clientRunId, lifecycleGeneration);
+      context.removeChatRun(clientRunId, clientRunId, sessionKey);
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          err instanceof SessionRpcReceiptConflictError
+            ? "session Goal operation was reused with different input"
+            : "session already has a Goal",
+          { details: { code: "SESSION_GOAL_CONFLICT" } },
+        ),
+      );
+      return;
+    }
     await handleChatSendSetupError({
       admission: admitted.value,
       context,

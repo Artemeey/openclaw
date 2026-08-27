@@ -11,7 +11,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { runAgentHarnessBeforeMessageWriteHook } from "../agents/harness/hook-helpers.js";
 import { formatSqliteSessionFileMarker } from "../config/sessions/legacy-sqlite-marker.js";
-import { loadTranscriptEvents } from "../config/sessions/session-accessor.js";
+import {
+  loadSessionEntry,
+  loadTranscriptEvents,
+  upsertSessionEntryCore,
+} from "../config/sessions/session-accessor.js";
 import { createUserTurnTranscriptRecorder } from "./user-turn-transcript.js";
 import { persistUserTurnTranscript } from "./user-turn-transcript.test-support.js";
 
@@ -271,6 +275,240 @@ describe("persistUserTurnTranscript", () => {
     ]);
   });
 
+  it("commits a session Goal, transcript turn, and receipt atomically and replays exactly", async () => {
+    const dir = tempDirs.make("openclaw-user-turn-goal-start-");
+    const target = createSqliteTranscriptTarget({ dir });
+    await upsertSessionEntryCore(target, { sessionId: target.sessionId, updatedAt: 1 });
+    const input = {
+      text: "/ship\nwithout command interpretation",
+      timestamp: 123,
+      idempotencyKey: "goal-run-1:user",
+      sessionGoalStart: {
+        kind: "session-goal-start" as const,
+        version: 1 as const,
+        goalId: "goal-1",
+        operationId: "goal-run-1",
+        sourceRunId: "goal-run-1",
+        sourceTurnId: "goal-run-1:user",
+      },
+    };
+    const mutation = {
+      ...input.sessionGoalStart,
+      now: 123,
+      objective: input.text,
+      requestFingerprint: `sha256:${"a".repeat(64)}` as const,
+      result: { runId: "goal-run-1", goalId: "goal-1", status: "started" as const },
+    };
+
+    const first = await persistUserTurnTranscript({
+      ...target,
+      expectedSessionId: target.sessionId,
+      input,
+      sessionTurnMutation: mutation,
+      updateMode: "none",
+    });
+    const replay = await persistUserTurnTranscript({
+      ...target,
+      expectedSessionId: target.sessionId,
+      input,
+      sessionTurnMutation: mutation,
+      updateMode: "none",
+    });
+
+    expect(first?.sessionTurnMutation).toEqual({ status: "inserted", result: mutation.result });
+    expect(replay?.sessionTurnMutation).toEqual({ status: "replay", result: mutation.result });
+    expect(replay?.messageId).toBe(first?.messageId);
+    expect(loadSessionEntry(target)?.goal).toMatchObject({
+      id: "goal-1",
+      objective: input.text,
+      status: "active",
+    });
+    await expect(readTranscriptMessages(target)).resolves.toEqual([
+      expect.objectContaining({
+        content: input.text,
+        idempotencyKey: input.idempotencyKey,
+        __openclaw: expect.objectContaining({ sessionGoalStart: input.sessionGoalStart }),
+      }),
+    ]);
+  });
+
+  it("rolls back the transcript and Goal when receipt persistence fails", async () => {
+    const dir = tempDirs.make("openclaw-user-turn-goal-rollback-");
+    const target = createSqliteTranscriptTarget({ dir });
+    await upsertSessionEntryCore(target, { sessionId: target.sessionId, updatedAt: 1 });
+
+    await expect(
+      persistUserTurnTranscript({
+        ...target,
+        expectedSessionId: target.sessionId,
+        input: { text: "atomic objective", idempotencyKey: "goal-fault:user" },
+        sessionTurnMutation: {
+          kind: "session-goal-start",
+          version: 1,
+          goalId: "goal-fault",
+          operationId: "goal-fault",
+          sourceRunId: "goal-fault",
+          sourceTurnId: "goal-fault:user",
+          now: -1,
+          objective: "atomic objective",
+          requestFingerprint: `sha256:${"b".repeat(64)}`,
+          result: { runId: "goal-fault", goalId: "goal-fault", status: "started" },
+        },
+        updateMode: "none",
+      }),
+    ).rejects.toThrow("creation time must be a non-negative safe integer");
+    expect(loadSessionEntry(target)?.goal).toBeUndefined();
+    await expect(readTranscriptMessages(target)).resolves.toEqual([]);
+  });
+
+  it.each([
+    { name: "blocks the turn", replacement: undefined },
+    { name: "rewrites the objective", replacement: "hook replacement" },
+  ])("rolls back Goal start when before_message_write $name", async ({ replacement }) => {
+    initializeGlobalHookRunner(
+      createMockPluginRegistry([
+        {
+          hookName: "before_message_write",
+          handler: () =>
+            replacement === undefined
+              ? { block: true }
+              : { message: castAgentMessage({ role: "user", content: replacement }) },
+        },
+      ]),
+    );
+    const dir = tempDirs.make("openclaw-user-turn-goal-hook-rollback-");
+    const target = createSqliteTranscriptTarget({ dir });
+    await upsertSessionEntryCore(target, { sessionId: target.sessionId, updatedAt: 1 });
+
+    await expect(
+      persistUserTurnTranscript({
+        ...target,
+        expectedSessionId: target.sessionId,
+        input: { text: "original objective", idempotencyKey: "goal-hook:user" },
+        beforeMessageWrite: runAgentHarnessBeforeMessageWriteHook,
+        sessionTurnMutation: {
+          kind: "session-goal-start",
+          version: 1,
+          goalId: "goal-hook",
+          operationId: "goal-hook",
+          sourceRunId: "goal-hook",
+          sourceTurnId: "goal-hook:user",
+          now: 1,
+          objective: "original objective",
+          requestFingerprint: `sha256:${"e".repeat(64)}`,
+          result: { runId: "goal-hook", goalId: "goal-hook", status: "started" },
+        },
+        updateMode: "none",
+      }),
+    ).rejects.toThrow("requires one unchanged new transcript turn");
+    expect(loadSessionEntry(target)?.goal).toBeUndefined();
+    await expect(readTranscriptMessages(target)).resolves.toEqual([]);
+  });
+
+  it("rejects a structured Goal operation that reuses an ordinary transcript turn", async () => {
+    const dir = tempDirs.make("openclaw-user-turn-goal-text-collision-");
+    const target = createSqliteTranscriptTarget({ dir });
+    await upsertSessionEntryCore(target, { sessionId: target.sessionId, updatedAt: 1 });
+    await persistUserTurnTranscript({
+      ...target,
+      input: { text: "ordinary text", idempotencyKey: "goal-collision:user" },
+      updateMode: "none",
+    });
+
+    await expect(
+      persistUserTurnTranscript({
+        ...target,
+        expectedSessionId: target.sessionId,
+        input: { text: "ordinary text", idempotencyKey: "goal-collision:user" },
+        sessionTurnMutation: {
+          kind: "session-goal-start",
+          version: 1,
+          goalId: "goal-collision",
+          operationId: "goal-collision",
+          sourceRunId: "goal-collision",
+          sourceTurnId: "goal-collision:user",
+          now: 1,
+          objective: "ordinary text",
+          requestFingerprint: `sha256:${"f".repeat(64)}`,
+          result: { runId: "goal-collision", goalId: "goal-collision", status: "started" },
+        },
+        updateMode: "none",
+      }),
+    ).rejects.toThrow("requires one unchanged new transcript turn");
+    expect(loadSessionEntry(target)?.goal).toBeUndefined();
+    await expect(readTranscriptMessages(target)).resolves.toHaveLength(1);
+  });
+
+  it.each([
+    { name: "operation fingerprint changed", existingGoal: false, fingerprint: "d" },
+    { name: "the session already has a Goal", existingGoal: true, fingerprint: "c" },
+  ])("rejects $name before inserting a turn", async ({ existingGoal, fingerprint }) => {
+    const dir = tempDirs.make("openclaw-user-turn-goal-conflict-");
+    const target = createSqliteTranscriptTarget({ dir });
+    await upsertSessionEntryCore(target, {
+      sessionId: target.sessionId,
+      updatedAt: 1,
+      ...(existingGoal
+        ? {
+            goal: {
+              schemaVersion: 1,
+              id: "existing-goal",
+              objective: "existing",
+              status: "active",
+              createdAt: 1,
+              updatedAt: 1,
+              tokenStart: 0,
+              tokenStartFresh: true,
+              tokensUsed: 0,
+              continuationTurns: 0,
+            } as const,
+          }
+        : {}),
+    });
+    if (!existingGoal) {
+      await persistUserTurnTranscript({
+        ...target,
+        expectedSessionId: target.sessionId,
+        input: { text: "first", idempotencyKey: "goal-conflict:user" },
+        sessionTurnMutation: {
+          kind: "session-goal-start",
+          version: 1,
+          goalId: "goal-first",
+          operationId: "goal-conflict",
+          sourceRunId: "goal-conflict",
+          sourceTurnId: "goal-conflict:user",
+          now: 1,
+          objective: "first",
+          requestFingerprint: `sha256:${"c".repeat(64)}`,
+          result: { runId: "goal-conflict", goalId: "goal-first", status: "started" },
+        },
+        updateMode: "none",
+      });
+    }
+
+    await expect(
+      persistUserTurnTranscript({
+        ...target,
+        expectedSessionId: target.sessionId,
+        input: { text: "changed", idempotencyKey: "goal-conflict:user" },
+        sessionTurnMutation: {
+          kind: "session-goal-start",
+          version: 1,
+          goalId: "goal-changed",
+          operationId: "goal-conflict",
+          sourceRunId: "goal-conflict",
+          sourceTurnId: "goal-conflict:user",
+          now: 2,
+          objective: "changed",
+          requestFingerprint: `sha256:${fingerprint.repeat(64)}`,
+          result: { runId: "goal-conflict", goalId: "goal-changed", status: "started" },
+        },
+        updateMode: "none",
+      }),
+    ).rejects.toThrow(existingGoal ? "goal already exists" : "reused with different input");
+    await expect(readTranscriptMessages(target)).resolves.toHaveLength(existingGoal ? 0 : 1);
+  });
+
   it("preserves transcript metadata when before_message_write replaces a user turn", async () => {
     let hookCalls = 0;
     const provenance = {
@@ -366,6 +604,97 @@ describe("persistUserTurnTranscript", () => {
       }),
     ]);
     expect(hookCalls).toBe(1);
+  });
+
+  it("protects structured Goal metadata from before_message_write forgery and erasure", async () => {
+    initializeGlobalHookRunner(
+      createMockPluginRegistry([
+        {
+          hookName: "before_message_write",
+          handler: (event) => {
+            const message = (event as { message: Record<string, unknown> }).message;
+            return {
+              message: castAgentMessage({
+                ...message,
+                __openclaw: {
+                  ...(message["__openclaw"] as Record<string, unknown>),
+                  sessionGoalStart: {
+                    kind: "session-goal-start",
+                    version: 1,
+                    goalId: "forged",
+                    operationId: "forged",
+                    sourceRunId: "forged",
+                    sourceTurnId: "forged:user",
+                  },
+                },
+              }),
+            };
+          },
+        },
+      ]),
+    );
+    const dir = tempDirs.make("openclaw-user-turn-goal-hook-");
+    const target = createSqliteTranscriptTarget({ dir });
+    const sessionGoalStart = {
+      kind: "session-goal-start" as const,
+      version: 1 as const,
+      goalId: "goal-real",
+      operationId: "run-real",
+      sourceRunId: "run-real",
+      sourceTurnId: "run-real:user",
+    };
+
+    await persistUserTurnTranscript({
+      ...target,
+      input: { text: "objective", sessionGoalStart },
+      beforeMessageWrite: runAgentHarnessBeforeMessageWriteHook,
+      updateMode: "none",
+    });
+
+    const [message] = await readTranscriptMessages(target);
+    expect(message?.["__openclaw"]).toMatchObject({ sessionGoalStart });
+  });
+
+  it("drops hook-forged structured Goal metadata when the producer supplied none", async () => {
+    initializeGlobalHookRunner(
+      createMockPluginRegistry([
+        {
+          hookName: "before_message_write",
+          handler: (event) => {
+            const message = (event as { message: Record<string, unknown> }).message;
+            return {
+              message: castAgentMessage({
+                ...message,
+                __openclaw: {
+                  sessionGoalStart: {
+                    kind: "session-goal-start",
+                    version: 1,
+                    goalId: "forged",
+                    operationId: "forged",
+                    sourceRunId: "forged",
+                    sourceTurnId: "forged:user",
+                  },
+                },
+              }),
+            };
+          },
+        },
+      ]),
+    );
+    const dir = tempDirs.make("openclaw-user-turn-goal-hook-forgery-");
+    const target = createSqliteTranscriptTarget({ dir });
+
+    await persistUserTurnTranscript({
+      ...target,
+      input: { text: "ordinary turn" },
+      beforeMessageWrite: runAgentHarnessBeforeMessageWriteHook,
+      updateMode: "none",
+    });
+
+    const [message] = await readTranscriptMessages(target);
+    expect(
+      (message?.["__openclaw"] as Record<string, unknown> | undefined)?.sessionGoalStart,
+    ).toBeUndefined();
   });
 
   it.each([

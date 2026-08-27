@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
@@ -10,6 +11,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { measureDiagnosticsTimelineSpanSync } from "../../infra/diagnostics-timeline.js";
 import { isIncognitoSessionKey } from "../../routing/session-key.js";
 import { resolveMissingAgentHarnessSessionError } from "../../sessions/agent-harness-session-key.js";
+import { fingerprintSessionRpcReceiptInput } from "../../state/openclaw-agent-session-rpc-receipts.js";
 import { isBrowserOperatorUiClient } from "../../utils/message-channel.js";
 import { authorizeGatewaySessionCreation } from "../operator-role-policy.js";
 import { pendingChatSendDedupeKey } from "../server-shared.js";
@@ -21,6 +23,7 @@ import {
 import {
   hasGatewayAdminScope,
   resolveChatSendActiveScopeKey,
+  resolveChatSendOriginatingRoute,
   resolveRequestedChatAgentId,
   validateChatSelectedAgent,
 } from "./chat-origin-routing.js";
@@ -28,6 +31,7 @@ import { createRestartSafeChatRequest } from "./chat-restart-recovery.js";
 import type { NormalizedChatSendRequest } from "./chat-send-request.js";
 import { roundedChatSendTimingMs } from "./chat-server-timing.js";
 import { normalizeOptionalChatText } from "./chat-text-normalization.js";
+import { gatewayClientSenderFields } from "./gateway-client-identity.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
 function loadChatSendSessionContext(params: {
@@ -106,6 +110,22 @@ function loadChatSendSessionContext(params: {
   };
 }
 
+function fingerprintAttachmentContent(content: unknown): string | null {
+  if (content === undefined) {
+    return null;
+  }
+  const bytes =
+    typeof content === "string"
+      ? content
+      : content instanceof Uint8Array
+        ? content
+        : JSON.stringify(content);
+  if (bytes === undefined) {
+    return null;
+  }
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 /** Load and validate the session/model facts shared by later admission and dispatch phases. */
 export function prepareChatSendSession(params: {
   request: NormalizedChatSendRequest;
@@ -174,22 +194,97 @@ export function prepareChatSendSession(params: {
   });
   const timeoutMs = resolveAgentTimeoutMs({ cfg, overrideMs: p.timeoutMs });
   const now = Date.now();
+  const replyToId = normalizeOptionalChatText(p.replyToId);
+  const expectedSessionRoutingContract = normalizeOptionalChatText(
+    p.expectedSessionRoutingContract,
+  )?.toLowerCase();
+  const originatingRoute = resolveChatSendOriginatingRoute({
+    client: request.clientInfo,
+    deliver: p.deliver,
+    entry,
+    explicitOrigin,
+    hasConnectedClient: client?.connect !== undefined,
+    mainKey: cfg.session?.mainKey,
+    sessionKey,
+  });
+  const sender = gatewayClientSenderFields(client).sender;
+  const structuredGoalRequestFingerprint = request.structuredGoalStart
+    ? fingerprintSessionRpcReceiptInput([
+        "chat.send",
+        "session-goal-start",
+        1,
+        agentId,
+        backingSessionId ?? null,
+        entry?.lifecycleRevision ?? null,
+        rawMessage,
+        normalizedAttachments.map((attachment) => [
+          attachment.type ?? null,
+          attachment.mimeType ?? null,
+          attachment.fileName ?? null,
+          fingerprintAttachmentContent(attachment.content),
+          attachment.sizeBytes ?? null,
+          attachment.durationMs ?? null,
+          attachment.width ?? null,
+          attachment.height ?? null,
+        ]),
+        replyToId ?? null,
+        [
+          originatingRoute.originatingChannel,
+          originatingRoute.originatingTo ?? null,
+          originatingRoute.accountId ?? null,
+          originatingRoute.messageThreadId ?? null,
+          originatingRoute.explicitDeliverRoute,
+        ],
+        [
+          p.thinking ?? null,
+          p.fastMode ?? null,
+          p.fastAutoOnSeconds ?? null,
+          timeoutMs,
+          loadedValue.expectedLeafEntryId ?? null,
+          expectedSessionRoutingContract ?? null,
+          requestedSessionId ?? null,
+          request.reconnectResumeRequested,
+          request.supportsTaskSuggestions,
+          request.clientInfo?.id ?? null,
+          request.clientInfo?.mode ?? null,
+          [...new Set(client?.connect?.scopes ?? [])].toSorted(),
+          [...new Set(client?.connect?.caps ?? [])].toSorted(),
+          sender?.id ?? null,
+          sender?.name ?? null,
+          hasGatewayAdminScope(client),
+        ],
+      ])
+    : undefined;
+  const structuredGoalStart =
+    request.structuredGoalStart && structuredGoalRequestFingerprint
+      ? {
+          ...request.structuredGoalStart,
+          requestFingerprint: structuredGoalRequestFingerprint,
+        }
+      : undefined;
   const restartSafeRequest = createRestartSafeChatRequest({
     cfg,
-    eligible:
-      isBrowserOperatorUiClient(request.clientInfo) &&
-      turnKind === "main" &&
-      normalizedAttachments.length === 0 &&
-      !request.reconnectResumeRequested &&
-      explicitOrigin === undefined &&
-      p.deliver !== true &&
-      p.thinking === undefined &&
-      p.fastMode === undefined &&
-      p.fastAutoOnSeconds === undefined &&
-      p.timeoutMs === undefined &&
-      request.systemInputProvenance === undefined &&
-      request.systemProvenanceReceipt === undefined &&
-      !request.suppressCommandInterpretation,
+    eligible: structuredGoalStart
+      ? true
+      : isBrowserOperatorUiClient(request.clientInfo) &&
+        turnKind === "main" &&
+        normalizedAttachments.length === 0 &&
+        !request.reconnectResumeRequested &&
+        explicitOrigin === undefined &&
+        p.deliver !== true &&
+        p.thinking === undefined &&
+        p.fastMode === undefined &&
+        p.fastAutoOnSeconds === undefined &&
+        p.timeoutMs === undefined &&
+        request.systemInputProvenance === undefined &&
+        request.systemProvenanceReceipt === undefined &&
+        !request.suppressCommandInterpretation,
+    ...(structuredGoalStart
+      ? {
+          allowCommandLikeMessage: true,
+          fingerprint: structuredGoalStart.requestFingerprint,
+        }
+      : {}),
     message: rawMessage,
     senderIsOwner: hasGatewayAdminScope(client),
   });
@@ -207,7 +302,9 @@ export function prepareChatSendSession(params: {
       resolvedSessionAuthProvider,
       timeoutMs,
       now,
+      originatingRoute,
       restartSafeRequest,
+      structuredGoalStart,
     },
   };
 }

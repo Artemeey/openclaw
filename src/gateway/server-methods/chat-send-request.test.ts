@@ -115,6 +115,52 @@ describe("normalizeChatSendRequest", () => {
     });
   });
 
+  it("accepts structured Goal start without capability or admin and suppresses commands", () => {
+    const result = normalizeChatSendRequest({
+      params: validParams({
+        message: "/leading\nmultiline objective",
+        intent: { kind: "session-goal-start", version: 1 },
+      }),
+      client: null,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        rawMessage: "/leading\nmultiline objective",
+        suppressCommandInterpretation: true,
+        stopCommand: false,
+        turnKind: "main",
+        structuredGoalStart: {
+          kind: "session-goal-start",
+          version: 1,
+          operationId: "request-1",
+          sourceRunId: "request-1",
+          sourceTurnId: "request-1:user",
+          goalId: "goal-884f450f7c018831a57d95b6a6c6cf4079d5",
+        },
+      },
+    });
+  });
+
+  it.each([
+    { queueMode: "followup" },
+    { deliver: false },
+    { suppressCommandInterpretation: false },
+    { originatingChannel: "webchat", originatingTo: "main" },
+    { systemInputProvenance: { kind: "internal_system" } },
+  ])("rejects incompatible structured Goal controls before admission: %o", (incompatible) => {
+    expect(
+      normalizeChatSendRequest({
+        params: validParams({
+          intent: { kind: "session-goal-start", version: 1 },
+          ...incompatible,
+        }),
+        client: null,
+      }),
+    ).toMatchObject({ ok: false, error: expect.stringContaining("cannot include") });
+  });
+
   it("requires capable copilot runs to carry explicit tool bindings", () => {
     expect(normalizeChatSendRequest({ params: validParams(), client: copilotClient() })).toEqual({
       ok: false,

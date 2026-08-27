@@ -77,7 +77,7 @@ describe("listGatewayMethods", () => {
   });
 
   it("appends new methods after model probing without shifting older method indices", () => {
-    expect(listGatewayMethods().slice(-66)).toEqual([
+    expect(listGatewayMethods().slice(-68)).toEqual([
       "models.probe",
       "migrations.memory.plan",
       "migrations.memory.apply",
@@ -144,6 +144,8 @@ describe("listGatewayMethods", () => {
       "diagnostics.lanes",
       "session.members.listEvidence",
       "plugins.inspect",
+      "sessions.goal.update",
+      "sessions.goal.clear",
     ]);
     const methods = listGatewayMethods();
     expect(methods.indexOf("node.pluginSurface.refresh")).toBe(
@@ -266,7 +268,7 @@ describe("listGatewayMethods", () => {
       "exec.approval.get",
     ]);
     expect(methods).toContain("tts.speak");
-    expect(coreMethods.slice(-73)).toEqual([
+    expect(coreMethods.slice(-75)).toEqual([
       "sessions.catalog.continue",
       "sessions.catalog.archive",
       "approval.get",
@@ -340,6 +342,8 @@ describe("listGatewayMethods", () => {
       "diagnostics.lanes",
       "session.members.listEvidence",
       "plugins.inspect",
+      "sessions.goal.update",
+      "sessions.goal.clear",
     ]);
     expect(methods.indexOf("approval.get")).toBeGreaterThan(methods.indexOf("tts.speak"));
     expect(methods.indexOf("approval.resolve")).toBe(methods.indexOf("approval.get") + 1);
@@ -382,6 +386,10 @@ describe("listGatewayMethods", () => {
     expect(methods.indexOf("progressCard.put")).toBe(methods.indexOf("progressCard.get") + 1);
     expect(methods.indexOf("session.members.listEvidence")).toBe(
       methods.indexOf("diagnostics.lanes") + 1,
+    );
+    expect(methods.indexOf("sessions.goal.update")).toBe(methods.indexOf("plugins.inspect") + 1);
+    expect(methods.indexOf("sessions.goal.clear")).toBe(
+      methods.indexOf("sessions.goal.update") + 1,
     );
   });
 

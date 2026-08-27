@@ -47,6 +47,7 @@ export type {
 } from "./schema/secrets.js";
 export * from "./schema/portals.js";
 export * from "./public-schema.js";
+export * from "./goal-public-schema.js";
 export {
   MIN_CLIENT_PROTOCOL_VERSION,
   MIN_NODE_PROTOCOL_VERSION,

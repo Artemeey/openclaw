@@ -26,6 +26,10 @@ import {
   readSessionIdentitySnapshot,
   writeSessionEntry,
 } from "./session-accessor.sqlite-entry-store.js";
+import {
+  commitSessionGoalStartMutation,
+  readSessionGoalStartReplay,
+} from "./session-accessor.sqlite-goal-turn-mutation.js";
 import { emitCommittedSessionIdentityDiff } from "./session-accessor.sqlite-identity.js";
 import {
   readTranscriptEventRows,
@@ -51,7 +55,7 @@ import {
   replaceSqliteTranscriptEventsInTransaction,
   rewriteSqliteTranscriptEventRowsInTransaction,
 } from "./session-accessor.sqlite-transcript-store.js";
-import type { SessionTranscriptWriteTransactionContext } from "./session-accessor.types.js";
+import type * as AccessorTypes from "./session-accessor.types.js";
 import type {
   SessionTranscriptTurnExpectedState,
   SessionTranscriptTurnLifecyclePatch,
@@ -82,6 +86,7 @@ type SqliteExpectedSessionTranscriptTurnResult = {
   rejectedReason?: "session-rebound";
   sessionEntry: SessionEntry | undefined;
   sessionFile: string;
+  sessionTurnMutation?: AccessorTypes.SessionTurnMutationResult;
 };
 
 type SqliteTranscriptWriteLockContext = {
@@ -350,7 +355,6 @@ function resolveTranscriptEventAppendParent(
   return effectiveParentId === parentId ? event : { ...event, parentId: effectiveParentId };
 }
 
-/** Appends a guarded transcript turn and touches its session row in one queued write. */
 export async function appendExpectedSessionTranscriptTurn(
   scope: SessionTranscriptWriteScope,
   options: {
@@ -363,6 +367,7 @@ export async function appendExpectedSessionTranscriptTurn(
     expectedSessionId: string;
     messages: readonly SessionTranscriptTurnMessageAppend[];
     sessionLifecyclePatch?: SessionTranscriptTurnLifecyclePatch;
+    sessionTurnMutation?: AccessorTypes.SessionTurnMutation;
     sessionFile: string;
     touchSessionEntry?: boolean;
   },
@@ -400,6 +405,38 @@ export async function appendExpectedSessionTranscriptTurn(
       if (!sessionMatchesExpectedTranscriptTurn(fresh, options)) {
         result = sqliteSessionTranscriptTurnRebound(fresh, options.sessionFile);
         return;
+      }
+      const sessionTurnMutation = options.sessionTurnMutation;
+      if (sessionTurnMutation) {
+        sessionTurnMutation.assertCommitAllowed?.();
+        const replayResult = readSessionGoalStartReplay({
+          database: transactionDb,
+          mutation: sessionTurnMutation,
+          sessionId: resolved.sessionId,
+        });
+        if (replayResult) {
+          const replayed = appendTranscriptMessageInTransaction(
+            transactionDb,
+            resolved,
+            options.messages[0]!,
+          );
+          if (!replayed || replayed.appended) {
+            throw new Error("Session Goal start receipt has no matching transcript turn");
+          }
+          result = {
+            appendedMessages: [replayed],
+            sessionEntry: cloneSessionEntry(fresh.entry),
+            sessionFile: options.sessionFile,
+            sessionTurnMutation: {
+              result: replayResult,
+              status: "replay",
+            },
+          };
+          return;
+        }
+        if (fresh.entry.goal) {
+          throw new Error("goal already exists");
+        }
       }
       const appendedMessages: TranscriptMessageAppendResult<unknown>[] = [];
       for (const append of messages) {
@@ -439,9 +476,18 @@ export async function appendExpectedSessionTranscriptTurn(
         sessionLifecyclePatch: options.sessionLifecyclePatch,
         touchSessionEntry: options.touchSessionEntry,
       });
+      const goalPatch = sessionTurnMutation
+        ? commitSessionGoalStartMutation({
+            appendedMessages,
+            database: transactionDb,
+            entry: fresh.entry,
+            mutation: sessionTurnMutation,
+            sessionId: resolved.sessionId,
+          })
+        : undefined;
       const next =
-        Object.keys(sessionPatch).length > 0
-          ? mergeSessionEntry(fresh.entry, sessionPatch)
+        Object.keys(sessionPatch).length > 0 || goalPatch
+          ? mergeSessionEntry(fresh.entry, { ...sessionPatch, ...goalPatch })
           : fresh.entry;
       if (next !== fresh.entry) {
         const identityKeys = collectSessionEntryLookupKeys(transactionDb, resolved.sessionKey);
@@ -453,6 +499,14 @@ export async function appendExpectedSessionTranscriptTurn(
         appendedMessages,
         sessionEntry: cloneSessionEntry(next),
         sessionFile: options.sessionFile,
+        ...(sessionTurnMutation
+          ? {
+              sessionTurnMutation: {
+                result: sessionTurnMutation.result,
+                status: "inserted" as const,
+              },
+            }
+          : {}),
       };
     }, toDatabaseOptions(resolved));
     emitCommittedSessionIdentityDiff(previousIdentity, currentIdentity);
@@ -632,7 +686,7 @@ export async function withTranscriptWriteLock<T>(
 /** Runs synchronous transcript work under one writer queue and SQLite transaction. */
 export async function withTranscriptWriteTransaction<T>(
   scope: SessionTranscriptWriteScope,
-  run: (context: SessionTranscriptWriteTransactionContext) => T,
+  run: (context: AccessorTypes.SessionTranscriptWriteTransactionContext) => T,
 ): Promise<T> {
   const resolved = resolveSqliteTranscriptScope(scope);
   return await runExclusiveSqliteSessionWrite(resolved, async () =>

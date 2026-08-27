@@ -92,6 +92,8 @@ export type {
   SessionTranscriptTurnMessageAppend,
   SessionTranscriptTurnPersistOptions,
   SessionTranscriptTurnPersistResult,
+  SessionTurnMutation,
+  SessionTurnMutationResult,
   SessionTranscriptTurnUpdateMode,
   SessionTranscriptTurnWriteContext,
   SessionTranscriptVisibleMessageDeltaLimits,

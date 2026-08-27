@@ -103,19 +103,27 @@ function fingerprintRestartSafeChatRequest(params: {
 }
 
 export function createRestartSafeChatRequest(params: {
+  allowCommandLikeMessage?: boolean;
   eligible: boolean;
+  fingerprint?: string;
   message: string;
   senderIsOwner: boolean;
   cfg: OpenClawConfig;
 }): RestartSafeChatRequest | undefined {
-  if (!params.eligible || hasRestartUnsafeMessageSemantics(params.message, params.cfg)) {
+  if (
+    !params.eligible ||
+    (!params.allowCommandLikeMessage &&
+      hasRestartUnsafeMessageSemantics(params.message, params.cfg))
+  ) {
     return undefined;
   }
   return {
-    fingerprint: fingerprintRestartSafeChatRequest({
-      message: params.message,
-      senderIsOwner: params.senderIsOwner,
-    }),
+    fingerprint:
+      params.fingerprint ??
+      fingerprintRestartSafeChatRequest({
+        message: params.message,
+        senderIsOwner: params.senderIsOwner,
+      }),
   };
 }
 
@@ -221,6 +229,7 @@ export async function resolveDurableChatClaim(params: {
 }
 
 function isRestartSafeChatSession(params: {
+  clientRunId: string;
   entry?: SessionEntry;
   requestedSessionId?: string;
   sessionKey: string;
@@ -229,7 +238,8 @@ function isRestartSafeChatSession(params: {
   return Boolean(
     entry?.sessionId &&
     params.sessionKey !== "global" &&
-    entry.status !== "running" &&
+    (entry.status !== "running" ||
+      entry.restartRecoveryDeliverySourceRunId === params.clientRunId) &&
     entry.abortedLastRun !== true &&
     entry.archivedAt === undefined &&
     entry.initializationPending !== true &&
@@ -249,7 +259,7 @@ function isRestartSafeChatSession(params: {
   );
 }
 
-function hasRestartUnsafeChatWork(params: {
+export function hasRestartUnsafeChatWork(params: {
   context: Pick<GatewayRequestContext, "chatAbortControllers"> &
     Partial<Pick<GatewayRequestContext, "chatQueuedTurns">>;
   sessionId: string;

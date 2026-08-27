@@ -199,6 +199,9 @@ describe("sendGatewayHello update detail scope", () => {
     expect(helloPayload(context)?.features.capabilities).toContain(
       GATEWAY_SERVER_CAPS.SESSION_UNREAD_ACK_CONTRACT,
     );
+    expect(helloPayload(context)?.features.capabilities).toContain(
+      GATEWAY_SERVER_CAPS.SESSION_GOAL_START,
+    );
   });
 
   it("omits package build identity for independently built configured UI roots", async () => {

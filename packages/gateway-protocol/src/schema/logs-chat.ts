@@ -139,6 +139,12 @@ const RunToolBindingsSchema = Type.Record(
 const QUEUE_MODES = ["steer", "followup", "collect", "interrupt"] as const;
 export type QueueMode = (typeof QUEUE_MODES)[number];
 
+/** Versioned meaning attached to a human-visible chat turn. */
+export const ChatSendIntentSchema = closedObject({
+  kind: Type.Literal("session-goal-start"),
+  version: Type.Literal(1),
+});
+
 /** User-to-agent send request; idempotency key lets clients safely retry transport failures. */
 export const ChatSendParamsSchema = closedObject({
   sessionKey: ChatSendSessionKeyString,
@@ -170,6 +176,7 @@ export const ChatSendParamsSchema = closedObject({
   // the Gateway steers the session's direct run or starts a turn when idle.
   expectedLeafEntryId: Type.Optional(Type.Union([NonEmptyString, Type.Null()])),
   expectedSessionRoutingContract: Type.Optional(NonEmptyString),
+  intent: Type.Optional(ChatSendIntentSchema),
   idempotencyKey: NonEmptyString,
 });
 
@@ -279,6 +286,8 @@ export type ChatHistoryResetResult = Static<typeof ChatHistoryResetResultSchema>
 export type ChatHistoryCursorResult = Static<typeof ChatHistoryCursorResultSchema>;
 export type ChatMetadataParams = Static<typeof ChatMetadataParamsSchema>;
 export type ChatToolTitlesParams = Static<typeof ChatToolTitlesParamsSchema>;
+export type ChatSendIntent = Static<typeof ChatSendIntentSchema>;
+export type ChatSendParams = Static<typeof ChatSendParamsSchema>;
 export type LogsTailParams = Static<typeof LogsTailParamsSchema>;
 export type LogsTailResult = Static<typeof LogsTailResultSchema>;
 export type ChatAbortParams = Static<typeof ChatAbortParamsSchema>;

@@ -366,6 +366,27 @@ export type SessionTranscriptWriteTransactionContext = {
 
 export type SessionTranscriptTurnUpdateMode = "inline" | "file-only" | "none";
 
+type SessionGoalStartTurnMutation = {
+  assertCommitAllowed?: () => void;
+  goalId: string;
+  kind: "session-goal-start";
+  now: number;
+  objective: string;
+  operationId: string;
+  requestFingerprint: `sha256:${string}`;
+  result: { goalId: string; runId: string; status: "started" };
+  sourceRunId: string;
+  sourceTurnId: string;
+  version: 1;
+};
+
+export type SessionTurnMutation = SessionGoalStartTurnMutation;
+
+export type SessionTurnMutationResult = {
+  result: SessionGoalStartTurnMutation["result"];
+  status: "inserted" | "replay";
+};
+
 export type SessionTranscriptTurnMessageAppend = TranscriptMessageAppendOptions<unknown> & {
   /**
    * Runs inside the session writer queue before the SQLite transaction begins.
@@ -401,6 +422,8 @@ export type SessionTranscriptTurnPersistOptions = {
   expectedSessionState?: SessionTranscriptTurnExpectedState;
   /** Lifecycle metadata committed when the guarded turn inserts or idempotently matches a message. */
   sessionLifecyclePatch?: SessionTranscriptTurnLifecyclePatch;
+  /** Closed non-lifecycle state mutation committed with this transcript turn. */
+  sessionTurnMutation?: SessionTurnMutation;
   /** Message rows to append under one transcript write lock. */
   messages: readonly SessionTranscriptTurnMessageAppend[];
   /** Exact run provenance persisted on output rows and emitted on terminal assistant updates. */
@@ -423,6 +446,7 @@ export interface SessionTranscriptTurnPersistResult {
   messages: TranscriptMessageAppendResult<unknown>[];
   rejectedReason?: "session-rebound";
   sessionEntry: SessionEntry | undefined;
+  sessionTurnMutation?: SessionTurnMutationResult;
 }
 
 export interface SessionTranscriptRuntimeTarget {

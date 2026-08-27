@@ -246,6 +246,8 @@ describe("session sharing policy", () => {
           "talk.session.steer",
           "taskSuggestions.create",
           "sessions.companion.reset",
+          "sessions.goal.clear",
+          "sessions.goal.update",
           "wake",
         ]) {
           expect(

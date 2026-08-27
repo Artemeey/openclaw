@@ -1,7 +1,20 @@
 import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
+import { resolveEmbeddedSessionLane } from "../../agents/embedded-agent-runner/lanes.js";
+import { hasPendingFollowupQueueWork } from "../../auto-reply/reply/queue/state.js";
 import { resolveSessionWorkStartError } from "../../config/sessions.js";
 import { SESSION_ROUTING_CHANGED_ERROR_REASON } from "../../config/sessions/main-session.js";
+import {
+  resolveSqliteReadScope,
+  toDatabaseOptions,
+} from "../../config/sessions/session-accessor.sqlite-scope.js";
+import { getCommandLaneSnapshot } from "../../process/command-queue.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
+import { isSessionWorkAdmissionActive } from "../../sessions/session-lifecycle-admission.js";
+import { openOpenClawAgentDatabase } from "../../state/openclaw-agent-db.js";
+import {
+  readSessionRpcReceipt,
+  SessionRpcReceiptConflictError,
+} from "../../state/openclaw-agent-session-rpc-receipts.js";
 import { sessionDeliveryChannel } from "../../utils/delivery-context.shared.js";
 import { setGatewayDedupeEntry } from "../agent-turn/agent-job.js";
 import { chatAbortMarkerTimestampMs } from "../server-chat-state.js";
@@ -16,13 +29,34 @@ import {
   abortChatRunsForSessionKeyWithPartials,
   createChatAbortOps,
 } from "./chat-abort-runtime.js";
-import { resolveDurableChatClaim } from "./chat-restart-recovery.js";
+import { hasRestartUnsafeChatWork, resolveDurableChatClaim } from "./chat-restart-recovery.js";
 import type { NormalizedChatSendRequest } from "./chat-send-request.js";
 import type { PreparedChatSendSession } from "./chat-send-session.js";
 import { resolveChatSendStopOwnerScope } from "./chat-send-stop-owner-scope.js";
+import { normalizeUnknownChatText } from "./chat-text-normalization.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
 export const ACTIVE_LEAF_CHANGED_ERROR_REASON = "active-leaf-changed";
+export const SESSION_GOAL_BUSY_ERROR_REASON = "session-goal-busy";
+
+export function hasQueuedSessionGoalWork(identities: Iterable<string | undefined>): boolean {
+  const keys = [...identities].filter((key): key is string => Boolean(key?.trim()));
+  return (
+    hasPendingFollowupQueueWork(keys) ||
+    keys.some((key) => getCommandLaneSnapshot(resolveEmbeddedSessionLane(key)).queuedCount > 0)
+  );
+}
+
+export function respondChatSessionGoalBusy(respond: GatewayRequestHandlerOptions["respond"]): void {
+  respond(
+    false,
+    undefined,
+    errorShape(ErrorCodes.UNAVAILABLE, "session has active or queued work", {
+      details: { reason: SESSION_GOAL_BUSY_ERROR_REASON },
+      retryable: true,
+    }),
+  );
+}
 
 export function respondChatSessionRoutingChanged(respond: GatewayRequestHandlerOptions["respond"]) {
   respond(
@@ -84,7 +118,6 @@ export async function runChatSendPreAdmission(params: {
     );
     return false;
   }
-
   if (stopCommand) {
     if (sessionRoutingChanged(cfg)) {
       respondChatSessionRoutingChanged(respond);
@@ -116,7 +149,9 @@ export async function runChatSendPreAdmission(params: {
     return false;
   }
 
-  const cached = context.dedupe.get(`chat:${clientRunId}`);
+  const cached = request.structuredGoalStart
+    ? undefined
+    : context.dedupe.get(`chat:${clientRunId}`);
   if (cached) {
     respond(cached.ok, cached.payload, cached.error, { cached: true });
     return false;
@@ -141,10 +176,32 @@ export async function runChatSendPreAdmission(params: {
     keyPrefix: PENDING_CHAT_SEND_DEDUPE_PREFIX,
   });
   if (pendingChatSend) {
-    respond(true, { runId: clientRunId, status: "in_flight" as const }, undefined, {
-      cached: true,
-      runId: clientRunId,
-    });
+    if (
+      session.structuredGoalStart &&
+      normalizeUnknownChatText(pendingChatSend.payload.requestIdentity) !==
+        session.structuredGoalStart.requestFingerprint
+    ) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          "session Goal operation was reused with different input",
+          { details: { code: "SESSION_GOAL_CONFLICT" } },
+        ),
+      );
+      return false;
+    }
+    const goalId = normalizeUnknownChatText(pendingChatSend.payload.goalId);
+    respond(
+      true,
+      { runId: clientRunId, status: "in_flight" as const, ...(goalId ? { goalId } : {}) },
+      undefined,
+      {
+        cached: true,
+        runId: clientRunId,
+      },
+    );
     return false;
   }
 
@@ -182,6 +239,58 @@ export async function runChatSendPreAdmission(params: {
     );
     return false;
   }
+  if (durableClaim.kind === "accepted" && request.structuredGoalStart) {
+    const receiptKey = {
+      sessionId: entry?.sessionId ?? session.backingSessionId ?? clientRunId,
+      method: "chat.send",
+      operationId: request.structuredGoalStart.operationId,
+    };
+    const receipt = readSessionRpcReceipt(
+      openOpenClawAgentDatabase(
+        toDatabaseOptions(
+          resolveSqliteReadScope({ agentId: session.agentId, sessionKey, storePath }),
+        ),
+      ),
+      receiptKey,
+    );
+    if (!receipt) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.UNAVAILABLE, "accepted session Goal start has no durable receipt"),
+      );
+      return false;
+    }
+    if (receipt.requestFingerprint !== session.structuredGoalStart!.requestFingerprint) {
+      const conflict = new SessionRpcReceiptConflictError(receiptKey);
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, conflict.message, {
+          details: { code: "SESSION_GOAL_CONFLICT" },
+        }),
+      );
+      return false;
+    }
+    const result = receipt.result;
+    if (
+      !result ||
+      typeof result !== "object" ||
+      Array.isArray(result) ||
+      result.status !== "started" ||
+      result.runId !== clientRunId ||
+      result.goalId !== session.structuredGoalStart!.goalId
+    ) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.UNAVAILABLE, "accepted session Goal start receipt is invalid"),
+      );
+      return false;
+    }
+    respond(true, result, undefined, { cached: true, runId: clientRunId });
+    return false;
+  }
   if (durableClaim.kind === "accepted") {
     // An active source claim or terminal tombstone proves the durable turn
     // was already accepted. Retire the outbox without dispatching twice.
@@ -189,6 +298,23 @@ export async function runChatSendPreAdmission(params: {
       cached: true,
       runId: clientRunId,
     });
+    return false;
+  }
+
+  const goalWorkIdentities = [sessionKey, entry?.sessionId];
+  if (
+    request.structuredGoalStart &&
+    ((entry?.sessionId &&
+      hasRestartUnsafeChatWork({
+        context,
+        sessionId: entry.sessionId,
+        sessionKey,
+        agentId: session.agentId,
+      })) ||
+      isSessionWorkAdmissionActive(storePath, goalWorkIdentities) ||
+      hasQueuedSessionGoalWork(goalWorkIdentities))
+  ) {
+    respondChatSessionGoalBusy(respond);
     return false;
   }
 

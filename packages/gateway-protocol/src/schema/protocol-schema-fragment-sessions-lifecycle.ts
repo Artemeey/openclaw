@@ -1,3 +1,4 @@
+import * as sessionGoals from "./sessions-goals.js";
 import * as viewerPresence from "./sessions-viewer-presence.js";
 import * as sessions from "./sessions.js";
 
@@ -62,6 +63,12 @@ export const SessionLifecycleProtocolSchemas = {
   SessionsDeleteResult: sessions.SessionsDeleteResultSchema,
   SessionsAssignOwnerParams: sessions.SessionsAssignOwnerParamsSchema,
   SessionsAssignOwnerResult: sessions.SessionsAssignOwnerResultSchema,
+  SessionGoalStatus: sessionGoals.SessionGoalStatusSchema,
+  SessionGoal: sessionGoals.SessionGoalSchema,
+  SessionsGoalUpdateParams: sessionGoals.SessionsGoalUpdateParamsSchema,
+  SessionsGoalUpdateResult: sessionGoals.SessionsGoalUpdateResultSchema,
+  SessionsGoalClearParams: sessionGoals.SessionsGoalClearParamsSchema,
+  SessionsGoalClearResult: sessionGoals.SessionsGoalClearResultSchema,
   SessionGroup: sessions.SessionGroupSchema,
   SessionGroupDefaults: sessions.SessionGroupDefaultsSchema,
   SessionsGroupsListParams: sessions.SessionsGroupsListParamsSchema,

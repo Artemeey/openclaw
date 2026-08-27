@@ -5,6 +5,8 @@ import {
   createSessionGoal,
   formatSessionGoalStatus,
   getSessionGoal,
+  projectSessionGoalCreate,
+  projectSessionGoalTransition,
   resolveSessionGoalDisplayState,
   updateSessionGoalObjective,
   updateSessionGoalStatus,
@@ -54,6 +56,113 @@ describe("session goals", () => {
       },
     });
   }
+
+  function goalEntry(overrides: Partial<SessionEntry> = {}): SessionEntry {
+    return {
+      sessionId: "sess-1",
+      updatedAt: 1,
+      totalTokens: 125,
+      totalTokensFresh: true,
+      totalTokensVersion: 1,
+      goal: {
+        schemaVersion: 1,
+        id: "goal-1",
+        objective: "ship",
+        status: "active",
+        createdAt: 10,
+        updatedAt: 10,
+        tokenStart: 100,
+        tokenStartFresh: true,
+        tokensUsed: 0,
+        tokenBudget: 50,
+        continuationTurns: 0,
+      },
+      ...overrides,
+    };
+  }
+
+  it("projects deterministic goal creation from caller-owned identity and time", () => {
+    const entry: SessionEntry = {
+      sessionId: "sess-1",
+      updatedAt: 1,
+      totalTokens: 100,
+      totalTokensFresh: true,
+      totalTokensVersion: 1,
+    };
+
+    expect(
+      projectSessionGoalCreate(entry, {
+        goalId: "goal-fixed",
+        now: 20,
+        objective: "  land the PR  ",
+        tokenBudget: 50.9,
+      }),
+    ).toEqual({
+      goal: {
+        schemaVersion: 1,
+        id: "goal-fixed",
+        objective: "land the PR",
+        status: "active",
+        createdAt: 20,
+        updatedAt: 20,
+        tokenStart: 100,
+        tokenStartFresh: true,
+        tokensUsed: 0,
+        tokenBudget: 50,
+        continuationTurns: 0,
+      },
+    });
+    expect(entry.goal).toBeUndefined();
+  });
+
+  it.each([
+    {
+      transition: { action: "edit" as const, objective: "ship safely" },
+      expected: { objective: "ship safely", status: "active" },
+    },
+    {
+      transition: { action: "pause" as const, note: "later" },
+      expected: { lastStatusNote: "later", pausedAt: 20, status: "paused" },
+    },
+    {
+      transition: { action: "resume" as const },
+      expected: { status: "active" },
+    },
+    {
+      transition: { action: "complete" as const, note: "done" },
+      expected: { completedAt: 20, lastStatusNote: "done", status: "complete" },
+    },
+    {
+      transition: { action: "block" as const, note: "waiting" },
+      expected: { blockedAt: 20, lastStatusNote: "waiting", status: "blocked" },
+    },
+  ])(
+    "projects the $transition.action transition against the expected goal",
+    ({ transition, expected }) => {
+      const entry = goalEntry();
+
+      const patch = projectSessionGoalTransition(entry, {
+        expectedGoalId: "goal-1",
+        now: 20,
+        transition,
+      });
+
+      expect(patch.goal).toMatchObject({ id: "goal-1", updatedAt: 20, ...expected });
+      expect(entry.goal).toMatchObject({ objective: "ship", status: "active", updatedAt: 10 });
+    },
+  );
+
+  it("fences pure transitions and clears to the exact goal id", () => {
+    const entry = goalEntry();
+
+    expect(() =>
+      projectSessionGoalTransition(entry, {
+        expectedGoalId: "replaced-goal",
+        now: 20,
+        transition: { action: "pause" },
+      }),
+    ).toThrow("goal changed");
+  });
 
   it("creates core-owned goal state on the session entry", async () => {
     await upsertSessionEntry({
@@ -442,6 +551,97 @@ describe("session goals", () => {
         now: 30,
       }),
     ).rejects.toThrow(/already complete/);
+  });
+
+  it("fences persisted mutations to the exact expected goal id", async () => {
+    await writeSession(0);
+    const goal = await createSessionGoal({
+      storePath: fixture.storePath(),
+      sessionKey,
+      objective: "ship",
+      now: 10,
+    });
+
+    await expect(
+      updateSessionGoalObjective({
+        storePath: fixture.storePath(),
+        sessionKey,
+        expectedGoalId: "replaced-goal",
+        objective: "wrong target",
+        now: 20,
+      }),
+    ).rejects.toThrow("goal changed");
+    await expect(
+      updateSessionGoalStatus({
+        storePath: fixture.storePath(),
+        sessionKey,
+        expectedGoalId: "replaced-goal",
+        status: "complete",
+        now: 20,
+      }),
+    ).rejects.toThrow("goal changed");
+    await expect(
+      clearSessionGoal({
+        storePath: fixture.storePath(),
+        sessionKey,
+        expectedGoalId: "replaced-goal",
+      }),
+    ).rejects.toThrow("goal changed");
+    expect(getSessionEntry({ storePath: fixture.storePath(), sessionKey })?.goal).toEqual(goal);
+  });
+
+  it("revalidates mutation authorization at the commit edge", async () => {
+    await writeSession(0);
+    const denyCommit = () => {
+      throw new Error("authorization changed");
+    };
+
+    await expect(
+      createSessionGoal({
+        storePath: fixture.storePath(),
+        sessionKey,
+        objective: "ship",
+        now: 10,
+        assertCommitAllowed: denyCommit,
+      }),
+    ).rejects.toThrow("authorization changed");
+    expect(getSessionEntry({ storePath: fixture.storePath(), sessionKey })?.goal).toBeUndefined();
+
+    const goal = await createSessionGoal({
+      storePath: fixture.storePath(),
+      sessionKey,
+      objective: "ship",
+      now: 10,
+    });
+    await expect(
+      updateSessionGoalObjective({
+        storePath: fixture.storePath(),
+        sessionKey,
+        expectedGoalId: goal.id,
+        objective: "wrong target",
+        now: 20,
+        assertCommitAllowed: denyCommit,
+      }),
+    ).rejects.toThrow("authorization changed");
+    await expect(
+      updateSessionGoalStatus({
+        storePath: fixture.storePath(),
+        sessionKey,
+        expectedGoalId: goal.id,
+        status: "complete",
+        now: 20,
+        assertCommitAllowed: denyCommit,
+      }),
+    ).rejects.toThrow("authorization changed");
+    await expect(
+      clearSessionGoal({
+        storePath: fixture.storePath(),
+        sessionKey,
+        expectedGoalId: goal.id,
+        assertCommitAllowed: denyCommit,
+      }),
+    ).rejects.toThrow("authorization changed");
+    expect(getSessionEntry({ storePath: fixture.storePath(), sessionKey })?.goal).toEqual(goal);
   });
 
   it("projects display state from fresh session tokens", () => {

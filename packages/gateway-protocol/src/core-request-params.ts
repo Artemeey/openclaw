@@ -3,6 +3,7 @@ import type * as BoardSchema from "./schema/board.js";
 import type { CommandsListParams } from "./schema/commands.js";
 import type { LogsTailParams } from "./schema/logs-chat.js";
 import type { PortalCloseParams, PortalListParams, PortalOpenParams } from "./schema/portals.js";
+import type { SessionsGoalClearParams, SessionsGoalUpdateParams } from "./schema/sessions-goals.js";
 import type { UiCommandParams } from "./schema/ui-command.js";
 
 /** Schema-derived payload ownership for statically validated core Gateway methods. */
@@ -25,5 +26,7 @@ export type GatewayCoreRequestParams = {
   "portal.close": PortalCloseParams;
   "portal.list": PortalListParams;
   "portal.open": PortalOpenParams;
+  "sessions.goal.clear": SessionsGoalClearParams;
+  "sessions.goal.update": SessionsGoalUpdateParams;
   "ui.command": UiCommandParams;
 };

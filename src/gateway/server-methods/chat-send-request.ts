@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import type { FastMode } from "@openclaw/normalization-core/string-coerce";
 import {
@@ -9,7 +10,10 @@ import {
   formatValidationErrors,
   validateChatSendParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import type { QueueMode } from "../../../packages/gateway-protocol/src/schema/logs-chat.js";
+import type {
+  ChatSendIntent,
+  QueueMode,
+} from "../../../packages/gateway-protocol/src/schema/logs-chat.js";
 import { isBtwRequestText } from "../../auto-reply/reply/btw-command.js";
 import type { InputProvenance } from "../../sessions/input-provenance.js";
 import { normalizeInputProvenance } from "../../sessions/input-provenance.js";
@@ -55,7 +59,17 @@ type ChatSendRequestParams = {
   suppressCommandInterpretation?: boolean;
   expectedLeafEntryId?: string | null;
   expectedSessionRoutingContract?: string;
+  intent?: ChatSendIntent;
   idempotencyKey: string;
+};
+
+type StructuredChatGoalStart = {
+  goalId: string;
+  kind: "session-goal-start";
+  operationId: string;
+  sourceRunId: string;
+  sourceTurnId: string;
+  version: 1;
 };
 
 export type NormalizedChatSendRequest = {
@@ -74,6 +88,7 @@ export type NormalizedChatSendRequest = {
   normalizedAttachments: ChatAttachment[];
   rawMessage: string;
   reconnectResumeRequested: boolean;
+  structuredGoalStart?: StructuredChatGoalStart;
 };
 
 type NormalizeChatSendRequestResult =
@@ -102,7 +117,37 @@ export function normalizeChatSendRequest(params: {
   }
 
   const p = controlUiReconnectResume.params as ChatSendRequestParams;
-  const suppressCommandInterpretation = p.suppressCommandInterpretation === true;
+  const isStructuredGoalStart = p.intent?.kind === "session-goal-start";
+  if (
+    isStructuredGoalStart &&
+    (p.queueMode !== undefined ||
+      p.deliver !== undefined ||
+      p.suppressCommandInterpretation !== undefined ||
+      p.systemInputProvenance !== undefined ||
+      p.systemProvenanceReceipt !== undefined ||
+      p.originatingChannel !== undefined ||
+      p.originatingTo !== undefined ||
+      p.originatingAccountId !== undefined ||
+      p.originatingThreadId !== undefined ||
+      p.toolBindings !== undefined)
+  ) {
+    return {
+      ok: false,
+      error:
+        "session Goal start cannot include queue, delivery, routing, provenance, command, or tool-binding controls",
+    };
+  }
+  if (
+    isStructuredGoalStart &&
+    (p.idempotencyKey !== p.idempotencyKey.trim() || p.idempotencyKey.length > 256)
+  ) {
+    return {
+      ok: false,
+      error: "session Goal start idempotencyKey must be canonical and at most 256 characters",
+    };
+  }
+  const suppressCommandInterpretation =
+    isStructuredGoalStart || p.suppressCommandInterpretation === true;
   const explicitOriginResult = normalizeExplicitChatSendOrigin({
     originatingChannel: p.originatingChannel,
     originatingTo: p.originatingTo,
@@ -115,7 +160,7 @@ export function normalizeChatSendRequest(params: {
   if (
     (p.systemInputProvenance ||
       p.systemProvenanceReceipt ||
-      suppressCommandInterpretation ||
+      p.suppressCommandInterpretation === true ||
       explicitOriginResult.value) &&
     !params.trustedSystemInput &&
     !hasGatewayAdminScope(params.client)
@@ -123,7 +168,9 @@ export function normalizeChatSendRequest(params: {
     return {
       ok: false,
       error:
-        p.systemInputProvenance || p.systemProvenanceReceipt || suppressCommandInterpretation
+        p.systemInputProvenance ||
+        p.systemProvenanceReceipt ||
+        p.suppressCommandInterpretation === true
           ? "system provenance fields require admin scope"
           : "originating route fields require admin scope",
     };
@@ -189,6 +236,21 @@ export function normalizeChatSendRequest(params: {
       normalizedAttachments,
       rawMessage,
       reconnectResumeRequested: controlUiReconnectResume.resumeRequested,
+      ...(isStructuredGoalStart
+        ? {
+            structuredGoalStart: {
+              goalId: `goal-${createHash("sha256")
+                .update(`openclaw.session-goal-start.v1\0${p.idempotencyKey}`)
+                .digest("hex")
+                .slice(0, 36)}`,
+              kind: "session-goal-start" as const,
+              operationId: p.idempotencyKey,
+              sourceRunId: p.idempotencyKey,
+              sourceTurnId: `${p.idempotencyKey}:user`,
+              version: 1 as const,
+            },
+          }
+        : {}),
     },
   };
 }
