@@ -65,7 +65,11 @@ describe("Code Mode reconciliation", () => {
 
     expect(
       activateCodeModeReconciliation({
-        attempt: { ...eligibleAttempt(), assistantTexts: ["Only the first hunk applied."] },
+        attempt: {
+          ...eligibleAttempt(),
+          assistantTexts: ["Only the first hunk applied."],
+          toolMetas: [{ toolName: "read", isError: false }],
+        },
         hostOwnsToolSurface: true,
         retryState,
         activateInternalPrompt: (value) => {
@@ -78,9 +82,16 @@ describe("Code Mode reconciliation", () => {
   });
 
   it.each([
-    ["failed read", { lastToolError: { toolName: "read", message: "read failed" } }],
+    [
+      "failed read",
+      {
+        lastToolError: { toolName: "read", message: "read failed" },
+        toolMetas: [{ toolName: "read", isError: true }],
+      },
+    ],
     ["terminal tool", { toolMetas: [{ toolName: "read", terminate: true }] }],
-    ["empty report", { assistantTexts: [] }],
+    ["text-only report", { toolMetas: [] }],
+    ["empty report", { assistantTexts: [], toolMetas: [{ toolName: "read", isError: false }] }],
   ])("keeps reconciliation restricted after a %s", (_label, overrides) => {
     const retryState = createEmbeddedRunTerminalRetryState();
     retryState.forceCodeModeReconciliationTools = true;

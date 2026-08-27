@@ -60,6 +60,16 @@ function hasCodeModeReconciliationReport(attempt: EmbeddedRunAttemptResult): boo
   );
 }
 
+function hasSuccessfulCodeModeReconciliationRead(attempt: EmbeddedRunAttemptResult): boolean {
+  return attempt.toolMetas.some(
+    (entry) =>
+      normalizeToolPolicyName(entry.toolName) === "read" &&
+      entry.isError !== true &&
+      entry.terminate !== true &&
+      entry.asyncStarted !== true,
+  );
+}
+
 export function activateCodeModeReconciliation(params: {
   attempt: EmbeddedRunAttemptResult;
   hostOwnsToolSurface: boolean;
@@ -78,6 +88,7 @@ export function activateCodeModeReconciliation(params: {
       params.attempt.toolMetas.some(
         (entry) => entry.isError === true || entry.terminate === true,
       ) ||
+      !hasSuccessfulCodeModeReconciliationRead(params.attempt) ||
       !hasCodeModeReconciliationReport(params.attempt)
     ) {
       return false;

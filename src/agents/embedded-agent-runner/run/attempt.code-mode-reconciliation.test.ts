@@ -103,6 +103,17 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
 
     const providerContexts: Context[] = [];
     let attemptPhase: "mutation" | "reconciliation" | "continuation" = "mutation";
+    const baseSubscribe = hoisted.subscribeEmbeddedAgentSessionMock.getMockImplementation();
+    if (!baseSubscribe) {
+      throw new Error("missing embedded subscription test implementation");
+    }
+    hoisted.subscribeEmbeddedAgentSessionMock.mockImplementation((params) => {
+      const subscription = baseSubscribe(params);
+      if (attemptPhase === "reconciliation") {
+        subscription.toolMetas.push({ toolName: "read", isError: false });
+      }
+      return subscription;
+    });
     const createSession = () => {
       const session = createDefaultEmbeddedSession();
       const options = hoisted.createAgentSessionMock.mock.calls.at(-1)?.[0] as {
@@ -207,6 +218,9 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
     expect(message.execute).not.toHaveBeenCalled();
     expect(shell.execute).not.toHaveBeenCalled();
     expect(appliedChanges).toEqual(["first hunk applied"]);
+    expect(reconciliationAttempt.toolMetas).toEqual([
+      expect.objectContaining({ toolName: "read", isError: false }),
+    ]);
 
     let continuationPrompt: string | undefined;
     expect(

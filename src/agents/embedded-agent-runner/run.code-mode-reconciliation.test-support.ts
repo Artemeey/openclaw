@@ -46,7 +46,12 @@ describe("runEmbeddedAgent Code Mode reconciliation", () => {
           itemLifecycle: { startedCount: 1, completedCount: 1, activeCount: 0 },
         }),
       )
-      .mockResolvedValueOnce(makeAttemptResult({ assistantTexts: ["The first hunk applied."] }))
+      .mockResolvedValueOnce(
+        makeAttemptResult({
+          assistantTexts: ["The first hunk applied."],
+          toolMetas: [{ toolName: "read", isError: false }],
+        }),
+      )
       .mockResolvedValueOnce(
         makeAttemptResult({ assistantTexts: ["Finished the remaining work."] }),
       );
