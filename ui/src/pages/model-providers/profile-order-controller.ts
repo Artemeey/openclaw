@@ -238,14 +238,12 @@ export class ProfileOrderController {
     messageKey: string,
     method: "models.authCooldownClear",
     params: Record<string, unknown>,
-    success: string,
     busyKey = messageKey,
   ) {
     await this.runProfileMutation({
       method,
       messageKey,
       busyKey,
-      success,
       request: (client, agentId) =>
         client.request<ModelAuthCooldownClearResult>(method, { ...params, agentId }),
     });
@@ -284,7 +282,7 @@ export class ProfileOrderController {
     method: ProfileMutationMethod;
     messageKey: string;
     busyKey: string;
-    success: string;
+    success?: string;
     context?: ProfileMutationContext;
     beforeRequest?: () => void;
     request: (client: GatewayBrowserClient, agentId: string) => Promise<unknown>;

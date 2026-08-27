@@ -371,13 +371,7 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
       card.profileOrderFallbacks[owner] !== undefined && !card.profileOrderLockedOwners[owner],
   );
   const profileOrderLocked = owners.some((owner) => card.profileOrderLockedOwners[owner]);
-  const resetLabel = t(
-    resettableOrderOwners.some((owner) => card.profileOrderFallbacks[owner] === "config")
-      ? "modelProviders.profiles.useConfigured"
-      : resettableOrderOwners.some((owner) => card.profileOrderFallbacks[owner] === "inherited")
-        ? "modelProviders.profiles.useInherited"
-        : "modelProviders.profiles.useAutomatic",
-  );
+  const resetLabel = t("modelProviders.profiles.resetOrder");
   const reorderOffered =
     props.profileCanReorder &&
     profiles.some((profile) => {
@@ -494,18 +488,7 @@ export function renderProfiles(card: ModelProviderCard, props: ProfileViewProps)
                   account: identity,
                   position: String(ownerIndex + 1),
                 })
-              : orderLocked
-                ? t("modelProviders.profiles.pinnedFor", { account: identity })
-                : !explicitOrder
-                  ? t("modelProviders.profiles.automaticFor", { account: identity })
-                  : excluded
-                    ? t("modelProviders.profiles.notInRotationFor", { account: identity })
-                    : ownerIndex === 0
-                      ? t("modelProviders.profiles.primaryFor", { account: identity })
-                      : t("modelProviders.profiles.priorityFor", {
-                          account: identity,
-                          position: String(ownerIndex + 1),
-                        });
+              : identity;
             const move = (position: ProfileDropPosition, targetId: string) => {
               const next = reorderedOwnerProfileIds(
                 moveContext(profile.profileId),

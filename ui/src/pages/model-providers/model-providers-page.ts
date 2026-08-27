@@ -669,7 +669,6 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
           `profiles:${owner}`,
           "models.authCooldownClear",
           { provider, profileId },
-          t("modelProviders.profiles.cooldownCleared"),
           `cooldown:${owner}`,
         ),
       onAddProviderToggle: () => {

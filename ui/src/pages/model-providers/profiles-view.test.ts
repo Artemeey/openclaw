@@ -164,7 +164,7 @@ describe("provider profile roster", () => {
     expect(text(container.querySelector(".model-providers__profiles-heading"))).toContain(
       "tried in priority order",
     );
-    expect(container.querySelector('button[aria-label="Use automatic rotation"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Reset"]')).toBeNull();
     expect(container.querySelector(".model-providers__profile-retry")).toBeNull();
     expect(container.querySelectorAll(".model-providers__profile-logout")).toHaveLength(2);
     expect(
@@ -422,9 +422,7 @@ describe("provider profile roster", () => {
       profileCard(),
       props({ busy: { "profiles:openai": true }, onProfileOrderChange }),
     );
-    const automatic = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Use automatic rotation"]',
-    );
+    const automatic = container.querySelector<HTMLButtonElement>('button[aria-label="Reset"]');
 
     expect(automatic?.disabled).toBe(false);
     automatic?.click();
@@ -439,20 +437,17 @@ describe("provider profile roster", () => {
       props({ onProfileOrderChange }),
     );
 
-    configuredFallback
-      .querySelector<HTMLButtonElement>('button[aria-label="Use configured order"]')
-      ?.click();
+    configuredFallback.querySelector<HTMLButtonElement>('button[aria-label="Reset"]')?.click();
     expect(onProfileOrderChange).toHaveBeenCalledWith("openai", null);
 
     const configuredOrder = mount(profileCard({ profileOrderFallbacks: {} }));
-    expect(configuredOrder.querySelector('button[aria-label="Use automatic rotation"]')).toBeNull();
-    expect(configuredOrder.querySelector('button[aria-label="Use configured order"]')).toBeNull();
+    expect(configuredOrder.querySelector('button[aria-label="Reset"]')).toBeNull();
   });
 
   it("describes an inherited order behind the local override", () => {
     const container = mount(profileCard({ profileOrderFallbacks: { openai: "inherited" } }));
 
-    expect(container.querySelector('button[aria-label="Use inherited order"]')).not.toBeNull();
+    expect(container.querySelector('button[aria-label="Reset"]')).not.toBeNull();
   });
 
   it("does not offer reordering when config pins the profile", () => {
@@ -468,7 +463,7 @@ describe("provider profile roster", () => {
     expect(text(container.querySelector(".model-providers__profiles-heading"))).toContain(
       "profile pinned in config",
     );
-    expect(container.querySelector('button[aria-label="Use automatic rotation"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Reset"]')).toBeNull();
     const grips = container.querySelectorAll<HTMLButtonElement>(".model-providers__profile-grip");
     expect([...grips].every((grip) => grip.disabled)).toBe(true);
     expect(

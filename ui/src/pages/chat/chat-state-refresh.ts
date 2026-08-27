@@ -160,45 +160,34 @@ export async function refreshChatModelAuthStatus(host: ChatPageHost, opts?: { re
     host.connected &&
     host.connectionEpoch === connectionEpoch &&
     resolveChatAgentId(host) === agentId;
+  let result: Awaited<ReturnType<typeof loadModelAuthStatus>> | null = null;
   try {
-    const result = await loadModelAuthStatus(client, {
+    result = await loadModelAuthStatus(client, {
       ...opts,
       agentId,
     });
-    if (!ownsRequest()) {
-      return;
-    }
-    host.modelAuthStatusResult = result;
-    host.modelAuthStatusError = null;
-    let pending = result.usageRefreshPending === true;
-    while (pending) {
+    while (ownsRequest()) {
+      host.modelAuthStatusResult = result;
+      host.modelAuthStatusError = null;
+      if (result.usageRefreshPending !== true) {
+        return;
+      }
       host.requestUpdate?.();
       await new Promise<void>((resolve) => {
-        globalThis.setTimeout(resolve, MODEL_AUTH_USAGE_REFRESH_DELAY_MS);
+        setTimeout(resolve, MODEL_AUTH_USAGE_REFRESH_DELAY_MS);
       });
       if (!ownsRequest()) {
         return;
       }
-      try {
-        const refreshed = await loadModelAuthStatus(client, { agentId });
-        if (!ownsRequest()) {
-          return;
-        }
-        host.modelAuthStatusResult = refreshed;
-        host.modelAuthStatusError = null;
-        pending = refreshed.usageRefreshPending === true;
-      } catch (err) {
-        if (ownsRequest()) {
-          host.modelAuthStatusError = formatUiError(err);
-        }
-        return;
-      }
+      result = await loadModelAuthStatus(client, { agentId });
     }
   } catch (err) {
     if (!ownsRequest()) {
       return;
     }
-    host.modelAuthStatusResult = { ts: 0, providers: [] };
+    if (!result) {
+      host.modelAuthStatusResult = { ts: 0, providers: [] };
+    }
     host.modelAuthStatusError = formatUiError(err);
   }
 }
