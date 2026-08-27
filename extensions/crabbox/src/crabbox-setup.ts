@@ -71,8 +71,8 @@ const DAYTONA_DESCRIPTOR: WorkerSetupProvider = {
     },
     target: { label: "Target", advanced: true },
     ttl: {
-      label: "Maximum lifetime",
-      help: "For example 8h. This is the hard lifetime limit, including active work. Idle suspension stops unused workers earlier.",
+      label: "Requested lifetime",
+      help: "For example 8h. The Daytona deployment must support wall-clock TTL. Read-only checks do not verify deadline enforcement; idle stop is not a hard lifetime limit.",
     },
     idleTimeout: { label: "Idle timeout", advanced: true },
   },

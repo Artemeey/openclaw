@@ -18,6 +18,7 @@ import {
   renderSettingsStatus,
 } from "../../components/settings-ui.ts";
 import { t } from "../../i18n/index.ts";
+import { registerCloudWorkersEnglish } from "../../i18n/locales/en-cloud-workers.ts";
 import type { McpServerSummary } from "../../lib/config/mcp-servers.ts";
 import { EXTERNAL_LINK_TARGET, buildExternalLinkRel } from "../../lib/external-link.ts";
 import { formatUiExternalText } from "../../lib/format-error.ts";
@@ -44,6 +45,8 @@ import {
 } from "./presentation.ts";
 
 export type PluginsTab = "installed" | "discover";
+
+registerCloudWorkersEnglish();
 
 export type InstalledFilter = "all" | "enabled" | "disabled" | "issues";
 

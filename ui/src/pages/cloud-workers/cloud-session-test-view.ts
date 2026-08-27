@@ -1,5 +1,8 @@
 import { html, nothing } from "lit";
-import type { CloudSessionTestState } from "../../app/cloud-session-test.ts";
+import type {
+  ApplicationCloudSessionTest,
+  CloudSessionTestState,
+} from "../../app/cloud-session-test.ts";
 import type { ApplicationContext } from "../../app/context.ts";
 import {
   renderSettingsRow,
@@ -19,8 +22,10 @@ export function cloudSessionTestPassed(state: CloudSessionTestState) {
   );
 }
 
-export function renderCloudSessionTest(context: ApplicationContext) {
-  const owner = context.cloudSessionTest;
+export function renderCloudSessionTest(
+  context: ApplicationContext,
+  owner: ApplicationCloudSessionTest,
+) {
   const state = owner.state;
   if (!state) {
     return nothing;

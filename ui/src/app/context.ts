@@ -113,7 +113,9 @@ export type ApplicationContext<TRouteId extends string = string> = {
   readonly skillWorkshopRevisionAdmissions: ApplicationSkillWorkshopRevisionAdmissions;
   readonly initialUserMessage: ApplicationInitialUserMessageHandoff;
   readonly chatAttachmentHandoff: ApplicationChatAttachmentHandoff;
-  readonly cloudSessionTest: ApplicationCloudSessionTest;
+  readonly getCloudSessionTest: (
+    create: (gateway: ApplicationGateway) => ApplicationCloudSessionTest,
+  ) => ApplicationCloudSessionTest | null;
   readonly navigate: (routeId: TRouteId, options?: ApplicationNavigationOptions) => void;
   /** Navigates and resolves after any route-specific handoff completes. */
   readonly navigateAndWait: (

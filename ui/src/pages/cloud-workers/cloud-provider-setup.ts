@@ -9,10 +9,12 @@ import type {
   WorkerSetupDescriptor,
   WorkerSetupInstallResult,
 } from "../../../../packages/gateway-protocol/src/index.js";
+import { createApplicationCloudSessionTest } from "../../app/cloud-session-test.ts";
 import { applicationContext, type ApplicationContext } from "../../app/context.ts";
 import { hasOperatorAdminAccess } from "../../app/operator-access.ts";
 import { showConfirmDialog } from "../../components/confirm-dialog.ts";
 import { t } from "../../i18n/index.ts";
+import { registerCloudWorkersEnglish } from "../../i18n/locales/en-cloud-workers.ts";
 import { resolveEditableSnapshotConfig } from "../../lib/config/config-state-model.ts";
 import { formatUiError } from "../../lib/format-error.ts";
 import { canCallGatewayMethod } from "../../lib/gateway-methods.ts";
@@ -31,6 +33,8 @@ import {
 } from "./cloud-worker-config.ts";
 
 export type CloudSetupOwner = { plugin: PluginCatalogItem; descriptor: WorkerSetupDescriptor };
+
+registerCloudWorkersEnglish();
 
 class CloudProviderSetup extends OpenClawLightDomElement {
   @consume({ context: applicationContext, subscribe: true }) private context!: ApplicationContext;
@@ -87,9 +91,13 @@ class CloudProviderSetup extends OpenClawLightDomElement {
       },
     )
     .watch(
-      () => this.context?.cloudSessionTest,
+      () => this.cloudSessionTest,
       (test, notify) => test.subscribe(notify),
     );
+
+  private get cloudSessionTest() {
+    return this.context?.getCloudSessionTest(createApplicationCloudSessionTest) ?? null;
+  }
 
   override disconnectedCallback() {
     this.clearPlaintext();
@@ -598,6 +606,7 @@ class CloudProviderSetup extends OpenClawLightDomElement {
   }
 
   override render() {
+    const test = this.cloudSessionTest;
     const admin = hasOperatorAdminAccess(this.gateway.snapshot?.hello?.auth ?? null);
     const owner = this.owner();
     const awaitingApply =
@@ -638,15 +647,15 @@ class CloudProviderSetup extends OpenClawLightDomElement {
           : null,
         available: (method) => this.available(method),
         mutationAllowed: this.mutationAllowed,
-        test: this.context.cloudSessionTest.state,
+        test: test?.state ?? null,
         canTest:
-          this.context.cloudSessionTest.canStart &&
+          test?.canStart === true &&
           !this.adding &&
           Boolean(this.context.runtimeConfig.state.configSnapshot?.hash),
         onTest: (profileId, label) => {
           const revision = this.context.runtimeConfig.state.configSnapshot?.hash;
           if (revision) {
-            this.context.cloudSessionTest.start(profileId, label, revision);
+            test?.start(profileId, label, revision);
           }
         },
         onAdd: () => {
@@ -693,7 +702,7 @@ class CloudProviderSetup extends OpenClawLightDomElement {
         onSecrets: () => this.context.navigate("secrets"),
         onEndpointSettings: () => this.context.navigate("advanced", { search: "?section=gateway" }),
       })}
-      ${admin ? renderCloudSessionTest(this.context) : html``}
+      ${admin && test ? renderCloudSessionTest(this.context, test) : html``}
     </div>`;
   }
 }

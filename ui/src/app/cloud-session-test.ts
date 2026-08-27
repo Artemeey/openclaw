@@ -50,6 +50,7 @@ export function createApplicationCloudSessionTest(
   const lifecycle = createGatewayConnectionLifecycle(gateway.snapshot);
   const listeners = new Set<() => void>();
   let state: CloudSessionTestState | null = null;
+  let disposed = false;
   let gatewayUrl = gateway.connection.gatewayUrl;
   let connectionRevision = gateway.connectionRevision;
   let recoveryScope = gateway.snapshot.client?.recoveryScope;
@@ -203,6 +204,7 @@ export function createApplicationCloudSessionTest(
     },
     get canStart() {
       return Boolean(
+        !disposed &&
         gateway.snapshot.client?.recoveryScopeReady &&
         ["wizard.start", "wizard.next", "wizard.status", "wizard.cancel"].every(available) &&
         (!state ||
@@ -266,6 +268,7 @@ export function createApplicationCloudSessionTest(
       return () => listeners.delete(listener);
     },
     dispose() {
+      disposed = true;
       stopObserving();
       lifecycle.dispose();
       unsubscribe();
