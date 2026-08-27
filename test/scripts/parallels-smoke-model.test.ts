@@ -816,6 +816,12 @@ ensure_vm_running`,
     expect(macos).toContain('ALLOW_ADHOC_SIGNING: "1"');
   });
 
+  it("keeps retrying the macOS root desktop-user fallback while the guest boots", () => {
+    expect(macos).toMatch(
+      /while \(Date\.now\(\) < deadline\) \{[\s\S]{0,300}const fallback = this\.resolveDesktopUser\(\);/u,
+    );
+  });
+
   it("rejects inherited object keys as unknown Parallels smoke arguments", () => {
     for (const parseArgs of [parseMacosSmokeArgs, parseLinuxSmokeArgs, parseWindowsSmokeArgs]) {
       for (const arg of ["constructor", "toString"]) {

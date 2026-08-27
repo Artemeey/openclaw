@@ -1063,16 +1063,18 @@ exec node "$entry" ${argv}`,
       }
       run("sleep", ["2"], { quiet: true });
     }
-    const fallback = this.resolveDesktopUser();
-    if (fallback) {
-      this.guestUser = fallback;
-      this.guestTransport = "sudo";
-      warn(
-        `desktop user unavailable via Parallels --current-user; using root sudo fallback for ${fallback}`,
-      );
-      return;
-    }
     while (Date.now() < deadline) {
+      // Parallels Tools can become ready after the initial current-user window.
+      // Keep retrying the root fallback so a login-window boot can still use the desktop account.
+      const fallback = this.resolveDesktopUser();
+      if (fallback) {
+        this.guestUser = fallback;
+        this.guestTransport = "sudo";
+        warn(
+          `desktop user unavailable via Parallels --current-user; using root sudo fallback for ${fallback}`,
+        );
+        return;
+      }
       const result = run("prlctl", ["exec", this.options.vmName, "--current-user", "whoami"], {
         check: false,
         quiet: true,
