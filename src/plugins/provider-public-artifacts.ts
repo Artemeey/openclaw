@@ -106,30 +106,40 @@ export function resolveProviderPolicySurface(
   if (!normalizedProviderId || !options.manifestRegistry) {
     return null;
   }
-  const plugin = resolveTrustedExternalProviderPolicyOwner(providerId, options.manifestRegistry);
-  if (!plugin) {
-    return null;
+  for (const plugin of listTrustedExternalProviderPolicyOwners(
+    providerId,
+    options.manifestRegistry,
+  )) {
+    const surface = resolveTrustedExternalProviderPolicySurface({
+      pluginId: plugin.id,
+      pluginRoot: plugin.rootDir,
+      trustedOfficialInstall: plugin.trustedOfficialInstall,
+    });
+    if (surface) {
+      return surface;
+    }
   }
-  return resolveTrustedExternalProviderPolicySurface({
-    pluginId: plugin.id,
-    pluginRoot: plugin.rootDir,
-    trustedOfficialInstall: plugin.trustedOfficialInstall,
-  });
+  return null;
 }
 
-/** Returns the trusted installed plugin that owns a provider policy reference. */
+function listTrustedExternalProviderPolicyOwners(
+  providerId: string,
+  manifestRegistry: Pick<PluginManifestRegistry, "plugins">,
+): PluginManifestRegistry["plugins"] {
+  const normalizedProviderId = normalizeProviderId(providerId);
+  return manifestRegistry.plugins
+    .toSorted((left, right) => left.id.localeCompare(right.id))
+    .filter(
+      (plugin) =>
+        plugin.trustedOfficialInstall === true &&
+        pluginOwnsProviderPolicyRef(plugin, normalizedProviderId),
+    );
+}
+
+/** Returns the first trusted installed plugin that owns a provider policy reference. */
 export function resolveTrustedExternalProviderPolicyOwner(
   providerId: string,
   manifestRegistry: Pick<PluginManifestRegistry, "plugins">,
 ): PluginManifestRegistry["plugins"][number] | null {
-  const normalizedProviderId = normalizeProviderId(providerId);
-  return (
-    manifestRegistry.plugins
-      .toSorted((left, right) => left.id.localeCompare(right.id))
-      .find(
-        (plugin) =>
-          plugin.trustedOfficialInstall === true &&
-          pluginOwnsProviderPolicyRef(plugin, normalizedProviderId),
-      ) ?? null
-  );
+  return listTrustedExternalProviderPolicyOwners(providerId, manifestRegistry)[0] ?? null;
 }

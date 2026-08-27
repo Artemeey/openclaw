@@ -266,6 +266,36 @@ describe("provider public artifacts", () => {
     }
   });
 
+  it("continues to a usable policy when the first trusted owner lacks its artifact", () => {
+    const missingPolicyRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "openclaw-provider-owner-missing-"),
+    );
+    const policyRoot = writeExternalPolicyFixture();
+    const owner = (id: string, rootDir: string) =>
+      ({
+        id,
+        origin: "external",
+        trustedOfficialInstall: true,
+        rootDir,
+        providers: [],
+        cliBackends: [],
+        contracts: { embeddingProviders: ["fixture-embedding"] },
+      }) as never;
+    try {
+      const manifestRegistry = {
+        plugins: [owner("a-missing-policy", missingPolicyRoot), owner("b-policy", policyRoot)],
+      };
+
+      expect(
+        resolveProviderPolicySurface("fixture-embedding", { manifestRegistry })
+          ?.inspectEmbeddingProviderSetup,
+      ).toBeTypeOf("function");
+    } finally {
+      fs.rmSync(missingPolicyRoot, { recursive: true, force: true });
+      fs.rmSync(policyRoot, { recursive: true, force: true });
+    }
+  });
+
   it.runIf(process.platform !== "win32")(
     "rejects trusted official provider policy artifacts hardlinked outside the installed root",
     () => {
