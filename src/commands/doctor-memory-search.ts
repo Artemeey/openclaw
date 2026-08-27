@@ -42,7 +42,10 @@ import {
   type ShortTermAuditSummary,
 } from "../plugin-sdk/memory-core-bundled-runtime.js";
 import { normalizePluginsConfig } from "../plugins/config-state.js";
-import { resolveManifestOwnerBasePolicyBlock } from "../plugins/manifest-owner-policy.js";
+import {
+  resolveManifestOwnerBasePolicyBlock,
+  type ManifestOwnerBasePolicyBlockReason,
+} from "../plugins/manifest-owner-policy.js";
 import {
   getActiveMemorySearchManagerCore,
   resolveActiveMemoryBackendConfig,
@@ -102,6 +105,34 @@ function formatLocalRuntimeDoctorNote(facts: DoctorMemoryEmbeddingRuntimePayload
   const loadError = facts.loadError ? `\nLoad error: ${facts.loadError}` : "";
   const state = facts.state === "ready" ? "" : ` (${facts.state})`;
   return `llama.cpp server: ${backend}${build}${state}${model}${capabilities}${endpoints}${loadError}`;
+}
+
+function resolveLocalProviderPolicyBlockGuidance(
+  pluginId: string,
+  reason: ManifestOwnerBasePolicyBlockReason,
+): { message: string; fix: string } {
+  switch (reason) {
+    case "plugins-disabled":
+      return {
+        message: "Plugin loading is disabled for this config.",
+        fix: `Fix: ${formatCliCommand("openclaw config set plugins.enabled true --strict-json")}, or select another memory provider.`,
+      };
+    case "blocked-by-denylist":
+      return {
+        message: `Installed plugin "${pluginId}" is blocked by plugins.deny.`,
+        fix: `Fix: Remove "${pluginId}" from plugins.deny, or select another memory provider.`,
+      };
+    case "plugin-disabled":
+      return {
+        message: `Installed plugin "${pluginId}" is disabled for this config.`,
+        fix: `Fix: Enable it: ${formatCliCommand(`openclaw plugins enable ${pluginId} --accept-capabilities`)}, or select another memory provider.`,
+      };
+    case "not-in-allowlist":
+      return {
+        message: `Installed plugin "${pluginId}" is omitted from plugins.allow.`,
+        fix: `Fix: Include "${pluginId}" in plugins.allow, or select another memory provider.`,
+      };
+  }
 }
 
 const MEMORY_EMBEDDING_PROVIDER_AUTH_IDS = new Map([
@@ -602,8 +633,8 @@ async function noteMemorySearchHealthForAgent(
       !ownerPolicyBlock && !inspectSetup
         ? `Fix: Update the installed plugin: ${formatCliCommand(`openclaw plugins update ${installedOwner.id}`)}`
         : null;
-    const enableFix = ownerPolicyBlock
-      ? `Fix: Enable the installed plugin: ${formatCliCommand(`openclaw plugins enable ${installedOwner.id} --accept-capabilities`)}, or select another memory provider.`
+    const policyBlock = ownerPolicyBlock
+      ? resolveLocalProviderPolicyBlockGuidance(installedOwner.id, ownerPolicyBlock)
       : null;
     const hasRuntimeFailureDetail = Boolean(gatewayDetail || runtimeFacts?.loadError);
     noteFn(
@@ -614,13 +645,13 @@ async function noteMemorySearchHealthForAgent(
           ? 'Memory search provider is set to "local" and a local model path is configured, but local embeddings are not confirmed ready.'
           : 'Memory search provider is set to "local", but local embeddings are not confirmed ready.',
         setupReason ? `Setup: ${setupReason}` : null,
-        enableFix ? `Installed plugin "${installedOwner.id}" is disabled for this config.` : null,
+        policyBlock?.message,
         updateFix
           ? `Installed plugin "${installedOwner.id}" does not provide current local-memory setup diagnostics.`
           : null,
         gatewayDetail && gatewayDetail !== setupReason ? `Gateway probe: ${gatewayDetail}` : null,
         "",
-        enableFix ??
+        policyBlock?.fix ??
           updateFix ??
           (setupFix
             ? `Fix: ${setupFix}`

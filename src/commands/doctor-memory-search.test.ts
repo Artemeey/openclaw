@@ -44,7 +44,14 @@ const resolveTrustedExternalProviderPolicyOwner = vi.hoisted(() =>
   vi.fn((): { id: string } | null => ({ id: "llama-cpp" })),
 );
 const resolveManifestOwnerBasePolicyBlock = vi.hoisted(() =>
-  vi.fn((): "plugin-disabled" | null => null),
+  vi.fn(
+    ():
+      | "plugins-disabled"
+      | "blocked-by-denylist"
+      | "plugin-disabled"
+      | "not-in-allowlist"
+      | null => null,
+  ),
 );
 const getMissingLocalMemoryEmbeddingProviderMessage = vi.hoisted(() =>
   vi.fn(
@@ -377,16 +384,33 @@ describe("noteMemorySearchHealth", () => {
     expectFirstNoteExcludes("openclaw plugins install @openclaw/llama-cpp-provider");
   });
 
-  it("enables an installed provider that is disabled for the current config", async () => {
-    resolveManifestOwnerBasePolicyBlock.mockReturnValueOnce("plugin-disabled");
-
-    await runMemorySearchHealth("local", failedGatewayOptions("local provider is disabled"));
-
-    expectFirstNoteContains(
+  it.each([
+    [
+      "plugins-disabled",
+      "Plugin loading is disabled for this config",
+      "openclaw config set plugins.enabled true --strict-json",
+    ],
+    [
+      "blocked-by-denylist",
+      'Installed plugin "llama-cpp" is blocked by plugins.deny',
+      'Remove "llama-cpp" from plugins.deny',
+    ],
+    [
+      "plugin-disabled",
       'Installed plugin "llama-cpp" is disabled for this config',
-      "local provider is disabled",
       "openclaw plugins enable llama-cpp --accept-capabilities",
-    );
+    ],
+    [
+      "not-in-allowlist",
+      'Installed plugin "llama-cpp" is omitted from plugins.allow',
+      'Include "llama-cpp" in plugins.allow',
+    ],
+  ] as const)("handles the %s installed-provider policy block", async (reason, message, fix) => {
+    resolveManifestOwnerBasePolicyBlock.mockReturnValueOnce(reason);
+
+    await runMemorySearchHealth("local", failedGatewayOptions("local provider is blocked"));
+
+    expectFirstNoteContains(message, "local provider is blocked", fix);
     expectFirstNoteExcludes(
       "openclaw plugins install @openclaw/llama-cpp-provider",
       "openclaw plugins update llama-cpp",
