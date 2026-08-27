@@ -1,5 +1,6 @@
 import type {
   ProviderFetchUsageSnapshotContext,
+  ProviderResolveProfileUsageAuthContext,
   ProviderResolveUsageAuthContext,
   ProviderResolvedUsageAuth,
 } from "openclaw/plugin-sdk/plugin-entry";
@@ -276,7 +277,7 @@ export async function resolveAnthropicUsageAuth(
   return { handled: true };
 }
 
-export function resolveAnthropicProfileUsageAuth(ctx: { profileId: string }) {
+export function resolveAnthropicProfileUsageAuth(ctx: ProviderResolveProfileUsageAuthContext) {
   return ctx.profileId === CLAUDE_CLI_PROFILE_ID
     ? { token: CLAUDE_CLI_NATIVE_AUTH_MARKER }
     : undefined;

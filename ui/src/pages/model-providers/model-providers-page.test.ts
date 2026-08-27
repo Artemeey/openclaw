@@ -81,6 +81,8 @@ describe("ModelProvidersPage agent scope", () => {
   });
 
   it("cancels account-availability repaint timers when disconnected", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-26T00:00:00Z"));
     const { context, request } = createHarness("main");
     const originalRequest = request.getMockImplementation()!;
     const deadline = Date.now() + 500;
@@ -116,13 +118,8 @@ describe("ModelProvidersPage agent scope", () => {
     const requestUpdate = vi.spyOn(page, "requestUpdate");
     page.remove();
     await page.updateComplete;
-    await new Promise((resolve) => {
-      window.setTimeout(resolve, 100);
-    });
     requestUpdate.mockClear();
-    await new Promise((resolve) => {
-      window.setTimeout(resolve, 500);
-    });
+    await vi.advanceTimersByTimeAsync(600);
 
     expect(requestUpdate).not.toHaveBeenCalled();
   });

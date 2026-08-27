@@ -6,6 +6,7 @@ import {
   ErrorCodes,
   errorShape,
   validateModelsAuthCooldownClearParams,
+  validateModelsAuthLogoutParams,
   validateModelsAuthOrderSetParams,
 } from "../../../packages/gateway-protocol/src/index.js";
 import { tryResolveAmbientOwnerAgentId } from "../../agents/agent-scope-config.js";
@@ -388,6 +389,10 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
     const selection = readLogoutProfileSelection(params);
     if (!selection.ok) {
       respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, selection.message));
+      return;
+    }
+    if (!validateModelsAuthLogoutParams(params)) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "invalid auth logout"));
       return;
     }
     try {

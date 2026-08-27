@@ -2895,6 +2895,20 @@ describe("models.authLogout", () => {
     resetAuthStatusMocks();
   });
 
+  it("rejects params outside the registered request schema", async () => {
+    const opts = createLogoutOptions({ provider: "openrouter", unexpected: true });
+
+    await logoutHandler(opts);
+
+    expect(mocks.resolveAgentDir).not.toHaveBeenCalled();
+    expect(mocks.ensureAuthProfileStoreWithoutExternalProfiles).not.toHaveBeenCalled();
+    expect(firstRespondCall(opts)).toEqual([
+      false,
+      undefined,
+      { code: "INVALID_REQUEST", message: "invalid auth logout" },
+    ]);
+  });
+
   it.each([
     { name: "omitted", agentId: undefined, expectedAgentId: "main" },
     { name: "empty", agentId: "", expectedAgentId: "main" },
