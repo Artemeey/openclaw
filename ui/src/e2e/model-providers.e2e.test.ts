@@ -411,6 +411,23 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
         await expect
           .poll(() => helpButton.evaluate((node) => getComputedStyle(node).color))
           .not.toBe(defaultColor);
+        const hoverTooltip = utilityLabel.locator("openclaw-tooltip wa-tooltip");
+        expect(await hoverTooltip.count()).toBe(1);
+        await expect
+          .poll(() => hoverTooltip.evaluate((node) => node.hasAttribute("open")))
+          .toBe(true);
+        await expect.poll(() => hoverTooltip.textContent()).toContain("short background tasks");
+        const helpButtonBox = await helpButton.boundingBox();
+        expect(helpButtonBox).not.toBeNull();
+        expect(helpButtonBox?.width).toBeLessThanOrEqual(18);
+        expect(helpButtonBox?.height).toBeLessThanOrEqual(18);
+        if (recordVisuals) {
+          await page.screenshot({
+            animations: "disabled",
+            fullPage: true,
+            path: path.join(utilityHelpArtifactDir, `${colorScheme}-hover-tooltip-full.png`),
+          });
+        }
 
         await helpButton.click();
         const popover = page.locator("wa-popover.model-providers__utility-help-popover");

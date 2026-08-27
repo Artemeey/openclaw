@@ -37,6 +37,14 @@ export type SettingsSectionProps = {
   danger?: boolean;
 };
 
+type SettingsHelpTriggerProps = {
+  id: string;
+  label: string;
+  tooltip: string;
+  glyph: "?" | "i";
+  popoverId: string;
+};
+
 export function renderSettingsPage(
   children: unknown,
   options: { wide?: boolean; intro?: unknown } = {},
@@ -54,6 +62,23 @@ export function renderDocsLink(url: string, label: unknown): TemplateResult {
   return html`<a href=${url} target=${EXTERNAL_LINK_TARGET} rel=${buildExternalLinkRel()}
     >${label}</a
   >`;
+}
+
+export function renderSettingsHelpTrigger(props: SettingsHelpTriggerProps): TemplateResult {
+  return html`
+    <openclaw-tooltip .content=${props.tooltip}>
+      <button
+        id=${props.id}
+        type="button"
+        class="settings-section__help-button"
+        aria-label=${props.label}
+        aria-controls=${props.popoverId}
+        aria-haspopup="dialog"
+      >
+        <span aria-hidden="true">${props.glyph}</span>
+      </button>
+    </openclaw-tooltip>
+  `;
 }
 
 /** Section = plain text heading + one group surface containing rows. */
