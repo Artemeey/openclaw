@@ -40,6 +40,9 @@ const resolveProviderPolicySurface = vi.hoisted(() =>
     } | null => ({ inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup }),
   ),
 );
+const resolveTrustedExternalProviderPolicyOwner = vi.hoisted(() =>
+  vi.fn((): { id: string } | null => ({ id: "llama-cpp" })),
+);
 const getMissingLocalMemoryEmbeddingProviderMessage = vi.hoisted(() =>
   vi.fn(
     () =>
@@ -88,6 +91,7 @@ vi.mock("../plugins/plugin-registry.js", () => ({
 
 vi.mock("../plugins/provider-public-artifacts.js", () => ({
   resolveProviderPolicySurface,
+  resolveTrustedExternalProviderPolicyOwner,
 }));
 
 vi.mock("../plugin-sdk/memory-core-bundled-runtime.js", () => ({
@@ -321,6 +325,8 @@ describe("noteMemorySearchHealth", () => {
     resolveProviderPolicySurface.mockReturnValue({
       inspectEmbeddingProviderSetup: inspectConfiguredEmbeddingProviderSetup,
     });
+    resolveTrustedExternalProviderPolicyOwner.mockReset();
+    resolveTrustedExternalProviderPolicyOwner.mockReturnValue({ id: "llama-cpp" });
     resolveActiveMemoryBackendConfig.mockReset();
     resolveActiveMemoryBackendConfig.mockReturnValue({ backend: "builtin" });
     getActiveMemorySearchManagerCore.mockResolvedValue({
@@ -334,6 +340,7 @@ describe("noteMemorySearchHealth", () => {
 
   it("uses the memory-core recovery message when the local provider plugin is missing", async () => {
     resolveProviderPolicySurface.mockReturnValueOnce(null);
+    resolveTrustedExternalProviderPolicyOwner.mockReturnValueOnce(null);
     await runMemorySearchHealth("local", {});
 
     expect(note).toHaveBeenCalledTimes(1);
@@ -343,6 +350,22 @@ describe("noteMemorySearchHealth", () => {
       "openclaw memory status --deep",
     );
     expect(getMissingLocalMemoryEmbeddingProviderMessage).toHaveBeenCalledOnce();
+  });
+
+  it("updates a legacy installed provider that has no setup policy artifact", async () => {
+    resolveProviderPolicySurface.mockReturnValueOnce(null);
+
+    await runMemorySearchHealth(
+      "local",
+      failedGatewayOptions("legacy llama.cpp server is unavailable"),
+    );
+
+    expectFirstNoteContains(
+      'Installed plugin "llama-cpp" does not provide current local-memory setup diagnostics',
+      "legacy llama.cpp server is unavailable",
+      "openclaw plugins update llama-cpp",
+    );
+    expectFirstNoteExcludes("openclaw plugins install @openclaw/llama-cpp-provider");
   });
 
   it("uses installed provider setup guidance instead of reinstalling the plugin", async () => {

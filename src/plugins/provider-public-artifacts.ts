@@ -106,22 +106,30 @@ export function resolveProviderPolicySurface(
   if (!normalizedProviderId || !options.manifestRegistry) {
     return null;
   }
-  for (const plugin of options.manifestRegistry.plugins.toSorted((left, right) =>
-    left.id.localeCompare(right.id),
-  )) {
-    if (
-      pluginOwnsProviderPolicyRef(plugin, normalizedProviderId) &&
-      plugin.trustedOfficialInstall === true
-    ) {
-      const surface = resolveTrustedExternalProviderPolicySurface({
-        pluginId: plugin.id,
-        pluginRoot: plugin.rootDir,
-        trustedOfficialInstall: plugin.trustedOfficialInstall,
-      });
-      if (surface) {
-        return surface;
-      }
-    }
+  const plugin = resolveTrustedExternalProviderPolicyOwner(providerId, options.manifestRegistry);
+  if (!plugin) {
+    return null;
   }
-  return null;
+  return resolveTrustedExternalProviderPolicySurface({
+    pluginId: plugin.id,
+    pluginRoot: plugin.rootDir,
+    trustedOfficialInstall: plugin.trustedOfficialInstall,
+  });
+}
+
+/** Returns the trusted installed plugin that owns a provider policy reference. */
+export function resolveTrustedExternalProviderPolicyOwner(
+  providerId: string,
+  manifestRegistry: Pick<PluginManifestRegistry, "plugins">,
+): PluginManifestRegistry["plugins"][number] | null {
+  const normalizedProviderId = normalizeProviderId(providerId);
+  return (
+    manifestRegistry.plugins
+      .toSorted((left, right) => left.id.localeCompare(right.id))
+      .find(
+        (plugin) =>
+          plugin.trustedOfficialInstall === true &&
+          pluginOwnsProviderPolicyRef(plugin, normalizedProviderId),
+      ) ?? null
+  );
 }

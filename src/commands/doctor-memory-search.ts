@@ -47,7 +47,10 @@ import {
   resolveActiveMemoryBackendConfig,
 } from "../plugins/memory-runtime.js";
 import { loadPluginManifestRegistryForPluginRegistry } from "../plugins/plugin-registry.js";
-import { resolveProviderPolicySurface } from "../plugins/provider-public-artifacts.js";
+import {
+  resolveProviderPolicySurface,
+  resolveTrustedExternalProviderPolicyOwner,
+} from "../plugins/provider-public-artifacts.js";
 import { defaultSlotIdForKey } from "../plugins/slots.js";
 import { getProviderEnvVars } from "../secrets/provider-env-vars.js";
 import { resolveUserPath } from "../utils.js";
@@ -573,16 +576,21 @@ async function noteMemorySearchHealthForAgent(
     const gatewayDetail = detail && detail !== runtimeFacts?.loadError ? detail : null;
     const env = opts.env ?? process.env;
     const manifestRegistry = loadPluginManifestRegistryForPluginRegistry({ config: cfg, env });
+    const installedOwner = resolveTrustedExternalProviderPolicyOwner(provider, manifestRegistry);
     const inspectSetup = resolveProviderPolicySurface(provider, {
       manifestRegistry,
     })?.inspectEmbeddingProviderSetup;
-    if (!inspectSetup) {
+    if (!inspectSetup && !installedOwner) {
       noteFn(getMissingLocalMemoryEmbeddingProviderMessage(), "Memory search");
       return;
     }
-    const setup = await inspectSetup({ config: cfg, env, agentId, provider });
+    const setup = inspectSetup ? await inspectSetup({ config: cfg, env, agentId, provider }) : null;
     const setupReason = setup?.reason.trim();
     const setupFix = setup?.fixHint?.trim();
+    const updateFix =
+      !inspectSetup && installedOwner
+        ? `Fix: Update the installed plugin: ${formatCliCommand(`openclaw plugins update ${installedOwner.id}`)}`
+        : null;
     const hasRuntimeFailureDetail = Boolean(gatewayDetail || runtimeFacts?.loadError);
     noteFn(
       [
@@ -592,15 +600,19 @@ async function noteMemorySearchHealthForAgent(
           ? 'Memory search provider is set to "local" and a local model path is configured, but local embeddings are not confirmed ready.'
           : 'Memory search provider is set to "local", but local embeddings are not confirmed ready.',
         setupReason ? `Setup: ${setupReason}` : null,
+        updateFix
+          ? `Installed plugin "${installedOwner?.id}" does not provide current local-memory setup diagnostics.`
+          : null,
         gatewayDetail && gatewayDetail !== setupReason ? `Gateway probe: ${gatewayDetail}` : null,
         "",
-        setupFix
-          ? `Fix: ${setupFix}`
-          : hasUnavailableConfiguredLocalModel
-            ? "Fix: Set memory.search.local.modelPath to an existing GGUF file, or remove it to use the managed default."
-            : hasRuntimeFailureDetail
-              ? "Fix: Repair the llama.cpp server problem reported by the Gateway."
-              : null,
+        updateFix ??
+          (setupFix
+            ? `Fix: ${setupFix}`
+            : hasUnavailableConfiguredLocalModel
+              ? "Fix: Set memory.search.local.modelPath to an existing GGUF file, or remove it to use the managed default."
+              : hasRuntimeFailureDetail
+                ? "Fix: Repair the llama.cpp server problem reported by the Gateway."
+                : null),
         "",
         `Verify: ${formatCliCommand("openclaw memory status --deep")}`,
       ]

@@ -9,6 +9,7 @@ import { resolveDirectBundledProviderPolicySurface } from "./provider-policy-sur
 import {
   resolveBundledProviderPolicySurface,
   resolveProviderPolicySurface,
+  resolveTrustedExternalProviderPolicyOwner,
 } from "./provider-public-artifacts.js";
 
 function writeExternalPolicyFixture(): string {
@@ -241,6 +242,27 @@ describe("provider public artifacts", () => {
       restoreBundledPluginEnv();
       fs.rmSync(pluginRoot, { recursive: true, force: true });
       fs.rmSync(bundledPluginsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("retains a trusted installed provider owner without a policy artifact", () => {
+    const pluginRoot = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-provider-owner-"));
+    try {
+      const plugin = {
+        id: "llama-cpp",
+        origin: "external",
+        trustedOfficialInstall: true,
+        rootDir: pluginRoot,
+        providers: ["llama-cpp"],
+        cliBackends: [],
+        contracts: { embeddingProviders: ["local"] },
+      } as never;
+      const manifestRegistry = { plugins: [plugin] };
+
+      expect(resolveTrustedExternalProviderPolicyOwner("local", manifestRegistry)).toBe(plugin);
+      expect(resolveProviderPolicySurface("local", { manifestRegistry })).toBeNull();
+    } finally {
+      fs.rmSync(pluginRoot, { recursive: true, force: true });
     }
   });
 
