@@ -56,7 +56,12 @@ describe("archiveSessionTranscriptsDetailed failure surface", () => {
       const sessionId = "22222222-2222-4222-8222-222222222222";
       const sessionFile = path.join(tmpDir, `${sessionId}.jsonl`);
       fs.writeFileSync(sessionFile, '{"type":"session-meta","agentId":"main"}\n');
-      const updates: Array<{ agentId?: string; sessionFile?: string; sessionId?: string }> = [];
+      const updates: Array<{
+        agentId?: string;
+        archiveFile?: true;
+        sessionFile?: string;
+        sessionId?: string;
+      }> = [];
       const unsubscribe = onInternalSessionTranscriptUpdate((update) => updates.push(update));
 
       let archived: ReturnType<typeof archiveSessionTranscriptsDetailed>;
@@ -77,7 +82,12 @@ describe("archiveSessionTranscriptsDetailed failure surface", () => {
       expect(archivedPath).toContain(".jsonl.reset.");
       expect(fs.existsSync(archivedPath)).toBe(true);
       expect(fs.existsSync(sessionFile)).toBe(false);
-      expect(updates).toContainEqual({ agentId: "main", sessionFile: archivedPath, sessionId });
+      expect(updates).toContainEqual({
+        agentId: "main",
+        archiveFile: true,
+        sessionFile: archivedPath,
+        sessionId,
+      });
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

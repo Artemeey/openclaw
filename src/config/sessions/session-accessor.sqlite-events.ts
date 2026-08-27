@@ -14,6 +14,7 @@ export function emitArchivedTranscriptUpdates(
   for (const archived of archivedTranscripts) {
     emitSessionTranscriptUpdate({
       agentId: archived.agentId,
+      archiveFile: true,
       sessionFile: archived.archivedPath,
       sessionId: archived.sessionId,
     });

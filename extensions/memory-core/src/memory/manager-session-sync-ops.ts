@@ -35,6 +35,7 @@ const log = createSubsystemLogger("memory");
 
 type MemorySessionTranscriptUpdate = {
   agentId?: string;
+  archiveFile?: true;
   sessionFile?: string;
   sessionId?: string;
   sessionKey?: string;
@@ -309,7 +310,8 @@ export abstract class MemoryManagerSessionSyncOps extends MemoryManagerWatchOps 
     if (!agentId || !sessionId || normalizeAgentId(agentId) !== normalizeAgentId(this.agentId)) {
       return null;
     }
-    const sessionFile = update.target ? undefined : update.sessionFile?.trim();
+    const sessionFile =
+      !update.target && update.archiveFile === true ? update.sessionFile?.trim() : undefined;
     return {
       agentId,
       sessionId,

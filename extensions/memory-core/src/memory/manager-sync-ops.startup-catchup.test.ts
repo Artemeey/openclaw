@@ -57,6 +57,7 @@ type SyncParams = {
 
 type MemorySessionTranscriptUpdate = {
   agentId?: string;
+  archiveFile?: true;
   sessionFile?: string;
   sessionId?: string;
   sessionKey?: string;

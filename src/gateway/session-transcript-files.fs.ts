@@ -307,7 +307,7 @@ function archiveFileOnDisk(
   clearSessionTranscriptResetArchiveDiscoveryCache();
   // Archive creation already owns the transcript identity. Carry it with the
   // path so targeted memory indexing never needs gateway-loop corpus discovery.
-  emitSessionTranscriptUpdate({ sessionFile: archived, ...target });
+  emitSessionTranscriptUpdate({ archiveFile: true, sessionFile: archived, ...target });
   return archived;
 }
 
