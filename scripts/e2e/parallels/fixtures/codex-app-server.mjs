@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import readline from "node:readline";
 
-const version = "0.149.1";
+const version = "0.150.1";
 const requestLog = "/private/tmp/openclaw-onboarding-codex-app-server.jsonl";
 
 if (process.argv.includes("--version")) {
@@ -40,9 +40,10 @@ input.on("line", (line) => {
   switch (request.method) {
     case "initialize":
       result({
-        protocolVersion: "2",
-        serverInfo: { name: "openclaw-parallels-onboarding", version },
         userAgent: `openclaw-parallels-onboarding/${version} (macOS; test)`,
+        codexHome: "/private/tmp/openclaw-onboarding-codex-home",
+        platformFamily: "unix",
+        platformOs: "macos",
       });
       break;
     case "account/read":

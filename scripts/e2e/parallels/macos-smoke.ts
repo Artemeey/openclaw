@@ -249,6 +249,7 @@ class MacosSmoke {
   private coreSha256 = "";
   private codexFixturePath = "";
   private codexFixtureSha256 = "";
+  private codexVersion = "";
   private hostCorePackageMs = 0;
   private hostAppPackageMs = 0;
   private hostPreparationMs = 0;
@@ -606,6 +607,21 @@ class MacosSmoke {
         repoRoot,
         "scripts/e2e/parallels/fixtures/codex-app-server.mjs",
       );
+      const codexPackage = JSON.parse(
+        await readFile(path.join(repoRoot, "extensions/codex/package.json"), "utf8"),
+      ) as { dependencies?: Record<string, string> };
+      this.codexVersion = codexPackage.dependencies?.["@openai/codex"]?.trim() || "";
+      if (!/^\d+\.\d+\.\d+$/u.test(this.codexVersion)) {
+        throw new Error("Codex plugin does not declare an exact @openai/codex version");
+      }
+      const fixtureVersion = run(process.execPath, [fixtureSource, "--version"], {
+        quiet: true,
+      }).stdout.trim();
+      if (fixtureVersion !== `codex-cli ${this.codexVersion}`) {
+        throw new Error(
+          `Codex fixture ${fixtureVersion || "<empty>"} did not match plugin runtime ${this.codexVersion}`,
+        );
+      }
       this.codexFixturePath = path.join(this.tgzDir, "codex-app-server.mjs");
       await copyFile(fixtureSource, this.codexFixturePath);
       this.appZipSha256 = await this.sha256(this.appZipPath);
@@ -876,13 +892,7 @@ JS`);
     }
     const restored = run(
       "prlctl",
-      [
-        "snapshot-switch",
-        this.options.vmName,
-        "--id",
-        this.snapshot.id,
-        "--skip-resume",
-      ],
+      ["snapshot-switch", this.options.vmName, "--id", this.snapshot.id, "--skip-resume"],
       { check: false, quiet: true, timeoutMs: this.remainingPhaseTimeoutMs(360_000) },
     );
     this.log(restored.stdout);
@@ -896,7 +906,9 @@ JS`);
   }
 
   private async sha256(filePath: string): Promise<string> {
-    return createHash("sha256").update(await readFile(filePath)).digest("hex");
+    return createHash("sha256")
+      .update(await readFile(filePath))
+      .digest("hex");
   }
 
   private requireAuth(): ProviderAuth {
@@ -1652,7 +1664,7 @@ fi`,
           completedTrials: this.appOnboardingTrials.length,
           coreVersion: this.artifact?.version || "",
           coreCommit: this.artifact?.buildCommit || "",
-          codexVersion: "0.149.1",
+          codexVersion: this.codexVersion,
           host: {
             corePackageMs: this.hostCorePackageMs,
             appPackageMs: this.hostAppPackageMs,
