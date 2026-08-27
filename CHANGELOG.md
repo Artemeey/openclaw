@@ -70,7 +70,6 @@ Docs: https://docs.openclaw.ai
 ### Fixes
 
 - Codex image attachments: decode mixed-case `file://` URLs as local image paths while preserving existing file URL validation and platform behavior. (#121611) Thanks @sunlit-deng.
-- **Gateway plugin metadata:** reuse prepared metadata across agent workspaces and config reads, keep serving metadata intact until reload commit, and remove stale channel/schema/media caches that caused repeated discovery and event-loop stalls. (#130324)
 
 - **Control UI agent files:** keep confirmed saves and file metadata intact when older reads or list refreshes finish later, preserve newer drafts, and rebuild invalidated file lists without losing the open editor.
 
@@ -81,6 +80,7 @@ Docs: https://docs.openclaw.ai
 - **Onboarding migration menu:** group Claude, Codex, Hermes, and plugin-provided imports under a single **Import from another agent** setup choice while preserving detected source hints, manual paths, and Back navigation before import begins. Fixes #126440. Thanks @shakkernerd.
 - **Onboarding provider hook loading:** scope selected-model hook fallback to the chosen provider so metadata-only setup providers do not load unrelated plugins before configuration completes. Fixes #126408. Thanks @shakkernerd.
 - **Plugin setup diagnostics:** stop treating metadata-only provider setup descriptors as missing runtime registrations while retaining undeclared runtime and CLI drift warnings. Fixes #125506. Thanks @shakkernerd.
+- **Gateway plugin metadata:** reuse prepared metadata across agent workspaces and config reads, keep serving metadata intact until reload commit, and remove stale channel/schema/media caches that caused repeated discovery and event-loop stalls. (#130324)
 - **Onboarding model browsing:** keep preferred-provider model discovery scoped to the selected provider, preserve route variants, and avoid loading unrelated provider setup surfaces. Fixes #125363. Thanks @shakkernerd.
 - **Codex subagent fan-out:** settle successful terminal yields immediately and preserve requester ownership so completed children reliably resume their parent.
 - **Control UI session companion:** load bounded visible session context before answering, keep unavailable questions retryable, and prevent private companion reference wrappers from appearing as answers. Fixes #120746. Thanks @shakkernerd.
