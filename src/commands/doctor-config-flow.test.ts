@@ -14,10 +14,7 @@ import {
 } from "../plugins/capability-consent.js";
 import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
-import {
-  resolvePluginMetadataEnvFingerprint,
-  type PluginMetadataSnapshot,
-} from "../plugins/plugin-metadata-snapshot.js";
+import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-snapshot.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { loadAndMaybeMigrateDoctorConfig } from "./doctor-config-flow.js";
 import {
