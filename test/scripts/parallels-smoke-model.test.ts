@@ -686,12 +686,7 @@ ensure_vm_running`,
     expect(parseMacosSmokeArgs([]).appOnboardingTrials).toBe(1);
     expect(parseMacosSmokeArgs(["--app-onboarding", "dev"]).appOnboarding).toBe("dev");
     expect(
-      parseMacosSmokeArgs([
-        "--app-onboarding",
-        "staged",
-        "--app-onboarding-trials",
-        "3",
-      ]),
+      parseMacosSmokeArgs(["--app-onboarding", "staged", "--app-onboarding-trials", "3"]),
     ).toMatchObject({ appOnboarding: "staged", appOnboardingTrials: 3 });
     expect(parseMacosSmokeArgs(["--vm", "macOS"]).vmNameExplicit).toBe(true);
     expect(parseMacosSmokeArgs(["--host-port", "65535"]).hostPort).toBe(65535);
