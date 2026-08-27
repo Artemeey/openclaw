@@ -1834,7 +1834,7 @@ EOF
     fi
     rm -rf "$cache_new" || rollback_failed=1
     if [[ "$rollback_failed" == "1" ]]; then
-      emit_json '{"event":"step","name":"prewarmed-runtime-rollback","status":"warn","reason":"incomplete"}'
+      emit_json step name prewarmed-runtime-rollback status warn reason incomplete
       log "WARNING: Prewarmed runtime rollback could not restore every path"
     fi
     return 0
