@@ -109,6 +109,7 @@ export function mapModelAuthStatusProvider(params: {
   config: OpenClawConfig;
   authAliasLookupParams: ProviderAuthAliasLookupParams;
   usageByProfile: Map<string, ProviderUsageStatus>;
+  usageByProvider?: ReadonlyMap<string, ProviderUsageStatus>;
   expectsOAuth: ReadonlySet<string>;
   apiKeys: ReadonlyMap<string, ModelAuthStatusProvider["apiKey"]>;
   logoutProfileIds: ReadonlySet<string>;
@@ -131,6 +132,16 @@ export function mapModelAuthStatusProvider(params: {
   const refreshableProfiles = effectiveProfiles.filter(
     (profile) => profile.type === "oauth" || profile.type === "token",
   );
+  const usageProfile =
+    refreshableProfiles[0] ?? effectiveProfiles.find((profile) => profile.type === "api_key");
+  const usageProviderId = resolveUsageProviderId(provider.provider, {
+    credentialType: usageProfile?.type,
+  });
+  const legacyUsage =
+    effectiveProfiles
+      .map((profile) => params.usageByProfile.get(profile.profileId))
+      .find((usage) => usage !== undefined) ??
+    (usageProviderId ? params.usageByProvider?.get(usageProviderId) : undefined);
   // External CLI access tokens rotate without operator action. Keep their raw
   // profile expiry diagnostic, but do not turn it into a provider login warning.
   const externalCliOwnsOAuthRefresh =
@@ -253,6 +264,7 @@ export function mapModelAuthStatusProvider(params: {
       : {}),
     ...(profileOrderLocked ? { profileOrderLocked: true as const } : {}),
     ...(apiKey ? { apiKey } : {}),
+    ...(legacyUsage ? { usage: mapModelAuthUsage(legacyUsage.providerId, legacyUsage) } : {}),
   };
 }
 

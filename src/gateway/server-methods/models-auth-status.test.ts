@@ -507,7 +507,7 @@ describe("models.authStatus", () => {
     resetAuthStatusMocks();
   });
 
-  it("keeps account quota off the provider-wide usage field", () => {
+  it("keeps the effective account quota available to existing clients", () => {
     const lexical = {
       profileId: "openai:a",
       provider: "openai",
@@ -551,7 +551,7 @@ describe("models.authStatus", () => {
       store: { version: 1, profiles: {} },
     });
 
-    expect("usage" in result).toBe(false);
+    expect(result.usage?.windows).toEqual([{ label: "effective", usedPercent: 20 }]);
     expect(result.profiles.map((profile) => profile.usage?.windows)).toEqual([
       [{ label: "lexical", usedPercent: 10 }],
       [{ label: "effective", usedPercent: 20 }],
@@ -1922,6 +1922,11 @@ describe("models.authStatus", () => {
     expect(refreshed.providerUsage?.[0]).toEqual({
       providerId: "deepseek",
       displayName: "DeepSeek",
+      windows: [],
+      summary: "Balance ¥42.50",
+    });
+    expect(refreshed.providers[0]?.usage).toEqual({
+      providerId: "deepseek",
       windows: [],
       summary: "Balance ¥42.50",
     });

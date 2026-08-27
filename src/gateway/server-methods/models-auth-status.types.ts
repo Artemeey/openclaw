@@ -77,6 +77,8 @@ export type ModelAuthStatusProvider = {
     source: "config" | "env";
     envVar?: string;
   };
+  /** Provider-level usage kept for clients predating account-scoped usage. */
+  usage?: ModelAuthUsage;
 };
 
 type ModelAuthProviderUsage = ModelAuthUsage & {

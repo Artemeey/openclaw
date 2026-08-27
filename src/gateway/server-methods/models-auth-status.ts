@@ -627,6 +627,7 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
           config: cfg,
           authAliasLookupParams,
           usageByProfile,
+          usageByProvider,
           expectsOAuth: configured.expectsOAuth,
           apiKeys,
           logoutProfileIds,
