@@ -30,7 +30,7 @@ import { createSessionOwnerAssignmentOverlay } from "./session-owner-assignment-
 import {
   confirmsSessionDeletion,
   requestSessionDelete,
-  requestSessionOwnerAssignment,
+  requestSessionOwnerAssignment as assignSessionOwner,
   requestSessionPatch,
   requestSessionReset,
 } from "./session-requests.ts";
@@ -590,36 +590,47 @@ export function createSessionMutations(host: SessionMutationsHost) {
     }
   };
 
-  const assignOwner = async (
+  const assignOwner = (
     key: string,
     owner: SessionsAssignOwnerParams["owner"],
     options: { agentId?: string | null } = {},
-  ) => {
-    const scope = host.connection.capture();
-    if (!scope) {
-      return null;
-    }
-    try {
-      const result = await requestSessionOwnerAssignment(scope.client, key, owner, options.agentId);
-      if (!host.connection.isCurrent(scope)) {
+  ) =>
+    ownerAssignments.enqueue(key, async () => {
+      const scope = host.connection.capture();
+      if (!scope) {
         return null;
       }
-      const ownerClaim = ownerAssignments.confirm(
-        result.key,
-        result.owner,
-        host.ownerAssignmentScopeRevisions(result.key),
-        host.publishedRow(result.key)?.sessionId,
-      );
-      patchRowLocal(result.key, { owner: result.owner });
-      host.redecorateLists();
-      ownerAssignments.settleOn(host.refreshReplacement(options.agentId, result.key), ownerClaim);
-      return result.owner;
-    } catch (error) {
-      if (host.connection.isCurrent(scope)) {
-        host.publish({ ...host.readState(), error: formatUiError(error) }, "operation");
+      try {
+        const result = await assignSessionOwner(scope.client, key, owner, options.agentId);
+        if (!host.connection.isCurrent(scope)) {
+          return null;
+        }
+        const ownerClaim = ownerAssignments.confirm(
+          result.key,
+          result.owner,
+          host.ownerAssignmentScopeRevisions(result.key),
+          host.publishedRow(result.key)?.sessionId,
+        );
+        patchRowLocal(result.key, { owner: ownerClaim.owner });
+        host.redecorateLists();
+        ownerAssignments.settleOn(host.refreshReplacement(options.agentId, result.key), ownerClaim);
+        return ownerClaim.owner;
+      } catch (error) {
+        if (host.connection.isCurrent(scope)) {
+          host.publish({ ...host.readState(), error: formatUiError(error) }, "operation");
+        }
+        return null;
       }
-      return null;
-    }
+    });
+
+  const clearMutationState = () => {
+    pendingCreatedModelOverrides.clear();
+    pendingModelPatches.clear();
+    pendingPinPatches.clear();
+    confirmedArchives.clear();
+    ownerAssignments.clear();
+    archiveVisibility.clearAll();
+    preparedWorkSessionKeys.clear();
   };
 
   return {
@@ -734,29 +745,17 @@ export function createSessionMutations(host: SessionMutationsHost) {
       }
     },
     retireConnection() {
-      pendingCreatedModelOverrides.clear();
-      pendingModelPatches.clear();
+      clearMutationState();
       // Pin intents live inside `result`, which the replacement connection
       // rehydrates wholesale; only the model-override side map outlives that
       // replacement, so it is the one that needs an explicit rollback below.
-      pendingPinPatches.clear();
-      confirmedArchives.clear();
-      ownerAssignments.clear();
-      archiveVisibility.clearAll();
-      preparedWorkSessionKeys.clear();
       const state = host.readState();
       if (Object.keys(state.modelOverrides).length > 0) {
         host.publish({ ...state, modelOverrides: {} });
       }
     },
     dispose() {
-      pendingCreatedModelOverrides.clear();
-      pendingModelPatches.clear();
-      pendingPinPatches.clear();
-      confirmedArchives.clear();
-      ownerAssignments.clear();
-      archiveVisibility.clearAll();
-      preparedWorkSessionKeys.clear();
+      clearMutationState();
     },
   };
 }

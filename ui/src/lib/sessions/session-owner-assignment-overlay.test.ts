@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SessionsListResult } from "../../api/types.ts";
 import { createSessionOwnerAssignmentOverlay } from "./session-owner-assignment-overlay.ts";
 
@@ -24,6 +24,32 @@ function result(ownerId: string, assignedAt: number): SessionsListResult {
 }
 
 describe("session owner assignment overlay", () => {
+  it("cancels queued assignments when the connection state is cleared", async () => {
+    const overlay = createSessionOwnerAssignmentOverlay();
+    let releaseFirst: () => void = () => undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let runs = 0;
+    const first = overlay.enqueue("agent:main:owned", async () => {
+      runs += 1;
+      await firstGate;
+      return "first";
+    });
+    const second = overlay.enqueue("agent:main:owned", async () => {
+      runs += 1;
+      return "second";
+    });
+    await vi.waitFor(() => expect(runs).toBe(1));
+
+    overlay.clear();
+    releaseFirst();
+
+    await expect(first).resolves.toBe("first");
+    await expect(second).resolves.toBeNull();
+    expect(runs).toBe(1);
+  });
+
   it("keeps the confirmed owner until older same-scope requests settle", () => {
     const overlay = createSessionOwnerAssignmentOverlay();
     const confirmed = result("profile-ada", 20).sessions[0]!.owner!;

@@ -28,7 +28,14 @@ function ownerSupersedes(current: SessionOwner | undefined, confirmed: SessionOw
 }
 
 export function createSessionOwnerAssignmentOverlay() {
+  const assignmentQueues = new Map<string, Promise<unknown>>();
   const claims = new Map<string, ConfirmedOwnerClaim>();
+  let queueEpoch = 0;
+
+  const forget = (key: string): void => {
+    assignmentQueues.delete(key);
+    claims.delete(key);
+  };
 
   const settleConfirmed = (claim: ConfirmedOwnerClaim): void => {
     if (claims.get(claim.key) !== claim) {
@@ -43,7 +50,25 @@ export function createSessionOwnerAssignmentOverlay() {
     }
   };
 
+  const enqueue = <T>(key: string, run: () => Promise<T>): Promise<T | null> => {
+    const normalizedKey = key.trim();
+    const previous = assignmentQueues.get(normalizedKey) ?? Promise.resolve();
+    const epoch = queueEpoch;
+    const current = previous
+      .catch(() => undefined)
+      .then(() => (epoch === queueEpoch ? run() : null));
+    assignmentQueues.set(normalizedKey, current);
+    const retire = () => {
+      if (assignmentQueues.get(normalizedKey) === current) {
+        assignmentQueues.delete(normalizedKey);
+      }
+    };
+    void current.then(retire, retire);
+    return current;
+  };
+
   return {
+    enqueue,
     confirm(
       key: string,
       owner: SessionOwner,
@@ -62,13 +87,15 @@ export function createSessionOwnerAssignmentOverlay() {
       return claim;
     },
     retire(key: string): void {
-      claims.delete(key);
+      forget(key.trim());
     },
     settleConfirmed,
     settleOn(reconciliation: Promise<void>, claim: ConfirmedOwnerClaim): void {
       void reconciliation.then(() => settleConfirmed(claim));
     },
     clear(): void {
+      queueEpoch += 1;
+      assignmentQueues.clear();
       claims.clear();
     },
     decorate: (
@@ -98,7 +125,7 @@ export function createSessionOwnerAssignmentOverlay() {
           return row;
         }
         if (claim.sessionId && row.sessionId && claim.sessionId !== row.sessionId) {
-          claims.delete(row.key);
+          forget(row.key);
           return row;
         }
         if (ownersMatch(row.owner, claim.owner)) {
@@ -124,7 +151,7 @@ export function createSessionOwnerAssignmentOverlay() {
         }
         const row = result?.sessions.find((candidate) => candidate.key === key);
         if (claim.sessionId && row?.sessionId && claim.sessionId !== row.sessionId) {
-          claims.delete(key);
+          forget(key);
           continue;
         }
         if (row?.owner && ownerSupersedes(row.owner, claim.owner)) {

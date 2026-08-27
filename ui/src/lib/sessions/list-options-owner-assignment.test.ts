@@ -39,6 +39,125 @@ function createSessions(client: GatewayBrowserClient, key: string) {
 }
 
 describe("session owner assignment list reconciliation", () => {
+  it.each([
+    { label: "without timestamps", assignedAt: undefined },
+    { label: "with tied timestamps", assignedAt: 20 },
+  ])("accepts a later assignment $label", async ({ assignedAt }) => {
+    const key = "agent:main:equal-assignment-revisions";
+    const ada = { type: "human" as const, id: "profile-ada", label: "Ada" };
+    const bob = { type: "human" as const, id: "profile-bob", label: "Bob" };
+    const carol = { type: "human" as const, id: "profile-carol", label: "Carol" };
+    const oldOwner = { actor: bob, assignedBy: bob, assignedAt: 10 };
+    const adaOwner = {
+      actor: ada,
+      assignedBy: ada,
+      ...(assignedAt === undefined ? {} : { assignedAt }),
+    };
+    const carolOwner = {
+      actor: carol,
+      assignedBy: carol,
+      ...(assignedAt === undefined ? {} : { assignedAt }),
+    };
+    const responses = [adaOwner, carolOwner];
+    let serverOwner: NonNullable<SessionsListResult["sessions"][number]["owner"]> = oldOwner;
+    const request = vi.fn(async (method: string) => {
+      if (method === "sessions.assignOwner") {
+        const owner = responses.shift();
+        if (!owner) {
+          throw new Error("missing assignment response");
+        }
+        serverOwner = owner;
+        return { ok: true, key, owner };
+      }
+      if (method === "sessions.list") {
+        return sessionsResult([{ key, kind: "direct", updatedAt: 20, owner: serverOwner }], 20);
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    const sessions = createSessions({ request } as unknown as GatewayBrowserClient, key);
+    await sessions.refresh({ agentId: "main", force: true });
+
+    await expect(sessions.assignOwner(key, ada, { agentId: "main" })).resolves.toEqual(adaOwner);
+    await expect(sessions.assignOwner(key, carol, { agentId: "main" })).resolves.toEqual(
+      carolOwner,
+    );
+    expect(sessions.state.result?.sessions[0]?.owner).toEqual(carolOwner);
+    sessions.dispose();
+  });
+
+  it("serializes assignment requests so responses cannot arrive out of order", async () => {
+    const key = "agent:main:reversed-assignments";
+    const ada = { type: "human" as const, id: "profile-ada", label: "Ada" };
+    const bob = { type: "human" as const, id: "profile-bob", label: "Bob" };
+    const carol = { type: "human" as const, id: "profile-carol", label: "Carol" };
+    const oldOwner = { actor: bob, assignedBy: bob, assignedAt: 10 };
+    const adaOwner = { actor: ada, assignedBy: ada, assignedAt: 20 };
+    const carolOwner = { actor: carol, assignedBy: carol, assignedAt: 30 };
+    const firstResponse = deferred<typeof adaOwner>();
+    const secondResponse = deferred<typeof carolOwner>();
+    let assignmentCalls = 0;
+    let serverOwner = oldOwner;
+    const request = vi.fn(async (method: string) => {
+      if (method === "sessions.assignOwner") {
+        assignmentCalls += 1;
+        const call = assignmentCalls;
+        const owner = await (call === 1 ? firstResponse.promise : secondResponse.promise);
+        if (call === 2) {
+          serverOwner = owner;
+        }
+        return { ok: true, key, owner };
+      }
+      if (method === "sessions.list") {
+        return sessionsResult([{ key, kind: "direct", updatedAt: 20, owner: serverOwner }], 20);
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    const sessions = createSessions({ request } as unknown as GatewayBrowserClient, key);
+    await sessions.refresh({ agentId: "main", force: true });
+
+    const first = sessions.assignOwner(key, ada, { agentId: "main" });
+    await vi.waitFor(() => expect(assignmentCalls).toBe(1));
+    const second = sessions.assignOwner(key, carol, { agentId: "main" });
+
+    firstResponse.resolve(adaOwner);
+    await expect(first).resolves.toEqual(adaOwner);
+    await vi.waitFor(() => expect(assignmentCalls).toBe(2));
+    secondResponse.resolve(carolOwner);
+    await expect(second).resolves.toEqual(carolOwner);
+    expect(sessions.state.result?.sessions[0]?.owner).toEqual(carolOwner);
+    sessions.dispose();
+  });
+
+  it("keeps an earlier successful assignment when the queued request fails", async () => {
+    const key = "agent:main:failed-queued-assignment";
+    const ada = { type: "human" as const, id: "profile-ada", label: "Ada" };
+    const carol = { type: "human" as const, id: "profile-carol", label: "Carol" };
+    const adaOwner = { actor: ada, assignedBy: ada };
+    const serverOwner = adaOwner;
+    let assignmentCalls = 0;
+    const request = vi.fn(async (method: string) => {
+      if (method === "sessions.assignOwner") {
+        assignmentCalls += 1;
+        if (assignmentCalls === 2) {
+          throw new Error("assignment rejected");
+        }
+        return { ok: true, key, owner: adaOwner };
+      }
+      if (method === "sessions.list") {
+        return sessionsResult([{ key, kind: "direct", updatedAt: 20, owner: serverOwner }], 20);
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    const sessions = createSessions({ request } as unknown as GatewayBrowserClient, key);
+    await sessions.refresh({ agentId: "main", force: true });
+
+    await expect(sessions.assignOwner(key, ada, { agentId: "main" })).resolves.toEqual(adaOwner);
+    await expect(sessions.assignOwner(key, carol, { agentId: "main" })).resolves.toBeNull();
+    expect(sessions.state.result?.sessions[0]?.owner).toEqual(adaOwner);
+    expect(assignmentCalls).toBe(2);
+    sessions.dispose();
+  });
+
   it("refreshes an active owner filter that gains the assigned session", async () => {
     const key = "agent:main:new-owner-filter";
     const ada = { type: "human" as const, id: "profile-ada", label: "Ada" };
