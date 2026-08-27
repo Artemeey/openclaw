@@ -3,6 +3,7 @@ import type { SessionsListResult } from "../../api/types.ts";
 
 type ConfirmedOwnerClaim = {
   confirmedScopes: Set<string>;
+  key: string;
   owner: SessionOwner;
   scopeRevisions: Map<string, number>;
   sessionId?: string;
@@ -29,6 +30,19 @@ function ownerSupersedes(current: SessionOwner | undefined, confirmed: SessionOw
 export function createSessionOwnerAssignmentOverlay() {
   const claims = new Map<string, ConfirmedOwnerClaim>();
 
+  const settleConfirmed = (claim: ConfirmedOwnerClaim): void => {
+    if (claims.get(claim.key) !== claim) {
+      return;
+    }
+    for (const scope of claim.confirmedScopes) {
+      claim.scopeRevisions.delete(scope);
+    }
+    claim.confirmedScopes.clear();
+    if (claim.scopeRevisions.size === 0) {
+      claims.delete(claim.key);
+    }
+  };
+
   return {
     confirm(
       key: string,
@@ -36,29 +50,23 @@ export function createSessionOwnerAssignmentOverlay() {
       scopeRevisions: ReadonlyMap<string, number>,
       sessionId?: string,
     ): ConfirmedOwnerClaim {
+      const normalizedKey = key.trim();
       const claim = {
         confirmedScopes: new Set<string>(),
+        key: normalizedKey,
         owner,
         scopeRevisions: new Map(scopeRevisions),
         ...(sessionId ? { sessionId } : {}),
       };
-      claims.set(key.trim(), claim);
+      claims.set(normalizedKey, claim);
       return claim;
     },
     retire(key: string): void {
       claims.delete(key);
     },
-    settleConfirmed(key: string, claim: ConfirmedOwnerClaim): void {
-      if (claims.get(key) !== claim) {
-        return;
-      }
-      for (const scope of claim.confirmedScopes) {
-        claim.scopeRevisions.delete(scope);
-      }
-      claim.confirmedScopes.clear();
-      if (claim.scopeRevisions.size === 0) {
-        claims.delete(key);
-      }
+    settleConfirmed,
+    settleOn(reconciliation: Promise<void>, claim: ConfirmedOwnerClaim): void {
+      void reconciliation.then(() => settleConfirmed(claim));
     },
     clear(): void {
       claims.clear();

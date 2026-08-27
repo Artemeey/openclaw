@@ -1,6 +1,7 @@
 import type { SessionCatalogPullRequestSummary } from "../../../../packages/gateway-protocol/src/schema/sessions-catalog.js";
 import { GatewayRequestError, type GatewayEventFrame } from "../../api/gateway.ts";
 import type { GatewaySessionRow, SessionsListResult } from "../../api/types.ts";
+import { formatUiError } from "../format-error.ts";
 import { createGatewayConnectionLifecycle } from "../gateway-connection-lifecycle.ts";
 import { scopedAgentListParamsForSession } from "./navigation.ts";
 import {
@@ -135,23 +136,6 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
       mutations.applyConfirmedArchives(mutations.applyPendingPins(swarmActivity.decorate(result))),
     );
 
-  const roster = createSessionRosterRefresh({
-    connection,
-    snapshot: () => gateway.snapshot,
-    readState: () => state,
-    publish,
-    observerError: () => sessionEventSubscriptionError,
-    decorate: decorateRows,
-    observeCanonicalRows(result, requestRevision, scope) {
-      mutations.observeCanonicalOwners(result, requestRevision, scope);
-    },
-    retireCanonicalScope: (scope) => mutations.retireCanonicalOwnerScope(scope),
-    onCanonicalList(result) {
-      mutations.settlePrepared(result);
-      canonicalListRevision += 1;
-    },
-  });
-
   const sessionEventSubscription = createSessionEventSubscriptionOwner({
     isCurrent: (scope) => connection.isCurrent(scope),
     retryDelayMs: sessionRetryDelayMs,
@@ -174,6 +158,24 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     },
   });
 
+  const roster = createSessionRosterRefresh({
+    connection,
+    snapshot: () => gateway.snapshot,
+    readState: () => state,
+    publish,
+    observerError: () => sessionEventSubscriptionError,
+    bootstrap: (scope, list) => sessionEventSubscription.ensure(scope, list),
+    decorate: decorateRows,
+    observeCanonicalRows(result, requestRevision, scope) {
+      mutations.observeCanonicalOwners(result, requestRevision, scope);
+    },
+    retireCanonicalScope: (scope) => mutations.retireCanonicalOwnerScope(scope),
+    onCanonicalList(result) {
+      mutations.settlePrepared(result);
+      canonicalListRevision += 1;
+    },
+  });
+
   const groups = createSessionGroupCatalog({
     connection,
     snapshot: () => gateway.snapshot,
@@ -182,6 +184,12 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     refreshRows: () => roster.refresh({ ...roster.lastOptions(), force: true }),
     retryDelayMs: sessionRetryDelayMs,
   });
+
+  const notifyCreated = (key: string) => {
+    for (const listener of createdListeners) {
+      listener(key);
+    }
+  };
 
   const mutations = createSessionMutations({
     connection,
@@ -194,11 +202,7 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     ownerAssignmentScopeRevisions: (key) => roster.ownerAssignmentScopeRevisions(key),
     publishedRow: (key) => roster.publishedRow(key),
     redecorateLists: () => roster.redecorateLists(),
-    notifyCreated(key) {
-      for (const listener of createdListeners) {
-        listener(key);
-      }
-    },
+    notifyCreated,
     retirePullRequestSummary,
   });
 
@@ -206,6 +210,8 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     connection,
     agentId: () => state.agentId,
     refreshReplacement: (agentId) => roster.refreshReplacement(agentId),
+    notifyCreated,
+    reportError: (error) => publish({ ...state, error: formatUiError(error) }, "operation"),
   });
 
   const pullRequestSummary = (key: string) => pullRequestSummaries.get(key.trim());
@@ -394,13 +400,12 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
       hydratedClient = scope.client;
       hydratedSelfUserId = selfUserId;
       void (async () => {
-        await sessionEventSubscription.ensure(scope);
         if (connection.isCurrent(scope)) {
           const sessionKey = gateway.snapshot.sessionKey?.trim();
           const agentScope = sessionKey
             ? scopedAgentListParamsForSession(gateway.snapshot, sessionKey)
             : { agentId: resolveUiSelectedGlobalAgentId(gateway.snapshot) };
-          await roster.refresh({
+          await roster.bootstrap({
             ...roster.lastOptions(), // Keep visible roster filters through reconnect hydration.
             ...agentScope,
             includeDerivedTitles: true,
@@ -537,13 +542,12 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     refreshReplacement: roster.refreshReplacement,
     createResult: mutations.createResult,
     create: mutations.create,
-    recover: mutations.recover,
+    recover: operations.recover,
     patch: mutations.patch,
     archiveVisibility: mutations.archiveVisibility,
     setArchiveVisibility: mutations.setArchiveVisibility,
     assignOwner: mutations.assignOwner,
     retireModelOverride: mutations.retireModelOverride,
-    setModelOverride: mutations.setModelOverride,
     patchRowLocal: mutations.patchRowLocal,
     isPreparedWorkSession: mutations.isPreparedWorkSession,
     pullRequestSummary,

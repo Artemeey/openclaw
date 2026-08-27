@@ -17,6 +17,7 @@ import {
   renderSettingsValue,
 } from "../../components/settings-ui.ts";
 import { t } from "../../i18n/index.ts";
+import { resolveScrollBehavior } from "../../lib/scroll-behavior.ts";
 import { APPEARANCE_SETTINGS_TARGET_IDS } from "./route-data.ts";
 import {
   renderChatPreferencesSection,
@@ -63,6 +64,21 @@ const BUILTIN_THEME_OPTIONS: ThemeOption[] = [
     id: "absolutely",
     labelKey: "configView.themes.absolutely.label",
     descriptionKey: "configView.themes.absolutely.description",
+  },
+  {
+    id: "tide",
+    labelKey: "configView.themes.tide.label",
+    descriptionKey: "configView.themes.tide.description",
+  },
+  {
+    id: "beacon",
+    labelKey: "configView.themes.beacon.label",
+    descriptionKey: "configView.themes.beacon.description",
+  },
+  {
+    id: "phosphor",
+    labelKey: "configView.themes.phosphor.label",
+    descriptionKey: "configView.themes.phosphor.description",
   },
 ];
 
@@ -117,7 +133,7 @@ function focusCustomThemeImportInput() {
       return;
     }
     if (typeof input.scrollIntoView === "function") {
-      input.scrollIntoView({ block: "center", behavior: "smooth" });
+      input.scrollIntoView({ block: "center", behavior: resolveScrollBehavior() });
     }
     input.focus();
     input.select();

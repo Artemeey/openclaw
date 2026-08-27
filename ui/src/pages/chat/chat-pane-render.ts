@@ -21,6 +21,7 @@ import {
   resolveChatPaneObserverRunId,
 } from "../../lib/observer-digest.ts";
 import { hasSessionPresenceViewers } from "../../lib/presence-users.ts";
+import { isSessionRunActive } from "../../lib/session-run-state.ts";
 import { buildAgentMainSessionKey } from "../../lib/sessions/session-key.ts";
 import { showToast } from "../../lib/toast.ts";
 import { generateUUID } from "../../lib/uuid.ts";
@@ -71,6 +72,7 @@ export class ChatPane extends ChatPaneLayoutRender {
     }
     void this.ensureTaskSuggestionCloudProfiles();
     const selectedSession = selectedChatSessionRow(state);
+    const selectedSessionArchived = this.isCurrentSessionArchived(state);
     const mutationAccess = readChatPaneMutationAccess(
       this.context.gateway.snapshot,
       state.sessionKey,
@@ -95,7 +97,7 @@ export class ChatPane extends ChatPaneLayoutRender {
       Boolean(placement) && placement?.state !== "local" && !hasAbortableSessionRun(state);
     const canPublishPullRequest =
       Boolean(publishClient) &&
-      Boolean(selectedSession?.key) &&
+      Boolean(selectedSession?.key && !selectedSessionArchived) &&
       !hasAbortableSessionRun(state) &&
       publicationHasDirectPlacement &&
       hasOperatorWriteAccess(this.context.gateway.snapshot.hello?.auth ?? null) &&
@@ -164,7 +166,6 @@ export class ChatPane extends ChatPaneLayoutRender {
       selectedAgentFound: selectedAgent !== undefined,
       agentModel: agentDefaultModel,
     });
-    const selectedSessionArchived = this.isCurrentSessionArchived(state);
     const placementStartup = this.context.placementStartup.get(state.sessionKey);
     const placementStartupPending =
       placementStartup !== null && placementStartup.phase !== "failed";
@@ -197,15 +198,13 @@ export class ChatPane extends ChatPaneLayoutRender {
       selectedSession.sharingRole === "viewer" &&
       isGatewayMethodAdvertised(gatewaySnapshot, "session.suggestions.add") === true &&
       isGatewayMethodAdvertised(gatewaySnapshot, "session.suggestions.list") === true;
-    // Every composer-disabling gate needs a visible reason here or a banner in
-    // sessionDisabledBanner; a silently disabled composer is a silent failure.
+    // Placement progress already explains its gate in the transcript. Other
+    // gates need a reason here or a sessionDisabledBanner.
     const disabledReason = modelUnavailable
       ? `${t("modelSetup.failure.auth")}. ${t("modelSetup.failureGuidance.auth")}`
       : sessionParticipationBlocked && !suggestionViewer
         ? t("chat.sessionSharing.readOnlyNotice")
-        : placementStartupPending
-          ? t("newSession.starting")
-          : null;
+        : null;
     const typingEnabled =
       multiIdentity &&
       hasOperatorWriteAccess(gatewaySnapshot.hello?.auth ?? null) &&
@@ -225,21 +224,16 @@ export class ChatPane extends ChatPaneLayoutRender {
           ? t("chat.catalog.remoteViewOnly")
           : t("chat.catalog.unsupportedViewOnly")
         : null;
-    const {
-      backgroundTasks,
-      closePanelSlot,
-      openPanelSlot,
-      progressCardPlacement,
-      sessionWorkspace,
-    } = createChatPaneRails({
-      state,
-      sidebarLayout,
-      paneWidth: this.paneWidth,
-      presentationId: this.presentationId,
-      presented: this.presented,
-      gatewaySnapshot,
-      setObserverVisibility: this.setSessionObserverVisibility,
-    });
+    const { backgroundTasks, closePanelSlot, openPanelSlot, sessionWorkspace } =
+      createChatPaneRails({
+        state,
+        sidebarLayout,
+        presentationId: this.presentationId,
+        presented: this.presented,
+        gatewaySnapshot,
+        setObserverVisibility: this.setSessionObserverVisibility,
+        updateSidebarLayout: (layout) => this.commitSidebarLayout(layout),
+      });
     const selfUser = resolveCurrentSelfUser({
       snapshotUser: gatewaySnapshot.selfUser,
       presenceEntries: readPresenceEntries(gatewaySnapshot.hello?.snapshot),
@@ -278,6 +272,11 @@ export class ChatPane extends ChatPaneLayoutRender {
       onFork: (entryId) => this.forkFromMessage(entryId),
       onReset: () => void clearChatHistory(state),
     });
+    const setReply: NonNullable<ChatProps["onSetReply"]> = (target) => {
+      state.chatReplyTarget = target;
+      state.requestUpdate?.();
+    };
+    const replyMessageAccess = this.currentReplyMessageAccess(state.sessionKey);
     const composerControls = catalogKey
       ? undefined
       : renderChatPaneComposerControls({
@@ -320,8 +319,10 @@ export class ChatPane extends ChatPaneLayoutRender {
       waitingApproval: state.waitingApprovalStatuses.size > 0,
       compactionStatus: state.compactionStatus,
       fallbackStatus: state.fallbackStatus,
-      progressCard:
-        progressCardPlacement === "rail" || !this.progressCard.card ? null : this.progressCard.card,
+      progressCard: this.progressCard.card,
+      progressCardHasActiveRun: Boolean(
+        state.chatRunId || (selectedSession && isSessionRunActive(selectedSession)),
+      ),
       onDismissProgressCard,
       gatewayQuestionPrompts: catalogKey || sessionParticipationBlocked ? [] : this.questionPrompts,
       onGatewayQuestionChange: () => {
@@ -538,6 +539,10 @@ export class ChatPane extends ChatPaneLayoutRender {
       onRequestUpdate: state.requestUpdate,
       onHistoryKeydown: state.handleChatInputHistoryKey,
       onSlashIntent: () => refreshChatCommands(state),
+      onSlashCommand:
+        suggestionViewer || catalogKey
+          ? undefined
+          : (command) => void state.handleSendChat(command),
       showNewMessages: state.chatNewMessagesBelow,
       onScrollToBottom: state.scrollToBottom,
       attachments: state.chatAttachments,
@@ -604,12 +609,9 @@ export class ChatPane extends ChatPaneLayoutRender {
         state.chatReplyTarget = null;
         state.requestUpdate?.();
       },
-      onSetReply: (target) => {
-        state.chatReplyTarget = target;
-        state.requestUpdate?.();
-      },
-      replyMessageAccess: catalogKey ? undefined : this.currentReplyMessageAccess(state.sessionKey),
-      onRewindMessage: sessionActionCallbacks.onRewindMessage,
+      onSetReply: selectedSessionArchived ? undefined : setReply,
+      replyMessageAccess: catalogKey || selectedSessionArchived ? undefined : replyMessageAccess,
+      onRewindMessage: selectedSessionArchived ? undefined : sessionActionCallbacks.onRewindMessage,
       onForkMessage: sessionActionCallbacks.onForkMessage,
       onClearHistory: sessionActionCallbacks.onClearHistory,
       agentsList: state.agentsList,
@@ -650,8 +652,6 @@ export class ChatPane extends ChatPaneLayoutRender {
       currentAgentId,
       board,
       sidebarLayout,
-      progressCardPlacement,
-      onDismissProgressCard,
       sessionWorkspace,
       backgroundTasks,
       chatProps: props,

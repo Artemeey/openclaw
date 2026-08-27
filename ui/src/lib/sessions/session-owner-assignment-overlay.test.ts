@@ -33,7 +33,7 @@ describe("session owner assignment overlay", () => {
 
     expect(overlay.decorate(result("profile-bob", 10))?.sessions[0]?.owner).toEqual(confirmed);
 
-    overlay.settleConfirmed("agent:main:owned", claim);
+    overlay.settleConfirmed(claim);
     expect(overlay.decorate(result("profile-bob", 10))?.sessions[0]?.owner?.actor.id).toBe(
       "profile-bob",
     );

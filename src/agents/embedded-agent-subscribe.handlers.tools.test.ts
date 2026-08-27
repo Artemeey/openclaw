@@ -41,6 +41,7 @@ import {
   reserveAskUserPromptDelivery,
 } from "./tools/ask-user-tool.js";
 import { resetPendingAskUserQuestionsForTest } from "./tools/ask-user-tool.test-support.js";
+import { createSecretsTool } from "./tools/secrets-tool.js";
 
 type ToolExecutionStartEvent = Omit<Extract<AgentEvent, { type: "tool_execution_start" }>, "type">;
 type ToolExecutionEndEvent = Omit<Extract<AgentEvent, { type: "tool_execution_end" }>, "type">;
@@ -430,6 +431,14 @@ describe("handleToolExecutionStart read path checks", () => {
                   optionValue: "Production",
                 },
               },
+              {
+                label: "Other…",
+                action: {
+                  type: "question",
+                  questionId,
+                  intent: "custom-input",
+                },
+              },
             ],
           },
         ],
@@ -438,41 +447,72 @@ describe("handleToolExecutionStart read path checks", () => {
     await activation.finish();
   });
 
-  it.each([
-    {
-      name: "multi-question",
-      questions: [
-        {
-          id: "target",
-          header: "Target",
-          question: "Where next?",
-          options: [{ label: "Staging" }, { label: "Production" }],
-        },
-        {
-          id: "region",
-          header: "Region",
-          question: "Which region?",
-          options: [{ label: "EU" }, { label: "US" }],
-        },
-      ],
-    },
-    {
-      name: "multi-select",
-      questions: [
-        {
-          id: "targets",
-          header: "Targets",
-          question: "Where next?",
-          options: [{ label: "Staging" }, { label: "Production" }],
-          multiSelect: true,
-        },
-      ],
-    },
-  ])("keeps $name ask_user prompts text-only", async ({ questions }) => {
+  it("delivers credential requests as absolute Control UI links without answer affordances", async () => {
     const { ctx } = createTestContext();
     const onToolResult = vi.fn();
     ctx.params.onToolResult = onToolResult;
-    const toolCallId = `ask-${questions[0]?.id ?? "unknown"}`;
+    ctx.params.config = {
+      gateway: {
+        publicOrigin: "https://console.example.test",
+        controlUi: { basePath: "/control" },
+      },
+    };
+    const args = { action: "request", name: "TEST_API_KEY", kind: "secret" };
+    let questionId = "";
+    let resolveAnswer: ((value: { status: "cancelled" }) => void) | undefined;
+    const tool = createSecretsTool({
+      agentId: "agent-test-id",
+      sessionKey: "agent:unit-session",
+      runId: "run-test",
+      gatewayCall: async (method, _options, params) => {
+        if (method === "question.request") {
+          questionId = String(requireRecord(params, "question request").id);
+          return { id: questionId };
+        }
+        if (method === "question.get") {
+          return { question: { questions: [] } };
+        }
+        if (method === "question.waitAnswer") {
+          return await new Promise((resolve) => {
+            resolveAnswer = resolve;
+          });
+        }
+        throw new Error(`unexpected method ${method}`);
+      },
+    });
+
+    await startTool(ctx, { toolName: "secrets", toolCallId: "secret-call-1", args });
+    const pending = tool.execute("secret-call-1", args);
+    await vi.waitFor(() => expect(onToolResult).toHaveBeenCalledOnce());
+
+    expect(onToolResult).toHaveBeenCalledWith({
+      text: `🔑 Agent requests credential TEST_API_KEY (secret). Reply is disabled for secrets — open to provide it: https://console.example.test/control/ask/${questionId}`,
+    });
+    expect(onToolResult.mock.calls[0]?.[0]).not.toHaveProperty("channelData");
+    expect(onToolResult.mock.calls[0]?.[0]).not.toHaveProperty("presentation");
+    resolveAnswer?.({ status: "cancelled" });
+    await pending;
+  });
+
+  it("keeps multi-question ask_user prompts text-only", async () => {
+    const questions = [
+      {
+        id: "target",
+        header: "Target",
+        question: "Where next?",
+        options: [{ label: "Staging" }, { label: "Production" }],
+      },
+      {
+        id: "region",
+        header: "Region",
+        question: "Which region?",
+        options: [{ label: "EU" }, { label: "US" }],
+      },
+    ];
+    const { ctx } = createTestContext();
+    const onToolResult = vi.fn();
+    ctx.params.onToolResult = onToolResult;
+    const toolCallId = "ask-multi-question";
 
     await startTool(ctx, {
       toolName: "ask_user",
@@ -484,12 +524,37 @@ describe("handleToolExecutionStart read path checks", () => {
 
     const payload = onToolResult.mock.calls[0]?.[0];
     expect(payload?.text).toContain(
-      questions.length > 1
-        ? "Reply by number or question id. Use a declared option where choices are fixed."
-        : "Reply with the number, the option text, or your own answer.",
+      "Reply by number or question id. Use a declared option where choices are fixed.",
     );
     expect(payload).not.toHaveProperty("presentation");
     expect(payload).not.toHaveProperty("presentationTextMode");
+    await activation.finish();
+  });
+
+  it("keeps a multi-select ask_user prompt readable without partial native state", async () => {
+    const { ctx } = createTestContext();
+    const onToolResult = vi.fn();
+    ctx.params.onToolResult = onToolResult;
+    const questions = [
+      {
+        id: "checks",
+        header: "Checks",
+        question: "Which checks should run?",
+        options: [{ label: "Unit" }, { label: "Lint" }],
+        multiSelect: true,
+      },
+    ];
+
+    await startTool(ctx, { toolName: "ask_user", toolCallId: "ask-checks", args: { questions } });
+    const activation = await activateAskUserPrompt("ask-checks", { questions });
+    await vi.waitFor(() => expect(onToolResult).toHaveBeenCalledOnce());
+
+    const payload = onToolResult.mock.calls[0]?.[0];
+    expect(payload?.text).toContain(
+      "Reply with comma-separated option numbers or text, or your own answer.",
+    );
+    expect(payload).not.toHaveProperty("presentation");
+    expect(payload?.channelData).toEqual({ askUser: { questionId: activation.questionId } });
     await activation.finish();
   });
 

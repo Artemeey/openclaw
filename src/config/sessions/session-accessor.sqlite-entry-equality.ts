@@ -1,14 +1,26 @@
 import type { SessionEntry } from "./types.js";
 
-type SqliteLifecycleTargetSnapshot = {
+export type SqliteLifecycleTargetSnapshot = {
   primary: { entry: SessionEntry; key: string } | undefined;
   rows: Array<{ entry: SessionEntry; sessionKey: string }>;
+};
+
+type SqliteSessionEntrySelectionSnapshot = {
+  selected: { entry: SessionEntry; row: { session_key: string } } | undefined;
+  selectedRows: Array<{ entry: SessionEntry; sessionKey: string }>;
 };
 
 type SessionEntryComparator = (
   left: SessionEntry | undefined,
   right: SessionEntry | undefined,
 ) => boolean;
+
+class SqliteSessionMutationConflictError extends Error {
+  constructor(operationLabel: string) {
+    super(`SQLite session state changed while preparing ${operationLabel}`);
+    this.name = "SqliteSessionMutationConflictError";
+  }
+}
 
 export function sqliteSessionEntriesEqual(
   left: SessionEntry | undefined,
@@ -27,9 +39,8 @@ export function sqliteSessionEntriesEqual(
     participantCount: _rightParticipantCount,
     ...rightEntry
   } = right;
-  // Participant display metadata is a separately mutable projection. Owner
-  // remains part of the generic fence because detached replacements must fail
-  // when responsibility changes after their snapshot.
+  // Participant history is a separately mutable SQLite projection. It must not
+  // invalidate logical-session compare-and-swap or leak into entry_json writes.
   return JSON.stringify(leftEntry) === JSON.stringify(rightEntry);
 }
 
@@ -42,12 +53,12 @@ export function sqliteLifecycleSessionEntriesEqual(
   }
   const { owner: _leftOwner, ...leftEntry } = left;
   const { owner: _rightOwner, ...rightEntry } = right;
-  // Lifecycle writes preserve the separately stored owner columns, so an owner
-  // assignment must not invalidate their logical-entry snapshot.
+  // Owner is stored in dedicated columns and same-session lifecycle/reply
+  // writes preserve that projection instead of replacing it.
   return sqliteSessionEntriesEqual(leftEntry, rightEntry);
 }
 
-export function sqliteSessionSnapshotRowsEqual(
+function sqliteSessionSnapshotRowsEqual(
   left: Array<{ entry: SessionEntry; sessionKey: string }>,
   right: Array<{ entry: SessionEntry; sessionKey: string }>,
   entriesEqual: SessionEntryComparator = sqliteSessionEntriesEqual,
@@ -61,26 +72,43 @@ export function sqliteSessionSnapshotRowsEqual(
   );
 }
 
-export function sqliteSessionTargetSnapshotsEqual(
+export function sqliteLifecycleTargetSnapshotsEqual(
   expected: SqliteLifecycleTargetSnapshot,
   current: SqliteLifecycleTargetSnapshot,
-): boolean {
-  return sqliteTargetSnapshotsEqual(expected, current, sqliteSessionEntriesEqual);
-}
-
-function sqliteTargetSnapshotsEqual(
-  expected: SqliteLifecycleTargetSnapshot,
-  current: SqliteLifecycleTargetSnapshot,
-  entriesEqual: SessionEntryComparator,
 ): boolean {
   return (
     expected.primary?.key === current.primary?.key &&
-    entriesEqual(expected.primary?.entry, current.primary?.entry) &&
-    expected.rows.length === current.rows.length &&
-    expected.rows.every(
-      (row, index) =>
-        row.sessionKey === current.rows[index]?.sessionKey &&
-        entriesEqual(row.entry, current.rows[index]?.entry),
-    )
+    sqliteSessionEntriesEqual(expected.primary?.entry, current.primary?.entry) &&
+    sqliteSessionSnapshotRowsEqual(expected.rows, current.rows)
   );
+}
+
+export function assertSessionEntrySelectionUnchanged(
+  expected: SqliteSessionEntrySelectionSnapshot,
+  current: SqliteSessionEntrySelectionSnapshot,
+  operationLabel: string,
+  preserveOwnerProjection = false,
+): void {
+  const entriesEqual = preserveOwnerProjection
+    ? sqliteLifecycleSessionEntriesEqual
+    : sqliteSessionEntriesEqual;
+  const selectedMatches =
+    expected.selected?.row.session_key === current.selected?.row.session_key &&
+    entriesEqual(expected.selected?.entry, current.selected?.entry);
+  if (
+    !selectedMatches ||
+    !sqliteSessionSnapshotRowsEqual(expected.selectedRows, current.selectedRows, entriesEqual)
+  ) {
+    throw new SqliteSessionMutationConflictError(operationLabel);
+  }
+}
+
+export function assertLifecycleTargetSnapshotUnchanged(
+  expected: SqliteLifecycleTargetSnapshot,
+  current: SqliteLifecycleTargetSnapshot,
+  operationLabel: string,
+): void {
+  if (!sqliteLifecycleTargetSnapshotsEqual(expected, current)) {
+    throw new SqliteSessionMutationConflictError(operationLabel);
+  }
 }

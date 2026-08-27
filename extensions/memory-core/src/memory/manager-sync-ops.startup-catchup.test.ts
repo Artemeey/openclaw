@@ -31,6 +31,7 @@ import {
 } from "openclaw/plugin-sdk/session-transcript-runtime";
 import { closeOpenClawAgentDatabasesForTest } from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryIndexDatabase } from "./manager-database-context.js";
 import {
   MEMORY_INDEX_PROVENANCE_VERSION,
   resolveConfiguredScopeHash,
@@ -170,11 +171,10 @@ class SessionStartupCatchupHarness extends MemoryManagerSyncOps {
     pollIntervalMs: 0,
     timeoutMs: 0,
   };
-  protected readonly vector = { enabled: false, available: false };
   protected readonly cache = { enabled: false };
   protected providerUnavailableReason?: string;
   protected providerLifecycle = { mode: "active" as const, providerId: "test" };
-  protected db: DatabaseSync;
+  protected publishedDatabase: MemoryIndexDatabase;
 
   readonly syncCalls: SyncParams[] = [];
   readonly indexedPaths: string[] = [];
@@ -193,7 +193,8 @@ class SessionStartupCatchupHarness extends MemoryManagerSyncOps {
   ) {
     super();
     this.sources.add("sessions");
-    this.db = database ?? createStartupHarnessDatabase(sourceRows);
+    const db = database ?? createStartupHarnessDatabase(sourceRows);
+    this.publishedDatabase = new MemoryIndexDatabase(db);
   }
 
   restartForStartup(): SessionStartupCatchupHarness {
@@ -925,7 +926,7 @@ describe("session startup catch-up", () => {
     expect(harness.indexedContents[0]).not.toContain("replacement store target");
   });
 
-  it("preserves generated-session classification during targeted custom-store indexing", async () => {
+  it("excludes generated cron transcripts from targeted custom-store indexing", async () => {
     const storePath = path.join(stateDir, "custom-sessions", "sessions.json");
     const session = await writeSqliteSession({
       storePath,
@@ -947,8 +948,8 @@ describe("session startup catch-up", () => {
       ],
     });
 
-    expect(harness.indexedPaths).toEqual([session.corpusPath]);
-    expect(harness.indexedContents).toEqual([""]);
+    expect(harness.indexedPaths).toEqual([]);
+    expect(harness.indexedContents).toEqual([]);
   });
 
   it("queues transcript update identity without requiring a session file", async () => {

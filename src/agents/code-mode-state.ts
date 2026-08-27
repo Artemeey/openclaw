@@ -248,7 +248,7 @@ export function snapshotState(params: {
   catalogProjection: CodeModeCatalogProjection;
   namespaceRuntime: CodeModeNamespaceRuntime;
   output: unknown[];
-  deadlineMs: number;
+  remainingMs: number;
   deliveredOutputCount?: number;
   reservedActiveRunSlot?: boolean;
   replaySafe: boolean;
@@ -325,10 +325,6 @@ function isPendingBridgeRequestReplaySafe(
   return binding ? runtime.isReplaySafeExactId(binding.id) : false;
 }
 
-function isPendingBridgeRequestSideEffectFree(request: PendingBridgeRequest): boolean {
-  return request.method === "nodes" && (request.args[0] === "list" || request.args[0] === "get");
-}
-
 function enforceSnapshotStateLimits(params: {
   snapshotBytes: Uint8Array;
   config: CodeModeConfig;
@@ -348,7 +344,7 @@ export function createPendingBridgeStates(params: {
   namespaceRuntime: CodeModeNamespaceRuntime;
   parentToolCallId: string;
   codeModeRunId: string;
-  deadlineMs: number;
+  remainingMs: number;
   activeRunId?: string;
   ctx: ToolSearchToolContext;
   signal?: AbortSignal;
@@ -367,10 +363,14 @@ export function createPendingBridgeStates(params: {
     const target = params.catalogProjection.byCallableName.get(String(request.args[0]));
     const yieldRunSignal = target?.name === "sessions_yield" ? params.ctx.abortSignal : undefined;
     const tracksDispatch = request.method !== "sleep";
-    const sideEffectFree = isPendingBridgeRequestSideEffectFree(request);
+    // Exact catalog binding rejects shadowed or untrusted tools before replay-safety applies.
+    const recoverySafe =
+      (request.method === "nodes" && (request.args[0] === "list" || request.args[0] === "get")) ||
+      (request.method === "callValue" &&
+        isPendingBridgeRequestReplaySafe(request, params.runtime, params.catalogProjection));
     if (tracksDispatch) {
       params.bridgeDispatch.started = true;
-      if (!sideEffectFree) {
+      if (!recoverySafe) {
         params.bridgeDispatch.potentiallyMutatingDispatches += 1;
       }
     }
@@ -381,7 +381,7 @@ export function createPendingBridgeStates(params: {
       parentToolCallId: params.parentToolCallId,
       codeModeRunId: params.codeModeRunId,
       maxOutputBytes: params.config.maxOutputBytes,
-      remainingMs: Math.max(1, params.deadlineMs - Date.now()),
+      remainingMs: Math.max(1, params.remainingMs),
       ctx: params.ctx,
       request,
       signal,
@@ -398,7 +398,7 @@ export function createPendingBridgeStates(params: {
       ...request,
       promise: completion.then((settled) => {
         const trustedNoStart = tracksDispatch && consumeTrustedToolNoStartError(settled);
-        if (trustedNoStart && !sideEffectFree) {
+        if (trustedNoStart && !recoverySafe) {
           params.bridgeDispatch.potentiallyMutatingDispatches = Math.max(
             0,
             params.bridgeDispatch.potentiallyMutatingDispatches - 1,

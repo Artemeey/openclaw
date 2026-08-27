@@ -12,15 +12,14 @@ import {
   prepareSessionConversationForWrite,
   upsertConversationIdentity,
 } from "./session-accessor.sqlite-conversation.js";
+import { commitSqliteSessionDeletion } from "./session-accessor.sqlite-deletion.js";
 import {
   publishSessionEntryCacheInvalidation,
   trackSessionEntryCacheWrite,
 } from "./session-accessor.sqlite-entry-cache.js";
 import {
-  sqliteLifecycleSessionEntriesEqual as lifecycleEntriesEqual,
   sqliteSessionEntriesEqual,
-  sqliteSessionSnapshotRowsEqual,
-  sqliteSessionTargetSnapshotsEqual,
+  type SqliteLifecycleTargetSnapshot,
 } from "./session-accessor.sqlite-entry-equality.js";
 import {
   clearSessionCollaborationForKey,
@@ -77,10 +76,6 @@ type SqliteSessionEntrySelectionSnapshot = {
   selected: ResolvedSessionEntryRow | undefined;
   selectedRows: Array<{ entry: SessionEntry; sessionKey: string }>;
 };
-type SqliteLifecycleTargetSnapshot = {
-  primary: { entry: SessionEntry; key: string } | undefined;
-  rows: Array<{ entry: SessionEntry; sessionKey: string }>;
-};
 
 export function parseReadableSqliteSessionEntryRow(
   database: Pick<OpenClawAgentDatabase, "db">,
@@ -118,13 +113,6 @@ export function parseReadableSqliteSessionEntryRow(
   throw canonicalSessionKeyMigrationRequiredError(
     `invalid persisted session row requires repair for ${row.session_key}`,
   );
-}
-
-class SqliteSessionMutationConflictError extends Error {
-  constructor(operationLabel: string) {
-    super(`SQLite session state changed while preparing ${operationLabel}`);
-    this.name = "SqliteSessionMutationConflictError";
-  }
 }
 
 export function readSessionIdentitySnapshot(
@@ -201,24 +189,6 @@ export function readSessionEntrySelectionSnapshot(
       return row ? [{ entry: cloneSessionEntry(row.entry), sessionKey: candidateKey }] : [];
     }),
   };
-}
-
-export function assertSessionEntrySelectionUnchanged(
-  expected: SqliteSessionEntrySelectionSnapshot,
-  current: SqliteSessionEntrySelectionSnapshot,
-  operationLabel: string,
-  preserveOwnerProjection = false,
-): void {
-  const entriesEqual = preserveOwnerProjection ? lifecycleEntriesEqual : sqliteSessionEntriesEqual;
-  const selectedMatches =
-    expected.selected?.row.session_key === current.selected?.row.session_key &&
-    entriesEqual(expected.selected?.entry, current.selected?.entry);
-  if (
-    !selectedMatches ||
-    !sqliteSessionSnapshotRowsEqual(expected.selectedRows, current.selectedRows, entriesEqual)
-  ) {
-    throw new SqliteSessionMutationConflictError(operationLabel);
-  }
 }
 
 export function readExactSessionEntryRow(
@@ -340,16 +310,6 @@ export function readLifecycleTargetSnapshot(
   };
 }
 
-export function assertSessionTargetSnapshotUnchanged(
-  expected: SqliteLifecycleTargetSnapshot,
-  current: SqliteLifecycleTargetSnapshot,
-  operationLabel: string,
-): void {
-  if (!sqliteSessionTargetSnapshotsEqual(expected, current)) {
-    throw new SqliteSessionMutationConflictError(operationLabel);
-  }
-}
-
 export function normalizeLifecycleTarget(target: { canonicalKey: string; storeKeys: string[] }): {
   canonicalKey: string;
   storeKeys: string[];
@@ -364,8 +324,18 @@ export function normalizeLifecycleTarget(target: { canonicalKey: string; storeKe
 export function deleteSessionEntryRows(
   database: OpenClawAgentDatabase,
   sessionKey: string,
-  options: { deleteOwnedWindows?: boolean; deliveryCleanupKeys?: readonly string[] } = {},
+  options: {
+    deleteOwnedWindows?: boolean;
+    deliveryCleanupKeys?: readonly string[];
+    validatedEntry?: SessionEntry;
+  } = {},
 ): void {
+  // Doctor supplies the exact row it validated; the runtime parser deliberately rejects that shape.
+  const previousEntry =
+    options.validatedEntry ?? readExactSessionEntryRow(database, sessionKey)?.entry;
+  if (previousEntry) {
+    commitSqliteSessionDeletion(sessionKey, previousEntry);
+  }
   const db = getSessionKysely(database.db);
   const windows = executeSqliteQuerySync(
     database.db,
@@ -503,18 +473,25 @@ export function deleteLifecycleTargetRows(
   }
 }
 
+function sqliteLifecycleTargetMatchesExpectedEntry(
+  database: OpenClawAgentDatabase,
+  target: { canonicalKey: string; storeKeys: string[] },
+  expectedEntry: SessionEntry | undefined,
+): boolean {
+  const current = resolveLifecyclePrimaryEntry(database, target)?.entry;
+  if (!current || !expectedEntry) {
+    return current === expectedEntry;
+  }
+  return sqliteSessionEntriesEqual(current, expectedEntry);
+}
+
 export function assertLifecycleTargetUnchanged(
   database: OpenClawAgentDatabase,
   target: { canonicalKey: string; storeKeys: string[] },
   expectedEntry: SessionEntry | undefined,
   operation: "deleted" | "reset",
 ): void {
-  const current = resolveLifecyclePrimaryEntry(database, target)?.entry;
-  if (
-    current && expectedEntry
-      ? sqliteSessionEntriesEqual(current, expectedEntry)
-      : current === expectedEntry
-  ) {
+  if (sqliteLifecycleTargetMatchesExpectedEntry(database, target, expectedEntry)) {
     return;
   }
   throw new Error(`SQLite session entry changed before ${operation} lifecycle mutation`);
@@ -524,7 +501,7 @@ export function deleteLegacySessionEntryRows(
   database: OpenClawAgentDatabase,
   legacyKeys: string[],
   sessionKey: string,
-  options: { rehomeMembers?: boolean } = {},
+  options: { rehomeMembers?: boolean; validatedEntries?: ReadonlyMap<string, SessionEntry> } = {},
 ): void {
   if (legacyKeys.length === 0) {
     return;
@@ -533,6 +510,12 @@ export function deleteLegacySessionEntryRows(
   for (const legacyKey of legacyKeys) {
     if (legacyKey === sessionKey) {
       continue;
+    }
+    const previousEntry =
+      options.validatedEntries?.get(legacyKey) ??
+      readExactSessionEntryRow(database, legacyKey)?.entry;
+    if (previousEntry) {
+      commitSqliteSessionDeletion(legacyKey, previousEntry);
     }
     rehomeSessionWindows(database, sessionKey, [legacyKey]);
     copySessionNodeArtifactsForRepair(database, database, [legacyKey], sessionKey, {
