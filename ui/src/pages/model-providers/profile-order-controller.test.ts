@@ -289,6 +289,20 @@ describe("ProfileOrderController", () => {
     expect(getData().authStatus?.providers[0]?.profileOrder).toEqual(["openai:one", "openai:two"]);
   });
 
+  it("keeps a newer reorder when the in-flight save fails", async () => {
+    const { controller, getData, request, requests } = createHarness();
+
+    controller.queue("openai", ["openai:two", "openai:one"]);
+    controller.queue("openai", ["openai:one", "openai:two"]);
+    requests[0]?.reject(new Error("profile order changed"));
+
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    requests[1]?.resolve({});
+    await controller.waitFor("openai");
+
+    expect(getData().authStatus?.providers[0]?.profileOrder).toEqual(["openai:one", "openai:two"]);
+  });
+
   it("waits for a pending order save before logging out", async () => {
     vi.mocked(showConfirmDialog).mockResolvedValue(true);
     const { controller, request, requests } = createHarness();

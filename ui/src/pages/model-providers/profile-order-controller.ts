@@ -352,7 +352,10 @@ export class ProfileOrderController {
         });
       } catch (error) {
         if (this.isCurrent(client, clientEpoch, agentEpoch)) {
-          this.clearDraft(owner);
+          const latest = this.host.getDrafts()[owner];
+          if (latest && sameOrder(latest, profileIds)) {
+            this.clearDraft(owner);
+          }
           await this.refreshQuietly();
           this.host.setMessage(`profiles:${owner}`, {
             kind: "error",
