@@ -504,7 +504,7 @@ suite.define(() => {
     }
   });
 
-  it("keeps stale context visible as approximate without warning or compaction", async () => {
+  it("keeps stale context visible as approximate without warning", async () => {
     const context = await suite.newBrowserContext({
       locale: "en-US",
       serviceWorkers: "block",
@@ -548,7 +548,6 @@ suite.define(() => {
       await expect
         .poll(() => page.locator(".context-usage__popover").textContent())
         .toContain("~190k / 200k · ~95%");
-      expect(await page.locator(".context-ring__action").count()).toBe(0);
     } finally {
       await suite.closeBrowserContext(context);
     }

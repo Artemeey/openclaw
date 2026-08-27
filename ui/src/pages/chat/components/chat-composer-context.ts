@@ -18,13 +18,9 @@ import {
 } from "../../../lib/provider-quota-summary.ts";
 
 const CONTEXT_NOTICE_RATIO = 0.85;
-const CONTEXT_COMPACT_RATIO = 0.9;
 
 type ContextNoticeOptions = {
-  compactBusy?: boolean;
-  compactDisabled?: boolean;
   messages?: unknown[];
-  onCompact?: () => void | Promise<void>;
   providerUsage?: ProviderUsageDisplayProps;
 };
 
@@ -125,7 +121,6 @@ function getContextNoticeViewModel(
   color: string;
   bg: string;
   warning: boolean;
-  compactRecommended: boolean;
   approximate: boolean;
 } | null {
   const used = session?.totalTokens;
@@ -164,7 +159,6 @@ function getContextNoticeViewModel(
       color: "var(--muted)",
       bg: "color-mix(in srgb, var(--muted) 8%, transparent)",
       warning,
-      compactRecommended: false,
       approximate,
     };
   }
@@ -185,7 +179,6 @@ function getContextNoticeViewModel(
     color,
     bg,
     warning,
-    compactRecommended: ratio >= CONTEXT_COMPACT_RATIO,
     approximate,
   };
 }
@@ -330,8 +323,6 @@ export function renderContextNotice(
   if (!model && quotaGroups.length === 0) {
     return nothing;
   }
-  const canRenderCompact = Boolean(model?.compactRecommended && options.onCompact);
-  const compactDisabled = options.compactDisabled === true || options.compactBusy === true;
   const summary = model
     ? t("chat.composer.contextUsage.summary", {
         used: `${model.approximate ? "~" : ""}${formatCompactTokenCount(model.used)}`,
@@ -473,33 +464,6 @@ export function renderContextNotice(
           ${planGroups.map((group) => renderQuotaGroup(group, usageHref))}
         </section>
       </details>
-      ${canRenderCompact
-        ? html`
-            <button
-              class="context-ring__action ${options.compactBusy
-                ? "context-ring__action--busy"
-                : ""}"
-              type="button"
-              aria-label=${t("chat.composer.compactRecommendedContext")}
-              ?disabled=${compactDisabled}
-              @click=${(event: Event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (compactDisabled) {
-                  return;
-                }
-                void options.onCompact?.();
-              }}
-            >
-              ${options.compactBusy ? icons.loader : icons.minimize}
-              <span
-                >${options.compactBusy
-                  ? t("chat.composer.compacting")
-                  : t("chat.composer.compact")}</span
-              >
-            </button>
-          `
-        : nothing}
     </div>
   `;
 }

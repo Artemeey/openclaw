@@ -129,8 +129,6 @@ export function renderChatComposer(props: ChatComposerProps) {
     showAbortableUi || Boolean(submittedProgress)
       ? { phase: "in-progress" as const }
       : props.runStatus;
-  const compactBusy =
-    props.compactionStatus?.phase === "active" || props.compactionStatus?.phase === "retrying";
   const activeSession = props.sessions?.sessions?.find((row) => row.key === props.sessionKey);
   const draftKey = composerDraftKey(props);
   if (state.dictationDraftKey !== null && state.dictationDraftKey !== draftKey) {
@@ -172,10 +170,7 @@ export function renderChatComposer(props: ChatComposerProps) {
     activeSession,
     props.sessions?.defaults?.contextTokens ?? null,
     {
-      compactBusy,
-      compactDisabled: !props.connected || !canCompose || isBusy || showAbortableUi,
       messages: props.messages,
-      onCompact: props.onCompact,
       providerUsage: props.providerUsage,
     },
   );

@@ -378,10 +378,8 @@ describe("renderChatComposer context usage", () => {
     expect(container.textContent).not.toContain("Model:");
   });
 
-  it("warns on fresh high usage but keeps stale usage approximate and nonactionable", () => {
-    const onCompact = vi.fn();
+  it("warns on fresh high usage but keeps stale usage approximate", () => {
     let container = renderComposer({
-      onCompact,
       sessions: {
         sessions: [
           {
@@ -397,11 +395,9 @@ describe("renderChatComposer context usage", () => {
     });
     expect(container.querySelector(".context-ring")?.textContent?.trim()).toBe("95%");
     expect(container.querySelector(".context-ring")?.classList).toContain("context-ring--warning");
-    container.querySelector<HTMLButtonElement>(".context-ring__action")?.click();
-    expect(onCompact).toHaveBeenCalledOnce();
+    expect(container.textContent).not.toContain("Compact");
 
     container = renderComposer({
-      onCompact,
       sessions: {
         sessions: [
           {
@@ -420,6 +416,5 @@ describe("renderChatComposer context usage", () => {
     expect(container.querySelector(".context-ring")?.classList).not.toContain(
       "context-ring--warning",
     );
-    expect(container.querySelector(".context-ring__action")).toBeNull();
   });
 });

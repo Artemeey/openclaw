@@ -255,7 +255,6 @@ export class ChatPane extends ChatPaneBrowserAnnotationRender {
       hasLocalRun: () => Boolean(state.chatRunId),
       sessionParticipationBlocked,
       onDenied: (reason) => this.publishHeaderError(reason),
-      onCompact: () => void state.handleSendChat("/compact"),
       onAbort: () => void state.handleAbortChat({ preserveDraft: true }),
       onRewind: (entryId) => this.rewindToMessage(entryId),
       onFork: (entryId) => this.forkFromMessage(entryId),
@@ -515,7 +514,6 @@ export class ChatPane extends ChatPaneBrowserAnnotationRender {
           : suggestionViewer
             ? void this.addCurrentSessionSuggestion()
             : void state.handleSendChat(),
-      onCompact: sessionActionCallbacks.onCompact,
       onOpenSessionCheckpoints: () => {
         const search = new URLSearchParams({ session: state.sessionKey });
         if (selectedSessionArchived) {

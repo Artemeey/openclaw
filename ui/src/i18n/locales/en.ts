@@ -5162,8 +5162,6 @@ export const en: TranslationMap = {
       runInterrupted: "Interrupted",
       runStatus: "Run status: {status}",
       compactingContext: "Compacting context...",
-      compacting: "Compacting",
-      compact: "Compact",
       contextCompacted: "Context compacted",
       fallbackActive: "Fallback active: {model}",
       fallbackCleared: "Fallback cleared: {model}",
@@ -5182,7 +5180,6 @@ export const en: TranslationMap = {
       browserAnnotationRemoved: "Browser annotation removed.",
       browserAnnotationUndoUnavailable:
         "Undo is unavailable because the browser annotation limit has been reached.",
-      compactRecommendedContext: "Compact recommended session context",
       removeAttachment: "Remove attachment",
       removeBrowserAnnotation: "Remove browser annotation: {name}",
       addAttachment: "Add attachment",
