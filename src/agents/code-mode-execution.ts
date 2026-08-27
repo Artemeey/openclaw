@@ -14,7 +14,10 @@ import {
   createCodeModeNamespaceRuntime,
   type CodeModeNamespaceRuntime,
 } from "./code-mode-namespaces.js";
-import { registerRepairableCodeModeFailure } from "./code-mode-repair-provenance.js";
+import {
+  registerRepairableCodeModeFailure,
+  registerUncertainCodeModeMutations,
+} from "./code-mode-repair-provenance.js";
 import {
   CODE_MODE_WORKER_WATCHDOG_GRACE_MS,
   codeModeFailureCode,
@@ -38,6 +41,7 @@ import {
   codeModeWaitingReason,
   createCodeModeBridgeDispatchState,
   createPendingBridgeStates,
+  codeModeMutationReplayKeys,
   disposeCodeModeRun,
   isCodeModeBridgeRepairEligible,
   pendingBridgeRequestsReplaySafe,
@@ -60,6 +64,23 @@ import type { AgentToolUpdateCallback } from "./runtime/index.js";
 import { resolveSwarmConfig } from "./subagents/swarm/swarm-config.js";
 import { ToolSearchRuntime, type ToolSearchToolContext } from "./tool-search.js";
 import { ToolInputError } from "./tools/common.js";
+
+function registerCodeModeExecFailureProvenance(
+  result: { status: string },
+  bridgeDispatch: CodeModeBridgeDispatchState,
+): void {
+  if (result.status !== "failed") {
+    return;
+  }
+  if (isCodeModeBridgeRepairEligible(bridgeDispatch)) {
+    registerRepairableCodeModeFailure(result);
+    return;
+  }
+  const mutationKeys = codeModeMutationReplayKeys(bridgeDispatch);
+  if (mutationKeys) {
+    registerUncertainCodeModeMutations(result, mutationKeys);
+  }
+}
 
 export async function runCodeModeExec(params: {
   toolCallId: string;
@@ -146,7 +167,7 @@ export async function runCodeModeExec(params: {
         params.signal,
       ),
     );
-    return await settleCodeModeResult({
+    const settled = await settleCodeModeResult({
       result,
       output: result.output,
       replaySafe: params.restartSafe,
@@ -163,9 +184,11 @@ export async function runCodeModeExec(params: {
       signal: params.signal,
       onUpdate: params.onUpdate,
     });
+    registerCodeModeExecFailureProvenance(settled, bridgeDispatch);
+    return settled;
   } catch (error) {
     const code = params.signal?.aborted ? ("aborted" as const) : codeModeFailureCode(error);
-    return {
+    const failed = {
       status: "failed" as const,
       error: params.signal?.aborted ? "code mode execution aborted" : codeModeFailureMessage(error),
       code,
@@ -179,6 +202,8 @@ export async function runCodeModeExec(params: {
       replaySafe: params.restartSafe,
       telemetry: telemetry(runtime),
     };
+    registerCodeModeExecFailureProvenance(failed, bridgeDispatch);
+    return failed;
   } finally {
     approvalWait.dispose();
   }
@@ -574,9 +599,6 @@ async function settleCodeModeResult(params: {
     replaySafe: params.replaySafe,
     telemetry: telemetry(params.runtime),
   };
-  if (finalized.status === "failed" && isCodeModeBridgeRepairEligible(params.bridgeDispatch)) {
-    registerRepairableCodeModeFailure(finalized);
-  }
   return finalized;
 }
 

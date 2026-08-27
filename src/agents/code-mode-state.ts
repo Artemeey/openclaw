@@ -8,6 +8,7 @@ import { runBridgeRequest } from "./code-mode-bridge.js";
 import type { CodeModeCatalogProjection } from "./code-mode-catalog.js";
 import { CODE_MODE_EXEC_TOOL_NAME, CODE_MODE_WAIT_TOOL_NAME } from "./code-mode-control-tools.js";
 import type { CodeModeNamespaceRuntime } from "./code-mode-namespaces.js";
+import { codeModeMutationReplayKey } from "./code-mode-repair-provenance.js";
 import {
   enforceSnapshotPayloadLimits,
   type CodeModeConfig,
@@ -23,6 +24,8 @@ import { ToolInputError } from "./tools/common.js";
 export type CodeModeBridgeDispatchState = {
   started: boolean;
   potentiallyMutatingDispatches: number;
+  potentiallyMutatingCallKeys: Map<string, number>;
+  mutationCallKeysComplete: boolean;
 };
 
 export type PendingBridgeState = PendingBridgeRequest & {
@@ -56,6 +59,7 @@ type CodeModeRunState = {
 
 const MAX_ACTIVE_CODE_MODE_RUNS = 64;
 const MAX_AGENT_WAIT_SNAPSHOT_TTL_WINDOWS = 4;
+const MAX_MUTATION_REPLAY_FENCE_KEYS = 64;
 const BRIDGE_CLOSED_MESSAGE = "Code Mode tool canceled, expired, or owner lost; start a new run.";
 
 export const activeRuns = new Map<string, CodeModeRunState>();
@@ -65,12 +69,56 @@ let nextPendingBridgeSettlementSequence = 0;
 let activeRunExpiryTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function createCodeModeBridgeDispatchState(): CodeModeBridgeDispatchState {
-  return { started: false, potentiallyMutatingDispatches: 0 };
+  return {
+    started: false,
+    potentiallyMutatingDispatches: 0,
+    potentiallyMutatingCallKeys: new Map(),
+    mutationCallKeysComplete: true,
+  };
 }
 
 /** Read the host-only side-effect classification for one Code Mode run. */
 export function isCodeModeBridgeRepairEligible(state: CodeModeBridgeDispatchState): boolean {
   return state.started && state.potentiallyMutatingDispatches === 0;
+}
+
+/** Return every uncertain bridged mutation, or fail closed if the bounded set overflowed. */
+export function codeModeMutationReplayKeys(
+  state: CodeModeBridgeDispatchState,
+): readonly string[] | undefined {
+  if (!state.mutationCallKeysComplete) {
+    return undefined;
+  }
+  const keys = [...state.potentiallyMutatingCallKeys.keys()].toSorted();
+  return keys.length > 0 ? keys : undefined;
+}
+
+function recordPotentiallyMutatingCall(
+  state: CodeModeBridgeDispatchState,
+  request: PendingBridgeRequest,
+): string {
+  const key = codeModeMutationReplayKey(request);
+  const count = state.potentiallyMutatingCallKeys.get(key);
+  if (count !== undefined) {
+    state.potentiallyMutatingCallKeys.set(key, count + 1);
+  } else if (state.potentiallyMutatingCallKeys.size < MAX_MUTATION_REPLAY_FENCE_KEYS) {
+    state.potentiallyMutatingCallKeys.set(key, 1);
+  } else {
+    state.mutationCallKeysComplete = false;
+  }
+  return key;
+}
+
+function releasePotentiallyMutatingCall(state: CodeModeBridgeDispatchState, key: string): void {
+  const count = state.potentiallyMutatingCallKeys.get(key);
+  if (count === undefined) {
+    return;
+  }
+  if (count === 1) {
+    state.potentiallyMutatingCallKeys.delete(key);
+  } else {
+    state.potentiallyMutatingCallKeys.set(key, count - 1);
+  }
 }
 
 // One unreferenced timer owns parked snapshots even when no later exec or wait
@@ -374,6 +422,10 @@ export function createPendingBridgeStates(params: {
         params.bridgeDispatch.potentiallyMutatingDispatches += 1;
       }
     }
+    const mutationKey =
+      tracksDispatch && !recoverySafe
+        ? recordPotentiallyMutatingCall(params.bridgeDispatch, request)
+        : undefined;
     const bridgeCall = runBridgeRequest({
       runtime: params.runtime,
       catalogProjection: params.catalogProjection,
@@ -403,6 +455,9 @@ export function createPendingBridgeStates(params: {
             0,
             params.bridgeDispatch.potentiallyMutatingDispatches - 1,
           );
+          if (mutationKey) {
+            releasePotentiallyMutatingCall(params.bridgeDispatch, mutationKey);
+          }
         }
         state.settledSequence = ++nextPendingBridgeSettlementSequence;
         state.settled = settled;

@@ -3,21 +3,24 @@ import {
   CODE_MODE_WAIT_TOOL_NAME,
   isCodeModeExecTool,
 } from "../../code-mode-control-tools.js";
-import { consumeRepairableCodeModeFailure } from "../../code-mode-repair-provenance.js";
+import {
+  consumeRepairableCodeModeFailure,
+  consumeUncertainCodeModeMutations,
+  type CodeModeReconciliationReplayFence,
+} from "../../code-mode-repair-provenance.js";
 import { readCode } from "../../code-mode-runtime.js";
 import type { AfterToolCallResult, Agent } from "../../runtime/index.js";
 import { readToolResultDetails } from "../../tool-result-error.js";
 
-export type CodeModeReconciliationReplayFence = {
-  code: string;
-};
+export type { CodeModeReconciliationReplayFence } from "../../code-mode-repair-provenance.js";
 
 function readCodeModeReconciliationReplayFence(
   args: unknown,
+  mutationKeys: readonly string[],
 ): CodeModeReconciliationReplayFence | undefined {
   try {
     const input = readCode(args);
-    return { code: input.code };
+    return { code: input.code, mutationKeys };
   } catch {
     return undefined;
   }
@@ -27,7 +30,7 @@ function matchesCodeModeReconciliationReplayFence(
   args: unknown,
   fence: CodeModeReconciliationReplayFence,
 ): boolean {
-  const input = readCodeModeReconciliationReplayFence(args);
+  const input = readCodeModeReconciliationReplayFence(args, []);
   return input?.code === fence.code;
 }
 
@@ -71,6 +74,7 @@ export function installCodeModeOutcomeHook(params: {
     const details = readToolResultDetails(context.result);
     // Capability is host-minted on this exact result object; guest-supplied fields cannot grant it.
     const noToolStarted = consumeRepairableCodeModeFailure(details);
+    const uncertainMutationKeys = consumeUncertainCodeModeMutations(details);
     let prior: AfterToolCallResult | undefined;
     try {
       prior = await previousAfterToolOutcome?.(context, signal);
@@ -112,7 +116,9 @@ export function installCodeModeOutcomeHook(params: {
       isCodeModeExec &&
       context.assistantMessage.content.filter((entry) => entry.type === "toolCall").length === 1
     ) {
-      const fence = readCodeModeReconciliationReplayFence(context.args);
+      const fence = uncertainMutationKeys
+        ? readCodeModeReconciliationReplayFence(context.args, uncertainMutationKeys)
+        : undefined;
       if (fence) {
         params.onReconciliationCandidate?.(fence);
       }

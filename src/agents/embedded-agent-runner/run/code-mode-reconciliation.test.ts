@@ -13,6 +13,7 @@ function eligibleAttempt() {
   return makeEmbeddedRunnerAttempt({
     codeModeReconciliationCandidate: {
       code: "return await apply_patch({});",
+      mutationKeys: ["callValue:mutation"],
     },
     itemLifecycle: { startedCount: 2, completedCount: 2, activeCount: 0 },
   });

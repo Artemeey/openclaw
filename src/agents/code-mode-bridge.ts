@@ -12,6 +12,7 @@ import { resolveSafeTimeoutDelayMs } from "../utils/timer-delay.js";
 import { redactCodeModeCatalogIds, type CodeModeCatalogProjection } from "./code-mode-catalog.js";
 import { boundCodeModeValue } from "./code-mode-json.js";
 import type { CodeModeNamespaceRuntime } from "./code-mode-namespaces.js";
+import { codeModeMutationReplayKey } from "./code-mode-repair-provenance.js";
 import type { PendingBridgeRequest, SettledBridgeRequest } from "./code-mode-runtime.js";
 import { readCodeModeSkill } from "./code-mode-skills.js";
 import { consumeMcpCodeModeGuestResult } from "./mcp-content.js";
@@ -399,6 +400,17 @@ export async function runBridgeRequest(params: {
 }): Promise<SettledBridgeRequest> {
   const catalogProjection = params.catalogProjection;
   try {
+    if (
+      params.ctx.codeModeReconciliationReplayFence?.mutationKeys.includes(
+        codeModeMutationReplayKey(params.request),
+      )
+    ) {
+      const error = new ToolInputError(
+        "Blocked a replay of a Code Mode mutation with an uncertain outcome.",
+      );
+      registerTrustedToolNoStartError(error);
+      throw error;
+    }
     const values = Array.isArray(params.request.args) ? params.request.args : [];
     let value: unknown;
     switch (params.request.method) {

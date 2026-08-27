@@ -143,7 +143,9 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
                       type: "toolCall",
                       id: "replay",
                       name: "exec",
-                      arguments: { code: "return await apply_patch({});" },
+                      arguments: {
+                        code: "// harmless source rewrite\nreturn await apply_patch({});",
+                      },
                     },
                     {
                       type: "toolCall",
@@ -196,6 +198,7 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
 
     expect(firstAttempt.codeModeReconciliationCandidate).toEqual({
       code: "return await apply_patch({});",
+      mutationKeys: [expect.stringMatching(/^callValue:/)],
     });
     expect(appliedChanges).toEqual(["first hunk applied"]);
     expect(applyPatch.execute).toHaveBeenCalledOnce();

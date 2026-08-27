@@ -128,7 +128,9 @@ function createInput(options?: {
     replaySafeTools: new Set(allCustomTools),
   };
   let onDeliveredSourceReply: (() => void) | undefined;
-  let onReconciliationCandidate: ((fence: { code: string }) => void) | undefined;
+  let onReconciliationCandidate:
+    | ((fence: { code: string; mutationKeys: readonly string[] }) => void)
+    | undefined;
 
   hoisted.createPreparedEmbeddedAgentSettingsManager.mockReturnValue(settingsManager);
   hoisted.resolveEffectiveCompactionMode.mockReturnValue("safeguard");
@@ -195,6 +197,7 @@ function createInput(options?: {
     markCodeModeReconciliationCandidate: () =>
       onReconciliationCandidate?.({
         code: "return await apply_patch({});",
+        mutationKeys: ["callValue:mutation"],
       }),
     onDeliveredSourceReply: () => onDeliveredSourceReply?.(),
     resourceLoader,
@@ -256,6 +259,7 @@ describe("prepareEmbeddedAttemptAgentSession", () => {
     fixture.markCodeModeReconciliationCandidate();
     expect(result.getCodeModeReconciliationCandidate()).toEqual({
       code: "return await apply_patch({});",
+      mutationKeys: ["callValue:mutation"],
     });
   });
 

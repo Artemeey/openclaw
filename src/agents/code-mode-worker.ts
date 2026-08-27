@@ -4,6 +4,7 @@ import { Worker } from "node:worker_threads";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { formatErrorMessage } from "../infra/errors.js";
 import { resolveRuntimeWorkerUrl } from "../infra/runtime-worker-url.js";
+import { copyCodeModeFailureProvenance } from "./code-mode-repair-provenance.js";
 import type { CodeModeFailureCode, CodeModeWorkerResult } from "./code-mode-runtime.js";
 
 let quickJsWasmModulePromise: Promise<WebAssembly.Module> | undefined;
@@ -52,10 +53,12 @@ export function normalizeCodeModeTimeoutResult<
     result.code === "timeout" &&
     !String(result.error).includes("timeout exceeded")
   ) {
-    return {
+    const normalized = {
       ...result,
       error: "code mode timeout exceeded",
     } as T;
+    copyCodeModeFailureProvenance(result, normalized);
+    return normalized;
   }
   return result;
 }

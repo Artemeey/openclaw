@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { registerRepairableCodeModeFailure } from "../../code-mode-repair-provenance.js";
+import {
+  registerRepairableCodeModeFailure,
+  registerUncertainCodeModeMutations,
+} from "../../code-mode-repair-provenance.js";
 import type { Agent } from "../../runtime/index.js";
 import { installCodeModeOutcomeHook } from "./code-mode-outcome.js";
 
@@ -20,6 +23,8 @@ function createOutcome(
   };
   if (options.noToolStarted) {
     registerRepairableCodeModeFailure(details);
+  } else if (options.bridgeStarted) {
+    registerUncertainCodeModeMutations(details, ["callValue:mutation"]);
   }
   const toolCall = {
     type: "toolCall" as const,
@@ -81,6 +86,7 @@ describe("Code Mode outcome safety", () => {
     ).resolves.toMatchObject({ isError: true, terminate: true });
     expect(onReconciliationCandidate).toHaveBeenCalledWith({
       code: "return await apply_patch({});",
+      mutationKeys: ["callValue:mutation"],
     });
   });
 

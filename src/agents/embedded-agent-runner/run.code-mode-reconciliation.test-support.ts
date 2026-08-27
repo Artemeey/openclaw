@@ -44,6 +44,7 @@ describe("runEmbeddedAgent Code Mode reconciliation", () => {
           currentAttemptCompletedAssistant: mutationAssistant,
           codeModeReconciliationCandidate: {
             code: "return await apply_patch({});",
+            mutationKeys: ["callValue:mutation"],
           },
           itemLifecycle: { startedCount: 1, completedCount: 1, activeCount: 0 },
         }),
@@ -87,6 +88,7 @@ describe("runEmbeddedAgent Code Mode reconciliation", () => {
       forceCodeModeReconciliationTools: undefined,
       codeModeReconciliationReplayFence: {
         code: "return await apply_patch({});",
+        mutationKeys: ["callValue:mutation"],
       },
       prompt: expect.stringContaining("Continue the original task from the reconciled state"),
     });
