@@ -801,7 +801,7 @@ ${shellQuote(cli)} --version
 /bin/launchctl print "gui/$(/usr/bin/id -u)/ai.openclaw.gateway"
 ${shellQuote(cli)} gateway status --deep --require-rpc --timeout 15000
 ${shellQuote(cli)} plugins inspect codex --runtime --json >${shellQuote(inspectPath)}
-/opt/homebrew/bin/node - ${shellQuote(String(result.installedVersion || ""))} ${shellQuote(expectedVersion)} ${shellQuote(inspectPath)} <<'JS'
+/opt/homebrew/bin/node - ${shellQuote(result.installedVersion || "")} ${shellQuote(expectedVersion)} ${shellQuote(inspectPath)} <<'JS'
 const fs = require("node:fs");
 const [installedVersion, expectedVersion, inspectPath] = process.argv.slice(2);
 if (installedVersion !== expectedVersion) {
