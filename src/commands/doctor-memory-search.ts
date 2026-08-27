@@ -133,6 +133,7 @@ function resolveLocalProviderPolicyBlockGuidance(
         fix: `Fix: Include "${pluginId}" in plugins.allow, or select another memory provider.`,
       };
   }
+  return reason satisfies never;
 }
 
 const MEMORY_EMBEDDING_PROVIDER_AUTH_IDS = new Map([
