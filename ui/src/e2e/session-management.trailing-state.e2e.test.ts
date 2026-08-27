@@ -13,7 +13,7 @@ import {
 const suite = createSessionManagementE2eSuite();
 
 suite.define(() => {
-  it("keeps action-only text widest at rest and swaps active state for actions", async () => {
+  it("keeps action-only text widest and theme-colored active state before swapping actions", async () => {
     const context = await suite.browser.newContext({
       locale: "en-US",
       serviceWorkers: "block",
@@ -76,6 +76,16 @@ suite.define(() => {
       const pin = row.getByRole("button", { name: "Pin session" });
       const menu = row.getByRole("button", { name: "Open session menu" });
       await expect.poll(() => state.locator(".session-run-spinner").isVisible()).toBe(true);
+      await page.locator("html").evaluate((element) => {
+        element.style.setProperty("--accent", "#7c3aed");
+      });
+      await expect
+        .poll(() =>
+          state
+            .locator(".session-run-spinner")
+            .evaluate((element) => getComputedStyle(element).borderTopColor),
+        )
+        .toBe("rgb(124, 58, 237)");
       await expect.poll(() => actionOpacity(state)).toBe("1");
 
       await row.hover();

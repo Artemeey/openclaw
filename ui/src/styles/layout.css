@@ -2096,7 +2096,7 @@ body.update-dialog-open .sidebar-update-card__status {
 }
 
 .sidebar-child-session-toggle--running {
-  color: var(--run);
+  color: var(--accent);
 }
 
 .sidebar-child-session-toggle--failed {

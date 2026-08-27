@@ -86,8 +86,8 @@ openclaw-session-owner-chip {
   position: absolute;
   inset: -2px;
   box-sizing: border-box;
-  border: 1.5px solid color-mix(in srgb, var(--run) 28%, transparent);
-  border-top-color: var(--run);
+  border: 1.5px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-top-color: var(--accent);
   border-radius: var(--radius-full);
   pointer-events: none;
 }
@@ -2885,8 +2885,8 @@ td.data-table-key-col {
 /* The edited row keeps its slot so the operator can see where the corrected
    message lands; the outline says the composer owns it right now.
    Editing is an active state, not a failure, so it uses the informational
-   family: --accent is red in every shipped theme and sits on top of --danger
-   (see the --run token note in base.css), which reads as an error at a glance. */
+   family: --accent sits on top of --danger in the shipped themes, which reads
+   as an error at a glance. */
 .chat-queue__item--editing {
   background: var(--info-subtle);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--info) 34%, transparent);
@@ -5686,8 +5686,8 @@ td.data-table-key-col {
   width: 12px;
   height: 12px;
   flex: 0 0 auto;
-  border: 1.5px solid color-mix(in srgb, var(--run) 28%, transparent);
-  border-top-color: var(--run);
+  border: 1.5px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-top-color: var(--accent);
   border-radius: var(--radius-full);
 }
 
@@ -5706,7 +5706,7 @@ td.data-table-key-col {
   .session-run-spinner,
   .session-glyph__ring {
     animation: none;
-    border-color: var(--run);
+    border-color: var(--accent);
   }
 }
 
