@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { makeEmbeddedRunnerAttempt } from "../../test-helpers/embedded-agent-runner-e2e-fixtures.js";
+import {
+  buildEmbeddedRunnerAssistant,
+  makeEmbeddedRunnerAttempt,
+} from "../../test-helpers/embedded-agent-runner-e2e-fixtures.js";
 import {
   activateCodeModeReconciliation,
   isCodeModeReconciliationTool,
@@ -68,6 +71,9 @@ describe("Code Mode reconciliation", () => {
         attempt: {
           ...eligibleAttempt(),
           assistantTexts: ["Only the first hunk applied."],
+          currentAttemptCompletedAssistant: buildEmbeddedRunnerAssistant({
+            content: [{ type: "text", text: "Only the first hunk applied." }],
+          }),
           toolMetas: [{ toolName: "read", isError: false }],
         },
         hostOwnsToolSurface: true,
@@ -98,6 +104,36 @@ describe("Code Mode reconciliation", () => {
     expect(
       activateCodeModeReconciliation({
         attempt: { ...eligibleAttempt(), assistantTexts: ["Observed state."], ...overrides },
+        hostOwnsToolSurface: true,
+        retryState,
+        activateInternalPrompt: () => undefined,
+      }),
+    ).toBe(false);
+    expect(retryState.forceCodeModeReconciliationTools).toBe(true);
+  });
+
+  it("keeps reconciliation restricted when the only report preceded the read", () => {
+    const retryState = createEmbeddedRunTerminalRetryState();
+    retryState.forceCodeModeReconciliationTools = true;
+    expect(
+      activateCodeModeReconciliation({
+        attempt: {
+          ...eligibleAttempt(),
+          assistantTexts: ["I will inspect the current state."],
+          currentAttemptCompletedAssistant: buildEmbeddedRunnerAssistant({
+            content: [
+              { type: "text", text: "I will inspect the current state." },
+              {
+                type: "toolCall",
+                id: "reconciliation-read",
+                name: "read",
+                arguments: { path: "src/index.ts" },
+              },
+            ],
+            stopReason: "toolUse",
+          }),
+          toolMetas: [{ toolName: "read", isError: false }],
+        },
         hostOwnsToolSurface: true,
         retryState,
         activateInternalPrompt: () => undefined,

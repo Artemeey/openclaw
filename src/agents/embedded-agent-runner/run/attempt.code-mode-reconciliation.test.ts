@@ -39,8 +39,8 @@ const model: Model = {
   maxTokens: 8_192,
 };
 
-function streamAssistant(content: AssistantMessage["content"]) {
-  const message: AssistantMessage = {
+function buildAssistant(content: AssistantMessage["content"]): AssistantMessage {
+  return {
     role: "assistant",
     content,
     api: model.api,
@@ -57,6 +57,10 @@ function streamAssistant(content: AssistantMessage["content"]) {
     stopReason: content.some((entry) => entry.type === "toolCall") ? "toolUse" : "stop",
     timestamp: Date.now(),
   };
+}
+
+function streamAssistant(content: AssistantMessage["content"]) {
+  const message = buildAssistant(content);
   const stream = createAssistantMessageEventStream();
   queueMicrotask(() => {
     stream.push({
@@ -111,6 +115,8 @@ describe("runEmbeddedAttempt Code Mode reconciliation boundary", () => {
       const subscription = baseSubscribe(params);
       if (attemptPhase === "reconciliation") {
         subscription.toolMetas.push({ toolName: "read", isError: false });
+        subscription.getCurrentAttemptAssistant = () =>
+          buildAssistant([{ type: "text", text: "first hunk applied" }]);
       }
       return subscription;
     });

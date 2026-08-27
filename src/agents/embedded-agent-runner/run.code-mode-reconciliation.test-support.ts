@@ -49,6 +49,9 @@ describe("runEmbeddedAgent Code Mode reconciliation", () => {
       .mockResolvedValueOnce(
         makeAttemptResult({
           assistantTexts: ["The first hunk applied."],
+          currentAttemptCompletedAssistant: buildEmbeddedRunnerAssistant({
+            content: [{ type: "text", text: "The first hunk applied." }],
+          }),
           toolMetas: [{ toolName: "read", isError: false }],
         }),
       )

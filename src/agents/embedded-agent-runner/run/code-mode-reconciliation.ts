@@ -49,14 +49,14 @@ function shouldRetryCodeModeReconciliation(
   );
 }
 
-function hasCodeModeReconciliationReport(attempt: EmbeddedRunAttemptResult): boolean {
-  if (attempt.assistantTexts.some((text) => text.trim().length > 0)) {
-    return true;
-  }
-  return Boolean(
-    attempt.currentAttemptAssistant?.content.some(
-      (entry) => entry.type === "text" && entry.text.trim().length > 0,
-    ),
+function hasCompletedCodeModeReconciliationReport(attempt: EmbeddedRunAttemptResult): boolean {
+  const assistant = attempt.currentAttemptCompletedAssistant;
+  // A tool-use assistant can contain pre-read commentary. Only the later completed
+  // non-tool-use message proves the report was produced after the read result.
+  return (
+    assistant?.stopReason === "stop" &&
+    !assistant.content.some((entry) => entry.type === "toolCall") &&
+    assistant.content.some((entry) => entry.type === "text" && entry.text.trim().length > 0)
   );
 }
 
@@ -89,7 +89,7 @@ export function activateCodeModeReconciliation(params: {
         (entry) => entry.isError === true || entry.terminate === true,
       ) ||
       !hasSuccessfulCodeModeReconciliationRead(params.attempt) ||
-      !hasCodeModeReconciliationReport(params.attempt)
+      !hasCompletedCodeModeReconciliationReport(params.attempt)
     ) {
       return false;
     }
