@@ -15,8 +15,8 @@ import { getCurrentPluginMetadataSnapshotState } from "./current-plugin-metadata
 import type { PluginManifestRecord, PluginManifestRegistry } from "./manifest-registry.js";
 import { createPluginCacheKey, PluginLruCache } from "./plugin-cache-primitives.js";
 import { resolvePluginControlPlaneFingerprint } from "./plugin-control-plane-context.js";
+import { resolvePluginMetadataEnvFingerprint } from "./plugin-metadata-env.js";
 import { registerPluginMetadataProcessMemoLifecycleClear } from "./plugin-metadata-lifecycle.js";
-import { resolvePluginMetadataEnvFingerprint } from "./plugin-metadata-snapshot.js";
 import {
   clearPluginModuleLoaderLifecycleCache,
   getCachedPluginModuleLoader,

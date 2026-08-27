@@ -12,8 +12,8 @@ import {
 } from "../plugins/current-plugin-metadata-snapshot.js";
 import { buildManifestBuiltInModelSuppressionResolver } from "../plugins/manifest-model-suppression.js";
 import { resolvePluginControlPlaneFingerprint } from "../plugins/plugin-control-plane-context.js";
+import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import { registerPluginMetadataProcessMemoLifecycleClear } from "../plugins/plugin-metadata-lifecycle.js";
-import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 
 type ManifestSuppressionResolver = ReturnType<typeof buildManifestBuiltInModelSuppressionResolver>;

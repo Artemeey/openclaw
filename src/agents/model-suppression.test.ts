@@ -19,8 +19,8 @@ import {
   setCurrentPluginMetadataSnapshot,
 } from "../plugins/current-plugin-metadata-snapshot.js";
 import * as pluginControlPlaneContext from "../plugins/plugin-control-plane-context.js";
+import * as pluginMetadataEnv from "../plugins/plugin-metadata-env.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
-import * as pluginMetadataSnapshot from "../plugins/plugin-metadata-snapshot.js";
 import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
 import {
   buildShouldSuppressBuiltInModelCore,
@@ -233,7 +233,7 @@ describe("model suppression", () => {
       pluginControlPlaneContext,
       "resolvePluginControlPlaneFingerprint",
     );
-    const envFingerprint = vi.spyOn(pluginMetadataSnapshot, "resolvePluginMetadataEnvFingerprint");
+    const envFingerprint = vi.spyOn(pluginMetadataEnv, "resolvePluginMetadataEnvFingerprint");
 
     withPluginRuntimeGenerationScope({ config, metadataSnapshot: snapshot }, () => {
       shouldSuppressBuiltInModelCore({ provider: "openai", id: "gpt-5.3", config });

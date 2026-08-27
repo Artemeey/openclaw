@@ -241,22 +241,8 @@ function createPluginManifestRecord(
   };
 }
 
-vi.mock("../plugins/manifest-registry.js", () => ({
-  loadPluginManifestRegistryCore: () => mockLoadPluginManifestRegistry(),
-  resolveManifestContractPluginIds: () => [],
-}));
-
-vi.mock("../plugins/plugin-registry.js", () => ({
-  loadPluginManifestRegistryForPluginRegistry: () => mockLoadPluginManifestRegistry(),
-}));
-
-vi.mock("../plugins/plugin-metadata-snapshot.js", () => ({
-  loadPluginMetadataSnapshot: () => ({
-    manifestRegistry: mockLoadPluginManifestRegistry(),
-  }),
-  resolvePluginMetadataSnapshot: () => ({
-    manifestRegistry: mockLoadPluginManifestRegistry(),
-  }),
+vi.mock("./io.plugin-metadata.js", () => ({
+  resolveConfigWidePluginManifestRegistry: mockLoadPluginManifestRegistry,
 }));
 
 vi.mock("../plugins/doctor-contract-registry.js", () => ({

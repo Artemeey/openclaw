@@ -31,13 +31,13 @@ import type {
   PreparePluginMetadataParams,
   PreparedPluginMetadata,
 } from "./plugin-metadata-collection.types.js";
+import { resolvePluginMetadataEnvFingerprint } from "./plugin-metadata-env.js";
 import {
   buildPluginMetadataOwnerMaps,
   freezePluginMetadataValue,
   isPluginMetadataSnapshotCompatible,
   loadPluginMetadataSnapshot,
   projectPluginMetadataSnapshot,
-  resolvePluginMetadataEnvFingerprint,
 } from "./plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "./plugin-metadata-snapshot.types.js";
 import { normalizePluginPolicyId } from "./plugin-policy-id.js";

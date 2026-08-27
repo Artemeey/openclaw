@@ -17,10 +17,10 @@ import {
 import { hashStableJson } from "./installed-plugin-index-hash.js";
 import { normalizeInstallRecordMap } from "./installed-plugin-index-install-records.js";
 import { loadInstalledPluginIndexInstallRecordsSync } from "./installed-plugin-index-record-reader.js";
+import { pickPluginMetadataEnv } from "./plugin-metadata-env.js";
 import {
   freezePluginMetadataValue,
   isPluginMetadataSnapshotCompatible,
-  pickPluginMetadataEnv,
 } from "./plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "./plugin-metadata-snapshot.types.js";
 
