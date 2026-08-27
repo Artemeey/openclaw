@@ -595,14 +595,24 @@ describe("OpenClaw shell route session commits", () => {
 });
 
 describe("OpenClaw shell server preferences", () => {
-  it("refreshes live navigation when a sidebar preference arrives from the gateway", () => {
+  it("refreshes live navigation when a sidebar preference arrives from the gateway", async () => {
     vi.stubGlobal("localStorage", createStorageMock());
     resetServerUiPrefsSync();
     const sidebarEntries = ["route:usage", "session:agent:main:test"];
     const updateNavigation = vi.fn();
     const refreshTheme = vi.fn();
+    const recordServerSelection = vi.fn();
+    const request = vi.fn(async () => ({
+      status: "ok",
+      entries: {
+        "ui.sidebarEntries": sidebarEntries,
+        "ui.migratedFromConfigPrefsV1": true,
+      },
+    }));
     const runtimeConfig = {
       state: {
+        connected: true,
+        client: { request },
         configSnapshot: {
           config: { ui: { prefs: { sidebarEntries } } },
           hash: "sidebar-config-hash",
@@ -610,9 +620,12 @@ describe("OpenClaw shell server preferences", () => {
       },
     } as unknown as ApplicationContext["runtimeConfig"];
     const context = {
-      gateway: { connection: { gatewayUrl: "ws://sidebar.test" } },
+      gateway: {
+        connection: { gatewayUrl: "ws://sidebar.test" },
+        snapshot: { selfUser: { id: "sidebar-user" } },
+      },
       navigation: { update: updateNavigation },
-      theme: { refresh: refreshTheme },
+      theme: { refresh: refreshTheme, recordServerSelection },
       // reconcileServerUiPrefs only accepts the current context's capability.
       runtimeConfig,
     } as unknown as ApplicationContext;
@@ -622,8 +635,9 @@ describe("OpenClaw shell server preferences", () => {
     shell.runtime = { context };
 
     shell.reconcileServerUiPrefs(runtimeConfig);
+    await vi.waitFor(() => expect(updateNavigation).toHaveBeenCalledWith({ sidebarEntries }));
 
-    expect(updateNavigation).toHaveBeenCalledWith({ sidebarEntries });
+    expect(request).toHaveBeenCalledWith("users.prefs.get", expect.any(Object));
     expect(refreshTheme).toHaveBeenCalledOnce();
     resetServerUiPrefsSync();
   });
