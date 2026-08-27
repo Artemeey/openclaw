@@ -41,7 +41,7 @@ type SettingsHelpTriggerProps = {
   id: string;
   label: string;
   tooltip: string;
-  glyph: "?" | "i";
+  icon: "question" | "info";
   popoverId: string;
 };
 
@@ -65,6 +65,7 @@ export function renderDocsLink(url: string, label: unknown): TemplateResult {
 }
 
 export function renderSettingsHelpTrigger(props: SettingsHelpTriggerProps): TemplateResult {
+  const helpIcon = props.icon === "info" ? icons.info : icons.circleQuestionMark;
   return html`
     <openclaw-tooltip .content=${props.tooltip}>
       <button
@@ -75,7 +76,7 @@ export function renderSettingsHelpTrigger(props: SettingsHelpTriggerProps): Temp
         aria-controls=${props.popoverId}
         aria-haspopup="dialog"
       >
-        <span aria-hidden="true">${props.glyph}</span>
+        <span aria-hidden="true">${helpIcon}</span>
       </button>
     </openclaw-tooltip>
   `;

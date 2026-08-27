@@ -404,6 +404,7 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
 
         const helpButton = defaults.getByRole("button", { name: "About the utility model" });
         await expect.poll(() => helpButton.count()).toBe(1);
+        await expect.poll(() => helpButton.locator("svg").count()).toBe(1);
         expect(await helpButton.getAttribute("aria-haspopup")).toBe("dialog");
 
         const defaultColor = await helpButton.evaluate((node) => getComputedStyle(node).color);

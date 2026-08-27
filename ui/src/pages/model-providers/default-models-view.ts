@@ -95,7 +95,7 @@ export function renderDefaultModels(props: DefaultModelsViewProps) {
                 id: UTILITY_MODEL_HELP_ID,
                 label: t("modelProviders.defaults.utilityHelpLabel"),
                 tooltip: t("modelProviders.defaults.utilityHelpPurpose"),
-                glyph: "i",
+                icon: "info",
                 popoverId: UTILITY_MODEL_HELP_POPOVER_ID,
               })}
               <wa-popover

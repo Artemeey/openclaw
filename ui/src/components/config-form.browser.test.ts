@@ -858,6 +858,7 @@ describe("config form renderer", () => {
       "section help button",
     );
     expect(button.getAttribute("aria-label")).toBe("Help for Gateway");
+    expect(button.querySelector("svg")).not.toBeNull();
     const tooltip = expectElement(button.closest("openclaw-tooltip"), "section help tooltip");
     expect((tooltip as HTMLElement & { content: string }).content).toBe("Help for Gateway");
     const link = expectElement(

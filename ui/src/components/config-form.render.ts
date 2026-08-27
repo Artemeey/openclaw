@@ -265,7 +265,7 @@ export function renderConfigForm(props: ConfigFormProps) {
                           id: docsTriggerId,
                           label: t("configForm.sectionHelp", { section: params.label }),
                           tooltip: t("configForm.sectionHelp", { section: params.label }),
-                          glyph: "?",
+                          icon: "question",
                           popoverId: `settings-section-help-popover-${params.id}`,
                         })}
                         <wa-popover
