@@ -3,11 +3,9 @@ import type { WebSocket } from "ws";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { resolveAgentDir } from "../agents/agent-scope.js";
 import { setRuntimeAuthProfileStoreSnapshot } from "../agents/auth-profiles/runtime-snapshots.js";
-import {
-  loadPublishedGatewayReplyDispatchRuntime,
-  registerPreparedModelRuntimePublicationListener,
-} from "../agents/prepared-model-runtime.js";
+import * as preparedModelRuntime from "../agents/prepared-model-runtime.js";
 import { getActiveGatewayRootWorkCount } from "../process/gateway-work-admission.js";
+import * as agentHandlerHelpers from "./agent-turn/agent-handler-helpers.js";
 import { installConnectedSessionStoreGatewaySuite } from "./test-helpers.connected-session-store.js";
 import {
   agentCommandMock,
@@ -90,7 +88,9 @@ async function prepareAuthDispatchAgents(affectedAgentId: string) {
   const config = getRuntimeConfig();
   return {
     agentDir: resolveAgentDir(config, affectedAgentId),
-    runtime: await loadPublishedGatewayReplyDispatchRuntime({ agentId: affectedAgentId }),
+    runtime: await preparedModelRuntime.loadPublishedGatewayReplyDispatchRuntime({
+      agentId: affectedAgentId,
+    }),
   };
 }
 
@@ -101,6 +101,94 @@ describe("gateway agent auth refresh dispatch", () => {
 
   afterEach(() => {
     testState.agentsConfig = undefined;
+  });
+
+  test("keeps an accepted run on its runtime while the next run uses the replacement", async () => {
+    const affectedAgentId = "auth-pinned";
+    const admittedRunId = "idem-agent-auth-pinned";
+    const subsequentRunId = "idem-agent-auth-next";
+    const before = await prepareAuthDispatchAgents(affectedAgentId);
+    const acquireRuntimeLease =
+      preparedModelRuntime.acquireAgentRunPreparedModelRuntime.bind(preparedModelRuntime);
+    const acquireSpy = vi
+      .spyOn(preparedModelRuntime, "acquireAgentRunPreparedModelRuntime")
+      .mockImplementation(async (...args) => await acquireRuntimeLease(...args));
+    const executionGate = createDeferred();
+    const executionSpy = vi
+      .spyOn(agentHandlerHelpers, "yieldAfterAgentAcceptedAck")
+      .mockImplementation(async () => await executionGate.promise);
+    const published = createDeferred();
+    const unregister = preparedModelRuntime.registerPreparedModelRuntimePublicationListener(
+      (event) => {
+        if (event.phase === "published") {
+          published.resolve();
+        }
+      },
+    );
+    try {
+      const admitted = sendAgentRpc(gatewaySuite.ws, {
+        agentId: affectedAgentId,
+        runId: admittedRunId,
+      });
+      await admitted.accepted;
+      expect(acquireSpy).toHaveBeenCalledOnce();
+      expect(acquireSpy.mock.calls[0]?.[0]).toMatchObject({
+        config: before.runtime?.config,
+        agentId: before.runtime?.agentId,
+        agentDir: before.runtime?.agentDir,
+      });
+      expect(acquireSpy.mock.calls[0]?.[1]?.pluginGeneration).toBe(
+        before.runtime?.pluginGeneration,
+      );
+
+      setRuntimeAuthProfileStoreSnapshot(
+        {
+          version: 1,
+          profiles: {
+            "anthropic:default": {
+              type: "api_key",
+              provider: "anthropic",
+              key: "replacement-generation-key",
+            },
+          },
+        },
+        before.agentDir,
+      );
+      await published.promise;
+      const after = await preparedModelRuntime.loadPublishedGatewayReplyDispatchRuntime({
+        agentId: affectedAgentId,
+      });
+      expect(after).not.toBe(before.runtime);
+
+      executionGate.resolve();
+      await expect(admitted.final).resolves.toMatchObject({
+        ok: true,
+        payload: { status: "ok" },
+      });
+      expect(acquireSpy).toHaveBeenCalledOnce();
+
+      const subsequent = sendAgentRpc(gatewaySuite.ws, {
+        agentId: affectedAgentId,
+        runId: subsequentRunId,
+      });
+      await subsequent.accepted;
+      await expect(subsequent.final).resolves.toMatchObject({
+        ok: true,
+        payload: { status: "ok" },
+      });
+      expect(acquireSpy).toHaveBeenCalledTimes(2);
+      expect(acquireSpy.mock.calls[1]?.[0]).toMatchObject({
+        config: after?.config,
+        agentId: after?.agentId,
+        agentDir: after?.agentDir,
+      });
+      expect(acquireSpy.mock.calls[1]?.[1]?.pluginGeneration).toBe(after?.pluginGeneration);
+    } finally {
+      executionGate.resolve();
+      unregister();
+      acquireSpy.mockRestore();
+      executionSpy.mockRestore();
+    }
   });
 
   test("aborts one affected waiter without cancelling shared auth publication", async () => {
@@ -122,11 +210,13 @@ describe("gateway agent auth refresh dispatch", () => {
           : await ensureOpenClawModelsJson(config, agentDir, options),
       );
     const published = createDeferred();
-    const unregister = registerPreparedModelRuntimePublicationListener((event) => {
-      if (event.phase === "published") {
-        published.resolve();
-      }
-    });
+    const unregister = preparedModelRuntime.registerPreparedModelRuntimePublicationListener(
+      (event) => {
+        if (event.phase === "published") {
+          published.resolve();
+        }
+      },
+    );
     try {
       setRuntimeAuthProfileStoreSnapshot(
         {
@@ -150,7 +240,17 @@ describe("gateway agent auth refresh dispatch", () => {
         agentId: affectedAgentId,
         runId: waitingRunId,
       });
-      await Promise.all([aborted.accepted, waiting.accepted]);
+      let abortedAccepted = false;
+      let waitingAccepted = false;
+      void aborted.accepted.then(
+        () => {
+          abortedAccepted = true;
+        },
+        () => undefined,
+      );
+      void waiting.accepted.then(() => {
+        waitingAccepted = true;
+      });
       const sibling = sendAgentRpc(gatewaySuite.ws, { agentId: "main", runId: siblingRunId });
       await sibling.accepted;
       await expect(sibling.final).resolves.toMatchObject({ ok: true, payload: { status: "ok" } });
@@ -158,6 +258,9 @@ describe("gateway agent auth refresh dispatch", () => {
       expect(agentCommandCallsFor(abortedRunId)).toHaveLength(0);
       expect(agentCommandCallsFor(waitingRunId)).toHaveLength(0);
       await vi.waitFor(() => expect(getActiveGatewayRootWorkCount()).toBe(activeWorkBefore + 2));
+      await Promise.resolve();
+      expect(abortedAccepted).toBe(false);
+      expect(waitingAccepted).toBe(false);
 
       const abort = await rpcReq(gatewaySuite.ws, "chat.abort", {
         sessionKey: `agent:${affectedAgentId}:main`,
@@ -183,8 +286,11 @@ describe("gateway agent auth refresh dispatch", () => {
 
       publicationGate.resolve({ agentDir: before.agentDir, wrote: false });
       await published.promise;
-      const after = await loadPublishedGatewayReplyDispatchRuntime({ agentId: affectedAgentId });
+      const after = await preparedModelRuntime.loadPublishedGatewayReplyDispatchRuntime({
+        agentId: affectedAgentId,
+      });
       expect(after).not.toBe(before.runtime);
+      await waiting.accepted;
       await expect(waiting.final).resolves.toMatchObject({
         ok: true,
         payload: { status: "ok" },
@@ -205,6 +311,7 @@ describe("gateway agent auth refresh dispatch", () => {
         payload: { status: "ok" },
       });
       expect(agentCommandCallsFor(subsequentRunId)).toHaveLength(1);
+      expect(getActiveGatewayRootWorkCount()).toBe(activeWorkBefore);
     } finally {
       publicationGate.resolve({ agentDir: before.agentDir, wrote: false });
       unregister();
@@ -227,11 +334,13 @@ describe("gateway agent auth refresh dispatch", () => {
         return await ensureOpenClawModelsJson(config, agentDir, options);
       });
     const failed = createDeferred();
-    const unregister = registerPreparedModelRuntimePublicationListener((event) => {
-      if (event.phase === "failed") {
-        failed.resolve();
-      }
-    });
+    const unregister = preparedModelRuntime.registerPreparedModelRuntimePublicationListener(
+      (event) => {
+        if (event.phase === "failed") {
+          failed.resolve();
+        }
+      },
+    );
     try {
       setRuntimeAuthProfileStoreSnapshot(
         {
@@ -248,19 +357,21 @@ describe("gateway agent auth refresh dispatch", () => {
       );
       await failed.promise;
       await expect(
-        loadPublishedGatewayReplyDispatchRuntime({ agentId: affectedAgentId }),
+        preparedModelRuntime.loadPublishedGatewayReplyDispatchRuntime({ agentId: affectedAgentId }),
       ).rejects.toThrow(
         `prepared reply dispatch runtime owner was not published for ${affectedAgentId}`,
       );
 
       const dispatched = sendAgentRpc(gatewaySuite.ws, { agentId: affectedAgentId, runId });
-      await expect(dispatched.accepted).resolves.toMatchObject({
-        ok: true,
-        payload: { status: "accepted" },
-      });
+      let accepted = false;
+      void dispatched.accepted.then(
+        () => {
+          accepted = true;
+        },
+        () => undefined,
+      );
       await expect(dispatched.final).resolves.toMatchObject({
         ok: false,
-        payload: { status: "error" },
         error: {
           code: "UNAVAILABLE",
           message: expect.stringContaining(
@@ -268,6 +379,8 @@ describe("gateway agent auth refresh dispatch", () => {
           ),
         },
       });
+      await Promise.resolve();
+      expect(accepted).toBe(false);
       expect(agentCommandCallsFor(runId)).toHaveLength(0);
     } finally {
       unregister();

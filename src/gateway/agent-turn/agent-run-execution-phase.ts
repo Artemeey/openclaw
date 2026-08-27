@@ -13,9 +13,7 @@ import {
   type MainSessionRecoveryPendingTarget,
   type MainSessionRecoveryOwnerLease,
 } from "../../agents/main-session-recovery/main-session-recovery-store.js";
-import { loadPublishedGatewayReplyDispatchRuntime } from "../../agents/prepared-model-runtime.js";
 import { resolveScheduledToolPolicyContext } from "../../agents/scheduled-tool-policy.js";
-import { resolveIngressWorkspaceOverrideForSessionRun } from "../../agents/spawned-context.js";
 import { isExecutionIdentityCollectionEnabled } from "../../audit/audit-config.js";
 import {
   setChannelSourceTurnId,
@@ -113,10 +111,16 @@ export function startAgentRunExecution(params: {
   const { prepared } = params;
   let unpersistedOffloadedRefs = prepared.unpersistedOffloadedRefs;
   let releaseGatewayRootContinuation = retainGatewayRootWorkAdmissionContinuation() ?? undefined;
+  let releasePreparedModelRuntime: (() => void) | undefined =
+    prepared.preparedModelRuntimeLease.release;
   const cleanupAdmittedRun: typeof prepared.activeRunAbort.cleanup = (options) => {
     const refsToDiscard = unpersistedOffloadedRefs;
     unpersistedOffloadedRefs = [];
     prepared.activeRunAbort.cleanup(options);
+    // Admission transfers this exact generation to execution; every terminal
+    // path converges here so retirement cannot release it twice.
+    releasePreparedModelRuntime?.();
+    releasePreparedModelRuntime = undefined;
     prepared.activeGatewayWorkAdmission.release();
     releaseGatewayRootContinuation?.();
     releaseGatewayRootContinuation = undefined;
@@ -212,15 +216,7 @@ export function startAgentRunExecution(params: {
       const ingressAgentId = params.resolvedSessionKey
         ? params.activeSessionAgentId
         : params.agentId;
-      const replyDispatchRuntime = await loadPublishedGatewayReplyDispatchRuntime({
-        agentId: params.activeSessionAgentId,
-        abortSignal: prepared.activeRunAbort.controller.signal,
-      });
-      if (!replyDispatchRuntime?.pluginGeneration) {
-        throw new Error(
-          `prepared reply dispatch runtime was not published for ${params.activeSessionAgentId}`,
-        );
-      }
+      const replyDispatchRuntime = prepared.replyDispatchRuntime;
       // Plugin-owned additive grants stay internal to the authenticated in-process run.
       // Public agent params cannot supply them, and normal tool policy still filters them.
       const runtimePluginToolGrant =
@@ -425,11 +421,7 @@ export function startAgentRunExecution(params: {
                   prepared.activeRunAbort.entry.sessionId = sessionId;
                 }
               },
-              workspaceDir: resolveIngressWorkspaceOverrideForSessionRun({
-                spawnedBy: params.spawnedBy,
-                workspaceDir: params.sessionEntry?.spawnedWorkspaceDir,
-                cwd: params.sessionEntry?.spawnedCwd,
-              }),
+              workspaceDir: prepared.workspaceDir,
               cwd: resolveSessionRuntimeCwd({
                 requestedCwd: params.request.cwd,
                 sessionEntry: params.sessionEntry,

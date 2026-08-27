@@ -14,7 +14,14 @@ import {
   type MainSessionRecoveryPendingTarget,
 } from "../../agents/main-session-recovery/main-session-recovery-store.js";
 import { resolvePersistedOverrideModelRef } from "../../agents/model-selection.js";
+import {
+  acquireAgentRunPreparedModelRuntime,
+  loadPublishedGatewayReplyDispatchRuntime,
+  type PreparedModelRuntimeLease,
+  type PreparedReplyDispatchRuntime,
+} from "../../agents/prepared-model-runtime.js";
 import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
+import { resolveIngressWorkspaceOverrideForSessionRun } from "../../agents/spawned-context.js";
 import {
   resolveExactSubagentCompletionEvent,
   type TrustedSubagentCompletionHandoff,
@@ -46,10 +53,12 @@ import { formatForLog } from "../ws-log.js";
 import {
   isPreRegistrationAbortedAgentDedupeEntryForSession,
   readGatewayDedupeEntry,
+  setAbortedAgentDedupeEntries,
   setGatewayDedupeEntries,
 } from "./agent-dedupe.js";
 import type { AgentDeliveryPhaseResult } from "./agent-delivery-phase.js";
 import type { RestoredCronContinuation } from "./agent-handler-helpers.js";
+import { resolveAbortedAgentStopReason } from "./agent-run-dispatch.js";
 import {
   prepareAgentRunUserTurn,
   releasePreparedAgentRunUserTurn,
@@ -73,6 +82,9 @@ export type PreparedAgentRunDispatch = {
   dispatchTaskTrackingMode: Exclude<GatewayAgentTaskTrackingMode, "plugin_subagent">;
   unpersistedOffloadedRefs: OffloadedRef[];
   userTurn: PreparedAgentRunUserTurn;
+  replyDispatchRuntime: PreparedReplyDispatchRuntime;
+  preparedModelRuntimeLease: PreparedModelRuntimeLease;
+  workspaceDir?: string;
   restoreAdmittedRestartRecoveryInterrupted?: () => Promise<
     MainSessionRecoveryPendingTarget | undefined
   >;
@@ -496,24 +508,83 @@ export async function prepareAgentRunDispatch(params: {
     params.io.emitAcceptance([false, undefined, errorShapeFromError(ErrorCodes.UNAVAILABLE, err)]);
     return undefined;
   }
-  try {
-    // Transcript persistence can yield. Revalidate the exact live admission
-    // before its durable turn is allowed to cross the acceptance boundary.
-    params.assertGatewayWorkAdmissionAllowed();
-  } catch (err) {
+  const workspaceDir = resolveIngressWorkspaceOverrideForSessionRun({
+    spawnedBy: params.sessionEntry?.spawnedBy,
+    workspaceDir: params.sessionEntry?.spawnedWorkspaceDir,
+    cwd: params.sessionEntry?.spawnedCwd,
+  });
+  let replyDispatchRuntime: PreparedReplyDispatchRuntime;
+  let preparedModelRuntimeLease: PreparedModelRuntimeLease | undefined;
+  const releasePreacceptResources = () => {
+    preparedModelRuntimeLease?.release();
     releasePreparedAgentRunUserTurn(userTurn);
     activeRunAbort.cleanup({ force: true });
+  };
+  let admissionErrorCode: (typeof ErrorCodes)[keyof typeof ErrorCodes] = ErrorCodes.INVALID_REQUEST;
+  try {
+    // Every awaited preparation step must revalidate the exact live admission
+    // before its durable turn is allowed to cross the acceptance boundary.
+    params.assertGatewayWorkAdmissionAllowed();
+    if (params.respondToGatewayAdmissionOutcome()) {
+      releasePreacceptResources();
+      return undefined;
+    }
+    admissionErrorCode = ErrorCodes.UNAVAILABLE;
+    const loadedRuntime = await loadPublishedGatewayReplyDispatchRuntime({
+      agentId: params.activeSessionAgentId,
+      abortSignal: activeRunAbort.controller.signal,
+    });
+    admissionErrorCode = ErrorCodes.INVALID_REQUEST;
+    params.assertGatewayWorkAdmissionAllowed();
+    if (params.respondToGatewayAdmissionOutcome()) {
+      releasePreacceptResources();
+      return undefined;
+    }
+    admissionErrorCode = ErrorCodes.UNAVAILABLE;
+    if (!loadedRuntime?.pluginGeneration) {
+      throw new Error(
+        `prepared reply dispatch runtime was not published for ${params.activeSessionAgentId}`,
+      );
+    }
+    replyDispatchRuntime = loadedRuntime;
+    preparedModelRuntimeLease = await acquireAgentRunPreparedModelRuntime(
+      {
+        config: replyDispatchRuntime.config,
+        agentId: replyDispatchRuntime.agentId,
+        agentDir: replyDispatchRuntime.agentDir,
+        workspaceDir: workspaceDir ?? replyDispatchRuntime.workspaceDir,
+        allowGatewaySubagentBinding: true,
+      },
+      {
+        catalogMode: "static",
+        pluginGeneration: replyDispatchRuntime.pluginGeneration,
+        abortSignal: activeRunAbort.controller.signal,
+      },
+    );
+    admissionErrorCode = ErrorCodes.INVALID_REQUEST;
+    params.assertGatewayWorkAdmissionAllowed();
+  } catch (err) {
+    releasePreacceptResources();
     activeGatewayWorkAdmission.release();
-    params.io.emitAcceptance([
-      false,
-      undefined,
-      errorShapeFromError(ErrorCodes.INVALID_REQUEST, err),
-    ]);
+    if (activeRunAbort.controller.signal.aborted) {
+      setAbortedAgentDedupeEntries({
+        dedupe: params.context.dedupe,
+        keys: params.agentDedupeKeys,
+        agentId: params.activeSessionAgentId,
+        sessionKey: params.resolvedSessionKey,
+        runId: params.runId,
+        stopReason: resolveAbortedAgentStopReason(activeRunAbort.entry),
+      });
+      params.assertGatewayWorkAdmissionAllowed();
+    }
+    if (params.respondToGatewayAdmissionOutcome()) {
+      return undefined;
+    }
+    params.io.emitAcceptance([false, undefined, errorShapeFromError(admissionErrorCode, err)]);
     return undefined;
   }
   if (params.respondToGatewayAdmissionOutcome()) {
-    releasePreparedAgentRunUserTurn(userTurn);
-    activeRunAbort.cleanup({ force: true });
+    releasePreacceptResources();
     return undefined;
   }
   const accepted = {
@@ -568,6 +639,9 @@ export async function prepareAgentRunDispatch(params: {
     dispatchTaskTrackingMode,
     unpersistedOffloadedRefs: userTurn.recorder ? [] : params.offloadedRefs,
     userTurn,
+    replyDispatchRuntime,
+    preparedModelRuntimeLease,
+    workspaceDir,
     restoreAdmittedRestartRecoveryInterrupted,
   };
 }
