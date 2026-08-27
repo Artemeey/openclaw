@@ -600,6 +600,7 @@ export async function startGatewayCoreRuntime(input: {
             hostServices: pluginHostServices,
             baseMethods,
             pluginLookUpTable: nextPluginLookUpTable,
+            pluginMetadataSnapshot: pluginMetadata.selectedSnapshot,
             ambientEnvTriggers,
             resolveGatewayContext: resolvePluginGatewayContext,
           });

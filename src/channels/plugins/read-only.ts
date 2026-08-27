@@ -558,6 +558,7 @@ function addManifestChannelPlugins(
   options: {
     pluginIds: ReadonlySet<string>;
     channelIds: readonly string[];
+    includeSetupFallbackPlugins: boolean;
   },
 ): void {
   const channelIds = new Set(options.channelIds);
@@ -572,7 +573,9 @@ function addManifestChannelPlugins(
       if (!channelIds.has(channelId)) {
         continue;
       }
-      if (!canUseManifestChannelPlugin(record, channelId)) {
+      // Inventory can describe accounts without executing setup. Setup-backed callers
+      // must still see missing capabilities when a runtime-dependent setup fails.
+      if (options.includeSetupFallbackPlugins && !canUseManifestChannelPlugin(record, channelId)) {
         continue;
       }
       addChannelPlugins(byId, [buildManifestChannelPlugin({ record, channelId })], {
@@ -650,6 +653,7 @@ export function resolveReadOnlyChannelPluginsForConfig(
 ): ReadOnlyChannelPluginResolution {
   const env = options.env ?? process.env;
   const workspaceDir = resolveReadOnlyWorkspaceDir(cfg, options);
+  const includeSetupFallbackPlugins = options.includeSetupFallbackPlugins === true;
   const loadedChannelPlugins = listChannelPlugins();
   const manifestRecords =
     options.metadataSnapshot?.plugins ??
@@ -694,7 +698,7 @@ export function resolveReadOnlyChannelPluginsForConfig(
 
   addChannelPlugins(byId, loadedChannelPlugins);
 
-  if (options.includeSetupFallbackPlugins === true) {
+  if (includeSetupFallbackPlugins) {
     for (const channelId of configuredChannelIds) {
       if (byId.has(channelId)) {
         continue;
@@ -734,6 +738,7 @@ export function resolveReadOnlyChannelPluginsForConfig(
       ),
     ),
     channelIds: bundledManifestMissingChannelIds,
+    includeSetupFallbackPlugins,
   });
 
   const missingConfiguredChannelIds = configuredChannelIds.filter(
@@ -749,7 +754,7 @@ export function resolveReadOnlyChannelPluginsForConfig(
   });
   if (externalPluginIds.length > 0) {
     const externalPluginIdSet = new Set(externalPluginIds);
-    if (options.includeSetupFallbackPlugins === true) {
+    if (includeSetupFallbackPlugins) {
       const missingChannelIdSet = new Set(missingConfiguredChannelIds);
       for (const record of externalManifestRecords) {
         if (!externalPluginIdSet.has(record.id) || !record.setupSource) {
@@ -791,6 +796,7 @@ export function resolveReadOnlyChannelPluginsForConfig(
     addManifestChannelPlugins(byId, externalManifestRecords, {
       pluginIds: externalPluginIdSet,
       channelIds: externalManifestMissingChannelIds,
+      includeSetupFallbackPlugins,
     });
   }
 

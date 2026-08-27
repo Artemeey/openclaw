@@ -785,6 +785,7 @@ describe("prepared harness source delivery", () => {
     mockedBuildEmbeddedRunPayloads.mockReturnValue([{ text: "ok" }]);
     mockedRunEmbeddedAttempt.mockResolvedValueOnce(makeAttemptResult({ assistantTexts: ["ok"] }));
     useOpenAIPlatformAuthFixture();
+    const abortSignal = new AbortController().signal;
 
     const isolatedProbeParams: RunEmbeddedAgentInternalParams = {
       ...overflowBaseRunParams,
@@ -796,6 +797,7 @@ describe("prepared harness source delivery", () => {
       preparedModelRuntimeMode: "isolated-read-only",
       runId: "isolated-probe-generation",
       sessionKey: undefined,
+      abortSignal,
       workspaceDir,
     };
     const result = await withPreparedModelRuntimePluginGenerationScope(
@@ -805,6 +807,7 @@ describe("prepared harness source delivery", () => {
 
     expect(mockedAcquireAgentRunPreparedModelRuntime).toHaveBeenCalledWith(
       expect.objectContaining({ config, loadRuntimePlugins: true, workspaceDir }),
+      abortSignal,
     );
     expect(result.payloads).toEqual([{ text: "ok" }]);
     expect(release).toHaveBeenCalledOnce();

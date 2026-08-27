@@ -10,10 +10,8 @@ import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
-import {
-  getPreparedPluginRuntimeLoadContext,
-  prepareOwnedPluginLoadContext,
-} from "./prepared-model-runtime.plugin-context.js";
+import { getPluginRuntimeLoadContext } from "../plugins/runtime/load-context.js";
+import { prepareOwnedPluginLoadContext } from "./prepared-model-runtime.plugin-context.js";
 import { withPreparedPluginGenerationScope } from "./prepared-model-runtime.plugin-generation.js";
 
 function operationMetadata(
@@ -67,7 +65,7 @@ describe("prepared model runtime plugin metadata ownership", () => {
         expect(
           prepareOwnedPluginLoadContext(input, process.env, registry, gatewaySnapshot, true),
         ).toBe(gatewaySnapshot);
-        expect(getPreparedPluginRuntimeLoadContext(registry)).toMatchObject({
+        expect(getPluginRuntimeLoadContext(registry)).toMatchObject({
           metadataSnapshot: gatewaySnapshot,
           preferBuiltPluginArtifacts: true,
         });
@@ -109,7 +107,7 @@ describe("prepared model runtime plugin metadata ownership", () => {
           registry,
         ),
       ).toBe(directSnapshot);
-      expect(getPreparedPluginRuntimeLoadContext(registry)).toMatchObject({
+      expect(getPluginRuntimeLoadContext(registry)).toMatchObject({
         metadataSnapshot: directSnapshot,
         preferBuiltPluginArtifacts: false,
       });

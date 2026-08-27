@@ -298,7 +298,10 @@ async function runEmbeddedAgentInternal(
         noteLaneTaskProgress,
         () =>
           params.preparedModelRuntimeMode === "isolated-read-only"
-            ? acquireReadOnlyPreparedModelRuntime({ ...preparedInput, runtimePluginSelections })
+            ? acquireReadOnlyPreparedModelRuntime(
+                { ...preparedInput, runtimePluginSelections },
+                params.abortSignal,
+              )
             : acquireAgentRunPreparedModelRuntime(
                 { ...preparedInput, runtimePluginSelections },
                 {
@@ -307,6 +310,7 @@ async function runEmbeddedAgentInternal(
                   // available through the snapshot's lazy control-plane loader.
                   catalogMode: "static",
                   ...(params.pluginGeneration ? { pluginGeneration: params.pluginGeneration } : {}),
+                  abortSignal: params.abortSignal,
                 },
               ),
       );
