@@ -131,9 +131,15 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
   // Canonical Gateway rows are the source of truth for everything except the
   // UI-owned facts the capability keeps beside them, so every published result
   // passes through the same overlay: swarm notes, then confirmed mutations.
-  const decorateRows = (result: SessionsListResult | null): SessionsListResult | null =>
+  const decorateRows = (
+    result: SessionsListResult | null,
+    scope?: string,
+    requestRevision?: number,
+  ): SessionsListResult | null =>
     mutations.applyConfirmedOwners(
       mutations.applyConfirmedArchives(mutations.applyPendingPins(swarmActivity.decorate(result))),
+      scope,
+      requestRevision,
     );
 
   const sessionEventSubscription = createSessionEventSubscriptionOwner({

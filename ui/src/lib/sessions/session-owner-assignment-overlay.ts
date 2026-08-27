@@ -71,11 +71,27 @@ export function createSessionOwnerAssignmentOverlay() {
     clear(): void {
       claims.clear();
     },
-    decorate: (result: SessionsListResult | null): SessionsListResult | null => {
+    decorate: (
+      result: SessionsListResult | null,
+      scope?: string,
+      requestRevision?: number,
+    ): SessionsListResult | null => {
       if (!result || claims.size === 0) {
         return result;
       }
-      let changed = false;
+      let invalidateOwners = scope
+        ? [...claims.values()].some((claim) => {
+            const scopeRevision = claim.scopeRevisions.get(scope);
+            if (scopeRevision === undefined) {
+              return false;
+            }
+            const row = result.sessions.find((candidate) => candidate.key === claim.key);
+            return (
+              !ownersMatch(row?.owner, claim.owner) &&
+              !(requestRevision !== undefined && requestRevision > scopeRevision && !row)
+            );
+          })
+        : false;
       const sessions = result.sessions.map((row) => {
         const claim = claims.get(row.key);
         if (!claim) {
@@ -88,10 +104,10 @@ export function createSessionOwnerAssignmentOverlay() {
         if (ownersMatch(row.owner, claim.owner)) {
           return row;
         }
-        changed = true;
+        invalidateOwners = true;
         return { ...row, owner: claim.owner };
       });
-      return changed ? { ...result, sessions, owners: undefined } : result;
+      return invalidateOwners ? { ...result, sessions, owners: undefined } : result;
     },
     observeCanonical: (
       result: SessionsListResult | null,
