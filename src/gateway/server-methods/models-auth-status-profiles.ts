@@ -281,7 +281,12 @@ export function attachAliasProfileOrders(providers: ModelAuthStatusProvider[]): 
         candidate.authProvider === source.authProvider,
     );
     const target = targets.length === 1 ? targets[0] : undefined;
-    if (!target || target.profileOrder !== undefined) {
+    const sourceOwnsStoredOrder = source.profileOrderFallback !== undefined;
+    const targetOwnsStoredOrder = target?.profileOrderFallback !== undefined;
+    if (
+      !target ||
+      (target.profileOrder !== undefined && (!sourceOwnsStoredOrder || targetOwnsStoredOrder))
+    ) {
       continue;
     }
     target.profileOrder = [...source.profileOrder];

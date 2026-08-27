@@ -352,6 +352,25 @@ describe("persisted auth profile boundary", () => {
     expect(merged.order?.openai).toEqual(["openai:new-login", "openai:aws-sdk"]);
   });
 
+  it("derives local order ownership when merging a persisted agent override", () => {
+    const merged = mergeAuthProfileStores(
+      {
+        version: AUTH_STORE_VERSION,
+        profiles: {},
+        order: { openai: ["openai:main"] },
+        runtimeLocalOrderProviders: [],
+      },
+      {
+        version: AUTH_STORE_VERSION,
+        profiles: {},
+        order: { openai: ["openai:writer"] },
+      },
+    );
+
+    expect(merged.runtimeLocalOrderProviders).toEqual(["openai"]);
+    expect(merged.runtimeInheritedOrder).toEqual({ openai: ["openai:main"] });
+  });
+
   it("prefers agent-local provider profiles before inherited main profiles", () => {
     const expires = Date.now() + 60_000;
     const merged = mergeAuthProfileStores(

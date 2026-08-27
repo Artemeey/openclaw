@@ -783,6 +783,45 @@ describe("models.authStatus", () => {
     });
   });
 
+  it("attaches a stored alias order over the profile row's configured fallback", () => {
+    const profiles = ["gmi:one", "gmi:two"].map((profileId) => ({
+      profileId,
+      type: "token" as const,
+      status: "ok" as const,
+    }));
+    const providers = [
+      {
+        provider: "gmi",
+        authProvider: "gmi",
+        displayName: "GMI",
+        status: "ok" as const,
+        profiles,
+        profileOrder: ["gmi:one", "gmi:two"],
+        profileOrderProvider: "gmi",
+      },
+      {
+        provider: "gmi-cloud",
+        authProvider: "gmi",
+        displayName: "GMI Cloud",
+        status: "missing" as const,
+        profiles: [],
+        profileOrder: ["gmi:two", "gmi:one"],
+        profileOrderProvider: "gmi-cloud",
+        profileOrderFallback: "config" as const,
+        profileOrderFallbackOrder: ["gmi:one", "gmi:two"],
+      },
+    ];
+
+    attachAliasProfileOrders(providers);
+
+    expect(providers[0]).toMatchObject({
+      profileOrder: ["gmi:two", "gmi:one"],
+      profileOrderProvider: "gmi-cloud",
+      profileOrderFallback: "config",
+      profileOrderFallbackOrder: ["gmi:one", "gmi:two"],
+    });
+  });
+
   it.each([
     { name: "omitted", params: {}, expectedAgentId: "main" },
     { name: "empty", params: { agentId: "" }, expectedAgentId: "main" },

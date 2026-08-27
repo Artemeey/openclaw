@@ -300,7 +300,9 @@ export async function fetchAnthropicUsage(
       fetchFn: ctx.fetchFn,
     });
   }
-  const snapshot = await fetchClaudeUsage(ctx.token, ctx.timeoutMs, ctx.fetchFn);
+  const snapshot = await fetchClaudeUsage(ctx.token, ctx.timeoutMs, ctx.fetchFn, {
+    allowWebSessionFallback: ctx.authProfileId === undefined,
+  });
   if (snapshot.error) {
     return snapshot;
   }

@@ -698,9 +698,15 @@ export function mergeAuthProfileStores(
   const runtimeLocalProfileIds = override.runtimeLocalProfileIds
     ?.filter((profileId) => merged.profiles[profileId])
     .toSorted();
+  const overrideOrderProviders = override.order
+    ? Object.keys(override.order).toSorted()
+    : undefined;
   const runtimeLocalOrderProviders =
-    override.runtimeLocalOrderProviders ?? base.runtimeLocalOrderProviders;
-  const runtimeInheritedOrder = override.runtimeInheritedOrder ?? base.runtimeInheritedOrder;
+    override.runtimeLocalOrderProviders ??
+    overrideOrderProviders ??
+    base.runtimeLocalOrderProviders;
+  const runtimeInheritedOrder =
+    override.runtimeInheritedOrder ?? (override.order ? base.order : base.runtimeInheritedOrder);
   const baseRuntimeExternalProfileIds =
     override.runtimeExternalProfileIdsAuthoritative === true &&
     options?.preserveBaseRuntimeExternalProfiles !== true

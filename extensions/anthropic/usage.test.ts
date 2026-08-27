@@ -273,4 +273,38 @@ describe("Anthropic provider usage", () => {
     });
     expect(snapshot.plan).toBeUndefined();
   });
+
+  it("does not attribute a global Claude web session to a saved profile", async () => {
+    vi.stubEnv("CLAUDE_AI_SESSION_KEY", "sk-ant-global-session");
+    try {
+      const fetchFn = vi.fn(async (input: string | URL | Request) => {
+        const url = requestUrl(input);
+        if (url.hostname === "api.anthropic.com") {
+          return new Response(
+            JSON.stringify({ error: { message: "scope requirement user:profile" } }),
+            { status: 403 },
+          );
+        }
+        if (url.pathname === "/api/organizations") {
+          return new Response(JSON.stringify([{ uuid: "global-org" }]), { status: 200 });
+        }
+        return new Response(JSON.stringify({ five_hour: { utilization: 12 } }), { status: 200 });
+      });
+
+      const snapshot = await fetchAnthropicUsage({
+        config: {},
+        env: {},
+        provider: "anthropic",
+        token: "saved-profile-token",
+        authProfileId: "anthropic:saved",
+        timeoutMs: 5000,
+        fetchFn: fetchFn as typeof fetch,
+      });
+
+      expect(snapshot.error).toBe("HTTP 403: scope requirement user:profile");
+      expect(fetchFn).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
