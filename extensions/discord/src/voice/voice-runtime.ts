@@ -430,27 +430,38 @@ export class DiscordVoiceManager {
     this.joinTasks.set(guildId, joinTask);
     try {
       const result = await joinTask;
-      if (result.ok) {
-        const entry = this.sessions.get(guildId);
-        if (!entry || !isCurrent()) {
-          // Registration can change after joinUnlocked publishes and before this continuation.
-          if (entry?.generation === generation) {
-            entry.stop("voice join cancelled before activation");
-          }
-          if (this.guildLifecycles.get(guildId)?.generation === generation) {
-            this.guildLifecycles.set(guildId, { status: "inactive", generation });
-          }
-          return { ...result, ok: false, message: "Discord voice join was cancelled." };
+      const entry = this.sessions.get(guildId);
+      if (
+        !entry ||
+        entry.generation !== generation ||
+        !isCurrent() ||
+        (!result.ok && entry.captureOnly && !entry.transcripts)
+      ) {
+        // Stop only this attempt's transport; cancellation or failed promotion can leave no owner.
+        if (entry?.generation === generation) {
+          entry.stop("voice join ended without an owner");
         }
-        this.guildLifecycles.set(guildId, { status: "active", generation, instance: entry });
+        if (this.guildLifecycles.get(guildId)?.generation === generation) {
+          this.guildLifecycles.set(guildId, { status: "inactive", generation });
+        }
+        return result.ok
+          ? { ...result, ok: false, message: "Discord voice join was cancelled." }
+          : result;
+      }
+      // Starting owns a pending normal join. Commit residency only on success; a failed
+      // promotion keeps the previous owner active so capture, stop, and occupancy still work.
+      if (result.ok && !options?.captureOnly) {
+        entry.captureOnly = false;
+        entry.autoJoinWhenOccupied = options?.autoJoinWhenOccupied === true;
+      }
+      this.guildLifecycles.set(guildId, { status: "active", generation, instance: entry });
+      if (result.ok) {
         this.fatalAutoJoinFailures.delete(formatAutoJoinFailureKey({ guildId, channelId }));
         // Recovery can finish after the last human leaves. Keep capture registered, not presence.
         if (waitingForOccupancy()) {
           await this.leave({ guildId, channelId });
           return waitingResult;
         }
-      } else if (this.guildLifecycles.get(guildId)?.generation === generation) {
-        this.guildLifecycles.set(guildId, { status: "inactive", generation });
       }
       return result;
     } finally {
@@ -546,12 +557,20 @@ export class DiscordVoiceManager {
 
   private isEntryCurrent(entry: VoiceSessionEntry): boolean {
     const lifecycle = this.guildLifecycles.get(entry.guildId);
-    return (
-      lifecycle?.status === "active" &&
-      lifecycle.generation === entry.generation &&
-      lifecycle.instance === entry &&
-      entry.sessionLifecycle.status === "active"
-    );
+    if (
+      !lifecycle ||
+      lifecycle.generation !== entry.generation ||
+      entry.sessionLifecycle.status !== "active"
+    ) {
+      return false;
+    }
+    // Conversation promotion must not pause an already-ready recorder. A starting
+    // generation may receive only through its exact existing same-channel transport.
+    return lifecycle.status === "active"
+      ? lifecycle.instance === entry
+      : lifecycle.status === "starting" &&
+          lifecycle.instance.channelId === entry.channelId &&
+          this.sessions.get(entry.guildId) === entry;
   }
 
   private resolveAutoJoinTarget(guildId: string): VoiceChannelResidency | undefined {

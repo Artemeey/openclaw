@@ -457,36 +457,42 @@ defineDiscordVoiceTests(
       expect(entry.realtime).toBeUndefined();
     });
 
-    it("detaches transcripts without leaving voice during pending realtime upgrade", async () => {
-      const manager = createAgentProxyManager();
-      const onUtterance = vi.fn();
+    it.each(["bootstrap", "connect"])(
+      "detaches transcripts without leaving voice during pending realtime upgrade (%s)",
+      async (phase) => {
+        const manager = createAgentProxyManager();
+        const onUtterance = vi.fn();
 
-      await startTranscripts(manager, onUtterance, "notes-1");
-      const entry = getSessionEntry(manager);
-      let resolveRealtimeReady!: () => void;
-      const realtimeReady = new Promise<undefined>((resolve) => {
-        resolveRealtimeReady = () => resolve(undefined);
-      });
-      realtimeSessionMock.connect.mockImplementationOnce(async () => realtimeReady);
+        await startTranscripts(manager, onUtterance, "notes-1");
+        const entry = getSessionEntry(manager);
+        let resolveRealtimeReady!: () => void;
+        const realtimeReady = new Promise<undefined>((resolve) => {
+          resolveRealtimeReady = () => resolve(undefined);
+        });
+        const pending =
+          phase === "bootstrap"
+            ? resolveRealtimeBootstrapContextInstructionsMock
+            : realtimeSessionMock.connect;
+        pending.mockImplementationOnce(async () => realtimeReady);
 
-      const upgrade = manager.join({ guildId: "g1", channelId: "1001" });
+        const upgrade = manager.join({ guildId: "g1", channelId: "1001" });
 
-      await vi.waitFor(() => expect(createRealtimeVoiceBridgeSessionMock).toHaveBeenCalledTimes(1));
-      const stopNotesResult = await stopTranscripts("notes-1");
+        await vi.waitFor(() => expect(pending).toHaveBeenCalledOnce());
+        const stopNotesResult = await stopTranscripts("notes-1");
 
-      expect(stopNotesResult.ok).toBe(true);
-      expect(entry.transcripts).toBeUndefined();
-      expect(entry.pendingRealtime).toBeTruthy();
-      expect(entry.realtime).toBeUndefined();
+        expect(stopNotesResult.ok).toBe(true);
+        expect(entry.transcripts).toBeUndefined();
+        expect(entry.realtime).toBeUndefined();
 
-      resolveRealtimeReady();
-      const result = await upgrade;
+        resolveRealtimeReady();
+        const result = await upgrade;
 
-      expect(result.ok).toBe(true);
-      expect(entry.pendingRealtime).toBeUndefined();
-      expect(entry.realtime).toBeTruthy();
-      expectConnectedStatus(manager, "1001");
-    });
+        expect(result.ok).toBe(true);
+        expect(entry.pendingRealtime).toBeUndefined();
+        expect(entry.realtime).toBeTruthy();
+        expectConnectedStatus(manager, "1001");
+      },
+    );
 
     it("does not start realtime upgrade if the voice entry leaves during bootstrap", async () => {
       const manager = createAgentProxyManager();

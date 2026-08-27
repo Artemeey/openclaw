@@ -172,15 +172,11 @@ export class DiscordVoiceSessions {
 
     const existing = this.params.sessions.get(guildId);
     if (existing && existing.channelId === channelId) {
-      if (!options?.captureOnly) {
-        existing.captureOnly = false;
-        existing.autoJoinWhenOccupied = options?.autoJoinWhenOccupied === true;
-      }
       if (authority) {
         existing.generation = authority.generation;
       }
       if (
-        !existing.captureOnly &&
+        (!options?.captureOnly || !existing.captureOnly) &&
         isDiscordRealtimeVoiceMode(voiceMode) &&
         existing.realtimeLifecycle.status !== "active" &&
         existing.realtimeLifecycle.status !== "starting"
