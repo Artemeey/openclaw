@@ -419,8 +419,8 @@ describeControlUiE2e("Control UI Models mocked Gateway E2E", () => {
         await expect.poll(() => hoverTooltip.textContent()).toContain("short background tasks");
         const helpButtonBox = await helpButton.boundingBox();
         expect(helpButtonBox).not.toBeNull();
-        expect(helpButtonBox?.width).toBeLessThanOrEqual(18);
-        expect(helpButtonBox?.height).toBeLessThanOrEqual(18);
+        expect(helpButtonBox?.width).toBeLessThanOrEqual(16);
+        expect(helpButtonBox?.height).toBeLessThanOrEqual(16);
         if (recordVisuals) {
           await page.screenshot({
             animations: "disabled",
