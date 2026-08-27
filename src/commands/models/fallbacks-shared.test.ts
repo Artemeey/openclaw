@@ -42,11 +42,7 @@ describe("listFallbacksCommand", () => {
       exit: vi.fn(),
     } satisfies RuntimeEnv;
 
-    await listFallbacksCommand(
-      { label: testCase.label, key: testCase.key },
-      { json: true },
-      runtime,
-    );
+    await listFallbacksCommand(testCase.key, { json: true }, runtime);
 
     expect(mocks.loadModelsConfig).toHaveBeenCalledWith({
       commandName: testCase.commandName,
@@ -77,11 +73,7 @@ describe("listFallbacksCommand", () => {
       writeJson: vi.fn(),
     };
 
-    await listFallbacksCommand(
-      { label: testCase.label, key: testCase.key },
-      { plain: true },
-      runtime,
-    );
+    await listFallbacksCommand(testCase.key, { plain: true }, runtime);
 
     expect(runtime.writeStdout).toHaveBeenCalledExactlyOnceWith(testCase.model);
     expect(runtime.log).not.toHaveBeenCalled();

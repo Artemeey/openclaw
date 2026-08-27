@@ -21,10 +21,7 @@ const loadModelsStatusCommands = createModuleLoader(
 );
 const loadModelsAliasesCommands = createModuleLoader(() => import("../commands/models/aliases.js"));
 const loadModelsFallbacksCommands = createModuleLoader(
-  () => import("../commands/models/fallbacks.js"),
-);
-const loadModelsImageFallbacksCommands = createModuleLoader(
-  () => import("../commands/models/image-fallbacks.js"),
+  () => import("../commands/models/fallbacks-shared.js"),
 );
 const loadModelsAuthCommands = createModuleLoader(() => import("../commands/models/auth.js"));
 const loadModelsAuthOrderCommands = createModuleLoader(
@@ -213,37 +210,21 @@ export function registerModelsCli(program: Command) {
   const fallbackGroups = [
     {
       name: "fallbacks",
+      key: "model",
       modelType: "model",
       noun: "fallback",
       article: "a",
-      load: async () => {
-        const commands = await loadModelsFallbacksCommands();
-        return {
-          list: commands.modelsFallbacksListCommand,
-          add: commands.modelsFallbacksAddCommand,
-          remove: commands.modelsFallbacksRemoveCommand,
-          clear: commands.modelsFallbacksClearCommand,
-        };
-      },
     },
     {
       name: "image-fallbacks",
+      key: "imageModel",
       modelType: "image model",
       noun: "image fallback",
       article: "an",
-      load: async () => {
-        const commands = await loadModelsImageFallbacksCommands();
-        return {
-          list: commands.modelsImageFallbacksListCommand,
-          add: commands.modelsImageFallbacksAddCommand,
-          remove: commands.modelsImageFallbacksRemoveCommand,
-          clear: commands.modelsImageFallbacksClearCommand,
-        };
-      },
     },
   ] as const;
 
-  for (const { name, modelType, noun, article, load } of fallbackGroups) {
+  for (const { name, key, modelType, noun, article } of fallbackGroups) {
     const group = models.command(name).description(`Manage ${modelType} fallback list`);
 
     group
@@ -253,8 +234,8 @@ export function registerModelsCli(program: Command) {
       .option("--plain", "Plain output", false)
       .action(async (opts) => {
         await withModelsRuntime(async ({ defaultRuntime }) => {
-          const commands = await load();
-          await commands.list({ ...opts, json: hasJsonOutput(opts) }, defaultRuntime);
+          const { listFallbacksCommand } = await loadModelsFallbacksCommands();
+          await listFallbacksCommand(key, { ...opts, json: hasJsonOutput(opts) }, defaultRuntime);
         });
       });
 
@@ -265,8 +246,10 @@ export function registerModelsCli(program: Command) {
         .argument("<model>", "Model id or alias")
         .action(async (model: string) => {
           await withModelsRuntime(async ({ defaultRuntime }) => {
-            const commands = await load();
-            await commands[action](model, defaultRuntime);
+            const commands = await loadModelsFallbacksCommands();
+            const command =
+              action === "add" ? commands.addFallbackCommand : commands.removeFallbackCommand;
+            await command(key, model, defaultRuntime);
           });
         });
     }
@@ -276,8 +259,8 @@ export function registerModelsCli(program: Command) {
       .description(`Clear all ${noun} models`)
       .action(async () => {
         await withModelsRuntime(async ({ defaultRuntime }) => {
-          const commands = await load();
-          await commands.clear(defaultRuntime);
+          const { clearFallbacksCommand } = await loadModelsFallbacksCommands();
+          await clearFallbacksCommand(key, defaultRuntime);
         });
       });
   }

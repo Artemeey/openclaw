@@ -10,11 +10,24 @@ describe("models cli lazy runtime boundary", () => {
   afterEach(() => {
     vi.doUnmock("./models-cli.runtime.js");
     vi.doUnmock("../commands/models/list.status-command.js");
+    vi.doUnmock("../commands/models/fallbacks-shared.js");
     vi.resetModules();
   });
 
-  it("renders help without importing the models runtime", async () => {
+  it.each([
+    ["models"],
+    ...["fallbacks", "image-fallbacks"].flatMap((group) =>
+      [[], ["list"], ["add"], ["remove"], ["clear"]].map((action) =>
+        ["models", group].concat(action),
+      ),
+    ),
+  ])("renders %j help without importing command runtimes", async (...args) => {
     const runtimeLoaded = vi.fn();
+    const fallbacksLoaded = vi.fn();
+    vi.doMock("../commands/models/fallbacks-shared.js", () => {
+      fallbacksLoaded();
+      return {};
+    });
     vi.doMock("./models-cli.runtime.js", () => {
       runtimeLoaded();
       return {
@@ -34,10 +47,11 @@ describe("models cli lazy runtime boundary", () => {
     });
     registerModelsCli(program);
 
-    await expect(program.parseAsync(["models", "--help"], { from: "user" })).rejects.toMatchObject({
+    await expect(program.parseAsync([...args, "--help"], { from: "user" })).rejects.toMatchObject({
       exitCode: 0,
     });
     expect(runtimeLoaded).not.toHaveBeenCalled();
+    expect(fallbacksLoaded).not.toHaveBeenCalled();
   });
 
   it("loads the models runtime for command actions", async () => {

@@ -11,7 +11,20 @@ const mocks = vi.hoisted(() => ({
   modelsStatusCommand: vi.fn().mockResolvedValue(undefined),
   modelsSetCommand: vi.fn().mockResolvedValue(undefined),
   modelsSetImageCommand: vi.fn().mockResolvedValue(undefined),
-  noopAsync: vi.fn(async () => undefined),
+  fallbacks: {
+    model: {
+      list: vi.fn().mockResolvedValue(undefined),
+      add: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+      clear: vi.fn().mockResolvedValue(undefined),
+    },
+    imageModel: {
+      list: vi.fn().mockResolvedValue(undefined),
+      add: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+      clear: vi.fn().mockResolvedValue(undefined),
+    },
+  },
   modelsAliasesAddCommand: vi.fn().mockResolvedValue(undefined),
   modelsAliasesListCommand: vi.fn().mockResolvedValue(undefined),
   modelsAliasesRemoveCommand: vi.fn().mockResolvedValue(undefined),
@@ -77,17 +90,15 @@ vi.mock("../commands/models/aliases.js", () => ({
   modelsAliasesListCommand: mocks.modelsAliasesListCommand,
   modelsAliasesRemoveCommand: mocks.modelsAliasesRemoveCommand,
 }));
-vi.mock("../commands/models/fallbacks.js", () => ({
-  modelsFallbacksAddCommand: mocks.noopAsync,
-  modelsFallbacksClearCommand: mocks.noopAsync,
-  modelsFallbacksListCommand: mocks.noopAsync,
-  modelsFallbacksRemoveCommand: mocks.noopAsync,
-}));
-vi.mock("../commands/models/image-fallbacks.js", () => ({
-  modelsImageFallbacksAddCommand: mocks.noopAsync,
-  modelsImageFallbacksClearCommand: mocks.noopAsync,
-  modelsImageFallbacksListCommand: mocks.noopAsync,
-  modelsImageFallbacksRemoveCommand: mocks.noopAsync,
+vi.mock("../commands/models/fallbacks-shared.js", () => ({
+  listFallbacksCommand: (key: keyof typeof mocks.fallbacks, ...args: unknown[]) =>
+    mocks.fallbacks[key].list(...args),
+  addFallbackCommand: (key: keyof typeof mocks.fallbacks, ...args: unknown[]) =>
+    mocks.fallbacks[key].add(...args),
+  removeFallbackCommand: (key: keyof typeof mocks.fallbacks, ...args: unknown[]) =>
+    mocks.fallbacks[key].remove(...args),
+  clearFallbacksCommand: (key: keyof typeof mocks.fallbacks, ...args: unknown[]) =>
+    mocks.fallbacks[key].clear(...args),
 }));
 vi.mock("../commands/models/scan.js", () => ({
   modelsScanCommand: mocks.modelsScanCommand,
@@ -101,6 +112,11 @@ vi.mock("../commands/models/set-image.js", () => ({
 
 describe("models cli", () => {
   beforeEach(() => {
+    for (const commands of Object.values(mocks.fallbacks)) {
+      for (const command of Object.values(commands)) {
+        command.mockClear();
+      }
+    }
     mocks.modelsListCommand.mockClear();
     modelsAliasesAddCommand.mockClear();
     modelsAliasesListCommand.mockClear();
@@ -159,6 +175,40 @@ describe("models cli", () => {
       throw new Error("expected command context");
     }
   }
+
+  describe.each([
+    { group: "fallbacks", key: "model" as const },
+    { group: "image-fallbacks", key: "imageModel" as const },
+  ])("$group routing", ({ group, key }) => {
+    it.each(["list", "add", "remove", "clear"] as const)(
+      "dispatches %s to only its own action and family",
+      async (action) => {
+        const modelArgs = action === "add" || action === "remove" ? ["sample-alias"] : [];
+        await runModelsCommand(["models", "--agent", "helper", group, action, ...modelArgs]);
+
+        const selected = mocks.fallbacks[key][action];
+        const expected = action === "list" ? [{ json: false, plain: false }] : modelArgs;
+        expect(selected).toHaveBeenCalledExactlyOnceWith(...expected, expect.any(Object));
+        for (const commands of Object.values(mocks.fallbacks)) {
+          for (const command of Object.values(commands)) {
+            if (command !== selected) {
+              expect(command).not.toHaveBeenCalled();
+            }
+          }
+        }
+      },
+    );
+
+    it.each([
+      { parent: ["--json"], leaf: [], json: true, plain: false },
+      { parent: [], leaf: ["--json"], json: true, plain: false },
+      { parent: [], leaf: ["--plain"], json: false, plain: true },
+      { parent: ["--status-json"], leaf: [], json: false, plain: false },
+    ])("preserves list output flags ($parent / $leaf)", async ({ parent, leaf, json, plain }) => {
+      await runModelsCommand(["models", ...parent, group, "list", ...leaf]);
+      expectCommandOptions(mocks.fallbacks[key].list, { json, plain });
+    });
+  });
 
   it.each(["--json", "--status-json"])("declares %s as machine output", async (flag) => {
     const program = createProgram();

@@ -26,7 +26,7 @@ vi.mock("../config/config.js", async () => {
   };
 });
 
-import { modelsFallbacksAddCommand } from "./models/fallbacks.js";
+import { addFallbackCommand } from "./models/fallbacks-shared.js";
 import { modelsSetImageCommand } from "./models/set-image.js";
 import { modelsSetCommand } from "./models/set.js";
 
@@ -153,7 +153,7 @@ describe("models set + fallbacks", () => {
     mockConfigSnapshot({ agents: { defaults: { model: { fallbacks: [] } } } });
     const runtime = makeRuntime();
 
-    await modelsFallbacksAddCommand("z-ai/glm-4.7", runtime);
+    await addFallbackCommand("model", "z-ai/glm-4.7", runtime);
 
     const written = getWrittenConfig();
     expect(written.agents).toEqual({
@@ -168,7 +168,7 @@ describe("models set + fallbacks", () => {
     mockConfigSnapshot({ agents: { defaults: { model: "openai/gpt-4.1-mini" } } });
     const runtime = makeRuntime();
 
-    await modelsFallbacksAddCommand("anthropic/claude-opus-4-6", runtime);
+    await addFallbackCommand("model", "anthropic/claude-opus-4-6", runtime);
 
     const written = getWrittenConfig();
     expect(written.agents).toEqual({
