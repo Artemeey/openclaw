@@ -335,6 +335,7 @@ function migrateFinalLayoutKills(raw: Record<string, unknown>, changes: string[]
     changes.push("Removed messages.removeAckAfterReply; acknowledgements are retained.");
   }
 
+  const legacyWhatsAppAckScopes: Array<{ path: string; scope?: string }> = [];
   visitChannelEntries(raw, "whatsapp", (entry, path) => {
     moveKey(entry, "messagePrefix", "responsePrefix", path, changes);
     const ack = getRecord(entry.ackReaction);
@@ -359,28 +360,47 @@ function migrateFinalLayoutKills(raw: Record<string, unknown>, changes: string[]
             ? identityEmoji
             : "👀";
     }
-    if (messages.ackReactionScope === undefined) {
-      const direct = ack.direct !== false;
-      const group = ack.group ?? "mentions";
-      const scope =
-        direct && group === "always"
-          ? "all"
-          : direct && group === "never"
-            ? "direct"
-            : !direct && group === "always"
-              ? "group-all"
-              : !direct && group === "mentions"
-                ? "group-mentions"
-                : !direct && group === "never"
-                  ? "off"
-                  : undefined;
-      if (scope) {
-        messages.ackReactionScope = scope;
-      }
+    const direct = ack.direct !== false;
+    const group = ack.group ?? "mentions";
+    const scope =
+      direct && group === "always"
+        ? "all"
+        : direct && group === "never"
+          ? "direct"
+          : !direct && group === "always"
+            ? "group-all"
+            : !direct && group === "mentions"
+              ? "group-mentions"
+              : !direct && group === "never"
+                ? "off"
+                : undefined;
+    if (messages.ackReactionScope === undefined && scope) {
+      messages.ackReactionScope = scope;
+    }
+    if (scope || (direct && group === "mentions")) {
+      legacyWhatsAppAckScopes.push({ path: `${path}.ackReaction`, scope });
     }
     delete entry.ackReaction;
     changes.push(`Moved translatable ${path}.ackReaction settings to messages ack settings.`);
   });
+  // Root and account settings collapse into one global scope. Compare after the
+  // traversal so every discarded intent is reported against the final value.
+  const finalScope = messages?.ackReactionScope ?? "group-mentions";
+  const comparableFinalScope = finalScope === "none" ? "off" : finalScope;
+  for (const source of legacyWhatsAppAckScopes) {
+    if (source.scope === comparableFinalScope) {
+      continue;
+    }
+    if (source.scope) {
+      changes.push(
+        `${source.path} requested ${JSON.stringify(source.scope)}, but final messages.ackReactionScope is ${JSON.stringify(finalScope)}; review the global scope if this source should win.`,
+      );
+    } else {
+      changes.push(
+        `${source.path} cannot represent direct messages plus mentioned groups in messages.ackReactionScope; final scope is ${JSON.stringify(finalScope)}; use "direct" to keep direct messages only, or "all" to keep direct messages and acknowledge every group message.`,
+      );
+    }
+  }
 
   visitChannelEntries(raw, "slack", (entry, path) => {
     const socketMode = getRecord(entry.socketMode);
