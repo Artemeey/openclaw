@@ -3947,9 +3947,13 @@ jobs:
         id: swift-test
         run: |
           set -euo pipefail
-          swift build --package-path apps/macos --build-tests --enable-code-coverage
+          # SwiftPM's swiftbuild backend can omit the test-bundle rpath for Sparkle.
+          # Remove once runner toolchains pass with swiftlang/swift-package-manager#10394.
+          # Keep the release build above on the default backend.
+          swift_test_args=(--package-path apps/macos --build-system native --enable-code-coverage)
+          swift build "${swift_test_args[@]}" --build-tests
           echo "debug-tests-built=true" >> "$GITHUB_OUTPUT"
-          swift_test_args=(--package-path apps/macos --enable-code-coverage --skip-build)
+          swift_test_args+=(--skip-build)
           if [[ "$SWIFT_TEST_EXECUTION" == "parallel" ]]; then
             swift_test_args+=(--parallel)
           else
