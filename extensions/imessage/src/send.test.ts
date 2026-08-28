@@ -121,10 +121,33 @@ describe("sendMessageIMessage receipts", () => {
     return sourcePath;
   }
 
-  it("scrubs private markers before delivering fenced YAML over real iMessage RPC", async () => {
+  it("scrubs private markers before delivering fenced YAML over real iMessage RPC", async (ctx) => {
+    const { signal } = ctx;
+    const started = performance.now();
+    let phase = "fixture";
     const cliPath = openClawState.path("fake-imsg");
     const requestLogPath = openClawState.path("fake-imsg-requests.jsonl");
     const actionLogPath = openClawState.path("fake-imsg-actions.jsonl");
+    const countRecords = (file: string) => {
+      try {
+        const records = fs.readFileSync(file, "utf8").trim();
+        return records ? records.split("\n").length : 0;
+      } catch {
+        return null;
+      }
+    };
+    const recordPhase = () => {
+      console.info(
+        "imessage-send-phase",
+        JSON.stringify({
+          phase,
+          elapsedMs: Math.round(performance.now() - started),
+          requests: countRecords(requestLogPath),
+          actions: countRecords(actionLogPath),
+        }),
+      );
+    };
+    signal.addEventListener("abort", recordPhase, { once: true });
     fs.writeFileSync(
       cliPath,
       [
@@ -165,7 +188,9 @@ describe("sendMessageIMessage receipts", () => {
     vi.stubEnv("VITEST", "");
 
     try {
+      phase = "import-deliver";
       const { deliverIMessageReply } = await import("./monitor/deliver.js");
+      phase = "monitor-yaml";
       const cfg = {
         channels: { imessage: { accounts: { default: { cliPath } } } },
       };
@@ -369,16 +394,20 @@ describe("sendMessageIMessage receipts", () => {
         },
       ];
       for (const testCase of disguisedCases) {
+        phase = "monitor-disguised:" + testCase.name;
         await deliver(testCase.text.join("\n"));
       }
 
+      phase = "rpc-styled";
       await sendMessageIMessage(
         "chat_id:10",
         ["# assistant:", "**😀 styled**", "#+#+#", "assistant to=tool"].join("\n"),
         { config: cfg },
       );
 
+      phase = "import-channel";
       const { imessagePlugin } = await import("./channel.js");
+      phase = "channel-contracts";
       const channelChunker = imessagePlugin.outbound?.chunker;
       const channelSanitizer = imessagePlugin.outbound?.sanitizeText;
       if (!channelChunker || !channelSanitizer) {
@@ -484,6 +513,7 @@ describe("sendMessageIMessage receipts", () => {
         () => deliver(runtimeCompanion),
         () => deliverThroughChannel(runtimeCompanion),
       ]) {
+        phase = "runtime-companion-routes";
         const previousRequestCount = countNativeRequests();
         await sendPrivateRuntime();
         const runtimeRequests = fs
@@ -507,6 +537,7 @@ describe("sendMessageIMessage receipts", () => {
         channelContractRequestCount += runtimeRequests.length;
       }
 
+      phase = "channel-hidden-rejections";
       for (const hidden of [
         "```xml\n<thinking>HIDDEN_CHANNEL_FENCED_THINKING</thinking>\n```",
         "`<thinking>HIDDEN_CHANNEL_INLINE_THINKING</thinking>`",
@@ -526,6 +557,7 @@ describe("sendMessageIMessage receipts", () => {
         );
         expect(countNativeRequests()).toBe(requestCount);
       }
+      phase = "channel-malformed-rejections";
       const malformedHiddenFunctionResponse = [
         '<<script>function_calls><<script>invoke name="exec">HIDDEN_CHANNEL_SYNTH_FUNCTION_CALL</<script>invoke></<script>function_calls><<script>function_response>',
         "HIDDEN_CHANNEL_SYNTH_FUNCTION_RESPONSE",
@@ -622,6 +654,7 @@ describe("sendMessageIMessage receipts", () => {
 
       const rawSeparator = "#+#+#";
       const entitySeparator = "&#35;&#43;&#35;&#43;&#35;";
+      phase = "embedded-role-roundtrips";
       let embeddedRequestCount = 0;
       for (const separator of [rawSeparator, entitySeparator]) {
         for (const role of roles) {
@@ -639,6 +672,7 @@ describe("sendMessageIMessage receipts", () => {
         }
       }
 
+      phase = "dunder-reference";
       const dunderReferenceRequestIndex = countNativeRequests();
       await sendMessageIMessage(
         "chat_id:10",
@@ -657,6 +691,7 @@ describe("sendMessageIMessage receipts", () => {
         ).flat(),
         "```",
       ].join("\n");
+      phase = "oversized-yaml-roundtrips";
       const fixedRequestCount = fs.readFileSync(requestLogPath, "utf8").trim().split("\n").length;
       await deliver(oversizedYaml, 110);
       const monitorRequestCount =
@@ -672,6 +707,7 @@ describe("sendMessageIMessage receipts", () => {
         await sendMessageIMessage("chat_id:10", chunk, { config: cfg });
       }
 
+      phase = "rpc-assertions";
       const readRequests = () =>
         fs
           .readFileSync(requestLogPath, "utf8")
@@ -755,7 +791,9 @@ describe("sendMessageIMessage receipts", () => {
         formatting: [{ start: 153, length: 4, styles: ["bold"] }],
       });
 
+      phase = "import-actions";
       const { imessageActionsRuntime } = await import("./actions.runtime.js");
+      phase = "action-roundtrips";
       const actionOptions = { cliPath, chatGuid: "iMessage;+;chat0000" };
       const fencedYaml = ["```yaml", ...roles.map((role) => `${role}:`), "```"].join("\n");
       await imessageActionsRuntime.sendRichMessage({
@@ -882,6 +920,7 @@ describe("sendMessageIMessage receipts", () => {
         options: actionOptions,
       });
 
+      phase = "action-assertions";
       const readActions = (): string[][] =>
         fs
           .readFileSync(actionLogPath, "utf8")
@@ -981,6 +1020,7 @@ describe("sendMessageIMessage receipts", () => {
         }
       }
 
+      phase = "malformed-runtime-rejection-matrix";
       const forgedTokenEntity = "&#xE000;".repeat("user".length);
       const roleTokenSwap = [
         "```xml",
@@ -1092,6 +1132,7 @@ describe("sendMessageIMessage receipts", () => {
         }
       }
       for (const hidden of privateRuntimeBlocks) {
+        phase = "hidden-runtime-rejection-matrix";
         const previousActionCount = readActions().length;
         const previousRequestCount = readRequests().length;
         await expect(sendMessageIMessage("chat_id:10", hidden, { config: cfg })).rejects.toThrow(
@@ -1137,6 +1178,7 @@ describe("sendMessageIMessage receipts", () => {
         expect(readActions()).toHaveLength(previousActionCount);
         expect(readRequests()).toHaveLength(previousRequestCount);
       }
+      phase = "role-protection-rejections";
       await expect(sendMessageIMessage("chat_id:10", "# user:", { config: cfg })).rejects.toThrow(
         "iMessage send requires text or media",
       );
@@ -1289,6 +1331,7 @@ describe("sendMessageIMessage receipts", () => {
       }
 
       for (const tag of ["thinking", "relevant_memories"] as const) {
+        phase = "hidden-action-rejection-matrix";
         for (const hidden of [
           `<${tag}>HIDDEN_RAW_CODE_PAYLOAD</${tag}>`,
           `<${tag}>HIDDEN_UNTERMINATED_RAW_CODE_PAYLOAD`,
@@ -1348,7 +1391,10 @@ describe("sendMessageIMessage receipts", () => {
       }
       expect(readActions()).toHaveLength(actions.length);
       expect(readRequests()).toHaveLength(requests.length);
+      phase = "complete";
     } finally {
+      signal.removeEventListener("abort", recordPhase);
+      recordPhase();
       vi.unstubAllEnvs();
     }
   }, 30_000);
