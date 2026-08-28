@@ -177,6 +177,7 @@ export async function prepareDirectCompactionAttempt(
     reusableRuntimeAuthPlan,
     agentDir,
     workspaceDir: resolvedWorkspace,
+    pluginMetadataSnapshot: preparedModelRuntime.metadataSnapshot,
     authProfileId,
     runtimePolicyAgentId,
     runtimePolicySessionKey,

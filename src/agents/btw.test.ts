@@ -36,7 +36,6 @@ const discoverModelsMock = vi.fn();
 const getModelRegistryRuntimeMock = vi.fn();
 const resolveModelWithRegistryMock = vi.fn();
 const ensureAuthProfileStoreMock = vi.fn();
-const ensureAuthProfileStoreWithoutExternalProfilesMock = vi.fn();
 const resolveModelAsyncMock = vi.fn();
 const getApiKeyForModelMock = vi.fn();
 const requireApiKeyMock = vi.fn();
@@ -168,8 +167,6 @@ vi.mock("./embedded-agent-runner/model.js", () => ({
 vi.mock("./model-auth.js", () => ({
   applySecretRefHeaderSentinels: (model: unknown) => model,
   ensureAuthProfileStore: (...args: unknown[]) => ensureAuthProfileStoreMock(...args),
-  ensureAuthProfileStoreWithoutExternalProfiles: (...args: unknown[]) =>
-    ensureAuthProfileStoreWithoutExternalProfilesMock(...args),
   getApiKeyForModelCore: (...args: unknown[]) => getApiKeyForModelMock(...args),
   hasUsableCustomProviderApiKey: (...args: unknown[]) => hasUsableCustomProviderApiKeyMock(...args),
   requireApiKey: (...args: unknown[]) => requireApiKeyMock(...args),
@@ -698,7 +695,6 @@ describe("runBtwSideQuestion", () => {
     resolveModelAsyncMock.mockReset();
     resolveModelWithRegistryMock.mockReset();
     ensureAuthProfileStoreMock.mockReset();
-    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReset();
     getApiKeyForModelMock.mockReset();
     requireApiKeyMock.mockReset();
     resolveSessionAuthSelectionMock.mockReset();
@@ -764,7 +760,6 @@ describe("runBtwSideQuestion", () => {
       api: "anthropic-messages",
     });
     ensureAuthProfileStoreMock.mockReturnValue({ version: 1, profiles: {} });
-    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue({ version: 1, profiles: {} });
     getApiKeyForModelMock.mockImplementation(async (params: { profileId?: string } = {}) => ({
       apiKey: "secret",
       mode: "api-key",
@@ -933,6 +928,41 @@ describe("runBtwSideQuestion", () => {
     preparedRuntimeSnapshotState.useSnapshotPluginRegistry = true;
     resolveAgentWorkspaceDirMock.mockReturnValue(GENERATION_WORKSPACE_DIR);
     publishCurrentModelGeneration(generationB);
+    const profileId = "local-proxy:workspace-a";
+    const selectedStore = {
+      version: 1,
+      profiles: {
+        [profileId]: {
+          type: "oauth" as const,
+          provider: "local-proxy",
+          access: "fixture-access",
+          refresh: "fixture-refresh",
+          expires: Date.now() + 60_000,
+        },
+      },
+      runtimeExternalProfileIds: [profileId],
+    };
+    resolveSessionAuthSelectionMock.mockResolvedValue({ profileId, source: "user" });
+    ensureAuthProfileStoreMock.mockImplementation(
+      (
+        _agentDir: string,
+        options: Parameters<typeof import("./auth-profiles/store.js").ensureAuthProfileStore>[1],
+      ) =>
+        options?.config === cfg &&
+        options.workspaceDir === GENERATION_WORKSPACE_DIR &&
+        options.pluginMetadataSnapshot === generationA.metadataSnapshot
+          ? selectedStore
+          : { version: 1, profiles: {} },
+    );
+    getApiKeyForModelMock.mockImplementation(async (params: { profileId?: string }) => {
+      if (params.profileId !== profileId) {
+        throw new Error("BTW must retain the selected workspace's external profile");
+      }
+      return { apiKey: "fixture-access", mode: "oauth", source: `profile:${profileId}`, profileId };
+    });
+    resolveModelAsyncMock.mockImplementation(async () => ({
+      model: resolveModelWithRegistryMock(),
+    }));
     const runtimeAuthA = vi.fn(async () => ({ apiKey: "runtime-auth-a" }));
     const runtimeAuthB = vi.fn(async () => ({ apiKey: "runtime-auth-b" }));
     const streamA = vi.fn(
@@ -976,15 +1006,14 @@ describe("runBtwSideQuestion", () => {
     await expect(
       runSideQuestion({ cfg, provider: "local-proxy", model: "side-model" }),
     ).resolves.toEqual({ text: "Generation A / runtime-auth-a / Stream A" });
-    expect(ensureAuthProfileStoreWithoutExternalProfilesMock).toHaveBeenCalledWith(
-      DEFAULT_AGENT_DIR,
-      {
-        config: cfg,
-        workspaceDir: GENERATION_WORKSPACE_DIR,
-        pluginMetadataSnapshot: generationA.metadataSnapshot,
-        allowKeychainPrompt: false,
-      },
-    );
+    expect(ensureAuthProfileStoreMock).toHaveBeenCalledWith(DEFAULT_AGENT_DIR, {
+      config: cfg,
+      workspaceDir: GENERATION_WORKSPACE_DIR,
+      pluginMetadataSnapshot: generationA.metadataSnapshot,
+      externalCliProviderIds: [],
+      externalCliProfileIds: [profileId],
+      allowKeychainPrompt: false,
+    });
     expect(resolveSessionAuthSelectionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         cfg,
@@ -1895,8 +1924,9 @@ describe("runBtwSideQuestion", () => {
         },
       },
     };
-    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValueOnce(staticAuthStore);
-    ensureAuthProfileStoreMock.mockReturnValueOnce(claudeAuthStore);
+    ensureAuthProfileStoreMock
+      .mockReturnValueOnce(staticAuthStore)
+      .mockReturnValueOnce(claudeAuthStore);
     getApiKeyForModelMock.mockResolvedValueOnce({
       apiKey: "claude-cli-access",
       mode: "oauth",
@@ -1917,17 +1947,17 @@ describe("runBtwSideQuestion", () => {
     const result = await runSideQuestion();
 
     expect(result).toEqual({ text: "Claude CLI answer." });
-    expect(ensureAuthProfileStoreWithoutExternalProfilesMock).toHaveBeenCalledWith(
-      DEFAULT_AGENT_DIR,
-      {
-        allowKeychainPrompt: false,
-        config: expect.any(Object),
-        workspaceDir: "/tmp/workspace",
-        pluginMetadataSnapshot: defaultPluginMetadataSnapshot,
-      },
-    );
+    expect(ensureAuthProfileStoreMock).toHaveBeenNthCalledWith(1, DEFAULT_AGENT_DIR, {
+      externalCliProviderIds: [],
+      externalCliProfileIds: [],
+      allowKeychainPrompt: false,
+      config: expect.any(Object),
+      workspaceDir: "/tmp/workspace",
+      pluginMetadataSnapshot: defaultPluginMetadataSnapshot,
+    });
     expect(ensureAuthProfileStoreMock).toHaveBeenCalledWith(DEFAULT_AGENT_DIR, {
       externalCliProviderIds: ["claude-cli"],
+      externalCliProfileIds: [],
       allowKeychainPrompt: false,
       config: expect.any(Object),
       workspaceDir: "/tmp/workspace",
@@ -1985,7 +2015,7 @@ describe("runBtwSideQuestion", () => {
       authStorage,
       modelRegistry,
     });
-    ensureAuthProfileStoreWithoutExternalProfilesMock.mockReturnValue(authStore);
+    ensureAuthProfileStoreMock.mockReturnValue(authStore);
     resolveSessionAuthSelectionMock.mockResolvedValue(undefined);
     getApiKeyForModelMock.mockImplementation(async (authParams: { profileId?: string } = {}) => {
       if (authParams.profileId === "anthropic:primary") {
@@ -2289,9 +2319,9 @@ describe("runBtwSideQuestion", () => {
       }),
     });
 
-    expect(ensureAuthProfileStoreWithoutExternalProfilesMock).not.toHaveBeenCalled();
     expect(ensureAuthProfileStoreMock).toHaveBeenCalledWith(DEFAULT_AGENT_DIR, {
       externalCliProviderIds: ["claude-cli"],
+      externalCliProfileIds: ["anthropic:api"],
       allowKeychainPrompt: false,
       config: expect.any(Object),
       workspaceDir: "/tmp/workspace",

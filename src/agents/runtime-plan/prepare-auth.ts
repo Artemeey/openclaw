@@ -22,6 +22,7 @@ import {
   shouldPreferExplicitConfigApiKeyAuth,
 } from "../model-auth.js";
 import { resolveOpenAIModelRoutes, selectOpenAIModelRouteAuth } from "../openai-model-routes.js";
+import type { ProviderAuthAliasLookupParams } from "../provider-auth-aliases.js";
 import {
   buildProviderModelAuthDirectSource,
   buildProviderModelAuthSourcePlan,
@@ -174,12 +175,14 @@ type ProviderEntryProfileParams = Pick<
   "config" | "modelId" | "provider"
 > & {
   store: AuthProfileStore;
+  authAliasLookupParams: ProviderAuthAliasLookupParams;
 };
 
 /** Applies terminal provider-entry credential policy before route selection. */
 function resolvePreparedProviderEntryApiKeyProfileReference(params: ProviderEntryProfileParams) {
   const reference = resolveProviderEntryApiKeyProfileReference({
     cfg: params.config,
+    authAliasLookupParams: params.authAliasLookupParams,
     provider: params.provider,
     store: params.store,
   });
@@ -188,6 +191,7 @@ function resolvePreparedProviderEntryApiKeyProfileReference(params: ProviderEntr
   }
   const eligibility = resolveAuthProfileEligibility({
     cfg: params.config,
+    authAliasLookupParams: params.authAliasLookupParams,
     store: params.store,
     provider: params.provider,
     profileId: reference.profileId,
@@ -209,6 +213,12 @@ function resolvePreparedProviderEntryApiKeyProfileReference(params: ProviderEntr
 export function prepareAgentRuntimeAuth(
   params: PrepareAgentRuntimeAuthPlanParams,
 ): PreparedAgentRuntimeAuth {
+  const authAliasLookupParams: ProviderAuthAliasLookupParams = {
+    config: params.config,
+    env: params.env,
+    workspaceDir: params.workspaceDir,
+    metadataSnapshot: params.metadataSnapshot,
+  };
   const requestedProfileId = params.sessionAuthProfileId?.trim() || undefined;
   const userPinnedProfileId =
     params.sessionAuthProfileSource === "user" ? requestedProfileId : undefined;
@@ -232,6 +242,7 @@ export function prepareAgentRuntimeAuth(
     const eligibility = store
       ? resolveAuthProfileEligibility({
           cfg: params.config,
+          authAliasLookupParams,
           store,
           provider: authProfileSelectionProvider,
           profileId: userPinnedProfileId,
@@ -260,6 +271,7 @@ export function prepareAgentRuntimeAuth(
           modelId: params.modelId,
           provider: params.provider,
           store,
+          authAliasLookupParams,
         })
       : { kind: "none" as const };
   if (providerBinding.kind === "profile-incompatible") {
@@ -300,6 +312,7 @@ export function prepareAgentRuntimeAuth(
         }
       : resolveAuthProfileOrderWithMetadata({
           cfg: params.config,
+          authAliasLookupParams,
           store,
           provider: authProfileSelectionProvider,
           preferredProfile: requestedProfileId,

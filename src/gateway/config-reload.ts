@@ -56,6 +56,7 @@ import type {
   GatewayHotReloadApplicationStatus,
   GatewayHotReloadStatus,
 } from "./config-reload-status.types.js";
+import { GatewayConfigReloadSupersededError } from "./server-reload-contracts.js";
 
 export type { GatewayReloadPlan } from "./config-reload-plan.js";
 const MISSING_CONFIG_RETRY_DELAY_MS = 150;
@@ -134,17 +135,6 @@ export type GatewayConfigReloadTransactionOwnership = {
   pluginMetadata?: PreparedPluginMetadata;
   publishPluginMetadata?: (runtimeConfig: OpenClawConfig) => void;
 };
-
-class GatewayConfigReloadSupersededError extends Error {
-  constructor() {
-    super("config reload superseded by a newer config write");
-    this.name = "GatewayConfigReloadSupersededError";
-  }
-}
-
-function isGatewayConfigReloadSupersededError(error: unknown): boolean {
-  return error instanceof Error && error.name === "GatewayConfigReloadSupersededError";
-}
 
 function asPluginInstallConfig(records: PluginInstallRecords): OpenClawConfig {
   return {
@@ -427,7 +417,7 @@ export function startGatewayConfigReloader(opts: {
       // transaction. Only downstream signal delivery may coalesce.
       await opts.onRestart(plan, nextConfig, ownership, sourceConfig);
     } catch (err) {
-      if (isGatewayConfigReloadSupersededError(err)) {
+      if (err instanceof GatewayConfigReloadSupersededError) {
         opts.log.info(`config restart superseded: ${String(err)}`);
       } else {
         opts.log.error(`config restart failed: ${String(err)}`);
@@ -822,12 +812,12 @@ export function startGatewayConfigReloader(opts: {
     }
   };
 
-  const runAcceptedTransaction = async (run: () => Promise<void>) => {
-    if (opts.runTransaction) {
-      await opts.runTransaction(run);
-      return;
-    }
-    await run();
+  const runAcceptedTransaction = async (
+    run: () => Promise<void>,
+    application?: RuntimeConfigWriteApplicationClaim,
+  ) => {
+    const runTransaction = application?.runTransaction ?? opts.runTransaction;
+    await (runTransaction ? runTransaction(run) : run());
   };
 
   const acceptCurrentRuntimeEcho = async (
@@ -915,7 +905,7 @@ export function startGatewayConfigReloader(opts: {
               activeInProcessConfig = null;
             }
             await promoteAcceptedInProcessWrite(pendingWrite.persistedHash);
-          });
+          }, pendingWrite.application);
         } catch (err) {
           if (lastAppliedWriteHash === pendingWrite.persistedHash) {
             lastAppliedWriteHash = null;
@@ -996,7 +986,7 @@ export function startGatewayConfigReloader(opts: {
               watcherIntentCameFromPendingWrite = false;
             }
             await promoteAcceptedSnapshot(snapshot, "in-process-write");
-          });
+          }, intentCandidate.application);
         } catch (err) {
           if (lastAppliedWriteHash === intentCandidate.persistedHash) {
             lastAppliedWriteHash = null;
@@ -1122,7 +1112,7 @@ export function startGatewayConfigReloader(opts: {
       });
       await acceptWatchedPaths(snapshot.includedPaths ?? []);
     } catch (err) {
-      const superseded = isGatewayConfigReloadSupersededError(err);
+      const superseded = err instanceof GatewayConfigReloadSupersededError;
       const transferredToWatcher =
         superseded && attemptedCandidate !== null && watcherIntentCandidate === attemptedCandidate;
       if (!transferredToWatcher) {

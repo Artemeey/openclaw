@@ -38,6 +38,7 @@ import {
   getActiveGatewayRootWorkCount,
   resetGatewayWorkAdmission,
   runWithGatewayIndependentRootWorkAdmission,
+  tryBeginGatewayRootWorkAdmission,
 } from "../process/gateway-work-admission.js";
 import {
   getSkillsSnapshotVersion,
@@ -59,6 +60,7 @@ import {
   startGatewayConfigReloader,
 } from "./config-reload.js";
 import { commitGatewayConfigWrite } from "./server-methods/config-write-flow.js";
+import { GatewayConfigReloadSupersededError } from "./server-reload-contracts.js";
 import { createTerminalLaunchPolicy } from "./terminal/launch.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -1718,7 +1720,7 @@ describe("startGatewayConfigReloader", () => {
     await harness.reloader.stop();
   });
 
-  it("carries an RPC write receipt through real option and listener copies until commit", async () => {
+  it("applies an RPC write receipt inside its originating gateway root", async () => {
     const root = tempDirs.make("openclaw-config-receipt-");
     const configPath = nodePath.join(root, "openclaw.json");
     const initialConfig = {
@@ -1748,10 +1750,11 @@ describe("startGatewayConfigReloader", () => {
         runtimeConfig: OpenClawConfig,
         ownership: GatewayConfigReloadTransactionOwnership,
       ) => {
+        const competingRootCount = getActiveGatewayRootWorkCount({ excludeCurrent: true });
         markHotReloadStarted();
         await hotReloadGate;
         ownership.markRuntimeCommitted(runtimeConfig, plan);
-        return "applied" as const;
+        return { status: "applied" as const, competingRootCount };
       },
     );
     const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
@@ -1786,34 +1789,49 @@ describe("startGatewayConfigReloader", () => {
           onNoopConfigCommit: async (plan, runtimeConfig, ownership) => {
             ownership.markRuntimeCommitted(runtimeConfig, plan);
           },
-          onHotReload,
+          onHotReload: async (plan, runtimeConfig, ownership) =>
+            (await onHotReload(plan, runtimeConfig, ownership)).status,
           onRestart: async () => {
             throw new Error("unexpected restart");
           },
+          runTransaction: runWithGatewayIndependentRootWorkAdmission,
           log,
           watchPath: configPath,
         });
 
         try {
-          const prepared = await readConfigFileSnapshotForWrite();
-          const writeResult = await commitGatewayConfigWrite({
-            snapshot: prepared.snapshot,
-            writeOptions: prepared.writeOptions,
-            nextConfig,
-            awaitRuntimeApplication: true,
+          const request = tryBeginGatewayRootWorkAdmission();
+          if (!request) {
+            throw new Error("expected gateway request admission");
+          }
+          const writeResult = await request.run(async () => {
+            const prepared = await readConfigFileSnapshotForWrite();
+            return await commitGatewayConfigWrite({
+              snapshot: prepared.snapshot,
+              writeOptions: prepared.writeOptions,
+              nextConfig,
+              awaitRuntimeApplication: true,
+            });
           });
-          let settled = false;
-          void writeResult.application?.then(() => {
-            settled = true;
-          });
+          try {
+            let settled = false;
+            void writeResult.application?.then(() => {
+              settled = true;
+            });
 
-          await vi.advanceTimersByTimeAsync(0);
-          await hotReloadStarted;
-          expect(onHotReload).toHaveBeenCalledOnce();
-          expect(settled).toBe(false);
+            await vi.advanceTimersByTimeAsync(0);
+            await hotReloadStarted;
+            expect(onHotReload).toHaveBeenCalledOnce();
+            expect(settled).toBe(false);
 
-          releaseHotReload();
-          await expect(writeResult.application).resolves.toBe("applied");
+            releaseHotReload();
+            await expect(writeResult.application).resolves.toBe("applied");
+            await expect(onHotReload.mock.results[0]?.value).resolves.toMatchObject({
+              competingRootCount: 0,
+            });
+          } finally {
+            request.release();
+          }
         } finally {
           await reloader.stop();
         }
@@ -3270,9 +3288,7 @@ describe("startGatewayConfigReloader", () => {
     });
     const readSnapshot = vi.fn<() => Promise<ConfigFileSnapshot>>().mockResolvedValue(snapshot);
     const { watcher, onRestart, log, reloader } = createReloaderHarness(readSnapshot);
-    const superseded = new Error("config reload superseded by a newer runtime config source");
-    superseded.name = "GatewayConfigReloadSupersededError";
-    onRestart.mockRejectedValueOnce(superseded);
+    onRestart.mockRejectedValueOnce(new GatewayConfigReloadSupersededError());
 
     watcher.emit("change");
     await vi.runAllTimersAsync();

@@ -17,9 +17,14 @@ import {
 import { createAgentRuntimeMetadataPluginIdScope } from "./harness/runtime-plugin-load-plan.js";
 import type { PreparedModelRuntimeInput } from "./prepared-model-runtime.types.js";
 
+type PreparedPluginContextInput = Pick<
+  PreparedModelRuntimeInput,
+  "config" | "workspaceDir" | "loadRuntimePlugins" | "runtimePluginSelections"
+>;
+
 /** Resolves and attaches the plugin facts owned by one prepared workspace generation. */
 export function prepareOwnedPluginLoadContext(
-  input: PreparedModelRuntimeInput,
+  input: PreparedPluginContextInput,
   env: NodeJS.ProcessEnv,
   registry?: PluginRegistry,
   preparedMetadataSnapshot?: PluginMetadataSnapshot,
@@ -42,7 +47,7 @@ export function prepareOwnedPluginLoadContext(
 }
 
 function prepareOperationMetadataSnapshot(
-  input: PreparedModelRuntimeInput,
+  input: PreparedPluginContextInput,
   env: NodeJS.ProcessEnv,
 ): PluginMetadataSnapshot {
   const inherited = getCurrentPluginMetadataSnapshot({

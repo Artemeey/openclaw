@@ -1,5 +1,6 @@
 /** Shared model, harness, and auth preparation for embedded compaction. */
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
 import type { ProviderRuntimeModel } from "../../plugins/provider-runtime-model.types.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { isDefaultAgentRuntimeId, normalizeOptionalAgentRuntimeId } from "../agent-runtime-id.js";
@@ -15,10 +16,7 @@ import {
   resolveAgentHarnessPreparedRouteSupport,
 } from "../harness/support.js";
 import type { AgentHarness } from "../harness/types.js";
-import {
-  ensureAuthProfileStore,
-  ensureAuthProfileStoreWithoutExternalProfiles,
-} from "../model-auth.js";
+import { ensureAuthProfileStore } from "../model-auth.js";
 import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
 import { isOpenAIProvider } from "../openai-routing.js";
 import {
@@ -147,6 +145,7 @@ export async function prepareCompactionHarnessAuth(params: {
   reusableRuntimeAuthPlan?: AgentRuntimeAuthPlan;
   agentDir: string;
   workspaceDir: string;
+  pluginMetadataSnapshot: PluginMetadataSnapshot;
   authProfileId?: string;
   authProfileIdSource?: "auto" | "user";
   runtimePolicyAgentId?: string;
@@ -160,14 +159,15 @@ export async function prepareCompactionHarnessAuth(params: {
   selectedPreparedHarness: AgentHarness;
   providerUsesProfileScopedModelMetadata: boolean;
 }> {
-  const runtimeAuthProfileStore = isOpenAIProvider(params.provider)
-    ? ensureAuthProfileStore(params.agentDir, {
-        externalCliProviderIds: ["openai"],
-        allowKeychainPrompt: false,
-      })
-    : ensureAuthProfileStoreWithoutExternalProfiles(params.agentDir, {
-        allowKeychainPrompt: false,
-      });
+  const runtimeAuthProfileStore = ensureAuthProfileStore(params.agentDir, {
+    config: params.config,
+    workspaceDir: params.workspaceDir,
+    pluginMetadataSnapshot: params.pluginMetadataSnapshot,
+    externalCliProviderIds: isOpenAIProvider(params.provider) ? ["openai"] : [],
+    externalCliProfileIds:
+      params.authProfileIdSource === "user" && params.authProfileId ? [params.authProfileId] : [],
+    allowKeychainPrompt: false,
+  });
   const selectPreparedHarness = (attempts: readonly PreparedAgentRuntimeAuthAttempt[]) =>
     selectAgentHarnessForPreparedModelProviders({
       provider: params.provider,
@@ -203,6 +203,7 @@ export async function prepareCompactionHarnessAuth(params: {
       env: process.env,
       agentDir: params.agentDir,
       workspaceDir: params.workspaceDir,
+      metadataSnapshot: params.pluginMetadataSnapshot,
       authProfileStore: runtimeAuthProfileStore,
       sessionAuthProfileId: params.authProfileId,
       sessionAuthProfileSource: params.authProfileIdSource,

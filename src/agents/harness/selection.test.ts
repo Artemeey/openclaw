@@ -3674,7 +3674,7 @@ describe("selectAgentHarness", () => {
         };
       },
     );
-    compactAuthMocks.ensureAuthProfileStoreWithoutExternalProfiles.mockReturnValue({
+    compactAuthMocks.ensureAuthProfileStore.mockReturnValue({
       version: 1,
       profiles: {
         "local-proxy:stale": {

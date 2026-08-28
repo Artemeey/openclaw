@@ -548,6 +548,9 @@ export async function runIsolatedCompletion(
             readOnly: true,
             allowKeychainPrompt: false,
             config,
+            workspaceDir,
+            pluginMetadataSnapshot: lease.snapshot.metadataSnapshot,
+            externalCliProfileIds: request.authProfileId ? [request.authProfileId] : undefined,
           });
           authAttempts = prepareAgentRuntimeAuth({
             provider: runtimeModel.provider,
@@ -558,6 +561,7 @@ export async function runIsolatedCompletion(
             env: process.env,
             agentDir,
             workspaceDir,
+            metadataSnapshot: lease.snapshot.metadataSnapshot,
             authProfileStore,
             sessionAuthProfileId: request.authProfileId,
             sessionAuthProfileSource: request.authProfileId ? "user" : undefined,

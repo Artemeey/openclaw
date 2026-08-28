@@ -12,8 +12,8 @@ import type {
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { addDoctorLegacyIssues } from "./doctor/shared/legacy-config-issues.js";
 
-const loadInstalledPluginIndexStore = createLazyRuntimeModule(
-  () => import("../plugins/installed-plugin-index-store.js"),
+const loadInstalledPluginIndexStoreWrite = createLazyRuntimeModule(
+  () => import("../plugins/installed-plugin-index-store-write.js"),
 );
 
 export type DoctorConfigPreflightPluginSnapshotRead = {
@@ -88,7 +88,7 @@ export async function persistRefreshedPluginIndex(params: {
   }
   const { writePersistedInstalledPluginIndexWithLeaseSync } = await params.measure(
     "plugin-index-store-import",
-    loadInstalledPluginIndexStore,
+    loadInstalledPluginIndexStoreWrite,
   );
   // The checkpoint certifies the persisted inventory, not a process-local replacement.
   // Write the exact derived index first, then prove a fresh reader can reuse it.

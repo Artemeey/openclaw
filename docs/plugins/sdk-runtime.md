@@ -460,6 +460,7 @@ snapshots; OpenClaw owns all persistence and lifecycle coordination.
       sessionKey: "agent:main:subagent:search-helper",
       message: "Expand this query into focused follow-up searches.",
       toolsAlsoAllow: ["my_plugin_progress"],
+      promptMode: "minimal", // optional bounded subagent prompt
       provider: "openai", // optional override
       model: "gpt-5.6-sol", // optional override
       deliver: false,
@@ -492,6 +493,8 @@ snapshots; OpenClaw owns all persistence and lifecycle coordination.
     For background calls without an operator request, `subagent.allowedModels` can restrict overrides to canonical `provider/model` targets. A finite allowlist binds the authorized initial target to the calling runtime's metadata. If the destination workspace resolves the override to a different model, the run fails before inference. ACP sessions reject these constrained overrides because they cannot guarantee that initial model selection. Configured automatic fallbacks remain separate from override authorization.
 
     `toolsAlsoAllow` adds exact, uniquely owned tools registered by the calling plugin to the worker's normal tool surface. The runtime rejects core tools and names shared with another plugin. Profiles and operator tool policies still apply, including explicit allowlists and denies.
+
+    `promptMode: "minimal"` selects the bounded subagent prompt instead of the full conversation prompt. The plugin runtime exposes only this mode; omission keeps the full prompt. Use `disableTools: true` as well when the run must have an exact empty tool surface.
 
     `completionDelivery: "current-requester"` is default-off and is only available while a `before_dispatch` hook is handling an authenticated inbound request. OpenClaw captures the canonical requester session and delivery route before invoking the plugin, then delivers the subagent completion through the normal announce path. Plugins cannot provide or override requester lineage or destination fields. Calls outside that requester-bound hook context are rejected.
 

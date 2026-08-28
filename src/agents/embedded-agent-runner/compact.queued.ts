@@ -533,6 +533,7 @@ async function compactResolvedContextEngine(
       reusableRuntimeAuthPlan,
       agentDir,
       workspaceDir: resolvedWorkspaceDir,
+      pluginMetadataSnapshot: preparedModelRuntime.metadataSnapshot,
       authProfileId: resolvedCompactionTarget.authProfileId,
       runtimePolicyAgentId,
       runtimePolicySessionKey,

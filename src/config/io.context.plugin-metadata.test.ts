@@ -5,10 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveReadOnlyChannelPluginsForConfig } from "../channels/plugins/read-only.js";
 import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
 import { clearLoadInstalledPluginIndexInstallRecordsCache } from "../plugins/installed-plugin-index-record-cache.js";
-import {
-  readPersistedInstalledPluginIndexSync,
-  refreshPersistedInstalledPluginIndexSync,
-} from "../plugins/installed-plugin-index-store.js";
+import { refreshPersistedInstalledPluginIndexSync } from "../plugins/installed-plugin-index-store-write.js";
+import { readPersistedInstalledPluginIndexSync } from "../plugins/installed-plugin-index-store.js";
 import {
   createPluginMetadataOwner,
   getPluginMetadataWorkspaceSnapshot,

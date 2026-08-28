@@ -59,7 +59,7 @@ describe("model-selection-resolve OpenRouter compat aliases", () => {
           owner.publish(metadata, { config: cfg });
           const workspaceDir = state.path(workspaceKind === "configured" ? "work" : "auxiliary");
           const pluginMetadataSnapshot = prepareOwnedPluginLoadContext(
-            { config: cfg, agentId: "work", agentDir: state.path("agent"), workspaceDir },
+            { config: cfg, workspaceDir },
             process.env,
           );
           const selection = {

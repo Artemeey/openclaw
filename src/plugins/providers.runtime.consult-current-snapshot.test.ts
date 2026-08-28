@@ -2,8 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { overlayExternalAuthProfiles } from "../agents/auth-profiles/external-auth.js";
 import {
-  listRuntimeAuthProfileStoreSnapshots,
-  replaceRuntimeAuthProfileStoreSnapshots,
+  listOwnedRuntimeAuthProfileStoreSnapshots,
+  replaceOwnedRuntimeAuthProfileStoreSnapshots,
   setRuntimeAuthProfileStoreSnapshot,
 } from "../agents/auth-profiles/runtime-snapshots.js";
 import { resolveSessionAuthSelection } from "../agents/auth-profiles/session-override.js";
@@ -295,8 +295,8 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
       "cron user pin",
       "cron concurrent user pin",
     ] as const)("keeps captured auth aliases for %s", async (scenario) => {
-      const previousStores = listRuntimeAuthProfileStoreSnapshots();
-      onTestFinished(() => replaceRuntimeAuthProfileStoreSnapshots(previousStores));
+      const previousStores = listOwnedRuntimeAuthProfileStoreSnapshots();
+      onTestFinished(() => replaceOwnedRuntimeAuthProfileStoreSnapshots(previousStores));
       await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
         const models = ["one", "two"].map((id) => ({
           id,
@@ -595,8 +595,8 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
           };
 
           if (surface === "cron") {
-            const previousStores = listRuntimeAuthProfileStoreSnapshots();
-            onTestFinished(() => replaceRuntimeAuthProfileStoreSnapshots(previousStores));
+            const previousStores = listOwnedRuntimeAuthProfileStoreSnapshots();
+            onTestFinished(() => replaceOwnedRuntimeAuthProfileStoreSnapshots(previousStores));
             const agentId = "work";
             const agentDir = state.agentDir(agentId);
             const sessionKey = "agent:work:cron:external-auth-context";
@@ -648,8 +648,8 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
               authProfileOverrideSource: "user",
             });
           } else if (surface === "fallback") {
-            const previousStores = listRuntimeAuthProfileStoreSnapshots();
-            onTestFinished(() => replaceRuntimeAuthProfileStoreSnapshots(previousStores));
+            const previousStores = listOwnedRuntimeAuthProfileStoreSnapshots();
+            onTestFinished(() => replaceOwnedRuntimeAuthProfileStoreSnapshots(previousStores));
             setRuntimeAuthProfileStoreSnapshot({
               version: 1,
               profiles: {

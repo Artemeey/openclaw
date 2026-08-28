@@ -8,8 +8,7 @@ import type {
   PreparedPluginMetadata,
 } from "../plugins/plugin-metadata-collection.js";
 import type { ChannelHealthMonitor } from "./channel-health-monitor.js";
-import type { ChannelKind } from "./config-reload-plan.js";
-import type { GatewayReloadPlan } from "./config-reload.js";
+import type { ChannelKind, GatewayReloadPlan } from "./config-reload-plan.js";
 import type { GatewayCronReconciliation } from "./server-cron-reconciled.js";
 import type { GatewayCronState } from "./server-cron.js";
 import type { GatewayConfigReloaderHandle } from "./server-runtime-handles.js";
@@ -138,15 +137,18 @@ export class GatewayConfigReloadSupersededError extends Error {
   }
 }
 
+export function createReloadCancellationError(superseded: boolean) {
+  return superseded
+    ? new GatewayConfigReloadSupersededError()
+    : new GatewayHotReloadCancelledError();
+}
+
 export function assertReloadPublicationCurrent(
   publicationCurrent: boolean,
   restartStopped: boolean,
 ): void {
-  if (!publicationCurrent) {
-    throw new GatewayConfigReloadSupersededError();
-  }
-  if (restartStopped) {
-    throw new GatewayHotReloadCancelledError();
+  if (!publicationCurrent || restartStopped) {
+    throw createReloadCancellationError(!publicationCurrent);
   }
 }
 

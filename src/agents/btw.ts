@@ -55,7 +55,6 @@ import {
 } from "./image-sanitization.js";
 import {
   ensureAuthProfileStore,
-  ensureAuthProfileStoreWithoutExternalProfiles,
   applySecretRefHeaderSentinels,
   requireApiKey,
 } from "./model-auth.js";
@@ -146,10 +145,14 @@ function resolveBtwAuthProfileStore(params: {
   ignoreAutoPreferredProfile: boolean;
 } {
   const { config: cfg, agentDir, workspaceDir, metadataSnapshot } = params.preparedModelRuntime;
+  const userPinnedAuthProfileId =
+    params.authProfileIdSource === "user" ? params.authProfileId : undefined;
+  const authAliasLookupParams = { env: process.env, metadataSnapshot };
   const authStoreOptions = {
     config: cfg,
     workspaceDir,
     pluginMetadataSnapshot: metadataSnapshot,
+    externalCliProfileIds: userPinnedAuthProfileId ? [userPinnedAuthProfileId] : [],
     allowKeychainPrompt: false,
   };
   if (isOpenAIProvider(params.provider)) {
@@ -162,30 +165,27 @@ function resolveBtwAuthProfileStore(params: {
     };
   }
 
-  const userPinnedAuthProfileId =
-    params.authProfileIdSource === "user" ? params.authProfileId : undefined;
   let externalCliAuthScope = resolveExternalCliAuthOverlayScopeFromSelection({
     provider: params.provider,
     cfg,
     agentId: params.agentId,
     modelId: params.modelId,
     workspaceDir,
+    authAliasLookupParams,
     userPinnedAuthProfileId,
   });
-  let store: AuthProfileStore;
-  if (externalCliAuthScope.providerIds) {
-    store = ensureAuthProfileStore(agentDir, {
-      externalCliProviderIds: externalCliAuthScope.providerIds,
-      ...authStoreOptions,
-    });
-  } else {
-    store = ensureAuthProfileStoreWithoutExternalProfiles(agentDir, authStoreOptions);
+  let store = ensureAuthProfileStore(agentDir, {
+    ...authStoreOptions,
+    externalCliProviderIds: externalCliAuthScope.providerIds ?? [],
+  });
+  if (!externalCliAuthScope.providerIds) {
     externalCliAuthScope = resolveExternalCliAuthOverlayScopeFromSelection({
       provider: params.provider,
       cfg,
       agentId: params.agentId,
       modelId: params.modelId,
       workspaceDir,
+      authAliasLookupParams,
       store,
       userPinnedAuthProfileId,
     });
@@ -551,6 +551,7 @@ async function resolveRuntimeModel(params: {
     config: cfg,
     env: process.env,
     workspaceDir,
+    metadataSnapshot: preparedModelRuntime.metadataSnapshot,
     authProfileStore: authProfileStoreSelection.store,
     sessionAuthProfileId: effectiveAuthProfileId,
     sessionAuthProfileSource: authProfileIdSource,
@@ -901,6 +902,7 @@ export async function runBtwSideQuestion(
             config: params.cfg,
             env: process.env,
             workspaceDir,
+            metadataSnapshot: preparedModelRuntime.metadataSnapshot,
             authProfileStore: authProfileStoreSelection.store,
             sessionAuthProfileId:
               authProfileStoreSelection.ignoreAutoPreferredProfile &&
