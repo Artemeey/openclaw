@@ -77,11 +77,8 @@ function resolveChannelCatalogPluginId(
 function resolveInstallRecords(
   params: ChannelCatalogParams,
 ): Record<string, PluginInstallRecord> | undefined {
-  if (params.installRecords) {
+  if (params.installRecords || params.origin === "bundled") {
     return params.installRecords;
-  }
-  if (params.origin === "bundled") {
-    return undefined;
   }
   try {
     return loadInstalledPluginIndexInstallRecordsSync(params.env ? { env: params.env } : {});

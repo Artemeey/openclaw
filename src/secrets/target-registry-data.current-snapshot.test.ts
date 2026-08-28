@@ -8,10 +8,10 @@ import {
 } from "../config/plugin-auto-enable.test-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
+import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
 import {
   createPluginMetadataOwner,
   getPluginMetadataWorkspaceSnapshot,
-  installPluginMetadataOwner,
 } from "../plugins/plugin-metadata-collection.js";
 import { freezePluginMetadataValue } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";

@@ -1,10 +1,14 @@
 // Verifies metadata-backed setup registry descriptor lookup.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { setCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-snapshot.js";
+import { withPluginMetadataSnapshotScope } from "./current-plugin-metadata-snapshot.js";
+import { setCurrentPluginMetadataSnapshot } from "./current-plugin-metadata.test-support.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
-import type { InstalledPluginIndex } from "./installed-plugin-index.js";
 import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
-import type { PluginMetadataSnapshot } from "./plugin-metadata-snapshot.js";
+import {
+  projectPluginMetadataSnapshot,
+  type PluginMetadataSnapshot,
+} from "./plugin-metadata-snapshot.js";
+import { createPluginMetadataSnapshotFixture } from "./plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "./registry-empty.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "./runtime.js";
 import { withPluginRuntimeGenerationScope } from "./runtime/generation-scope.js";
@@ -21,9 +25,10 @@ vi.mock("./manifest-registry-installed.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./manifest-registry-installed.js")>()),
   loadPluginManifestRegistryForInstalledIndex: loadPluginManifestRegistryForInstalledIndexMock,
 }));
-vi.mock("./plugin-metadata-snapshot.js", async () => {
+vi.mock("./plugin-metadata-snapshot.js", async (importOriginal) => {
   const current = await import("./current-plugin-metadata-snapshot.js");
   return {
+    ...(await importOriginal<typeof import("./plugin-metadata-snapshot.js")>()),
     loadPluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
     resolvePluginMetadataSnapshot: (
       params: Parameters<typeof current.getCurrentPluginMetadataSnapshot>[0] & {
@@ -53,46 +58,22 @@ function createCurrentSnapshot(params: {
   workspaceDir?: string;
 }): PluginMetadataSnapshot {
   const policyHash = resolveInstalledPluginIndexPolicyHash({});
-  const index: InstalledPluginIndex = {
-    version: 1,
-    hostContractVersion: "test-host",
-    compatRegistryVersion: "test-compat",
-    migrationVersion: 1,
-    policyHash,
-    generatedAtMs: 0,
-    installRecords: {},
-    plugins: [
-      {
-        pluginId: "openai",
-        manifestPath: `/tmp/openai-${params.manifestHash}/openclaw.plugin.json`,
-        manifestHash: params.manifestHash,
-        source: `/tmp/openai-${params.manifestHash}/index.ts`,
-        rootDir: `/tmp/openai-${params.manifestHash}`,
-        origin: "bundled",
-        enabled: true,
-        startup: {
-          sidecar: false,
-          memory: false,
-          agentHarnesses: [],
-        },
-        compat: [],
-      },
-    ],
-    diagnostics: [],
-  };
-  return {
-    policyHash,
-    configFingerprint: params.manifestHash,
-    workspaceDir: params.workspaceDir,
-    index,
+  const snapshot = createPluginMetadataSnapshotFixture({
     plugins: [
       {
         id: "openai",
-        origin: "bundled",
+        rootDir: `/tmp/openai-${params.manifestHash}`,
         cliBackends: params.cliBackends,
       },
     ],
-  } as unknown as PluginMetadataSnapshot;
+  });
+  return {
+    ...snapshot,
+    policyHash,
+    configFingerprint: params.manifestHash,
+    workspaceDir: params.workspaceDir,
+    index: { ...snapshot.index, policyHash },
+  };
 }
 
 describe("setup-registry descriptor lookup", () => {
@@ -102,13 +83,52 @@ describe("setup-registry descriptor lookup", () => {
       manifestHash: "shared-scope",
       cliBackends: ["example-cli"],
     });
-    const finite = { ...full, pluginIds: [], plugins: [] };
+    const finite = projectPluginMetadataSnapshot(full, []);
     const ids = [full, finite, full].map((metadataSnapshot) =>
       withPluginRuntimeGenerationScope({ config: {}, metadataSnapshot }, () =>
         resolvePluginSetupCliBackendIds(),
       ),
     );
     expect(ids).toEqual([["example-cli"], [], ["example-cli"]]);
+  });
+
+  it("keeps descriptors inside a narrower view of the same metadata generation", async () => {
+    const { resolvePluginSetupCliBackendDescriptor } = await import("./setup-registry.runtime.js");
+    const snapshot = createCurrentSnapshot({ manifestHash: "scoped", cliBackends: ["Scoped-CLI"] });
+    const narrowed = projectPluginMetadataSnapshot(snapshot, []);
+    const resolve = (view: PluginMetadataSnapshot) =>
+      withPluginMetadataSnapshotScope(
+        view,
+        () => resolvePluginSetupCliBackendDescriptor({ backend: "scoped-cli" }),
+        { trustConfigIdentity: true },
+      );
+
+    expect(resolve(snapshot)).toEqual({ pluginId: "openai", backend: { id: "Scoped-CLI" } });
+    expect(resolve(narrowed)).toBeUndefined();
+    expect(resolve(snapshot)).toEqual({ pluginId: "openai", backend: { id: "Scoped-CLI" } });
+    expect(loadPluginMetadataSnapshotMock).not.toHaveBeenCalled();
+  });
+
+  it("applies current enablement policy without rebuilding the prepared backend inventory", async () => {
+    const { resolvePluginSetupCliBackendDescriptor, resolvePluginSetupCliBackendIds } =
+      await import("./setup-registry.runtime.js");
+    const snapshot = createCurrentSnapshot({ manifestHash: "policy", cliBackends: ["Policy-CLI"] });
+    withPluginMetadataSnapshotScope(
+      snapshot,
+      () => {
+        for (const enabled of [true, false, true]) {
+          const config = { plugins: { entries: { openai: { enabled } } } };
+          expect(resolvePluginSetupCliBackendDescriptor({ backend: "policy-cli", config })).toEqual(
+            enabled ? { pluginId: "openai", backend: { id: "Policy-CLI" } } : undefined,
+          );
+          expect(resolvePluginSetupCliBackendIds({ config })).toEqual(
+            enabled ? ["Policy-CLI"] : [],
+          );
+        }
+      },
+      { trustConfigIdentity: true },
+    );
+    expect(loadPluginMetadataSnapshotMock).not.toHaveBeenCalled();
   });
 
   it("uses enabled metadata cliBackends", async () => {

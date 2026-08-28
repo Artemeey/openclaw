@@ -132,7 +132,7 @@ describe("prepared model runtime snapshots", () => {
       },
       {
         catalogMode: "static",
-        pluginMetadataSnapshot: mocks.pluginMetadataSnapshot as never,
+        pluginMetadataSnapshot: mocks.pluginMetadataSnapshot,
       },
     );
 
@@ -210,7 +210,7 @@ describe("prepared model runtime snapshots", () => {
           readOnly: true,
           loadRuntimePlugins: true,
         },
-        mocks.pluginMetadataSnapshot as never,
+        mocks.pluginMetadataSnapshot,
       ).runtimePluginRegistry,
     ).toBe(pluginRegistry);
     expect(mocks.loadAgentRuntimePluginRegistryHandle).toHaveBeenCalledWith(

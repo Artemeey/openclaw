@@ -42,7 +42,7 @@ export function createDoctorPluginMetadataSnapshotScope(params: {
     withPluginMetadataCollectionScope(prepare(scope.config, scope.workspaceDir), operation, {
       config: scope.config,
       env,
-      workspaceDir: scope.workspaceDir,
+      ...(scope.workspaceDir !== undefined ? { workspaceDir: scope.workspaceDir } : {}),
     });
 
   return {

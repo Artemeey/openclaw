@@ -2,10 +2,8 @@
 import fs from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/types.js";
-import {
-  createPluginMetadataOwner,
-  installPluginMetadataOwner,
-} from "../plugins/plugin-metadata-collection.js";
+import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
+import { createPluginMetadataOwner } from "../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { projectPluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
@@ -79,9 +77,7 @@ describe("model-selection-resolve OpenRouter compat aliases", () => {
             withPluginRuntimeGenerationScope(
               {
                 config: cfg,
-                metadataSnapshot: projectPluginMetadataSnapshot(metadata.selectedSnapshot, {
-                  pluginIds: [],
-                }),
+                metadataSnapshot: projectPluginMetadataSnapshot(metadata.selectedSnapshot, []),
               },
               () => resolveAllowedModelRefCore(selection),
             ),

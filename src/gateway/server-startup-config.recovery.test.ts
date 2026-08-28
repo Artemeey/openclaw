@@ -2,13 +2,12 @@
 // auto-enable behavior, model defaults, and recovery diagnostics.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConfigFileSnapshot, ModelDefinitionConfig, OpenClawConfig } from "../config/types.js";
-import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
-import type {
-  PluginMetadataOwner,
-  PreparedPluginMetadata,
-} from "../plugins/plugin-metadata-collection.js";
-import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
-import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
+import { createPluginCache } from "../plugins/plugin-cache.js";
+import type { PluginMetadataOwner } from "../plugins/plugin-metadata-collection.js";
+import {
+  createPluginMetadataSnapshotFixture,
+  createPreparedPluginMetadataFixture,
+} from "../plugins/plugin-metadata.test-support.js";
 import { buildTestConfigSnapshot } from "./test-helpers.config-snapshots.js";
 
 const applyPluginAutoEnable = vi.hoisted(() =>
@@ -22,63 +21,11 @@ const configMocks = vi.hoisted(() => ({
   isNixMode: { value: false },
 }));
 const pluginManifestRegistry = vi.hoisted(() => ({ plugins: [], diagnostics: [] }));
-const pluginMetadataSnapshot = vi.hoisted((): PluginMetadataSnapshot => {
-  const emptyOwners = {
-    channels: new Map(),
-    channelConfigs: new Map(),
-    providers: new Map(),
-    modelCatalogProviders: new Map(),
-    cliBackends: new Map(),
-    setupProviders: new Map(),
-    commandAliases: new Map(),
-    contracts: new Map(),
-  };
-  const zeroMetrics = {
-    registrySnapshotMs: 0,
-    manifestRegistryMs: 0,
-    ownerMapsMs: 0,
-    totalMs: 0,
-    indexPluginCount: 0,
-    manifestPluginCount: 0,
-  };
-  return {
-    policyHash: "policy",
-    index: {
-      version: 1,
-      hostContractVersion: "test",
-      compatRegistryVersion: "test",
-      migrationVersion: 1,
-      policyHash: "policy",
-      generatedAtMs: 0,
-      installRecords: {},
-      plugins: [],
-      diagnostics: [],
-    },
-    registryDiagnostics: [],
-    manifestRegistry: pluginManifestRegistry,
-    plugins: [],
-    diagnostics: [],
-    byPluginId: new Map(),
-    normalizePluginId: (pluginId) => pluginId,
-    owners: emptyOwners,
-    metrics: zeroMetrics,
-  };
+const pluginMetadata = createPreparedPluginMetadataFixture({
+  unionSnapshot: createPluginMetadataSnapshotFixture(pluginManifestRegistry),
 });
-const pluginMetadata: PreparedPluginMetadata = {
-  workspaces: new Map([[undefined, pluginMetadataSnapshot]]),
-  configWorkspaceDirs: [undefined],
-  agentWorkspaceDirs: new Map(),
-  installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
-  envFingerprint: resolvePluginMetadataEnvFingerprint(),
-  selectedSnapshot: pluginMetadataSnapshot,
-  manifestRegistry: pluginMetadataSnapshot.manifestRegistry,
-  plugins: pluginMetadataSnapshot.plugins,
-  byPluginId: pluginMetadataSnapshot.byPluginId,
-  owners: pluginMetadataSnapshot.owners,
-  diagnostics: pluginMetadataSnapshot.diagnostics,
-  channelCatalog: { read: () => [] },
-};
 const pluginMetadataOwner: PluginMetadataOwner = {
+  cache: createPluginCache(),
   prepare: () => pluginMetadata,
   publish: () => {},
   getActive: () => undefined,

@@ -8,10 +8,10 @@ import { getRuntimeConfigSnapshot, resetConfigRuntimeState } from "../config/run
 import { readLoggingConfig } from "../logging/config.js";
 import { resetLogger } from "../logging/logger.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
 import {
   createPluginMetadataOwner,
   getCurrentPluginMetadataOwner,
-  installPluginMetadataOwner,
 } from "../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { createOpenClawTestState } from "../test-utils/openclaw-test-state.js";
@@ -94,7 +94,6 @@ describe("gateway minimal boot smoke", () => {
           await import("./server-worker-environment-startup.js"),
         formatRuntimeGatewayAuthTokenWarning: () => "unused",
         pluginMetadataOwner,
-        disposePluginMetadataOwner,
       });
 
       expect(bootstrap.ambientEnvTriggers).toBe("suppress");
@@ -110,7 +109,7 @@ describe("gateway minimal boot smoke", () => {
   });
 
   it(
-    "carries auto-enabled plugin metadata through legacy maintenance and startup model selection",
+    "carries auto-enabled plugin metadata through startup model selection",
     { timeout: BOOT_BUDGET_MS },
     async () => {
       const state = await createOpenClawTestState({
@@ -149,22 +148,10 @@ describe("gateway minimal boot smoke", () => {
         },
         plugins: { enabled: true },
       });
-      await state.writeJson("agents/main/sessions/sessions.json", {
-        main: {
-          sessionId: "legacy-startup",
-          sessionFile: "legacy-startup.jsonl",
-          updatedAt: Date.now(),
-        },
-      });
-      await state.writeText(
-        "agents/main/sessions/legacy-startup.jsonl",
-        `${JSON.stringify({ type: "session", sessionId: "legacy-startup" })}\n`,
-      );
       state.applyEnv();
       const pluginMetadataOwner = createPluginMetadataOwner();
       const disposePluginMetadataOwner = installPluginMetadataOwner(pluginMetadataOwner);
       const log = createSubsystemLogger("gateway/startup-metadata-test");
-      const info = vi.spyOn(log, "info");
       try {
         const { prepareGatewayServerBootstrap } = await import("./server-startup-bootstrap.js");
         const bootstrap = await prepareGatewayServerBootstrap({
@@ -181,14 +168,8 @@ describe("gateway minimal boot smoke", () => {
             await import("./server-worker-environment-startup.js"),
           formatRuntimeGatewayAuthTokenWarning: () => "unused",
           pluginMetadataOwner,
-          disposePluginMetadataOwner,
         });
 
-        expect
-          .soft(info)
-          .toHaveBeenCalledWith(
-            expect.stringContaining("session: canonicalized orphaned session keys:"),
-          );
         expect(getRuntimeConfigSnapshot()).toBe(bootstrap.cfgAtStart);
         const { resolveConfiguredModelRef } = await import("../agents/model-selection.js");
         expect(
@@ -199,7 +180,6 @@ describe("gateway minimal boot smoke", () => {
           }),
         ).toEqual({ provider: "openai", model: "gpt-5.5" });
       } finally {
-        info.mockRestore();
         disposePluginMetadataOwner();
         await state.cleanup();
       }

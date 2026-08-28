@@ -1,57 +1,36 @@
-// Caches installed plugin index records for current process lookups.
-import type { PluginInstallRecord } from "../config/types.plugins.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { registerOpenClawStateDatabaseLifecycleListener } from "../state/openclaw-state-db-cache.js";
 import type { OpenClawStateDatabase } from "../state/openclaw-state-db-contract.js";
+import { getPluginCache, getProcessPluginCache } from "./plugin-cache.js";
 
-/** Cached installed plugin records for one store/recovery key. */
-type InstallRecordsCacheEntry = {
-  records: Record<string, PluginInstallRecord>;
-};
-
-// Metadata owners cross ESM/require bridges; their source cache and generation
-// must share one process lifetime too.
-const state = resolveGlobalSingleton(
-  Symbol.for("openclaw.installedPluginIndexInstallRecordsCache"),
-  () => ({
-    records: new Map<string, InstallRecordsCacheEntry>(),
-    generation: 0,
-    openedDatabases: new WeakSet<OpenClawStateDatabase>(),
-  }),
+// The revision fences unpublished metadata across source/ESM readers; facts live in PluginCache.
+const sourceState = resolveGlobalSingleton(
+  Symbol.for("openclaw.pluginInstallRecordsSourceRevision"),
+  () => ({ generation: 0, openedDatabases: new WeakSet<OpenClawStateDatabase>() }),
 );
 
-/** Returns cached installed plugin records for a store/recovery key. */
-export function getInstalledPluginIndexInstallRecordsCache(
-  key: string,
-): InstallRecordsCacheEntry | undefined {
-  return state.records.get(key);
-}
-
-/** Stores cached installed plugin records for a store/recovery key. */
-export function setInstalledPluginIndexInstallRecordsCache(
-  key: string,
-  entry: InstallRecordsCacheEntry,
-): void {
-  state.records.set(key, entry);
-}
-
-/** Current cache generation used to detect concurrent clears during async loads. */
 export function getInstalledPluginIndexInstallRecordsCacheGeneration(): number {
-  return state.generation;
+  return sourceState.generation;
 }
 
-/** Clears cached installed plugin records and advances the cache generation. */
+/** Explicit ledger writes/reloads leave the Gateway's embedded boot snapshot unchanged. */
 export function clearLoadInstalledPluginIndexInstallRecordsCache(): void {
-  state.generation += 1;
-  state.records.clear();
+  sourceState.generation += 1;
+  for (const cache of new Set([getPluginCache(), getProcessPluginCache()])) {
+    cache.installRecords.clear();
+    cache.persistedInstalledIndex.clear();
+    if (cache.metadata.current.owner !== "gateway") {
+      cache.metadata.collectionOwner?.invalidatePreparation();
+    }
+  }
 }
 
-// Earlier read-only preparation may have seen an unmigrated index. Registration
-// replays open handles, so duplicate module instances must invalidate each only once.
+// Read-only preflight can precede database initialization. Opening an authoritative
+// database invalidates that preparation once, including replay through a second module instance.
 registerOpenClawStateDatabaseLifecycleListener((event) => {
-  if (event.kind !== "opened" || state.openedDatabases.has(event.database)) {
+  if (event.kind !== "opened" || sourceState.openedDatabases.has(event.database)) {
     return;
   }
-  state.openedDatabases.add(event.database);
+  sourceState.openedDatabases.add(event.database);
   clearLoadInstalledPluginIndexInstallRecordsCache();
 });

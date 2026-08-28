@@ -6,9 +6,8 @@ import {
   resolveGatewayStartupPluginPlanFromRegistry,
   type GatewayStartupPluginPlan,
 } from "./channel-plugin-ids.js";
+import { bindPluginMetadataSnapshotCache, getPluginMetadataSnapshotCache } from "./plugin-cache.js";
 import {
-  isPluginMetadataSnapshotCompatible,
-  projectPluginMetadataSnapshot,
   resolvePluginMetadataSnapshot,
   type PluginMetadataSnapshot,
 } from "./plugin-metadata-snapshot.js";
@@ -37,55 +36,29 @@ type LoadPluginLookUpTableParams = {
   ambientEnvTriggers?: AmbientEnvTriggerPolicy;
 };
 
-const lookupTableMemoBySnapshot = new WeakMap<
-  PluginMetadataSnapshot,
-  Map<string, PluginLookUpTable>
->();
 export function loadPluginLookUpTable(params: LoadPluginLookUpTableParams): PluginLookUpTable {
   const requestedSnapshotConfig = params.activationSourceConfig ?? params.config;
   const workerProviderIds = normalizeWorkerProviderIds(params.workerProviderIds ?? []);
-  const pluginIdScope = createGatewayStartupMetadataPluginIdScope({
-    config: params.config,
-    ...(params.activationSourceConfig !== undefined
-      ? { activationSourceConfig: params.activationSourceConfig }
-      : {}),
-    env: params.env,
-    workerProviderIds,
-    ambientEnvTriggers: params.ambientEnvTriggers,
-  });
-  const requestedPluginIds = params.metadataSnapshot
-    ? pluginIdScope.resolve({ index: params.metadataSnapshot.index })
-    : undefined;
-  const sourceSnapshot =
-    params.metadataSnapshot &&
-    isPluginMetadataSnapshotCompatible({
-      snapshot: params.metadataSnapshot,
+  const metadataSnapshot =
+    // A caller-prepared inventory is authoritative. Startup activation selects
+    // from it; policy changes never authorize discovering a replacement graph.
+    params.metadataSnapshot ??
+    resolvePluginMetadataSnapshot({
       config: requestedSnapshotConfig,
-      env: params.env,
-      allowScopedSnapshot: true,
       workspaceDir: params.workspaceDir,
-      index: params.index,
-    }) &&
-    (params.metadataSnapshot.pluginIds === undefined ||
-      (requestedPluginIds !== undefined &&
-        requestedPluginIds.every((pluginId) =>
-          params.metadataSnapshot!.pluginIds!.includes(pluginId),
-        )))
-      ? params.metadataSnapshot
-      : resolvePluginMetadataSnapshot({
-          config: requestedSnapshotConfig,
-          workspaceDir: params.workspaceDir,
-          env: params.env,
-          allowWorkspaceScopedCurrent: params.workspaceDir === undefined,
-          ...(params.index ? { index: params.index } : {}),
-          pluginIdScope,
-        });
-  const memoKey = pluginIdScope.key;
-  const memo = lookupTableMemoBySnapshot.get(sourceSnapshot)?.get(memoKey);
-  if (memo) {
-    return memo;
-  }
-  const metadataSnapshot = projectPluginMetadataSnapshot(sourceSnapshot, { pluginIdScope });
+      env: params.env,
+      allowWorkspaceScopedCurrent: params.workspaceDir === undefined,
+      ...(params.index ? { index: params.index } : {}),
+      pluginIdScope: createGatewayStartupMetadataPluginIdScope({
+        config: params.config,
+        ...(params.activationSourceConfig !== undefined
+          ? { activationSourceConfig: params.activationSourceConfig }
+          : {}),
+        env: params.env,
+        workerProviderIds,
+        ambientEnvTriggers: params.ambientEnvTriggers,
+      }),
+    });
   const { index, manifestRegistry } = metadataSnapshot;
   const startupPlanStartedAt = performance.now();
   const startup = resolveGatewayStartupPluginPlanFromRegistry({
@@ -96,6 +69,7 @@ export function loadPluginLookUpTable(params: LoadPluginLookUpTableParams): Plug
     env: params.env,
     index,
     manifestRegistry,
+    discovery: metadataSnapshot.discovery,
     workerProviderIds,
     ambientEnvTriggers: params.ambientEnvTriggers,
   });
@@ -112,11 +86,6 @@ export function loadPluginLookUpTable(params: LoadPluginLookUpTableParams): Plug
       startupPluginCount: startup.pluginIds.length,
     },
   };
-  let memoByKey = lookupTableMemoBySnapshot.get(sourceSnapshot);
-  if (!memoByKey) {
-    memoByKey = new Map();
-    lookupTableMemoBySnapshot.set(sourceSnapshot, memoByKey);
-  }
-  memoByKey.set(memoKey, table);
+  bindPluginMetadataSnapshotCache(table, getPluginMetadataSnapshotCache(metadataSnapshot));
   return table;
 }

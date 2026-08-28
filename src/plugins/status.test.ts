@@ -5,6 +5,8 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginEntryConfig } from "../config/types.plugins.js";
+import { extractPluginInstallRecordsFromInstalledPluginIndex } from "./installed-plugin-index-install-records.js";
+import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
 import type { PluginRuntimeLoadContext } from "./runtime/load-context.js";
 import {
   createCompatibilityNotice,
@@ -62,7 +64,8 @@ vi.mock("./runtime/metadata-registry-loader.js", () => ({
     loadPluginMetadataRegistrySnapshotMock(...args),
 }));
 
-vi.mock("./plugin-metadata-snapshot.js", () => ({
+vi.mock("./plugin-metadata-snapshot.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./plugin-metadata-snapshot.js")>()),
   loadPluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
 }));
 
@@ -108,7 +111,11 @@ function createRuntimeLoadContext(
     workspaceDir: options?.workspaceDir,
     env: options?.env ?? process.env,
     logger: options?.logger ?? { info() {}, warn() {}, error() {} },
-    manifestRegistry: options?.manifestRegistry,
+    manifestRegistry: options?.manifestRegistry ?? options?.metadataSnapshot?.manifestRegistry,
+    metadataSnapshot: options?.metadataSnapshot,
+    installRecords: options?.metadataSnapshot
+      ? extractPluginInstallRecordsFromInstalledPluginIndex(options.metadataSnapshot.index)
+      : undefined,
     ...overrides,
   };
 }
@@ -382,6 +389,7 @@ describe("plugin status reports", () => {
   });
 
   beforeEach(() => {
+    clearPluginMetadataLifecycleCaches();
     loadConfigMock.mockReset();
     loadOpenClawPluginsMock.mockReset();
     resolveCompatibleRuntimePluginRegistryMock.mockReset();

@@ -2088,6 +2088,7 @@ describe("doctor config flow", () => {
     });
     const refreshedMetadata: PreparedPluginMetadata = {
       ...refreshedSnapshot,
+      unionSnapshot: refreshedSnapshot,
       selectedSnapshot: refreshedSnapshot,
       workspaces: new Map([[undefined, refreshedSnapshot]]),
       configWorkspaceDirs: [undefined],

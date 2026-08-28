@@ -4,11 +4,10 @@ import {
   makeRegistry,
 } from "../config/plugin-auto-enable.test-helpers.js";
 import * as currentPluginMetadata from "../plugins/current-plugin-metadata-snapshot.js";
-import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import * as pluginMetadata from "../plugins/plugin-metadata-collection.js";
-import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
+import { createPreparedPluginMetadataFixture } from "../plugins/plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { getPluginRuntimeLoadContext } from "../plugins/runtime/load-context.js";
 import { prepareOwnedPluginLoadContext } from "./prepared-model-runtime.plugin-context.js";
@@ -17,20 +16,10 @@ import { withPreparedPluginGenerationScope } from "./prepared-model-runtime.plug
 function operationMetadata(
   snapshot: PluginMetadataSnapshot,
 ): pluginMetadata.PreparedPluginMetadata {
-  return {
-    workspaces: new Map([[snapshot.workspaceDir, snapshot]]),
-    configWorkspaceDirs: [snapshot.workspaceDir],
+  return createPreparedPluginMetadataFixture({
+    unionSnapshot: snapshot,
     agentWorkspaceDirs: new Map(snapshot.workspaceDir ? [["main", snapshot.workspaceDir]] : []),
-    installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
-    envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
-    selectedSnapshot: snapshot,
-    manifestRegistry: snapshot.manifestRegistry,
-    plugins: snapshot.plugins,
-    byPluginId: snapshot.byPluginId,
-    owners: snapshot.owners,
-    diagnostics: snapshot.diagnostics,
-    channelCatalog: { read: () => [] },
-  };
+  });
 }
 
 describe("prepared model runtime plugin metadata ownership", () => {

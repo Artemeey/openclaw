@@ -8,6 +8,7 @@ import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { createTerminalTool } from "../agents/tools/terminal-tool.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
 import {
   getGlobalPluginRegistry,
   initializeGlobalHookRunner,
@@ -18,7 +19,6 @@ import type { PluginDiagnostic } from "../plugins/manifest-types.js";
 import type { PluginLookUpTable } from "../plugins/plugin-lookup-table.js";
 import {
   createPluginMetadataOwner,
-  installPluginMetadataOwner,
   type PluginMetadataOwner,
   type PreparedPluginMetadata,
 } from "../plugins/plugin-metadata-collection.js";
@@ -2448,9 +2448,10 @@ describe("loadGatewayPlugins", () => {
     async ({ included }) => {
       await withPreparedFallbackSubagentRuntime(
         async ({ config, metadata, owner, pluginId, runtime }) => {
-          const metadataSnapshot = projectPluginMetadataSnapshot(metadata.selectedSnapshot, {
-            pluginIds: included ? [pluginId] : [],
-          });
+          const metadataSnapshot = projectPluginMetadataSnapshot(
+            metadata.selectedSnapshot,
+            included ? [pluginId] : [],
+          );
           const replacement: OpenClawConfig = {
             ...config,
             agents: {

@@ -1,10 +1,10 @@
 import fs from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
 import {
   createPluginMetadataOwner,
   getPluginMetadataWorkspaceSnapshot,
-  installPluginMetadataOwner,
   type PluginMetadataOwner,
   type PreparedPluginMetadata,
   withPluginMetadataCollectionScope,
@@ -211,9 +211,7 @@ describe("resolveSessionModelRef", () => {
       const workspaceSnapshot = getPluginMetadataWorkspaceSnapshot(metadata, {
         workspaceDir: metadata.agentWorkspaceDirs.get("work"),
       });
-      const metadataSnapshot = projectPluginMetadataSnapshot(workspaceSnapshot, {
-        pluginIds,
-      });
+      const metadataSnapshot = projectPluginMetadataSnapshot(workspaceSnapshot, pluginIds);
       const resolve = (currentConfig: OpenClawConfig) =>
         resolveSessionModelRef(
           currentConfig,

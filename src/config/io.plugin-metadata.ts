@@ -1,18 +1,20 @@
 import {
   getCurrentPluginMetadataSnapshot,
-  isCurrentPluginMetadataSnapshotRuntimeGeneration,
+  isScopedPluginMetadataSnapshotRuntimeGeneration,
 } from "../plugins/current-plugin-metadata-snapshot.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import {
   createPluginMetadataOwner,
   getCurrentPluginMetadataOwner,
   getScopedPluginMetadata,
-  projectConfigWidePluginMetadata,
   type PreparedPluginMetadata,
 } from "../plugins/plugin-metadata-collection.js";
 import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import { projectPluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
-import type { PluginMetadataSnapshotPluginIdScope } from "../plugins/plugin-metadata-snapshot.types.js";
+import type {
+  PluginMetadataSnapshot,
+  PluginMetadataSnapshotPluginIdScope,
+} from "../plugins/plugin-metadata-snapshot.types.js";
 import type { OpenClawConfig } from "./types.openclaw.js";
 
 type ResolveConfigWidePluginMetadataParams = {
@@ -25,9 +27,9 @@ type ResolveConfigWidePluginMetadataParams = {
   metadata?: PreparedPluginMetadata;
 };
 
-export function resolveConfigWidePluginManifestRegistry(
+export function resolveConfigWidePluginMetadataSnapshot(
   params: ResolveConfigWidePluginMetadataParams,
-): PluginManifestRegistry {
+): PluginMetadataSnapshot {
   const canUsePrepared = params.allowCurrent !== false && params.stateDir === undefined;
   const supplied = params.metadata;
   if (
@@ -45,33 +47,46 @@ export function resolveConfigWidePluginManifestRegistry(
       allowScopedSnapshot: true,
       allowWorkspaceScopedSnapshot: true,
     });
-    if (current && isCurrentPluginMetadataSnapshotRuntimeGeneration(current)) {
-      return (
-        params.pluginIds !== undefined || params.pluginIdScope !== undefined
-          ? projectPluginMetadataSnapshot(current, params)
-          : current
-      ).manifestRegistry;
+    if (current && isScopedPluginMetadataSnapshotRuntimeGeneration(current)) {
+      return projectPluginMetadataSnapshot(
+        current,
+        params.pluginIds ?? params.pluginIdScope?.resolve({ index: current.index }),
+      );
     }
   }
   const scoped = canUsePrepared ? (supplied ?? getScopedPluginMetadata(params.env)) : undefined;
+  const project = (metadata: PreparedPluginMetadata) =>
+    projectPluginMetadataSnapshot(
+      metadata.unionSnapshot,
+      params.pluginIds ?? params.pluginIdScope?.resolve({ index: metadata.unionSnapshot.index }),
+    );
   if (scoped) {
-    return projectConfigWidePluginMetadata(scoped, params).manifestRegistry;
+    return project(scoped);
   }
   const owner = canUsePrepared ? getCurrentPluginMetadataOwner() : undefined;
   if (owner) {
     if (params.config) {
-      const prepared = owner.readConfigWide({ ...params, config: params.config });
+      const prepared = owner.readConfigWide({
+        config: params.config,
+        env: params.env,
+      });
       if (prepared) {
-        return prepared.manifestRegistry;
+        return project(prepared);
       }
     } else {
       const active = owner.getActive();
       if (active && active.envFingerprint === resolvePluginMetadataEnvFingerprint(params.env)) {
-        return projectConfigWidePluginMetadata(active, params).manifestRegistry;
+        return project(active);
       }
     }
     throw new Error("Config plugin metadata must be prepared before runtime lookup");
   }
   const metadata = createPluginMetadataOwner().prepare({ ...params, config: params.config ?? {} });
-  return projectConfigWidePluginMetadata(metadata, params).manifestRegistry;
+  return project(metadata);
+}
+
+export function resolveConfigWidePluginManifestRegistry(
+  params: ResolveConfigWidePluginMetadataParams,
+): PluginManifestRegistry {
+  return resolveConfigWidePluginMetadataSnapshot(params).manifestRegistry;
 }

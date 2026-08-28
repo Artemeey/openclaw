@@ -7,9 +7,8 @@ import {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
-import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
-import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
+import { createPreparedPluginMetadataFixture } from "../plugins/plugin-metadata.test-support.js";
 import {
   getPreparedModelRuntimeAuthMaterializations,
   getPreparedModelRuntimeAuthStore,
@@ -83,20 +82,10 @@ describe("prepared model runtime config stamps", () => {
         workspaceDir: `/tmp/queued-metadata-workspace-${index}`,
         manifestRegistry: { plugins: [], diagnostics: [] },
       });
-      return {
-        workspaces: new Map([[snapshot.workspaceDir, snapshot]]),
-        configWorkspaceDirs: [snapshot.workspaceDir],
+      return createPreparedPluginMetadataFixture({
+        unionSnapshot: snapshot,
         agentWorkspaceDirs: new Map([["default", `/tmp/queued-metadata-workspace-${index}`]]),
-        installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
-        envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
-        selectedSnapshot: snapshot,
-        plugins: snapshot.plugins,
-        manifestRegistry: snapshot.manifestRegistry,
-        byPluginId: snapshot.byPluginId,
-        owners: snapshot.owners,
-        diagnostics: snapshot.diagnostics,
-        channelCatalog: { read: () => [] },
-      };
+      });
     });
     let current = { config: initialConfig, pluginMetadata: metadata[0]! };
     const next = { config: nextConfig, pluginMetadata: metadata[1]! };

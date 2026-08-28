@@ -40,6 +40,7 @@ describe("runCronIsolatedAgentTurn runtime plugin owner", () => {
     await expect(runCronIsolatedAgentTurn(params)).resolves.toMatchObject({ status: "ok" });
     expect(loadModelCatalogOwnerMock).toHaveBeenCalledWith({
       config: params.cfg,
+      agentId: "main",
       readOnly: true,
       allowGatewaySubagentBinding: true,
     });
@@ -52,12 +53,12 @@ describe("runCronIsolatedAgentTurn runtime plugin owner", () => {
         {
           provider: "openai",
           modelId: "gpt-5.4",
-          agentId: "default",
+          agentId: "main",
         },
         {
           provider: "anthropic",
           modelId: "claude-sonnet-4-6",
-          agentId: "default",
+          agentId: "main",
         },
       ],
     });

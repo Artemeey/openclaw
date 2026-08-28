@@ -3,16 +3,27 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveReadOnlyChannelPluginsForConfig } from "../channels/plugins/read-only.js";
+import { resolvePluginCandidateInstallOwner } from "../plugins/candidate-install-owner.js";
 import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
+import { getCurrentPluginMetadataSnapshotState } from "../plugins/current-plugin-metadata-state.js";
 import { clearLoadInstalledPluginIndexInstallRecordsCache } from "../plugins/installed-plugin-index-record-cache.js";
 import { refreshPersistedInstalledPluginIndexSync } from "../plugins/installed-plugin-index-store-write.js";
 import { readPersistedInstalledPluginIndexSync } from "../plugins/installed-plugin-index-store.js";
+import {
+  createPluginCache,
+  getPluginCache,
+  getPluginMetadataSnapshotCache,
+  withPluginCache,
+} from "../plugins/plugin-cache.js";
 import {
   createPluginMetadataOwner,
   getPluginMetadataWorkspaceSnapshot,
   withPluginMetadataCollectionScope,
 } from "../plugins/plugin-metadata-collection.js";
-import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
+import {
+  clearPluginMetadataLifecycleCaches,
+  retainGatewayPluginMetadata,
+} from "../plugins/plugin-metadata-lifecycle.js";
 import { createColdPluginFixture } from "../plugins/test-helpers/cold-plugin-fixtures.js";
 import {
   cleanupTrackedTempDirs,
@@ -172,6 +183,12 @@ describe("config IO plugin metadata snapshots", () => {
       expect(result.pluginMetadata?.selectedSnapshot.index.installRecords).toEqual(
         index.installRecords,
       );
+      const union = result.pluginMetadata?.unionSnapshot;
+      expect(union?.index.installRecords).toEqual(index.installRecords);
+      expect(union?.discovery?.candidates.map(resolvePluginCandidateInstallOwner)).toContain(
+        plugin.pluginId,
+      );
+      expect(Object.isFrozen(union?.index.plugins)).toBe(true);
       expect(readPersistedInstalledPluginIndexSync({ env })?.installRecords).toEqual(
         index.installRecords,
       );
@@ -242,13 +259,14 @@ describe("config IO plugin metadata snapshots", () => {
   });
 
   it.each([
-    { sharedWorkspace: false, defaultStatePaths: false },
-    { sharedWorkspace: true, defaultStatePaths: false },
-    { sharedWorkspace: false, defaultStatePaths: true },
-    { sharedWorkspace: true, defaultStatePaths: true },
+    { sharedWorkspace: false, defaultStatePaths: false, operation: false },
+    { sharedWorkspace: true, defaultStatePaths: false, operation: false },
+    { sharedWorkspace: false, defaultStatePaths: true, operation: false },
+    { sharedWorkspace: true, defaultStatePaths: true, operation: false },
+    { sharedWorkspace: false, defaultStatePaths: false, operation: true },
   ])(
-    "reuses all workspace metadata across validation reads (shared workspace: $sharedWorkspace, default state paths: $defaultStatePaths)",
-    ({ sharedWorkspace, defaultStatePaths }) => {
+    "reuses all workspace metadata across validation contexts (shared workspace: $sharedWorkspace, default state paths: $defaultStatePaths, explicit operation: $operation)",
+    ({ sharedWorkspace, defaultStatePaths, operation }) => {
       if (defaultStatePaths) {
         delete env.OPENCLAW_STATE_DIR;
         delete env.OPENCLAW_CONFIG_PATH;
@@ -260,66 +278,161 @@ describe("config IO plugin metadata snapshots", () => {
         path.join(root, "bundled"),
         path.join(root, defaultStatePaths ? ".openclaw" : "state"),
       ];
-      const context = createConfigIoContext({ env, observe: false });
-      const readMetadata = () => {
-        const loader = context.createValidationPluginMetadataSnapshotLoader({
-          env,
-        });
-        loader.load(config);
-        return loader.getMetadata();
-      };
-      // Observe the real filesystem, not a mocked discovery result. This loader
-      // must not revisit plugin or state metadata after preparation.
-      const reads = [
-        vi.spyOn(fs, "existsSync"),
-        vi.spyOn(fs, "lstatSync"),
-        vi.spyOn(fs, "openSync"),
-        vi.spyOn(fs, "readdirSync"),
-        vi.spyOn(fs, "readFileSync"),
-        vi.spyOn(fs, "statSync"),
-        vi.spyOn(fs.realpathSync, "native"),
-      ];
-      const pluginReads = () =>
-        reads.flatMap((read) =>
-          read.mock.calls.flatMap(([target]) =>
-            typeof target === "string" &&
-            metadataRoots.some(
-              (metadataRoot) =>
-                target === metadataRoot || target.startsWith(`${metadataRoot}${path.sep}`),
-            )
-              ? [target]
-              : [],
-          ),
+      const readContexts = (operationCache?: ReturnType<typeof createPluginCache>) => {
+        const context = createConfigIoContext({ env, observe: false });
+        const otherContexts = Array.from({ length: 3 }, () =>
+          createConfigIoContext({ env, observe: false }),
         );
-      const prepared = readMetadata();
-      expect(pluginReads().length).toBeGreaterThan(0);
-      const expectedPluginIds = plugins.map((plugin) => plugin.pluginId);
-      expect(prepared?.plugins.map((plugin) => plugin.id)).toEqual(expectedPluginIds);
-      for (const plugin of plugins) {
-        expect(prepared?.byPluginId.get(plugin.pluginId)?.source).toBe(plugin.runtimeSource);
-        expect(prepared?.owners.channels.get(plugin.channelId)).toEqual([plugin.pluginId]);
-      }
-      expect(
-        resolveReadOnlyChannelPluginsForConfig(config, {
-          env,
-          metadataSnapshot: prepared,
-        })
-          .plugins.map((plugin) => plugin.id)
-          .toSorted(),
-      ).toEqual(plugins.map((plugin) => plugin.channelId).toSorted());
+        const readMetadata = (reader = context) => {
+          const loader = reader.createValidationPluginMetadataSnapshotLoader({
+            env,
+          });
+          loader.load(config);
+          return loader.getMetadata();
+        };
+        // Observe the real filesystem, not a mocked discovery result. This loader
+        // must not revisit plugin or state metadata after preparation.
+        const reads = [
+          vi.spyOn(fs, "existsSync"),
+          vi.spyOn(fs, "lstatSync"),
+          vi.spyOn(fs, "openSync"),
+          vi.spyOn(fs, "readdirSync"),
+          vi.spyOn(fs, "readFileSync"),
+          vi.spyOn(fs, "statSync"),
+          vi.spyOn(fs.realpathSync, "native"),
+        ];
+        const pluginReads = () =>
+          reads.flatMap((read) =>
+            read.mock.calls.flatMap(([target]) =>
+              typeof target === "string" &&
+              metadataRoots.some(
+                (metadataRoot) =>
+                  target === metadataRoot || target.startsWith(`${metadataRoot}${path.sep}`),
+              )
+                ? [target]
+                : [],
+            ),
+          );
+        const prepared = readMetadata();
+        const expectedPluginIds = plugins.map((plugin) => plugin.pluginId);
+        expect(prepared?.plugins.map((plugin) => plugin.id)).toEqual(expectedPluginIds);
+        expect(pluginReads().length).toBeGreaterThan(0);
+        if (operationCache) {
+          if (!prepared) {
+            throw new Error("Config validation did not prepare plugin metadata");
+          }
+          expect(getPluginMetadataSnapshotCache(prepared)).toBe(operationCache);
+          expect(getPluginMetadataSnapshotCache(prepared.unionSnapshot)).toBe(operationCache);
+        }
+        expect(prepared?.unionSnapshot.index.plugins.map((plugin) => plugin.pluginId)).toEqual(
+          expectedPluginIds,
+        );
+        for (const [workspaceDir, snapshot] of prepared?.workspaces ?? []) {
+          const workspaceCandidates = snapshot.discovery?.candidates.filter(
+            (candidate) => candidate.origin === "workspace",
+          );
+          expect(
+            workspaceCandidates?.every((candidate) => candidate.workspaceDir === workspaceDir),
+          ).toBe(true);
+        }
+        for (const plugin of plugins) {
+          expect(prepared?.byPluginId.get(plugin.pluginId)?.source).toBe(plugin.runtimeSource);
+          expect(prepared?.owners.channels.get(plugin.channelId)).toEqual([plugin.pluginId]);
+        }
+        expect(
+          resolveReadOnlyChannelPluginsForConfig(config, {
+            env,
+            metadataSnapshot: prepared,
+          })
+            .plugins.map((plugin) => plugin.id)
+            .toSorted(),
+        ).toEqual(plugins.map((plugin) => plugin.channelId).toSorted());
 
-      for (const read of reads) {
-        read.mockClear();
+        for (const read of reads) {
+          read.mockClear();
+        }
+        for (const reader of [context, ...otherContexts]) {
+          const metadata = readMetadata(reader);
+          expect(metadata?.plugins.map((plugin) => plugin.id)).toEqual(expectedPluginIds);
+          if (operationCache) {
+            expect(metadata).toBe(prepared);
+          }
+        }
+        for (const pluginId of [
+          plugins.at(-1)!.pluginId,
+          "shared-plugin",
+          plugins.at(-1)!.pluginId,
+        ]) {
+          expect(
+            resolveConfigWidePluginManifestRegistry({
+              config,
+              env,
+              pluginIds: [pluginId],
+            }).plugins.map((plugin) => plugin.id),
+          ).toEqual([pluginId]);
+        }
+        expect(pluginReads()).toHaveLength(0);
+        for (const plugin of plugins) {
+          expect(fs.existsSync(plugin.runtimeMarker)).toBe(false);
+        }
+      };
+      if (!operation) {
+        readContexts();
+        return;
       }
-      for (let iteration = 0; iteration < 3; iteration += 1) {
-        expect(readMetadata()?.plugins.map((plugin) => plugin.id)).toEqual(expectedPluginIds);
-      }
-      expect(pluginReads()).toHaveLength(0);
-      for (const plugin of plugins) {
-        expect(fs.existsSync(plugin.runtimeMarker)).toBe(false);
+
+      const gatewayPlugin = writePlugin(path.join(root, "gateway-only"), "gateway-only");
+      const gatewayConfig: OpenClawConfig = {
+        plugins: { load: { paths: [gatewayPlugin.rootDir] } },
+      };
+      const releaseGateway = retainGatewayPluginMetadata();
+      try {
+        const gatewayOwner = createPluginMetadataOwner();
+        const gatewayMetadata = gatewayOwner.prepare({ config: gatewayConfig, env });
+        gatewayOwner.publish(gatewayMetadata, { config: gatewayConfig, env });
+        expect(gatewayMetadata.plugins.map((plugin) => plugin.id)).toEqual([
+          gatewayPlugin.pluginId,
+        ]);
+
+        const operationCache = createPluginCache();
+        withPluginCache(operationCache, () => readContexts(operationCache));
+
+        expect(getPluginCache()).toBe(gatewayOwner.cache);
+        expect(gatewayOwner.getActive()).toBe(gatewayMetadata);
+        expect(getCurrentPluginMetadataSnapshotState().snapshot).toBe(
+          gatewayMetadata.unionSnapshot,
+        );
+        expect(gatewayMetadata.plugins.map((plugin) => plugin.id)).toEqual([
+          gatewayPlugin.pluginId,
+        ]);
+        expect(fs.existsSync(gatewayPlugin.runtimeMarker)).toBe(false);
+      } finally {
+        releaseGateway();
       }
     },
   );
+
+  it("retains disabled plugins in the complete validation inventory", () => {
+    const { config, plugins } = createWorkspaceFixture();
+    const disabled = plugins[1]!;
+    config.plugins!.entries![disabled.pluginId]!.enabled = false;
+    const context = createConfigIoContext({ env, observe: false });
+    const loader = context.createValidationPluginMetadataSnapshotLoader({ env });
+
+    const registry = loader.load(config).manifestRegistry;
+    const metadata = loader.getMetadata();
+
+    expect(registry.plugins.map((plugin) => plugin.id)).toEqual(
+      plugins.map((plugin) => plugin.pluginId),
+    );
+    expect(
+      metadata?.unionSnapshot.index.plugins.find((plugin) => plugin.pluginId === disabled.pluginId)
+        ?.enabled,
+    ).toBe(false);
+    expect(metadata?.byPluginId.get(disabled.pluginId)?.source).toBe(disabled.runtimeSource);
+    expect(Object.isFrozen(metadata?.unionSnapshot.index.plugins)).toBe(true);
+    expect(loader.getMetadata()).toBe(metadata);
+  });
 
   it("keeps exact plugin scope and discovery precedence across workspace unions", () => {
     const { config } = createWorkspaceFixture();
@@ -358,11 +471,18 @@ describe("config IO plugin metadata snapshots", () => {
       .map((workspaceDir) =>
         writePlugin(path.join(workspaceDir, ".openclaw", "extensions", "collision"), "collision"),
       );
-    const registry = resolveConfigWidePluginManifestRegistry({ config, env });
+    const owner = createPluginMetadataOwner();
+    const metadata = owner.prepare({ config, env });
+    const registry = resolveConfigWidePluginManifestRegistry({ config, env, metadata });
+    const expectedPluginIds = plugins.map((plugin) => plugin.pluginId);
 
-    expect(registry.plugins.map((plugin) => plugin.id)).toEqual(
-      plugins.map((plugin) => plugin.pluginId),
+    expect(registry.plugins.map((plugin) => plugin.id)).toEqual(expectedPluginIds);
+    expect(metadata.unionSnapshot.index.plugins.map((plugin) => plugin.pluginId)).toEqual(
+      expectedPluginIds,
     );
+    expect(
+      metadata.unionSnapshot.discovery?.candidates.map((candidate) => candidate.idHint),
+    ).toEqual(expectedPluginIds);
     expect(registry.diagnostics).toContainEqual({
       level: "error",
       pluginId: "collision",
@@ -371,6 +491,7 @@ describe("config IO plugin metadata snapshots", () => {
         .toSorted()
         .join(", ")}`,
     });
+    owner.dispose();
   });
 
   it("does not borrow an ordinary operation scope after its discovery environment changes", () => {
@@ -422,48 +543,53 @@ describe("config IO plugin metadata snapshots", () => {
     owner.dispose();
   });
 
-  it("retains auxiliary execution workspaces without including them in config-wide validation", () => {
-    const { config, plugins, workspaceDirs } = createWorkspaceFixture();
-    const oldWorkspace = workspaceDirs[0]!;
-    const nextWorkspace = workspaceDirs[1]!;
-    const oldCollision = writePlugin(
-      path.join(oldWorkspace, ".openclaw", "extensions", "collision"),
-      "collision",
-    );
-    const nextCollision = writePlugin(
-      path.join(nextWorkspace, ".openclaw", "extensions", "collision"),
-      "collision",
-    );
-    const owner = createPluginMetadataOwner();
-    owner.prepare({ config, env });
-    const nextConfig: OpenClawConfig = {
-      ...config,
-      agents: { ownership: "explicit", entries: { next: { workspace: nextWorkspace } } },
-    };
+  it.each(["additional", "selected"] as const)(
+    "retains %s auxiliary execution workspaces without including them in config-wide validation",
+    (selection) => {
+      const { config, plugins, workspaceDirs } = createWorkspaceFixture();
+      const oldWorkspace = workspaceDirs[0]!;
+      const nextWorkspace = workspaceDirs[1]!;
+      const oldCollision = writePlugin(
+        path.join(oldWorkspace, ".openclaw", "extensions", "collision"),
+        "collision",
+      );
+      const nextCollision = writePlugin(
+        path.join(nextWorkspace, ".openclaw", "extensions", "collision"),
+        "collision",
+      );
+      const owner = createPluginMetadataOwner();
+      owner.prepare({ config, env });
+      const nextConfig: OpenClawConfig = {
+        ...config,
+        agents: { ownership: "explicit", entries: { next: { workspace: nextWorkspace } } },
+      };
 
-    const metadata = owner.prepare({
-      config: nextConfig,
-      env,
-      additionalWorkspaceDirs: [oldWorkspace],
-    });
-    const oldExecution = getPluginMetadataWorkspaceSnapshot(metadata, {
-      workspaceDir: oldWorkspace,
-    });
-    expect(oldExecution.byPluginId.get("collision")?.source).toBe(oldCollision.runtimeSource);
-    expect(oldExecution.byPluginId.has("workspace-0-plugin")).toBe(true);
-    expect(metadata.plugins.map((plugin) => plugin.id).toSorted()).toEqual([
-      "collision",
-      "shared-plugin",
-      "workspace-1-plugin",
-    ]);
-    expect(metadata.byPluginId.get("collision")?.source).toBe(nextCollision.runtimeSource);
-    expect(metadata.owners.providers.has("workspace-0-plugin-provider")).toBe(false);
-    expect(metadata.diagnostics.some((diagnostic) => diagnostic.pluginId === "collision")).toBe(
-      false,
-    );
-    for (const plugin of [...plugins, oldCollision, nextCollision]) {
-      expect(fs.existsSync(plugin.runtimeMarker)).toBe(false);
-    }
-    owner.dispose();
-  });
+      const metadata = owner.prepare({
+        config: nextConfig,
+        env,
+        ...(selection === "selected"
+          ? { workspaceDir: oldWorkspace }
+          : { additionalWorkspaceDirs: [oldWorkspace] }),
+      });
+      const oldExecution = getPluginMetadataWorkspaceSnapshot(metadata, {
+        workspaceDir: oldWorkspace,
+      });
+      expect(oldExecution.byPluginId.get("collision")?.source).toBe(oldCollision.runtimeSource);
+      expect(oldExecution.byPluginId.has("workspace-0-plugin")).toBe(true);
+      expect(metadata.plugins.map((plugin) => plugin.id).toSorted()).toEqual([
+        "collision",
+        "shared-plugin",
+        "workspace-1-plugin",
+      ]);
+      expect(metadata.byPluginId.get("collision")?.source).toBe(nextCollision.runtimeSource);
+      expect(metadata.owners.providers.has("workspace-0-plugin-provider")).toBe(false);
+      expect(metadata.diagnostics.some((diagnostic) => diagnostic.pluginId === "collision")).toBe(
+        false,
+      );
+      for (const plugin of [...plugins, oldCollision, nextCollision]) {
+        expect(fs.existsSync(plugin.runtimeMarker)).toBe(false);
+      }
+      owner.dispose();
+    },
+  );
 });

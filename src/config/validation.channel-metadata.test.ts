@@ -277,7 +277,7 @@ function setupPluginSchemaWithRequiredDefault() {
 }
 
 beforeEach(() => {
-  mockLoadPluginManifestRegistry.mockClear();
+  mockLoadPluginManifestRegistry.mockReset().mockReturnValue({ diagnostics: [], plugins: [] });
 });
 
 describe("validateConfigObjectWithPlugins channel metadata (applyDefaults: true)", () => {

@@ -14,9 +14,7 @@ import {
   createPluginMetadataSnapshot,
   makeRegistry,
 } from "../config/plugin-auto-enable.test-helpers.js";
-import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
-import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
-import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
+import { createPreparedPluginMetadataFixture } from "../plugins/plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { withPreparedModelRuntimePluginGenerationScope } from "./prepared-model-runtime-generation-scope.js";
 import {
@@ -650,26 +648,22 @@ describe("prepared model runtime owner selection", () => {
       workspaceDir: "/tmp/distinct-prepared-runtime-workspace",
       manifestRegistry: makeRegistry([{ id: "distinct-workspace-plugin", channels: [] }]),
     });
-    const pluginMetadata: PreparedPluginMetadata = {
-      workspaces: new Map([
-        [sharedMetadata.workspaceDir, sharedMetadata],
-        [distinctMetadata.workspaceDir, distinctMetadata],
-      ]),
-      configWorkspaceDirs: [sharedMetadata.workspaceDir, distinctMetadata.workspaceDir],
-      agentWorkspaceDirs: new Map(mocks.configuredWorkspaces),
-      installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
-      envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
-      selectedSnapshot: sharedMetadata,
-      plugins: [...sharedMetadata.plugins, ...distinctMetadata.plugins],
+    const unionSnapshot = createPluginMetadataSnapshot({
+      config,
       manifestRegistry: {
         plugins: [...sharedMetadata.plugins, ...distinctMetadata.plugins],
         diagnostics: [],
       },
-      byPluginId: new Map([...sharedMetadata.byPluginId, ...distinctMetadata.byPluginId]),
-      owners: sharedMetadata.owners,
-      diagnostics: [],
-      channelCatalog: { read: () => [] },
-    };
+    });
+    const pluginMetadata = createPreparedPluginMetadataFixture({
+      unionSnapshot,
+      selectedSnapshot: sharedMetadata,
+      workspaces: new Map([
+        [sharedMetadata.workspaceDir, sharedMetadata],
+        [distinctMetadata.workspaceDir, distinctMetadata],
+      ]),
+      agentWorkspaceDirs: new Map(mocks.configuredWorkspaces),
+    });
     let stats:
       | {
           agentCount: number;

@@ -16,7 +16,7 @@ import { loadSessionEntry, replaceSessionEntry } from "../config/sessions/sessio
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveCronSession } from "../cron/isolated-agent/session.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
-import { setCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-snapshot.js";
+import { setCurrentPluginMetadataSnapshot } from "./current-plugin-metadata.test-support.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
 import type { InstalledPluginIndex } from "./installed-plugin-index.js";
 import * as pluginLoader from "./loader.js";
@@ -580,9 +580,10 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
             return { snapshot, registry };
           };
           const captured = prepareWorkspace("captured", WORKSPACE);
-          const pluginMetadataSnapshot = projectPluginMetadataSnapshot(captured.snapshot, {
+          const pluginMetadataSnapshot = projectPluginMetadataSnapshot(
+            captured.snapshot,
             pluginIds,
-          });
+          );
           const publishedWorkspace = "/workspace/b";
           const published = prepareWorkspace("published", publishedWorkspace);
           setActivePluginRegistry(published.registry, undefined, "default", publishedWorkspace);

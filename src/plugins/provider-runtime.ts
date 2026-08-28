@@ -20,7 +20,7 @@ import { providerUsageLabel } from "../infra/provider-usage.shared.js";
 import type { UsageProviderId } from "../infra/provider-usage.types.js";
 import {
   getCurrentPluginMetadataSnapshot,
-  isCurrentPluginMetadataSnapshotRuntimeGeneration,
+  isScopedPluginMetadataSnapshotRuntimeGeneration,
 } from "./current-plugin-metadata-snapshot.js";
 import { normalizeProviderModelIdWithManifest } from "./manifest-model-id-normalization.js";
 import type { PluginManifestRecord, PluginManifestRegistry } from "./manifest-registry.js";
@@ -1027,7 +1027,7 @@ export function resolveExternalAuthProfilesWithPlugins(params: {
   // over newer process metadata, including an explicitly empty/shared-root view.
   const metadataSnapshot =
     currentMetadataSnapshot &&
-    isCurrentPluginMetadataSnapshotRuntimeGeneration(currentMetadataSnapshot)
+    isScopedPluginMetadataSnapshotRuntimeGeneration(currentMetadataSnapshot)
       ? currentMetadataSnapshot
       : (params.pluginMetadataSnapshot ??
         currentMetadataSnapshot ??

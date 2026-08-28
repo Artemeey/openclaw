@@ -114,64 +114,80 @@ metadata-only while the setup module contributes other setup hooks.
 
 ### Plugin cache boundary
 
-OpenClaw does not refresh plugin metadata on wall-clock timers or poll plugin
-files during runtime lookups. A Gateway owner retains its accepted metadata
-collection and one observed candidate. Installs, manifest edits, and load-path
-changes become visible through explicit preparation and replacement; rejected
-reloads retain the accepted collection. Cold operations outside an owner prepare
-their own metadata and do not publish it globally.
+One `PluginCache` owns plugin facts from first access until the final Gateway
+owner shuts down. CLI preflight and startup progressively fill the same cache;
+later access fills only facts not yet acquired. The startup inventory includes
+all configured agent workspaces and disabled plugins, preserves source
+precedence and workspace provenance, and rejects conflicting workspace sources.
 
-Observing config reads initialize shared state after core validation and before
-preparing plugin metadata. Early read-only startup guards defer plugin validation
-until the guarded migration boundary; speculative recovery backups remain
-read-only. Database initialization advances the install-record generation, so
-earlier candidates and seeds cannot publish stale metadata. The accepted
-collection remains available until its replacement is accepted.
+Gateway preparation derives a metadata collection from that inventory.
+Its `unionSnapshot` combines indexes, manifests, and discovery facts from
+configured workspaces for validation and management. Runtime loading and model
+preparation use `selectedSnapshot` or an exact entry in `workspaces`; execution
+never uses the union index. Auxiliary execution workspaces remain outside the
+union, so they cannot change unrelated schemas or collision ownership. Retained
+plugin cleanup still accounts for every workspace. `PluginLookUpTable` adds
+activation planning without rediscovery. Raw channel catalog candidates remain separate from validated
+manifests so reuse does not change trust or shadowing rules.
 
-The manifest file parser keeps a bounded file-signature cache keyed by the
-opened manifest path plus device/inode, size, and mtime/ctime; that cache only
-avoids re-parsing unchanged bytes and must not cache discovery, registry,
-owner, or policy answers.
+The Gateway retains the accepted collection and at most one observed config
+candidate. Config, environment, secrets, and runtime generation publication
+share the reload commit boundary; rejected or superseded preparation leaves
+serving state intact. Runtime readers use prepared views without filesystem
+scanning, `stat`/`realpath` freshness polling, manifest rereads, or package
+hashing. Semantic input hashes may still identify prepared views.
+Config, account, and run-workspace changes can replace activation and service
+generations, but do not replace the startup package inventory. New workspace
+plugins and changed package metadata require a Gateway restart.
 
-The safe metadata fast path is explicit object ownership, not a hidden cache.
-Gateway hot paths pass a prepared collection, an exact workspace
-`PluginMetadataSnapshot`, a derived `PluginLookUpTable`, or an explicit manifest
-registry. Config validation uses the collection's manifest union; execution uses
-only the selected workspace's inventory. CLI and Doctor scopes retain their
-collections through asynchronous consumers. Derived schemas, descriptors, and
-media defaults follow immutable manifest identity, while account state,
-environment triggers, and active runtime registry selection remain live.
 Model normalization carries the prepared config, workspace, and manifest policy
-together. The collection records each configured agent's workspace once; session
-rows for removed agents use the accepted control-plane view without discovering
-another workspace. Provider hooks use that same inventory, including a shared
-view with no workspace; a loaded plugin from an older workspace cannot supply
-its hook merely because the provider or plugin ID matches.
-Retained runtime generations keep their exact finite metadata view. A newly
-prepared config operation may enter its own scope without widening that retained
-view after the operation returns.
-Replace snapshots instead of mutating them or retaining unbounded historical
-copies. Raw channel catalogs retain discovery candidates separately from
-validated manifests so metadata reuse does not change trust or shadowing rules.
+together. The collection records each configured agent's workspace; session rows
+for removed agents use the accepted control-plane view without discovering
+another workspace. Provider hooks use that same selected inventory, including a
+shared view with no workspace. A loaded plugin from an older workspace cannot
+supply its hook merely because the provider or plugin ID matches. Retained runs
+keep their exact config, finite metadata view, registry, and generation lease
+through asynchronous preparation, execution, finalization, and cleanup. A nested
+config operation may enter its own scope without widening the retained run's
+view after it returns.
 
-For plugin loading, the persistent cache layer is runtime loading. It may reuse
-loader state when code or installed artifacts are actually loaded, such as:
+Cold observing config reads initialize shared state after core validation and
+before preparing plugin metadata. Early read-only startup guards defer plugin
+validation until the guarded migration boundary; speculative recovery backups
+remain read-only. Database initialization advances the install-record generation
+so earlier candidates and seeds cannot publish stale preparation. This does not
+allow a management write to invalidate an already running Gateway's inventory.
 
-- `PluginLoaderCacheState` and compatible active runtime registries
-- jiti/module caches and public-surface loader caches used to avoid importing
-  the same runtime surface repeatedly
-- filesystem caches for installed plugin artifacts
-- short-lived per-call maps for path normalization or duplicate resolution
+Explicit install, update, registry refresh, and doctor operations use isolated
+generations of the same cache type, acquired after their lifecycle lease. Their
+collections survive asynchronous consumers. They may inspect changed files and
+rebuild the persisted installed index, but cannot clear or replace running boot
+metadata. The new inventory takes effect after restart. `plugins.refresh`
+reports `restartRequired: true`; with reload disabled, the running inventory
+stays in place until a manual restart.
 
-Those caches are data-plane implementation details. They must not answer
-control-plane questions such as "which plugin owns this provider?" unless the
-caller deliberately asked for runtime loading.
+The shared cache owns checked file contents, parsed package and manifest data,
+bundle MCP/LSP/settings files, plugin skill paths, discovery paths, installed-index
+projections, compiled model policies, SDK aliases, artifact locations, and lazy
+module exports. Missing files and artifacts are facts too: they remain missing
+until a new generation. Discovery, registry assembly, and index hashing reuse
+the same checked bytes rather than reopening a file at each stage. Derived
+schemas, descriptors, and media defaults follow immutable manifest identity;
+account state, environment triggers, session overlays, and activation remain live.
+Do not add independent metadata caches or wall-clock TTLs alongside this owner.
 
-Do not add independent persistent or wall-clock caches for discovery, manifest
-registries, provider ownership, model policy, or public-artifact metadata. Those
-answers belong to the accepted collection and its explicit replacement lifecycle.
-Cold operations reconstruct their own collection from the installed plugin index;
-the index remains durable source-plane state, not a second runtime authority.
+Actual code imports retain their boundary and file-identity checks before first
+execution. Consent checks use a fresh inspection after an awaited approval so
+changed artifacts cannot inherit approval for older capabilities. Failed module
+evaluation remains retryable; a successful import is shared across consumers.
+
+Registered services, hooks, tools, session MCP overlays, generated skill-link
+publication, and activation state remain runtime-owned. An active registry pins
+its chosen artifact binding so source and built modules cannot split its
+registrations. Native ESM module lifetime still follows Node's module loader.
+Manifest-derived ownership questions use prepared metadata without executing
+plugin code. The persisted installed index belongs to management and startup;
+it is not a freshness signal for runtime readers.
 
 ## Registry model
 

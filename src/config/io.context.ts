@@ -9,17 +9,11 @@ import {
   shouldDeferShellEnvFallback,
   shouldEnableShellEnvFallback,
 } from "../infra/shell-env.js";
-// Import the metadata module directly: the gateway-startup-plugin-ids facade
-// also re-exports the startup loader and embedding providers, which config
-// reads must not drag into every CLI invocation.
-import { createConfigValidationMetadataPluginIdScope } from "../plugins/gateway-startup-plugin-metadata.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import {
   createPluginMetadataOwner,
-  getCurrentPluginMetadataOwner,
+  getOrCreatePluginMetadataOwner,
   getScopedPluginMetadata,
-  projectConfigWidePluginMetadata,
-  withPluginMetadataCollectionScope,
   type PreparedPluginMetadata,
 } from "../plugins/plugin-metadata-collection.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
@@ -79,9 +73,7 @@ export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): Con
   const scopedMetadata = getScopedPluginMetadata(deps.env);
   const metadataOwner =
     options.pluginMetadataOwner ??
-    (scopedMetadata
-      ? createPluginMetadataOwner()
-      : (getCurrentPluginMetadataOwner() ?? createPluginMetadataOwner()));
+    (scopedMetadata ? createPluginMetadataOwner() : getOrCreatePluginMetadataOwner());
 
   function observeLoadConfigSnapshot(snapshot: ConfigFileSnapshot): ConfigFileSnapshot {
     if (deps.observe) {
@@ -128,34 +120,18 @@ export function createConfigIoContext(options: ConfigIoFactoryOptions = {}): Con
     env: NodeJS.ProcessEnv;
     allowCurrentPluginMetadata?: boolean;
   }): ValidationPluginMetadataSnapshotLoader {
-    let manifestRegistry: PluginManifestRegistry | undefined;
     let metadata: PreparedPluginMetadata | undefined;
     return {
       load: (config) => {
-        if (manifestRegistry) {
-          return { manifestRegistry };
-        }
-        metadata = metadataOwner.prepare({
+        metadata ??= metadataOwner.prepare({
           config,
           env: params.env,
           allowCurrent: params.allowCurrentPluginMetadata,
           seed: scopedMetadata,
         });
-        manifestRegistry = withPluginMetadataCollectionScope(
-          metadata,
-          () =>
-            projectConfigWidePluginMetadata(metadata!, {
-              pluginIdScope: createConfigValidationMetadataPluginIdScope({
-                config,
-                env: params.env,
-                preparedState: metadata,
-              }),
-            }).manifestRegistry,
-          { config, env: params.env },
-        );
-        return { manifestRegistry };
+        return { manifestRegistry: metadata.manifestRegistry };
       },
-      getManifestRegistry: () => manifestRegistry,
+      getManifestRegistry: () => metadata?.manifestRegistry,
       getMetadata: () => metadata,
     };
   }

@@ -3,10 +3,8 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { retainLegacyDefaultAgentId } from "../../config/legacy.default-agent-owner.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import {
-  createPluginMetadataOwner,
-  installPluginMetadataOwner,
-} from "../../plugins/plugin-metadata-collection.js";
+import { installPluginMetadataOwner } from "../../plugins/current-plugin-metadata.test-support.js";
+import { createPluginMetadataOwner } from "../../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadata-lifecycle.js";
 import { resetPluginRuntimeStateForTest } from "../../plugins/runtime.js";
 import { createColdPluginFixture } from "../../plugins/test-helpers/cold-plugin-fixtures.js";

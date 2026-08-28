@@ -5,11 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { formatSqliteSessionFileMarker } from "../../config/sessions/legacy-sqlite-marker.js";
+import { installPluginMetadataOwner } from "../../plugins/current-plugin-metadata.test-support.js";
 import * as manifestModelIdNormalization from "../../plugins/manifest-model-id-normalization.js";
-import {
-  createPluginMetadataOwner,
-  installPluginMetadataOwner,
-} from "../../plugins/plugin-metadata-collection.js";
+import { createPluginMetadataOwner } from "../../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadata-lifecycle.js";
 import {
   createColdPluginFixture,

@@ -1,5 +1,6 @@
 // Doctor repair sequencing tests cover ordered repair execution and dependency handling.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveAgentWorkspaceDir } from "../../agents/agent-scope-config.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
   createPluginMetadataSnapshot,
@@ -500,13 +501,16 @@ describe("doctor repair sequencing", () => {
 
   it("repairs managed npm plugin drift before missing plugin install repair", async () => {
     const events: string[] = [];
-    const refreshedSnapshot = createPluginMetadataSnapshot({
-      manifestRegistry: { plugins: [], diagnostics: [] },
-    });
-    mocks.loadPluginMetadataSnapshot.mockImplementationOnce(() => {
-      events.push("metadata-refresh");
-      return refreshedSnapshot;
-    });
+    const refreshedManifestRegistry = { plugins: [], diagnostics: [] };
+    mocks.loadPluginMetadataSnapshot.mockImplementation(
+      (params: { config: OpenClawConfig; workspaceDir?: string }) => {
+        events.push("metadata-refresh");
+        return createPluginMetadataSnapshot({
+          ...params,
+          manifestRegistry: refreshedManifestRegistry,
+        });
+      },
+    );
     mocks.maybeRepairStaleManagedNpmBundledPlugins.mockImplementation(() => {
       events.push("bundled-shadow-cleanup");
       return { installRecords: {}, removedPluginIds: ["google-meet"] };
@@ -546,6 +550,7 @@ describe("doctor repair sequencing", () => {
       "bundled-shadow-cleanup",
       "openclaw-peer-links",
       "metadata-refresh",
+      "metadata-refresh",
       "missing-installs",
     ]);
     expect(mocks.maybeRepairStaleManagedNpmBundledPlugins).toHaveBeenCalledOnce();
@@ -567,9 +572,14 @@ describe("doctor repair sequencing", () => {
     const peerLinkCall = mocks.maybeRepairPluginOpenClawHostLinks.mock.calls[0]?.[0];
     expect(peerLinkCall?.prompter).toEqual({ shouldRepair: true });
     expect(peerLinkCall?.env).toBe(process.env);
-    expect(mocks.loadPluginMetadataSnapshot).toHaveBeenCalledOnce();
+    expect(mocks.loadPluginMetadataSnapshot).toHaveBeenCalledTimes(2);
+    expect(
+      mocks.loadPluginMetadataSnapshot.mock.calls.map(([params]) => params.workspaceDir),
+    ).toEqual(
+      expect.arrayContaining([undefined, resolveAgentWorkspaceDir({}, "main", process.env)]),
+    );
     expect(result.pluginMetadata).toMatchObject({
-      manifestRegistry: refreshedSnapshot.manifestRegistry,
+      manifestRegistry: refreshedManifestRegistry,
       plugins: [],
     });
   });
@@ -1010,7 +1020,12 @@ describe("doctor repair sequencing", () => {
       manifestRegistry: { plugins: [], diagnostics: [] },
       candidates: [{ pluginId: "exa", kind: "configured-plugin-repaired" }],
     });
-    expect(mocks.loadPluginMetadataSnapshot).toHaveBeenCalledTimes(1);
+    expect(mocks.loadPluginMetadataSnapshot).toHaveBeenCalledTimes(2);
+    expect(
+      mocks.loadPluginMetadataSnapshot.mock.calls.map(([params]) => params.workspaceDir),
+    ).toEqual(
+      expect.arrayContaining([undefined, resolveAgentWorkspaceDir({}, "main", process.env)]),
+    );
     expect(result.state.candidate.plugins?.entries?.exa).toEqual({ enabled: true });
     expect(result.changeNotes).toStrictEqual([
       'Installed missing configured plugin "exa" from @openclaw/exa-plugin.',
@@ -1029,6 +1044,7 @@ describe("doctor repair sequencing", () => {
     });
     const staleMetadata: PreparedPluginMetadata = {
       ...staleSnapshot,
+      unionSnapshot: staleSnapshot,
       selectedSnapshot: staleSnapshot,
       workspaces: new Map([[workspaceDir, staleSnapshot]]),
       configWorkspaceDirs: [workspaceDir],
@@ -1040,7 +1056,7 @@ describe("doctor repair sequencing", () => {
     const configWideManifestRegistry = makeRegistry([
       { id: "workspace-plugin", channels: [], providers: [workspaceProvider] },
     ]);
-    mocks.loadPluginMetadataSnapshot.mockImplementationOnce(
+    mocks.loadPluginMetadataSnapshot.mockImplementation(
       (params: { config: OpenClawConfig; workspaceDir?: string }) =>
         createPluginMetadataSnapshot({
           ...params,
@@ -1121,6 +1137,10 @@ describe("doctor repair sequencing", () => {
         allowCurrent: false,
       }),
     );
+    expect(mocks.loadPluginMetadataSnapshot).toHaveBeenCalledTimes(2);
+    expect(
+      mocks.loadPluginMetadataSnapshot.mock.calls.map(([params]) => params.workspaceDir),
+    ).toEqual(expect.arrayContaining([undefined, workspaceDir]));
     expect(mocks.applyPluginAutoEnable).toHaveBeenCalledWith({
       config: {
         agents: {

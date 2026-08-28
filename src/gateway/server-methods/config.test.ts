@@ -750,6 +750,7 @@ describe("config.patch model input normalization", () => {
       },
     });
     modelNormalizationPluginMetadata = {
+      unionSnapshot: snapshot,
       workspaces: new Map([[undefined, snapshot]]),
       configWorkspaceDirs: [undefined],
       agentWorkspaceDirs: new Map(),

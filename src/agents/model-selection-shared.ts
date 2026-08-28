@@ -17,7 +17,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import {
   getCurrentPluginMetadataSnapshot,
-  isCurrentPluginMetadataSnapshotRuntimeGeneration,
+  isScopedPluginMetadataSnapshotRuntimeGeneration,
 } from "../plugins/current-plugin-metadata-snapshot.js";
 import { loadManifestMetadataSnapshot } from "../plugins/manifest-contract-eligibility.js";
 import {
@@ -146,7 +146,7 @@ function resolveModelManifestNormalizationContext(
           config: params.cfg,
           allowWorkspaceScopedSnapshot: true,
         });
-  if (current && isCurrentPluginMetadataSnapshotRuntimeGeneration(current)) {
+  if (current && isScopedPluginMetadataSnapshotRuntimeGeneration(current)) {
     return {
       config: params.cfg,
       workspaceDir: current.workspaceDir,
@@ -851,13 +851,13 @@ function findModelAlias(
   );
 }
 
-/** Resolve configured aliases without executing unrelated provider normalization hooks. */
-export function resolveModelRefWithConfiguredAliases(
+/** Prepare only the alias competitors and raw fallback that can own one model operand. */
+export function planModelRefWithConfiguredAliases(
   params: BuildModelAliasIndexParams & { raw: string },
-): ModelRef | null {
+): { candidates: EffectiveModelAlias[]; fallbackRef: ModelRef | null } {
   const { model } = splitTrailingAuthProfile(params.raw);
   if (!model) {
-    return null;
+    return { candidates: [], fallbackRef: null };
   }
   const manifestPluginContext =
     params.manifestPluginContext ?? createModelManifestPluginContext(params);
@@ -865,13 +865,14 @@ export function resolveModelRefWithConfiguredAliases(
   const aliasKey = normalizeLowercaseStringOrEmpty(model);
   const slash = model.indexOf("/");
   const qualifiedAlias = slash > 0 ? normalizeLowercaseStringOrEmpty(model.slice(slash + 1)) : "";
+  const normalization = manifestPluginContext.getContext();
+  let competingCandidates: EffectiveModelAlias[] = [];
   if (
     candidates.some(({ alias }) => {
       const key = normalizeLowercaseStringOrEmpty(alias);
       return key && (key === aliasKey || key === qualifiedAlias);
     })
   ) {
-    const normalization = manifestPluginContext.getContext();
     const parsedCandidates = candidates.flatMap((candidate) => {
       const ref = parseModelRefWithCompatAlias({
         ...params,
@@ -894,10 +895,39 @@ export function resolveModelRefWithConfiguredAliases(
         .map(({ ref }) => ref.provider),
     );
     // Runtime-only model aliases can collide with blank or renamed agent rows.
-    // Fold every candidate for competing providers in authored order, including blanks.
+    // Retain every candidate for competing providers in authored order, including blanks.
+    competingCandidates = parsedCandidates.filter(({ ref }) => providers.has(ref.provider));
+  }
+  return {
+    candidates: competingCandidates,
+    // If runtime normalization removes every alias, the raw operand owns selection.
+    // Its provider must already belong to the same closed runtime generation.
+    fallbackRef: parseModelRefWithCompatAlias({
+      ...params,
+      ...normalization,
+      raw: model,
+      allowPluginNormalization: false,
+    }),
+  };
+}
+
+/** Resolve configured aliases without executing unrelated provider normalization hooks. */
+export function resolveModelRefWithConfiguredAliases(
+  params: BuildModelAliasIndexParams & { raw: string },
+  plan?: ReturnType<typeof planModelRefWithConfiguredAliases>,
+): ModelRef | null {
+  const { model } = splitTrailingAuthProfile(params.raw);
+  if (!model) {
+    return null;
+  }
+  const manifestPluginContext =
+    params.manifestPluginContext ?? createModelManifestPluginContext(params);
+  const { candidates, fallbackRef } =
+    plan ?? planModelRefWithConfiguredAliases({ ...params, manifestPluginContext });
+  if (candidates.length > 0) {
     const { aliases, disabledKeys } = buildEffectiveModelAliases(
       { ...params, manifestPluginContext },
-      parsedCandidates.filter(({ ref }) => providers.has(ref.provider)),
+      candidates,
     );
     const alias = findModelAlias(model, indexModelAliases(aliases, disabledKeys));
     if (alias) {
@@ -905,11 +935,13 @@ export function resolveModelRefWithConfiguredAliases(
       return alias.ref;
     }
   }
-  return parseModelRefWithCompatAlias({
-    ...params,
-    ...manifestPluginContext.getContext(),
-    raw: model,
-  });
+  return params.allowPluginNormalization === false
+    ? fallbackRef
+    : parseModelRefWithCompatAlias({
+        ...params,
+        ...manifestPluginContext.getContext(),
+        raw: model,
+      });
 }
 
 export function resolveModelRefFromString(

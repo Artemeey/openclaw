@@ -3,11 +3,13 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
 import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
-import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
+import {
+  createPluginMetadataSnapshotFixture,
+  createPreparedPluginMetadataFixture,
+} from "../plugins/plugin-metadata.test-support.js";
 
 const applyPluginAutoEnable = vi.hoisted(() =>
   vi.fn((params: { config: unknown }) => ({
@@ -42,61 +44,14 @@ const pluginManifestRegistry = vi.hoisted(
     diagnostics: [],
   }),
 );
-const pluginMetadataSnapshot = vi.hoisted(
-  (): PluginMetadataSnapshot => ({
-    policyHash: "policy",
-    workspaceDir: "/workspace",
-    index: {
-      version: 1,
-      hostContractVersion: "test",
-      compatRegistryVersion: "test",
-      migrationVersion: 1,
-      policyHash: "policy",
-      generatedAtMs: 0,
-      installRecords: {},
-      plugins: [],
-      diagnostics: [],
-    },
-    registryDiagnostics: [],
-    manifestRegistry: pluginManifestRegistry,
-    plugins: [],
-    diagnostics: [],
-    byPluginId: new Map(),
-    normalizePluginId: (pluginId) => pluginId,
-    owners: {
-      channels: new Map(),
-      channelConfigs: new Map(),
-      providers: new Map(),
-      modelCatalogProviders: new Map(),
-      cliBackends: new Map(),
-      setupProviders: new Map(),
-      commandAliases: new Map(),
-      contracts: new Map(),
-    },
-    metrics: {
-      registrySnapshotMs: 0,
-      manifestRegistryMs: 0,
-      ownerMapsMs: 0,
-      totalMs: 0,
-      indexPluginCount: 0,
-      manifestPluginCount: 0,
-    },
-  }),
-);
-const pluginMetadata: PreparedPluginMetadata = {
-  workspaces: new Map([["/workspace", pluginMetadataSnapshot]]),
-  configWorkspaceDirs: ["/workspace"],
-  agentWorkspaceDirs: new Map([["main", "/workspace"]]),
-  installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
-  envFingerprint: resolvePluginMetadataEnvFingerprint(),
-  selectedSnapshot: pluginMetadataSnapshot,
-  manifestRegistry: pluginMetadataSnapshot.manifestRegistry,
-  plugins: pluginMetadataSnapshot.plugins,
-  byPluginId: pluginMetadataSnapshot.byPluginId,
-  owners: pluginMetadataSnapshot.owners,
-  diagnostics: pluginMetadataSnapshot.diagnostics,
-  channelCatalog: { read: () => [] },
+const pluginMetadataSnapshot = {
+  ...createPluginMetadataSnapshotFixture(pluginManifestRegistry),
+  workspaceDir: "/workspace",
 };
+const pluginMetadata = createPreparedPluginMetadataFixture({
+  unionSnapshot: pluginMetadataSnapshot,
+  agentWorkspaceDirs: new Map([["main", "/workspace"]]),
+});
 const pluginLookUpTableMetrics = vi.hoisted(() => ({
   registrySnapshotMs: 0,
   manifestRegistryMs: 0,
@@ -465,16 +420,12 @@ describe("prepareGatewayPluginBootstrap startup plugins", () => {
     async (systemAgentId) => {
       const workspaceDir = systemAgentId ? `/workspaces/${systemAgentId}` : undefined;
       const selectedSnapshot = { ...pluginMetadataSnapshot, workspaceDir };
-      const metadata: PreparedPluginMetadata = {
-        ...pluginMetadata,
-        selectedSnapshot,
-        workspaces: new Map([[workspaceDir, selectedSnapshot]]),
-        configWorkspaceDirs: [workspaceDir],
+      const metadata = createPreparedPluginMetadataFixture({
+        unionSnapshot: selectedSnapshot,
         agentWorkspaceDirs: new Map(
           systemAgentId && workspaceDir ? [[systemAgentId, workspaceDir]] : [],
         ),
-        installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
-      };
+      });
       const result = await prepareBootstrapWithRuntimeConfig(
         {
           agents: {

@@ -8,17 +8,22 @@ import {
   getCurrentPluginMetadataSnapshot,
   installTemporaryCurrentPluginMetadataSnapshot,
   isCurrentPluginMetadataSnapshotRuntimeGeneration,
-  setCurrentPluginMetadataSnapshot,
+  isScopedPluginMetadataSnapshotRuntimeGeneration,
+  setGatewayPluginMetadataSnapshot,
   withPluginMetadataSnapshotScope,
 } from "./current-plugin-metadata-snapshot.js";
 import { clearCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-state.js";
+import { setCurrentPluginMetadataSnapshot } from "./current-plugin-metadata.test-support.js";
 import { getGlobalHookRunnerRegistry } from "./hook-runner-global-state.js";
 import { withPluginInstallRoots } from "./install-root-context.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
 import { writePersistedInstalledPluginIndexSync } from "./installed-plugin-index-store-write.js";
 import type { PluginManifestRecord } from "./manifest-registry.js";
 import { resolvePluginControlPlaneFingerprint } from "./plugin-control-plane-context.js";
-import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
+import {
+  clearPluginMetadataLifecycleCaches,
+  retainGatewayPluginMetadata,
+} from "./plugin-metadata-lifecycle.js";
 import {
   resolvePluginMetadataSnapshot,
   type PluginMetadataSnapshot,
@@ -198,11 +203,13 @@ describe("current plugin metadata snapshot", () => {
           }),
         ).toBe(metadataSnapshot);
         expect(isCurrentPluginMetadataSnapshotRuntimeGeneration(metadataSnapshot)).toBe(true);
+        expect(isScopedPluginMetadataSnapshotRuntimeGeneration(metadataSnapshot)).toBe(true);
         expect(getPluginRuntimeGatewayRequestScope()?.pluginRegistry).toBe(pluginRegistry);
       },
     );
 
     expect(isCurrentPluginMetadataSnapshotRuntimeGeneration(metadataSnapshot)).toBe(false);
+    expect(isScopedPluginMetadataSnapshotRuntimeGeneration(metadataSnapshot)).toBe(false);
     expect(
       getCurrentPluginMetadataSnapshot({ config, workspaceDir: agentWorkspaceDir }),
     ).toBeUndefined();
@@ -851,9 +858,23 @@ describe("current plugin metadata snapshot", () => {
     expect(getCurrentPluginMetadataSnapshot()).toBeUndefined();
 
     const replacedLease = installTemporaryCurrentPluginMetadataSnapshot(temporary);
-    setCurrentPluginMetadataSnapshot(newer);
-    expect(replacedLease.release()).toBe(false);
-    expect(getCurrentPluginMetadataSnapshot()).toBe(newer);
+    const releaseGateway = retainGatewayPluginMetadata();
+    try {
+      setGatewayPluginMetadataSnapshot(newer);
+      expect(replacedLease.release()).toBe(false);
+      expect(getCurrentPluginMetadataSnapshot()).toBe(newer);
+      expect(isCurrentPluginMetadataSnapshotRuntimeGeneration(newer)).toBe(true);
+      expect(isScopedPluginMetadataSnapshotRuntimeGeneration(newer)).toBe(false);
+      expect(() => setGatewayPluginMetadataSnapshot(original)).toThrow("after shutdown");
+      expect(() => installTemporaryCurrentPluginMetadataSnapshot(temporary)).toThrow(
+        "after shutdown",
+      );
+      setCurrentPluginMetadataSnapshot(original);
+      expect(getCurrentPluginMetadataSnapshot()).toBe(newer);
+    } finally {
+      releaseGateway();
+    }
+    expect(getCurrentPluginMetadataSnapshot()).toBeUndefined();
   });
 
   it("unwinds nested temporary leases when they release out of order", () => {

@@ -1,6 +1,6 @@
 import {
   getCurrentPluginMetadataSnapshot,
-  isCurrentPluginMetadataSnapshotRuntimeGeneration,
+  isScopedPluginMetadataSnapshotRuntimeGeneration,
 } from "../plugins/current-plugin-metadata-snapshot.js";
 import {
   getCurrentPluginMetadataOwner,
@@ -59,7 +59,7 @@ function prepareOperationMetadataSnapshot(
   });
   // A nested runtime carries executable authority for one immutable graph.
   // Operation preparation must not replace it with another workspace's inventory.
-  if (inherited && isCurrentPluginMetadataSnapshotRuntimeGeneration(inherited)) {
+  if (inherited && isScopedPluginMetadataSnapshotRuntimeGeneration(inherited)) {
     return inherited;
   }
   const scope =
@@ -73,7 +73,10 @@ function prepareOperationMetadataSnapshot(
         }
       : {};
   if (inherited && inherited.pluginIds === undefined) {
-    return projectPluginMetadataSnapshot(inherited, scope);
+    return projectPluginMetadataSnapshot(
+      inherited,
+      scope.pluginIdScope?.resolve({ index: inherited.index }),
+    );
   }
   const prepared = getCurrentPluginMetadataOwner()?.readSnapshot({
     config: input.config,

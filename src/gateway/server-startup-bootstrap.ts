@@ -74,17 +74,9 @@ export async function prepareGatewayServerBootstrap(input: {
   loadWorkerEnvironmentStartupModule: WorkerEnvironmentStartupLoader;
   formatRuntimeGatewayAuthTokenWarning: () => string;
   pluginMetadataOwner: PluginMetadataOwner;
-  disposePluginMetadataOwner: () => void;
 }) {
-  const {
-    port,
-    opts,
-    log,
-    logSecrets,
-    loadWorkerEnvironmentStartupModule,
-    pluginMetadataOwner,
-    disposePluginMetadataOwner,
-  } = input;
+  const { port, opts, log, logSecrets, loadWorkerEnvironmentStartupModule, pluginMetadataOwner } =
+    input;
   const formatRuntimeGatewayAuthTokenWarning = input.formatRuntimeGatewayAuthTokenWarning;
   normalizeStateDirEnv(process.env);
   await assertOpenClawStateWriteAllowedAtPath({
@@ -560,7 +552,6 @@ export async function prepareGatewayServerBootstrap(input: {
     applyFixedGatewayOverlays,
     prepareReloadCandidate,
     pluginMetadataOwner,
-    disposePluginMetadataOwner,
     startupInternalWriteHash,
     startupLastGoodSnapshot,
     workerEnvironmentStartup,

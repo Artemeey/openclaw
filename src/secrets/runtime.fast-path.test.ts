@@ -243,8 +243,9 @@ describe("secrets runtime fast path", () => {
     const { prepareSecretsRuntimeSnapshot } = await import("./runtime.js");
     const { collectConfigAssignments } = await import("./runtime-config-collectors.js");
     const { resolveRuntimeWebTools } = await import("./runtime-web-tools.js");
-    const { createPluginMetadataOwner, installPluginMetadataOwner } =
-      await import("../plugins/plugin-metadata-collection.js");
+    const { createPluginMetadataOwner } = await import("../plugins/plugin-metadata-collection.js");
+    const { installPluginMetadataOwner } =
+      await import("../plugins/current-plugin-metadata.test-support.js");
     const config = asConfig({
       ...explicitMainRoster(),
       tools: { web: { search: { provider: "webiq" } } },

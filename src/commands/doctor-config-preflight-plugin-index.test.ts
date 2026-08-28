@@ -27,6 +27,7 @@ function snapshotRead(
     pluginMigrationFingerprint: "plugin-migrations",
     pluginMetadata: {
       ...snapshot,
+      unionSnapshot: snapshot,
       selectedSnapshot: snapshot,
       workspaces: new Map([[undefined, snapshot]]),
       configWorkspaceDirs: [undefined],

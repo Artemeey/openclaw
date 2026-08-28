@@ -1,119 +1,163 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { installPluginMetadataOwner } from "../current-plugin-metadata.test-support.js";
+import { createPluginCache, withPluginCache } from "../plugin-cache.js";
+import { createPluginMetadataOwner, preparePluginMetadata } from "../plugin-metadata-collection.js";
 import {
-  getCurrentPluginMetadataSnapshot,
-  setCurrentPluginMetadataSnapshot,
-} from "../current-plugin-metadata-snapshot.js";
-import { resolveInstalledPluginIndexPolicyHash } from "../installed-plugin-index-policy.js";
-import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../installed-plugin-index-record-cache.js";
-import * as pluginMetadata from "../plugin-metadata-collection.js";
-import { resolvePluginMetadataEnvFingerprint } from "../plugin-metadata-env.js";
-import { clearPluginMetadataLifecycleCaches } from "../plugin-metadata-lifecycle.js";
-import type { PluginMetadataSnapshot } from "../plugin-metadata-snapshot.types.js";
+  clearPluginMetadataLifecycleCaches,
+  retainGatewayPluginMetadata,
+} from "../plugin-metadata-lifecycle.js";
+import { createColdPluginFixture } from "../test-helpers/cold-plugin-fixtures.js";
+import {
+  cleanupTrackedTempDirs,
+  makeTrackedTempDir,
+  mkdirSafeDir,
+} from "../test-helpers/fs-fixtures.js";
 import { resolvePluginRuntimeLoadContext } from "./load-context.js";
 
-function createSnapshot(params: {
-  config: OpenClawConfig;
-  workspaceDir: string;
-}): PluginMetadataSnapshot {
-  const policyHash = resolveInstalledPluginIndexPolicyHash(params.config);
-  return {
-    policyHash,
-    workspaceDir: params.workspaceDir,
-    index: {
-      version: 1,
-      hostContractVersion: "test",
-      compatRegistryVersion: "test",
-      migrationVersion: 1,
-      policyHash,
-      generatedAtMs: 1,
-      installRecords: {},
-      plugins: [],
-      diagnostics: [],
-    },
-    registryDiagnostics: [],
-    manifestRegistry: { plugins: [], diagnostics: [] },
-    plugins: [],
-    diagnostics: [],
-    byPluginId: new Map(),
-    normalizePluginId: (pluginId) => pluginId,
-    owners: {
-      channels: new Map(),
-      channelConfigs: new Map(),
-      providers: new Map(),
-      modelCatalogProviders: new Map(),
-      cliBackends: new Map(),
-      setupProviders: new Map(),
-      commandAliases: new Map(),
-      contracts: new Map(),
-    },
-    metrics: {
-      registrySnapshotMs: 0,
-      manifestRegistryMs: 0,
-      ownerMapsMs: 0,
-      totalMs: 0,
-      indexPluginCount: 0,
-      manifestPluginCount: 0,
-    },
-    discovery: { candidates: [], diagnostics: [] },
-  };
-}
-
 describe("plugin runtime load context current snapshot ownership", () => {
+  const tempDirs: string[] = [];
+  let root: string;
+  let env: NodeJS.ProcessEnv;
+  let releaseOwner: (() => void) | undefined;
+  let releaseGateway: (() => void) | undefined;
+
+  beforeEach(() => {
+    clearPluginMetadataLifecycleCaches();
+    root = fs.realpathSync(makeTrackedTempDir("openclaw-runtime-metadata", tempDirs));
+    const bundledPluginsDir = path.join(root, "bundled");
+    mkdirSafeDir(bundledPluginsDir);
+    env = {
+      HOME: root,
+      OPENCLAW_HOME: root,
+      OPENCLAW_STATE_DIR: path.join(root, "state"),
+      OPENCLAW_BUNDLED_PLUGINS_DIR: bundledPluginsDir,
+      OPENCLAW_DISABLE_BUNDLED_SOURCE_OVERLAYS: "1",
+    };
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
+    releaseGateway?.();
+    releaseGateway = undefined;
+    releaseOwner?.();
+    releaseOwner = undefined;
     clearPluginMetadataLifecycleCaches();
+    cleanupTrackedTempDirs(tempDirs);
   });
 
-  it("keeps operation-local metadata from replacing the Gateway lifecycle snapshot", () => {
-    const lifecycleConfig = { plugins: { allow: ["lifecycle"] } };
-    const operationConfig = { plugins: { allow: ["operation"] } };
-    const lifecycleWorkspace = "/workspace/lifecycle";
-    const operationWorkspace = "/workspace/operation";
-    const lifecycleSnapshot = createSnapshot({
-      config: lifecycleConfig,
-      workspaceDir: lifecycleWorkspace,
-    });
-    const operationSnapshot = createSnapshot({
-      config: operationConfig,
-      workspaceDir: operationWorkspace,
-    });
-    setCurrentPluginMetadataSnapshot(lifecycleSnapshot, {
-      config: lifecycleConfig,
-      workspaceDir: lifecycleWorkspace,
-    });
-    vi.spyOn(pluginMetadata, "preparePluginMetadata").mockReturnValue({
-      workspaces: new Map([[operationWorkspace, operationSnapshot]]),
-      configWorkspaceDirs: [operationWorkspace],
-      agentWorkspaceDirs: new Map([["main", operationWorkspace]]),
-      installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
-      envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
-      selectedSnapshot: operationSnapshot,
-      manifestRegistry: operationSnapshot.manifestRegistry,
-      plugins: operationSnapshot.plugins,
-      byPluginId: operationSnapshot.byPluginId,
-      owners: operationSnapshot.owners,
-      diagnostics: operationSnapshot.diagnostics,
-      channelCatalog: { read: () => [] },
-    });
+  function pluginAt(rootDir: string, pluginId: string) {
+    mkdirSafeDir(rootDir);
+    return createColdPluginFixture({ rootDir, pluginId });
+  }
 
-    const context = resolvePluginRuntimeLoadContext({
-      config: operationConfig,
-      workspaceDir: operationWorkspace,
-    });
+  it.each(["explicit snapshot", "operation preparation"])(
+    "keeps %s isolated from the Gateway startup inventory",
+    (mode) => {
+      const lifecycle = pluginAt(path.join(root, "lifecycle"), "lifecycle");
+      const operation = pluginAt(path.join(root, "operation"), "operation");
+      const lifecycleWorkspace = path.join(root, "lifecycle-workspace");
+      const otherWorkspace = path.join(root, "other-workspace");
+      const workspacePlugin = pluginAt(
+        path.join(lifecycleWorkspace, ".openclaw", "extensions", "workspace-plugin"),
+        "workspace-plugin",
+      );
+      const lifecycleConfig: OpenClawConfig = {
+        agents: {
+          ownership: "explicit",
+          entries: {
+            lifecycle: { workspace: lifecycleWorkspace },
+            other: { workspace: otherWorkspace },
+          },
+        },
+        plugins: {
+          load: { paths: [lifecycle.rootDir] },
+          allow: [lifecycle.pluginId, workspacePlugin.pluginId],
+        },
+      };
+      const operationWorkspace = path.join(root, "operation-workspace");
+      const operationConfig: OpenClawConfig = {
+        plugins: { load: { paths: [operation.rootDir] }, allow: [operation.pluginId] },
+      };
+      const owner = createPluginMetadataOwner();
+      releaseOwner = installPluginMetadataOwner(owner);
+      releaseGateway = retainGatewayPluginMetadata();
+      const boot = owner.prepare({ config: lifecycleConfig, env });
+      owner.publish(boot, { config: lifecycleConfig, env });
 
-    expect(context.metadataSnapshot).toBe(operationSnapshot);
-    expect(
-      getCurrentPluginMetadataSnapshot({
+      const context = withPluginCache(createPluginCache(), () => {
+        const metadataSnapshot =
+          mode === "explicit snapshot"
+            ? preparePluginMetadata({
+                config: operationConfig,
+                env,
+                workspaceDir: operationWorkspace,
+              }).selectedSnapshot
+            : undefined;
+        return resolvePluginRuntimeLoadContext({
+          config: operationConfig,
+          env,
+          workspaceDir: operationWorkspace,
+          ...(metadataSnapshot ? { metadataSnapshot } : {}),
+        });
+      });
+
+      expect(context.metadataSnapshot?.plugins.map((plugin) => plugin.id)).toEqual([
+        operation.pluginId,
+      ]);
+      expect(context.workspaceDir).toBe(operationWorkspace);
+      expect(owner.getActive()).toBe(boot);
+      const unchanged = resolvePluginRuntimeLoadContext({
         config: lifecycleConfig,
+        env,
         workspaceDir: lifecycleWorkspace,
-      }),
-    ).toBe(lifecycleSnapshot);
-    expect(
-      getCurrentPluginMetadataSnapshot({
+      });
+      expect(unchanged.metadataSnapshot).toBe(boot.workspaces.get(lifecycleWorkspace));
+      expect(unchanged.metadataSnapshot?.plugins.map((plugin) => plugin.id)).toEqual([
+        lifecycle.pluginId,
+        workspacePlugin.pluginId,
+      ]);
+      const shared = resolvePluginRuntimeLoadContext({ config: lifecycleConfig, env });
+      expect(shared.metadataSnapshot).toBe(boot.selectedSnapshot);
+      expect(shared.metadataSnapshot?.plugins.map((plugin) => plugin.id)).toEqual([
+        lifecycle.pluginId,
+      ]);
+      const reads = [
+        vi.spyOn(fs, "existsSync"),
+        vi.spyOn(fs, "lstatSync"),
+        vi.spyOn(fs, "openSync"),
+        vi.spyOn(fs, "readdirSync"),
+        vi.spyOn(fs, "readFileSync"),
+        vi.spyOn(fs, "statSync"),
+        vi.spyOn(fs.realpathSync, "native"),
+      ];
+      const reconfigured = resolvePluginRuntimeLoadContext({
         config: operationConfig,
+        env,
         workspaceDir: operationWorkspace,
-      }),
-    ).toBeUndefined();
-  });
+      });
+      const metadataReads = reads.flatMap((read) =>
+        read.mock.calls.flatMap(([target]) =>
+          typeof target === "string" && (target === root || target.startsWith(`${root}${path.sep}`))
+            ? [target]
+            : [],
+        ),
+      );
+      for (const read of reads) {
+        read.mockRestore();
+      }
+      expect(reconfigured.rawConfig).toBe(operationConfig);
+      expect(reconfigured.workspaceDir).toBe(operationWorkspace);
+      expect(reconfigured.metadataSnapshot?.plugins.map((plugin) => plugin.id)).toEqual([
+        lifecycle.pluginId,
+      ]);
+      expect(metadataReads).toEqual([]);
+      expect(owner.getActive()).toBe(boot);
+      for (const plugin of [lifecycle, operation, workspacePlugin]) {
+        expect(fs.existsSync(plugin.runtimeMarker)).toBe(false);
+      }
+    },
+  );
 });

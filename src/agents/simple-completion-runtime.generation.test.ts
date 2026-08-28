@@ -5,6 +5,7 @@ import {
 } from "../config/plugin-auto-enable.test-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { Model } from "../llm/types.js";
+import { setCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata.test-support.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import {
@@ -13,6 +14,7 @@ import {
   setActivePluginRegistry,
 } from "../plugins/runtime.js";
 import { getPluginRuntimeGenerationRegistry } from "../plugins/runtime/generation-scope.js";
+import { createPluginRecord } from "../plugins/status.test-helpers.js";
 import type { resolveModelAsync } from "./embedded-agent-runner/model.js";
 import { AuthStorage, ModelRegistry } from "./sessions/index.js";
 
@@ -130,6 +132,7 @@ beforeEach(() => {
 
 afterEach(() => {
   resetPluginRuntimeStateForTest();
+  setCurrentPluginMetadataSnapshot(undefined);
 });
 
 it("keeps route rematerialization and runtime auth on the acquired generation", async () => {
@@ -306,3 +309,142 @@ it("acquires the canonical manifest-derived utility model selection", async () =
     },
   });
 });
+
+it.each([
+  { raw: "selected-provider/legacy@work", normalizedInput: "legacy", outcome: "model" },
+  { raw: "chosen@work", normalizedInput: "legacy", outcome: "model" },
+  {
+    raw: "selected-provider/selected-provider/selected-provider/legacy@work",
+    normalizedInput: "selected-provider/legacy",
+    outcome: "model",
+  },
+  { raw: "chosen@work", normalizedInput: "legacy", outcome: "error" },
+])(
+  "normalizes only chosen $raw after acquiring its generation ($outcome)",
+  async ({ raw, normalizedInput, outcome }) => {
+    const workspaceDir = "/tmp/runtime-workspace";
+    const config: OpenClawConfig = {
+      agents: {
+        entries: { main: { workspace: workspaceDir } },
+        defaults: {
+          model: "primary-provider/primary",
+          models: {
+            "selected-provider/legacy": { alias: "chosen" },
+            "unrelated-provider/another-model": { alias: "unused" },
+          },
+        },
+      },
+    };
+    const manifestRegistry = makeRegistry(
+      ["primary-provider", "selected-provider", "unrelated-provider"].map((id) => ({
+        id,
+        channels: [],
+        providers: [id],
+      })),
+    );
+    const metadataSnapshot = createPluginMetadataSnapshot({
+      config,
+      workspaceDir,
+      manifestRegistry,
+    });
+    const observed: Array<{
+      registry: ReturnType<typeof getPluginRuntimeGenerationRegistry>;
+      modelId: string;
+    }> = [];
+    const selectedNormalizer = vi.fn(({ modelId }: { modelId: string }) => {
+      observed.push({ registry: getPluginRuntimeGenerationRegistry(), modelId });
+      return modelId === normalizedInput ? "runtime-model" : `renormalized-${modelId}`;
+    });
+    const primaryNormalizer = vi.fn(({ modelId }: { modelId: string }) => modelId);
+    const unrelatedNormalizer = vi.fn(({ modelId }: { modelId: string }) => modelId);
+    const ambientNormalizer = vi.fn(() => "ambient-model");
+    for (const registry of [generationA, generationB]) {
+      for (const manifest of manifestRegistry.plugins) {
+        registry.plugins.push(
+          createPluginRecord({
+            id: manifest.id,
+            source: manifest.source,
+            rootDir: manifest.rootDir,
+            origin: manifest.origin,
+            providerIds: manifest.providers,
+          }),
+        );
+        registry.providers.push({
+          pluginId: manifest.id,
+          source: manifest.source,
+          rootDir: manifest.rootDir,
+          provider: {
+            id: manifest.id,
+            label: manifest.id,
+            auth: [],
+            normalizeModelId:
+              registry === generationB
+                ? ambientNormalizer
+                : manifest.id === "selected-provider"
+                  ? selectedNormalizer
+                  : manifest.id === "primary-provider"
+                    ? primaryNormalizer
+                    : unrelatedNormalizer,
+          },
+        });
+      }
+    }
+    setCurrentPluginMetadataSnapshot(metadataSnapshot, { config, workspaceDir });
+    setActivePluginRegistry(generationA, "selection-generation-A", "default", workspaceDir);
+    mocks.resolvePluginMetadataSnapshot.mockReturnValue(metadataSnapshot);
+    const acquire = mocks.acquireRuntimeLease.getMockImplementation();
+    if (!acquire) {
+      throw new Error("Expected the generation fixture's acquisition implementation");
+    }
+    mocks.acquireRuntimeLease.mockImplementation(async (input, options) => {
+      const lease = await acquire(input, options);
+      setActivePluginRegistry(generationB, "selection-generation-B", "default", workspaceDir);
+      return lease;
+    });
+    mocks.getApiKeyForModel.mockResolvedValue({
+      apiKey: "fixture-local-marker",
+      source: "fixture",
+      mode: "api-key",
+    });
+    const baseResolver = createOllamaModelResolver();
+    const modelResolver = vi.fn<typeof resolveModelAsync>(async (...args) => {
+      const resolved = await baseResolver(...args);
+      return outcome === "error"
+        ? {
+            error: "fixture model unavailable",
+            authStorage: resolved.authStorage,
+            modelRegistry: resolved.modelRegistry,
+          }
+        : resolved;
+    });
+
+    const result = await prepareSimpleCompletionModelForAgent({
+      cfg: config,
+      agentId: "main",
+      agentDir: "/tmp/canonical-agent",
+      modelRef: raw,
+      modelResolver,
+    });
+
+    expect(observed).toEqual([{ registry: generationA, modelId: normalizedInput }]);
+    expect(primaryNormalizer).not.toHaveBeenCalled();
+    expect(unrelatedNormalizer).not.toHaveBeenCalled();
+    expect(ambientNormalizer).not.toHaveBeenCalled();
+    expect(vi.mocked(modelResolver).mock.calls[0]?.slice(0, 2)).toEqual([
+      "selected-provider",
+      "runtime-model",
+    ]);
+    expect(result).toMatchObject({
+      selection: {
+        provider: "selected-provider",
+        modelId: "runtime-model",
+        profileId: "work",
+        agentDir: "/tmp/canonical-agent",
+      },
+      ...(outcome === "error"
+        ? { error: "fixture model unavailable" }
+        : { model: { provider: "selected-provider", id: "runtime-model" } }),
+    });
+    expect(readGeneration()).toBe("B");
+  },
+);

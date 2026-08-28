@@ -298,6 +298,9 @@ async function buildPublicModelsListEntries(params: {
       const available = evaluation.availability ?? (syntheticLocalAvailable ? true : undefined);
       // Legacy views keep emitting a boolean because existing clients treat
       // omission as selectable. Inventory consumers preserve unknown state.
+      const projectedAvailability = params.preserveUnknownAvailability
+        ? available
+        : (available ?? false);
       const capabilityProvider = params.apiKeyCapabilities?.resolveProvider(entry.provider);
       const agentRuntime = resolveModelChoiceAgentRuntime({
         cfg: params.cfg,
@@ -327,9 +330,15 @@ async function buildPublicModelsListEntries(params: {
             }
           : {}),
         ...(params.includeInput && entry.input?.length ? { input: entry.input } : {}),
-        ...(params.preserveUnknownAvailability && available === undefined
-          ? {}
-          : { available: available ?? false }),
+        ...(projectedAvailability === undefined ? {} : { available: projectedAvailability }),
+        ...(projectedAvailability === false && evaluation.unavailableReason
+          ? {
+              unavailableReason: evaluation.unavailableReason,
+              ...(evaluation.unavailableUntil !== undefined
+                ? { unavailableUntil: evaluation.unavailableUntil }
+                : {}),
+            }
+          : {}),
       };
     }),
   );

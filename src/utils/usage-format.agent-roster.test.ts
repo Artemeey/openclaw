@@ -9,10 +9,10 @@ import { normalizeStaticProviderModelId } from "../agents/model-ref-shared.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveEstimatedSessionCostUsd } from "../gateway/session-utils-core.js";
 import { buildSessionListRowMetadataContext } from "../gateway/session-utils-projection.js";
+import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
 import {
   createPluginMetadataOwner,
   getPluginMetadataWorkspaceSnapshot,
-  installPluginMetadataOwner,
   type PluginMetadataOwner,
   type PreparedPluginMetadata,
 } from "../plugins/plugin-metadata-collection.js";
@@ -247,14 +247,14 @@ describe("usage-format agent roster", () => {
         getPluginMetadataWorkspaceSnapshot(metadata, {
           workspaceDir: metadata.agentWorkspaceDirs.get("work"),
         }),
-        { pluginIds: ["work-pricing"] },
+        ["work-pricing"],
       );
       expect(
         normalizeStaticProviderModelId("anthropic", "scope-pricing-legacy", {
           manifestPlugins: full.plugins,
         }),
       ).toBe("work-priced");
-      const empty = projectPluginMetadataSnapshot(full, { pluginIds: [] });
+      const empty = projectPluginMetadataSnapshot(full, []);
       const read = () =>
         resolveEstimatedSessionCostUsd({
           cfg: config,

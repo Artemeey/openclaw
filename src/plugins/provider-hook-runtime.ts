@@ -151,7 +151,11 @@ function resolveProviderRuntimeLookupScope(
       cfg: params.config,
       provider: params.provider,
       model: modelId,
-    }).modelRefs,
+    }).modelRefs.filter(
+      // The selected provider owns nested IDs; a bare slash-bearing ID would
+      // activate its vendor as another provider. Keep slashless model-owner inference.
+      (modelRef) => !modelId.includes("/") || modelRef !== modelId,
+    ),
   };
 }
 

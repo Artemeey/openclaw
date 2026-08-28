@@ -5,17 +5,17 @@ import type {
   PluginConfigUiHint,
   PluginDiagnostic,
   PluginFormat,
-  PluginManifest,
-  PluginManifestActivation,
   PluginManifestBackupResource,
-  PluginManifestCapabilityProviderMetadata,
+  PluginManifestDoctorContract,
+  PluginManifestActivation,
   PluginManifestCatalog,
+  PluginManifestConfigContracts,
+  PluginManifest,
+  PluginManifestCapabilityProviderMetadata,
   PluginManifestChannelCommandDefaults,
   PluginManifestChannelConfig,
-  PluginManifestConfigContracts,
   PluginManifestContracts,
   PluginManifestDashboard,
-  PluginManifestDoctorContract,
   PluginManifestMediaUnderstandingProviderMetadata,
   PluginManifestMcpServer,
   PluginManifestModelCatalog,
@@ -33,10 +33,30 @@ import type {
   OpenClawPackageManifest,
   PluginPackageChannel,
   PluginPackageInstall,
-} from "./package-manifest.js";
+} from "./package-manifest.types.js";
 import type { PluginKind } from "./plugin-kind.types.js";
 import type { PluginOrigin } from "./plugin-origin.types.js";
 import type { PluginDependencySpecMap } from "./status-dependencies-core.js";
+
+export type PluginManifestContractListKey =
+  | "speechProviders"
+  | "externalAuthProviders"
+  | "embeddingProviders"
+  | "mediaUnderstandingProviders"
+  | "transcriptSourceProviders"
+  | "documentExtractors"
+  | "realtimeVoiceProviders"
+  | "realtimeTranscriptionProviders"
+  | "imageGenerationProviders"
+  | "videoGenerationProviders"
+  | "musicGenerationProviders"
+  | "webContentExtractors"
+  | "webFetchProviders"
+  | "webSearchProviders"
+  | "workerProviders"
+  | "usageProviders"
+  | "migrationProviders"
+  | "gatewayMethodDispatch";
 
 export type PluginManifestRecord = {
   id: string;
@@ -124,3 +144,9 @@ export type PluginManifestRegistry = {
   plugins: PluginManifestRecord[];
   diagnostics: PluginDiagnostic[];
 };
+
+export type BundledChannelConfigCollector = (params: {
+  pluginDir: string;
+  manifest: PluginManifest;
+  packageManifest?: OpenClawPackageManifest;
+}) => Record<string, PluginManifestChannelConfig> | undefined;

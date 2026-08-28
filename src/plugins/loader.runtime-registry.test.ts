@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
-import { setCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-snapshot.js";
+import { setCurrentPluginMetadataSnapshot } from "./current-plugin-metadata.test-support.js";
 import {
   getRegisteredEmbeddingProvider,
   registerEmbeddingProvider,
@@ -35,7 +35,10 @@ import {
   withPluginMetadataCollectionScope,
 } from "./plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
-import { normalizeProviderModelIdWithPlugin } from "./provider-runtime.js";
+import {
+  normalizeProviderModelIdWithPlugin,
+  resolveProviderRuntimePlugin,
+} from "./provider-runtime.js";
 import { createEmptyPluginRegistry } from "./registry.js";
 import { getActivePluginRegistry, setActivePluginRegistry } from "./runtime.js";
 import { createRuntimeSystem } from "./runtime/runtime-system.js";
@@ -448,6 +451,91 @@ describe("resolvePluginLoadCacheContext", () => {
 });
 
 describe("resolveRuntimePluginRegistry", () => {
+  it.each([
+    {
+      name: "an opaque nested model ID",
+      provider: "fixture-provider",
+      modelId: "fixture-nested-provider/model-legacy",
+      expectedModelId: "fixture-nested-provider/model-current",
+    },
+    {
+      name: "a model-owned virtual provider",
+      provider: "fixture-virtual-provider",
+      modelId: "fixture-model-legacy",
+      expectedModelId: "fixture-model-current",
+    },
+  ])("loads only the runtime hook owner for $name", ({ provider, modelId, expectedModelId }) => {
+    useNoBundledPlugins();
+    const selected = writePlugin({
+      id: "fixture-hook-owner",
+      body: `module.exports = {
+  id: "fixture-hook-owner",
+  register(api) {
+    api.registerProvider({
+      id: "fixture-provider", label: "Fixture", auth: [],
+      hookAliases: ["fixture-virtual-provider"],
+      normalizeModelId: ({ modelId }) => modelId.replace("-legacy", "-current"),
+    });
+  },
+};`,
+    });
+    const nestedDir = makePluginLoaderTempDir();
+    const nestedMarker = path.join(nestedDir, "runtime-loaded.txt");
+    const nested = writePlugin({
+      id: "fixture-nested-owner",
+      dir: nestedDir,
+      body: `require("node:fs").writeFileSync(${JSON.stringify(nestedMarker)}, "loaded");
+module.exports = {
+  id: "fixture-nested-owner",
+  register(api) {
+    api.registerProvider({ id: "fixture-nested-provider", label: "Nested", auth: [] });
+  },
+};`,
+    });
+    for (const [plugin, providers, modelSupport] of [
+      [selected, ["fixture-provider"], { modelPrefixes: ["fixture-model-"] }],
+      [nested, ["fixture-nested-provider"], undefined],
+    ] as const) {
+      fs.writeFileSync(
+        path.join(plugin.dir, "openclaw.plugin.json"),
+        JSON.stringify({
+          id: plugin.id,
+          providers,
+          modelSupport,
+          configSchema: { type: "object", additionalProperties: false, properties: {} },
+        }),
+      );
+    }
+    const config: OpenClawConfig = {
+      plugins: {
+        allow: [selected.id, nested.id],
+        entries: { [selected.id]: { enabled: true }, [nested.id]: { enabled: true } },
+        load: { paths: [selected.file, nested.file] },
+        slots: { memory: "none" },
+      },
+    };
+    const metadata = preparePluginMetadata({
+      config,
+      workspaceDir: selected.dir,
+      allowCurrent: false,
+    });
+    const lookup = {
+      provider,
+      modelId,
+      config,
+      workspaceDir: selected.dir,
+      pluginMetadataSnapshot: metadata.selectedSnapshot,
+    };
+
+    // Direct lookup makes the virtual-provider control depend on model ownership,
+    // rather than succeeding through the hook resolver's broad alias fallback.
+    expect(resolveProviderRuntimePlugin(lookup)?.id).toBe("fixture-provider");
+    expect(normalizeProviderModelIdWithPlugin({ ...lookup, context: { provider, modelId } })).toBe(
+      expectedModelId,
+    );
+    expect(fs.existsSync(nestedMarker)).toBe(false);
+  });
+
   it.each(["current", "captured"] as const)(
     "reuses registration for cold hook aliases and repeated provider misses with %s metadata",
     (metadataSource) => {

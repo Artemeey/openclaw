@@ -2,10 +2,7 @@
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isInstalledPluginEnabled } from "./installed-plugin-index.js";
-import {
-  resolvePluginMetadataSnapshot,
-  type PluginMetadataSnapshot,
-} from "./plugin-metadata-snapshot.js";
+import { resolvePluginMetadataSnapshot } from "./plugin-metadata-snapshot.js";
 import { getActivePluginRegistryWorkspaceDirFromState } from "./runtime-state.js";
 
 type SetupCliBackendDescriptorEntry = {
@@ -22,11 +19,6 @@ type SetupCliBackendDescriptorLookupParams = {
   env?: NodeJS.ProcessEnv;
 };
 
-const setupCliBackendDescriptors = new WeakMap<
-  PluginMetadataSnapshot,
-  SetupCliBackendDescriptorEntry[]
->();
-
 function resolveSetupCliBackendDescriptors(
   params: Omit<SetupCliBackendDescriptorLookupParams, "backend"> = {},
 ): SetupCliBackendDescriptorEntry[] {
@@ -38,14 +30,8 @@ function resolveSetupCliBackendDescriptors(
     ...(workspaceDir ? { workspaceDir } : {}),
     allowWorkspaceScopedCurrent: true,
   });
-  // Finite runtime views share an inventory fingerprint but not their allowed
-  // manifests. Descriptor ownership follows the exact immutable snapshot.
-  const cached = setupCliBackendDescriptors.get(snapshot);
-  if (cached) {
-    return cached;
-  }
-  const entries = snapshot.plugins.flatMap((plugin) => {
-    if (!isInstalledPluginEnabled(snapshot.index, plugin.id)) {
+  return snapshot.plugins.flatMap((plugin) => {
+    if (!isInstalledPluginEnabled(snapshot.index, plugin.id, params.config)) {
       return [];
     }
     return [...plugin.cliBackends, ...(plugin.setup?.cliBackends ?? [])].map(
@@ -56,8 +42,6 @@ function resolveSetupCliBackendDescriptors(
         }) satisfies SetupCliBackendDescriptorEntry,
     );
   });
-  setupCliBackendDescriptors.set(snapshot, entries);
-  return entries;
 }
 
 export function resolvePluginSetupCliBackendDescriptor(

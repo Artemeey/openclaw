@@ -8,13 +8,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
 import {
   withPluginMetadataCollectionScope,
   type PreparedPluginMetadata,
 } from "../plugins/plugin-metadata-collection.js";
-import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
+import { createPreparedPluginMetadataFixture } from "../plugins/plugin-metadata.test-support.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import { getPreparedModelRuntimeAuthStore } from "./prepared-model-runtime-auth.js";
 import {
@@ -56,31 +55,6 @@ function createNormalizerSnapshot(
   });
 }
 
-function createPreparedMetadataFixture(
-  selectedSnapshot: PluginMetadataSnapshot,
-  agentSnapshots: ReadonlyMap<string, PluginMetadataSnapshot>,
-): PreparedPluginMetadata {
-  const snapshots = [...agentSnapshots.values()];
-  return {
-    workspaces: new Map(snapshots.map((snapshot) => [snapshot.workspaceDir, snapshot])),
-    configWorkspaceDirs: snapshots.map((snapshot) => snapshot.workspaceDir),
-    agentWorkspaceDirs: new Map(
-      [...agentSnapshots].flatMap(([agentId, snapshot]) =>
-        snapshot.workspaceDir ? [[agentId, snapshot.workspaceDir] as const] : [],
-      ),
-    ),
-    installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
-    envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
-    selectedSnapshot,
-    manifestRegistry: selectedSnapshot.manifestRegistry,
-    plugins: selectedSnapshot.plugins,
-    byPluginId: selectedSnapshot.byPluginId,
-    owners: selectedSnapshot.owners,
-    diagnostics: selectedSnapshot.diagnostics,
-    channelCatalog: { read: () => [] },
-  };
-}
-
 describe("prepared model runtime scoped refresh", () => {
   beforeEach(() => resetPreparedModelRuntimeHarness());
 
@@ -119,7 +93,10 @@ describe("prepared model runtime scoped refresh", () => {
           fixtureWorkspaceDir,
           normalizedModel,
         );
-        return createPreparedMetadataFixture(snapshot, new Map([["pro", snapshot]]));
+        return createPreparedPluginMetadataFixture({
+          unionSnapshot: snapshot,
+          agentWorkspaceDirs: new Map([["pro", fixtureWorkspaceDir]]),
+        });
       };
       const ambient = metadata(ambientConfig, "/tmp/ambient-workspace", "ambient-model");
       const candidate = metadata(config, workspaceDir, "candidate-model");
@@ -192,7 +169,10 @@ describe("prepared model runtime scoped refresh", () => {
       await refreshPreparedModelRuntimeSnapshots(config, {
         gatewayLifecycle: true,
         catalogMode: "static",
-        pluginMetadata: createPreparedMetadataFixture(snapshot, new Map([["pro", snapshot]])),
+        pluginMetadata: createPreparedPluginMetadataFixture({
+          unionSnapshot: snapshot,
+          agentWorkspaceDirs: new Map([["pro", workspaceDir]]),
+        }),
       });
 
       expect(
@@ -234,17 +214,16 @@ describe("prepared model runtime scoped refresh", () => {
       "configured-model",
     );
     const startupSnapshot = createNormalizerSnapshot(config, startupWorkspaceDir, "startup-model");
-    const pluginMetadata: PreparedPluginMetadata = {
-      ...createPreparedMetadataFixture(
-        configuredSnapshot,
-        new Map([["default", configuredSnapshot]]),
-      ),
+    const pluginMetadata = createPreparedPluginMetadataFixture({
+      unionSnapshot: configuredSnapshot,
       selectedSnapshot: startupSnapshot,
+      configWorkspaceDirs: [configuredWorkspaceDir],
+      agentWorkspaceDirs: new Map([["default", configuredWorkspaceDir]]),
       workspaces: new Map([
         [configuredWorkspaceDir, configuredSnapshot],
         [startupWorkspaceDir, startupSnapshot],
       ]),
-    };
+    });
     await refreshPreparedModelRuntimeSnapshots(config, {
       gatewayLifecycle: true,
       defaultWorkspaceDir: startupWorkspaceDir,
@@ -326,14 +305,23 @@ describe("prepared model runtime scoped refresh", () => {
             manifestRegistry: { plugins: [], diagnostics: [] },
           })
         : freeMetadata;
+      const unionSnapshot = createPluginMetadataSnapshot({
+        config: initialConfig,
+        manifestRegistry: { plugins: [], diagnostics: [] },
+      });
       const metadata = (freeSnapshot: PluginMetadataSnapshot) =>
-        createPreparedMetadataFixture(
-          proMetadata,
-          new Map([
-            ["pro", proMetadata],
-            ["free", freeSnapshot],
+        createPreparedPluginMetadataFixture({
+          unionSnapshot,
+          selectedSnapshot: proMetadata,
+          workspaces: new Map([
+            [proMetadata.workspaceDir, proMetadata],
+            [freeSnapshot.workspaceDir, freeSnapshot],
           ]),
-        );
+          agentWorkspaceDirs: new Map([
+            ["pro", "/tmp/workspace-pro"],
+            ["free", freeInput.workspaceDir],
+          ]),
+        });
 
       await refreshPreparedModelRuntimeSnapshots(initialConfig, {
         gatewayLifecycle: true,

@@ -9,7 +9,7 @@ import { resolvePluginActivationSourceConfig } from "../activation-source-config
 import { resolvePluginControlPlaneWorkspace } from "../control-plane-workspace.js";
 import {
   getCurrentPluginMetadataSnapshot,
-  isCurrentPluginMetadataSnapshotRuntimeGeneration,
+  isScopedPluginMetadataSnapshotRuntimeGeneration,
 } from "../current-plugin-metadata-snapshot.js";
 import { extractPluginInstallRecordsFromInstalledPluginIndex } from "../installed-plugin-index-install-records.js";
 import type { PluginLoadOptions } from "../loader.js";
@@ -126,7 +126,7 @@ export function resolvePluginRuntimeLoadContext(
       })
     : undefined;
   const runtimeScoped =
-    current !== undefined && isCurrentPluginMetadataSnapshotRuntimeGeneration(current);
+    current !== undefined && isScopedPluginMetadataSnapshotRuntimeGeneration(current);
   const operationMetadata =
     ownsPreparation && !runtimeScoped && !getCurrentPluginMetadataOwner()
       ? (getScopedPluginMetadata(env) ??
@@ -136,7 +136,7 @@ export function resolvePluginRuntimeLoadContext(
     options?.metadataSnapshot ??
     (runtimeScoped && current
       ? options?.onlyPluginIds !== undefined
-        ? projectPluginMetadataSnapshot(current, { pluginIds: options.onlyPluginIds })
+        ? projectPluginMetadataSnapshot(current, options.onlyPluginIds)
         : current
       : undefined) ??
     (operationMetadata

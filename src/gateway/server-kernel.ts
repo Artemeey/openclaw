@@ -2,10 +2,8 @@ import { isNixMode } from "../config/paths.js";
 import { clearGatewayAgentCliShim } from "../infra/openclaw-cli-shim.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
 import { createSubsystemLogger, runtimeForLogger } from "../logging/subsystem.js";
-import {
-  createPluginMetadataOwner,
-  installPluginMetadataOwner,
-} from "../plugins/plugin-metadata-collection.js";
+import { getOrCreatePluginMetadataOwner } from "../plugins/plugin-metadata-collection.js";
+import { retainGatewayPluginMetadata } from "../plugins/plugin-metadata-lifecycle.js";
 import { clearSecretsRuntimeSnapshotState } from "../secrets/runtime-state.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { startGatewayCoreRuntime } from "./server-core-runtime.js";
@@ -125,8 +123,8 @@ export async function resetPreparedModelCatalogForTestCore(): Promise<void> {
 /** Builds the Gateway kernel and internal dispatch surface without creating HTTP servers. */
 export async function createGatewayKernel(port = 18789, opts: GatewayServerOptions = {}) {
   ensureOpenClawCliOnPath();
-  const pluginMetadataOwner = createPluginMetadataOwner();
-  const disposePluginMetadataOwner = installPluginMetadataOwner(pluginMetadataOwner);
+  const releasePluginMetadata = retainGatewayPluginMetadata();
+  const pluginMetadataOwner = getOrCreatePluginMetadataOwner();
   let lifecycleRuntime: Awaited<ReturnType<typeof prepareGatewayLifecycle>> | undefined;
   try {
     const bootstrap = await prepareGatewayServerBootstrap({
@@ -137,7 +135,6 @@ export async function createGatewayKernel(port = 18789, opts: GatewayServerOptio
       loadWorkerEnvironmentStartupModule,
       formatRuntimeGatewayAuthTokenWarning,
       pluginMetadataOwner,
-      disposePluginMetadataOwner,
     });
     const runtime = await prepareGatewayKernelState({
       bootstrap,
@@ -160,6 +157,7 @@ export async function createGatewayKernel(port = 18789, opts: GatewayServerOptio
     );
     lifecycleRuntime = await prepareGatewayLifecycle({
       runtime,
+      releasePluginMetadata,
       port,
       log,
       logCron,
@@ -184,12 +182,15 @@ export async function createGatewayKernel(port = 18789, opts: GatewayServerOptio
     });
     return await prepareGatewayKernelRequestRuntime({ coreRuntime, log, logHealth });
   } catch (error) {
-    if (lifecycleRuntime) {
-      await lifecycleRuntime.closeOnStartupFailure();
-    } else {
-      clearGatewayAgentCliShim();
-      clearSecretsRuntimeSnapshotState();
-      disposePluginMetadataOwner();
+    try {
+      if (lifecycleRuntime) {
+        await lifecycleRuntime.closeOnStartupFailure();
+      } else {
+        clearGatewayAgentCliShim();
+        clearSecretsRuntimeSnapshotState();
+      }
+    } finally {
+      releasePluginMetadata();
     }
     throw error;
   }

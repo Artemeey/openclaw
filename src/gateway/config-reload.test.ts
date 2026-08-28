@@ -30,6 +30,11 @@ import {
 } from "../config/runtime-write-application.js";
 import type { PluginInstallRecord } from "../config/types.plugins.js";
 import {
+  clearCurrentPluginMetadataSnapshot,
+  getCurrentPluginMetadataSnapshotState,
+  setCurrentPluginMetadataSnapshotState,
+} from "../plugins/current-plugin-metadata-state.js";
+import {
   createPluginMetadataOwner,
   type PluginMetadataOwner,
 } from "../plugins/plugin-metadata-collection.js";
@@ -1255,6 +1260,7 @@ describe("startGatewayConfigReloader", () => {
   });
 
   afterEach(() => {
+    clearCurrentPluginMetadataSnapshot();
     resetGatewayWorkAdmission();
     vi.useRealTimers();
     vi.restoreAllMocks();
@@ -4920,9 +4926,10 @@ describe("startGatewayConfigReloader", () => {
     },
   );
 
-  it("keeps serving metadata while an explicit replacement is pending", async () => {
+  it("keeps serving workspace bindings while an activation replacement is pending", async () => {
     const fixture = await createMetadataReloadFixture();
     const config = fixture.config("active");
+    const nextConfig = fixture.config("candidate");
     const initialMetadata = fixture.owner.prepare({ config, env: fixture.env });
     fixture.owner.publish(initialMetadata, { config, env: fixture.env });
     let release = () => {};
@@ -4930,7 +4937,7 @@ describe("startGatewayConfigReloader", () => {
       release = resolve;
     });
     const harness = createReloaderHarness(
-      vi.fn(async () => makeSnapshot({ config, hash: "same-config" })),
+      vi.fn(async () => makeSnapshot({ config: nextConfig, hash: "candidate-config" })),
       {
         initialConfig: config,
         pluginMetadataOwner: fixture.owner,
@@ -4943,7 +4950,11 @@ describe("startGatewayConfigReloader", () => {
       },
     );
     try {
-      harness.reloader.notifyPluginMetadataChanged();
+      harness.emitWrite({
+        ...makeZeroDebounceHookWrite("candidate-config"),
+        sourceConfig: nextConfig,
+        runtimeConfig: nextConfig,
+      });
       await vi.advanceTimersByTimeAsync(0);
       expect(harness.onHotReload).toHaveBeenCalledOnce();
       expect(fixture.owner.getActive()).toBe(initialMetadata);
@@ -4951,9 +4962,10 @@ describe("startGatewayConfigReloader", () => {
       release();
       await vi.runAllTimersAsync();
       expect(fixture.owner.getActive()).not.toBe(initialMetadata);
-      expect(fixture.owner.getActive()?.workspaces.has(config.agents!.defaults!.workspace)).toBe(
-        true,
-      );
+      expect(fixture.owner.getActive()?.unionSnapshot).toBe(initialMetadata.unionSnapshot);
+      expect(
+        fixture.owner.getActive()?.workspaces.has(nextConfig.agents!.defaults!.workspace),
+      ).toBe(true);
       harness.watcher.emit("change");
       await vi.runAllTimersAsync();
       expect(harness.onHotReload).toHaveBeenCalledOnce();
@@ -5058,53 +5070,68 @@ describe("startGatewayConfigReloader", () => {
     await harness.reloader.stop();
   });
 
-  it("forces a plugin reload when signaled metadata leaves config and install records identical", async () => {
-    const activeConfig: OpenClawConfig = {
-      gateway: { reload: {} },
-    };
-    const installRecords = {
-      brave: {
-        source: "npm",
-        spec: "@openclaw/brave",
-        installPath: "/tmp/openclaw/plugins/brave",
-      },
-    } satisfies Record<string, PluginInstallRecord>;
-    const readSnapshot = vi.fn(async () =>
-      makeSnapshot({
-        sourceConfig: activeConfig,
-        runtimeConfig: activeConfig,
-        config: activeConfig,
-        hash: "unchanged-config",
-      }),
-    );
-    const readPluginInstallRecords = vi.fn(async () => ({ ...installRecords }));
-    const harness = createReloaderHarness(readSnapshot, {
-      initialConfig: activeConfig,
-      initialCompareConfig: activeConfig,
-      initialPluginInstallRecords: installRecords,
-      readPluginInstallRecords,
-    });
+  it.each(["hybrid", "off"] as const)(
+    "preserves startup metadata when plugin metadata changes without config changes (%s)",
+    async (mode) => {
+      const activeConfig: OpenClawConfig = {
+        gateway: { reload: { mode } },
+      };
+      const installRecords = {
+        brave: {
+          source: "npm",
+          spec: "@openclaw/brave",
+          installPath: "/tmp/openclaw/plugins/brave",
+        },
+      } satisfies Record<string, PluginInstallRecord>;
+      const readSnapshot = vi.fn(async () =>
+        makeSnapshot({
+          sourceConfig: activeConfig,
+          runtimeConfig: activeConfig,
+          config: activeConfig,
+          hash: "unchanged-config",
+        }),
+      );
+      const readPluginInstallRecords = vi.fn(async () => ({ ...installRecords }));
+      const harness = createReloaderHarness(readSnapshot, {
+        initialConfig: activeConfig,
+        initialCompareConfig: activeConfig,
+        initialPluginInstallRecords: installRecords,
+        readPluginInstallRecords,
+      });
+      const startupMetadata = { plugins: [] };
+      setCurrentPluginMetadataSnapshotState(startupMetadata, "startup-metadata");
 
-    harness.reloader.notifyPluginMetadataChanged();
-    await vi.runOnlyPendingTimersAsync();
+      harness.reloader.notifyPluginMetadataChanged();
+      expect(getCurrentPluginMetadataSnapshotState().snapshot).toBe(startupMetadata);
+      await vi.runOnlyPendingTimersAsync();
 
-    expect(harness.onRestart).not.toHaveBeenCalled();
-    const [plan, nextConfig] = getOnlyHotReloadCall(harness);
-    expect(plan.changedPaths).toEqual([]);
-    expect(plan.restartGateway).toBe(false);
-    expect(plan.reloadPlugins).toBe(true);
-    expect(plan.disposeMcpRuntimes).toBe(true);
-    expect(nextConfig).toBe(activeConfig);
+      expect(harness.onHotReload).not.toHaveBeenCalled();
+      expect(getCurrentPluginMetadataSnapshotState().snapshot).toBe(startupMetadata);
+      if (mode === "off") {
+        expect(harness.onRestart).not.toHaveBeenCalled();
+        await harness.reloader.stop();
+        return;
+      }
+      const [plan, nextConfig] = getOnlyRestartCall(harness);
+      expect(plan.changedPaths).toEqual([]);
+      expect(plan.restartGateway).toBe(true);
+      expect(plan.restartReasons).toEqual(["plugin metadata changed"]);
+      expect(plan.reloadPlugins).toBe(false);
+      expect(plan.disposeMcpRuntimes).toBe(false);
+      expect(nextConfig).toBe(activeConfig);
+      expect(getCurrentPluginMetadataSnapshotState().snapshot).toBe(startupMetadata);
 
-    // The refresh is consumed by the committed reload: a later watcher echo of
-    // identical bytes must not replace the plugin runtime generation again.
-    harness.watcher.emit("change");
-    await vi.runOnlyPendingTimersAsync();
-    expect(harness.onHotReload).toHaveBeenCalledTimes(1);
-    expect(harness.onRestart).not.toHaveBeenCalled();
+      // An accepted restart consumes this signal; an unchanged watcher echo must
+      // not request another restart or replace the running metadata.
+      harness.watcher.emit("change");
+      await vi.runOnlyPendingTimersAsync();
+      expect(harness.onHotReload).not.toHaveBeenCalled();
+      expect(harness.onRestart).toHaveBeenCalledOnce();
+      expect(getCurrentPluginMetadataSnapshotState().snapshot).toBe(startupMetadata);
 
-    await harness.reloader.stop();
-  });
+      await harness.reloader.stop();
+    },
+  );
 
   it("keeps external plugin policy-only writes on the hot reload path", async () => {
     const previousConfig: OpenClawConfig = {

@@ -7,10 +7,8 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isCliProvider } from "../agents/model-selection-cli.js";
 import type { OpenClawConfig } from "../config/config.js";
-import {
-  createPluginMetadataOwner,
-  installPluginMetadataOwner,
-} from "../plugins/plugin-metadata-collection.js";
+import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
+import { createPluginMetadataOwner } from "../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import {
   createColdPluginFixture,

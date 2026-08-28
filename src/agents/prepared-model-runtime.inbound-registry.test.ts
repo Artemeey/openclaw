@@ -9,9 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
-import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
-import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
-import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-env.js";
+import { createPreparedPluginMetadataFixture } from "../plugins/plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import { getPluginRuntimeGenerationRegistry } from "../plugins/runtime/generation-scope.js";
 import { getPluginRuntimeLoadContext } from "../plugins/runtime/load-context.js";
@@ -46,20 +44,10 @@ describe("prepared reply dispatch runtime", () => {
       workspaceDir: "/tmp/unused-workspace",
       manifestRegistry: { plugins: [], diagnostics: [] },
     });
-    const pluginMetadata: PreparedPluginMetadata = {
-      workspaces: new Map([[metadataSnapshot.workspaceDir, metadataSnapshot]]),
-      configWorkspaceDirs: [metadataSnapshot.workspaceDir],
+    const pluginMetadata = createPreparedPluginMetadataFixture({
+      unionSnapshot: metadataSnapshot,
       agentWorkspaceDirs: new Map([["default", "/tmp/unused-workspace"]]),
-      installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
-      envFingerprint: resolvePluginMetadataEnvFingerprint(process.env),
-      selectedSnapshot: metadataSnapshot,
-      plugins: metadataSnapshot.plugins,
-      manifestRegistry: metadataSnapshot.manifestRegistry,
-      byPluginId: metadataSnapshot.byPluginId,
-      owners: metadataSnapshot.owners,
-      diagnostics: metadataSnapshot.diagnostics,
-      channelCatalog: { read: () => [] },
-    };
+    });
     const firstRegistry = createEmptyPluginRegistry();
     const replacementRegistry = createEmptyPluginRegistry();
     mocks.loadAgentRuntimePluginRegistryHandle.mockImplementation((params) => {

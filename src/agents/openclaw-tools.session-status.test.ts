@@ -2133,11 +2133,10 @@ describe("session_status tool", () => {
     const actualMetadataSnapshots = await vi.importActual<
       typeof import("../plugins/plugin-metadata-snapshot.js")
     >("../plugins/plugin-metadata-snapshot.js");
-    const {
-      createPluginMetadataOwner,
-      getPluginMetadataWorkspaceSnapshot,
-      installPluginMetadataOwner,
-    } = await import("../plugins/plugin-metadata-collection.js");
+    const { createPluginMetadataOwner, getPluginMetadataWorkspaceSnapshot } =
+      await import("../plugins/plugin-metadata-collection.js");
+    const { installPluginMetadataOwner } =
+      await import("../plugins/current-plugin-metadata.test-support.js");
     const { clearPluginMetadataLifecycleCaches } =
       await import("../plugins/plugin-metadata-lifecycle.js");
     const { createColdPluginFixture } =

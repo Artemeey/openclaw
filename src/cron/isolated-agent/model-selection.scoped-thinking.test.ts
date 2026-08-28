@@ -7,10 +7,10 @@ import type { ResolvedPublishedModelCatalogOwner } from "../../agents/prepared-m
 import { createPluginMetadataSnapshot } from "../../config/plugin-auto-enable.test-helpers.js";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { installPluginMetadataOwner } from "../../plugins/current-plugin-metadata.test-support.js";
 import {
   createPluginMetadataOwner,
   getPluginMetadataWorkspaceSnapshot,
-  installPluginMetadataOwner,
 } from "../../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadata-lifecycle.js";
 import * as pluginMetadataSnapshotRuntime from "../../plugins/plugin-metadata-snapshot.js";

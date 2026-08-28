@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createPluginCache, withPluginCache } from "../plugins/plugin-cache.js";
 import { cleanupTrackedTempDirs, makeTrackedTempDir } from "../plugins/test-helpers/fs-fixtures.js";
 
 const tempDirs: string[] = [];
@@ -145,8 +146,6 @@ describe("external channel secret contract api", () => {
         loadChannelSecretContractApi({ ...params, loadablePluginOrigins: new Map() }),
       ).toBeUndefined();
       expect(loadChannelSecretContractApi(params)).toBe(contractApi);
-      // Missing bundled artifacts retain their retry contract; only this
-      // successfully materialized external record must stop probing files.
       expect({
         probes: exists.mock.calls.filter(isExternalPath),
         opens: open.mock.calls.filter(isExternalPath),
@@ -157,7 +156,7 @@ describe("external channel secret contract api", () => {
     }
   });
 
-  it("retries missing dist/ secret-contract-api sidecars for external channel plugins", () => {
+  it("keeps missing external contract artifacts absent until a new cache generation", () => {
     const rootDir = makeTrackedTempDir("openclaw-channel-secret-contract-dist", tempDirs);
     fs.mkdirSync(path.join(rootDir, "dist"), { recursive: true });
     const record = {
@@ -184,9 +183,18 @@ describe("external channel secret contract api", () => {
       "utf8",
     );
 
-    const contractApi = requireChannelSecretContractApi(loadChannelSecretContractApi(params));
-    expectDiscordTokenRegistryEntry(contractApi);
-    expect(contractApi.collectRuntimeConfigAssignments).toBeTypeOf("function");
+    expect(loadChannelSecretContractApi(params)).toBeUndefined();
+    const inspection = createPluginCache();
+    try {
+      const contractApi = withPluginCache(inspection, () =>
+        requireChannelSecretContractApi(loadChannelSecretContractApi(params)),
+      );
+      expectDiscordTokenRegistryEntry(contractApi);
+      expect(contractApi.collectRuntimeConfigAssignments).toBeTypeOf("function");
+      expect(loadChannelSecretContractApi(params)).toBeUndefined();
+    } finally {
+      inspection.disposeModules?.();
+    }
   });
 
   it.runIf(process.platform !== "win32")(

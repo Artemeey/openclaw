@@ -24,14 +24,10 @@ import {
   resolveSetupChannelRegistration,
 } from "../../plugins/loader-channel-setup.js";
 import type { PluginManifestRecord } from "../../plugins/manifest-registry.js";
-import { registerPluginMetadataProcessMemoLifecycleClear } from "../../plugins/plugin-metadata-lifecycle.js";
+import { getPluginCache } from "../../plugins/plugin-cache.js";
 import { resolvePluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
-import {
-  clearPluginModuleLoaderLifecycleCache,
-  getCachedPluginModuleLoader,
-  type PluginModuleLoaderCache,
-} from "../../plugins/plugin-module-loader-cache.js";
+import { getCachedPluginModuleLoader } from "../../plugins/plugin-module-loader-cache.js";
 import { resolveNormalizedAccountEntry } from "../../routing/account-lookup.js";
 import {
   DEFAULT_ACCOUNT_ID,
@@ -40,6 +36,7 @@ import {
 } from "../../routing/session-key.js";
 import { resolveListedDefaultAccountId } from "./account-helpers.js";
 import { getBundledChannelSetupPlugin } from "./bundled.js";
+import type { ManifestChannelPlugin } from "./manifest-channel-plugin.types.js";
 import {
   isSafeManifestChannelId,
   normalizeChannelCommandDefaults,
@@ -49,8 +46,6 @@ import {
 import { listChannelPlugins } from "./registry.js";
 import type { ChannelPlugin } from "./types.plugin.js";
 
-const moduleLoaders: PluginModuleLoaderCache = new Map();
-const moduleRoots = new Map<string, string>();
 const log = createSubsystemLogger("channels");
 
 type ReadOnlyChannelPluginOptions = {
@@ -77,29 +72,6 @@ type ReadOnlyChannelPluginLoadFailure = {
   message: string;
   source?: string;
 };
-
-type ManifestChannelMetadata = {
-  plugins: Map<string, ChannelPlugin>;
-  setupPlugin?: ChannelPlugin;
-};
-
-// Descriptors belong to immutable manifest records; config, auth, and runtime
-// registry selection remain live and must never be retained with them.
-let channelMetadataByManifest = new WeakMap<PluginManifestRecord, ManifestChannelMetadata>();
-
-registerPluginMetadataProcessMemoLifecycleClear(() => {
-  channelMetadataByManifest = new WeakMap();
-  clearPluginModuleLoaderLifecycleCache({ moduleLoaders, moduleRoots });
-});
-
-function getManifestChannelMetadata(record: PluginManifestRecord): ManifestChannelMetadata {
-  let metadata = channelMetadataByManifest.get(record);
-  if (!metadata) {
-    metadata = { plugins: new Map() };
-    channelMetadataByManifest.set(record, metadata);
-  }
-  return metadata;
-}
 
 function addChannelPlugins(
   byId: Map<string, ChannelPlugin>,
@@ -253,13 +225,26 @@ function buildManifestChannelPlugin(params: {
   record: PluginManifestRecord;
   channelId: string;
 }): ChannelPlugin | undefined {
+  // Only the adapter is static; its methods receive current account config and
+  // channel selection still reevaluates policy, environment, and persisted auth.
+  const adapters = getPluginCache().metadata.channelAdapters;
+  let channels = adapters.get(params.record);
+  if (!channels) {
+    channels = new Map();
+    adapters.set(params.record, channels);
+  }
+  if (!channels.has(params.channelId)) {
+    channels.set(params.channelId, createManifestChannelPlugin(params));
+  }
+  return channels.get(params.channelId);
+}
+
+function createManifestChannelPlugin(params: {
+  record: PluginManifestRecord;
+  channelId: string;
+}): ManifestChannelPlugin | undefined {
   if (!isSafeManifestChannelId(params.channelId)) {
     return undefined;
-  }
-  const metadata = getManifestChannelMetadata(params.record);
-  const cached = metadata.plugins.get(params.channelId);
-  if (cached) {
-    return cached;
   }
   const catalogMeta =
     params.record.channelCatalogMeta?.id === params.channelId
@@ -295,7 +280,7 @@ function buildManifestChannelPlugin(params: {
   const commands = normalizeChannelCommandDefaults(
     channelConfig?.commands ?? catalogMeta?.commands,
   );
-  const plugin: ChannelPlugin = {
+  return {
     id: params.channelId,
     meta: {
       id: params.channelId,
@@ -344,8 +329,6 @@ function buildManifestChannelPlugin(params: {
         }),
     },
   };
-  metadata.plugins.set(params.channelId, plugin);
-  return plugin;
 }
 
 function canUseManifestChannelPlugin(record: PluginManifestRecord, channelId: string): boolean {
@@ -367,15 +350,15 @@ function loadSetupChannelPluginFromManifestRecord(params: {
   if (!params.record.setupSource || !params.record.channels.includes(params.channelId)) {
     return {};
   }
-  const metadata = getManifestChannelMetadata(params.record);
-  if (metadata.setupPlugin) {
-    return { plugin: metadata.setupPlugin };
+  const adapters = getPluginCache().metadata.channelSetupAdapters;
+  const cached = adapters.get(params.record);
+  if (cached) {
+    return { plugin: cached };
   }
   try {
-    moduleRoots.set(params.record.setupSource, params.record.rootDir);
     const moduleLoader = getCachedPluginModuleLoader({
-      cache: moduleLoaders,
       modulePath: params.record.setupSource,
+      rootDir: params.record.rootDir,
       importerUrl: import.meta.url,
       preferBuiltDist: true,
       loaderFilename: import.meta.url,
@@ -405,9 +388,9 @@ function loadSetupChannelPluginFromManifestRecord(params: {
     ) {
       return {};
     }
-    // Failed or empty registrations remain retryable; only validated setup
-    // metadata shares the manifest's lifetime.
-    metadata.setupPlugin = registration.plugin;
+    // Factories may import lazy setup dependencies; retain successful adapters
+    // in this cache generation while their account methods keep reading live config.
+    adapters.set(params.record, registration.plugin);
     return { plugin: registration.plugin };
   } catch (error) {
     const detail = formatErrorMessage(error);

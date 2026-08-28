@@ -1,5 +1,6 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PreparedPluginChannelCatalog } from "./channel-catalog-registry.types.js";
+import type { PluginCache } from "./plugin-cache.js";
 import type {
   PluginMetadataSnapshot,
   PluginMetadataSnapshotPluginIdScope,
@@ -13,6 +14,8 @@ export type ConfigWidePluginMetadataView = Pick<
 
 /** Config-wide metadata has no single executable index or workspace identity. */
 export type PreparedPluginMetadata = ConfigWidePluginMetadataView & {
+  /** Configured-workspace inventory for validation and management, never execution. */
+  readonly unionSnapshot: PluginMetadataSnapshot;
   readonly workspaces: ReadonlyMap<string | undefined, PluginMetadataSnapshot>;
   readonly agentWorkspaceDirs: ReadonlyMap<string, string>;
   readonly configWorkspaceDirs: readonly (string | undefined)[];
@@ -39,6 +42,7 @@ export type PluginMetadataScope = {
 };
 
 export type PluginMetadataOwner = {
+  readonly cache: PluginCache;
   prepare: (params: PreparePluginMetadataParams) => PreparedPluginMetadata;
   publish: (
     metadata: PreparedPluginMetadata,
