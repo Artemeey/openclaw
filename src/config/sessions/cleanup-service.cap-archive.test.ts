@@ -43,6 +43,39 @@ describe("session cleanup cap archives", () => {
     ).toBe("archive-cap");
   });
 
+  it("separates cap archives in cleanup summary JSON", async () => {
+    const now = Date.now();
+    const storePath = path.join(
+      tempDirs.make("openclaw-cleanup-cap-summary-"),
+      "agents",
+      "main",
+      "sessions",
+      "sessions.json",
+    );
+    for (const [index, updatedAt] of [now - 2, now - 1, now].entries()) {
+      const sessionKey = `agent:main:dashboard:ordinary-${index}`;
+      replaceSessionEntrySync(
+        { sessionKey, storePath },
+        { sessionId: `ordinary-${index}`, updatedAt },
+      );
+    }
+
+    const preview = await runSessionsCleanup({
+      cfg: {},
+      opts: { dryRun: true },
+      targets: [{ agentId: "main", storePath }],
+    });
+
+    expect(preview.previewResults[0]?.summary).toMatchObject({
+      archived: 0,
+      capArchived: 1,
+      capped: 1,
+    });
+    expect(preview.previewResults[0]?.capArchivedKeys).toEqual(
+      new Set(["agent:main:dashboard:ordinary-0"]),
+    );
+  });
+
   it("uses unarchived pressure consistently in preview and apply", async () => {
     const now = Date.now();
     const storePath = path.join(
