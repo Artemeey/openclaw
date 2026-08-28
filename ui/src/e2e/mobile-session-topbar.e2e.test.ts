@@ -98,14 +98,14 @@ suite.define(() => {
           const geometry = await header.evaluate((element) => {
             const row = element.querySelector<HTMLElement>(".chat-pane__topbar-row");
             const people = element.querySelector<HTMLElement>(".chat-pane__people");
-            const switcher = element.querySelector<HTMLElement>(".chat-pane__face-switch");
+            const faceSwitch = element.querySelector<HTMLElement>(".chat-pane__face-switch");
             const rect = (node: HTMLElement | null) =>
               node?.getBoundingClientRect().toJSON() ?? null;
             return {
               header: rect(element),
               row: rect(row),
               people: rect(people),
-              switcher: rect(switcher),
+              switcher: rect(faceSwitch),
             };
           });
 
@@ -122,6 +122,15 @@ suite.define(() => {
               .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("value"))),
           ).toEqual(["chat", "dashboard"]);
           expect(await switcher.locator(".board-fullscreen-button").count()).toBe(0);
+          if (colorScheme === "light" && face === "chat") {
+            await page.setViewportSize({ width: 1280, height: 800 });
+            await switcher.locator('wa-radio[value="split"]').waitFor();
+            expect(
+              await header
+                .locator(".chat-pane__actions")
+                .evaluate((element) => getComputedStyle(element).marginLeft),
+            ).toBe("0px");
+          }
           if (face === "dashboard") {
             const [headerBox, boardBox] = await Promise.all([
               header.boundingBox(),

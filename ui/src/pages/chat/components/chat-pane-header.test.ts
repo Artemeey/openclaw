@@ -412,6 +412,38 @@ describe("chat pane header", () => {
     expect(container.querySelector(".chat-pane__face-row [data-slot=face]")).not.toBeNull();
   });
 
+  it("keeps desktop placement before presence and the face control", () => {
+    const { container } = mountHeader({
+      session: row({
+        placement: {
+          state: "active",
+          generation: 1,
+          createdAtMs: 1,
+          updatedAtMs: 1,
+          stateChangedAtMs: 1,
+          environmentId: "worker:one",
+          activeOwnerEpoch: 1,
+          workerBundleHash: "a".repeat(64),
+          workspaceBaseManifestRef: "base-manifest",
+          remoteWorkspaceDir: "/worker/repo",
+        },
+      }),
+      presence: html`<span data-slot="presence"></span>`,
+      faceControl: html`<span data-slot="face"></span>`,
+    });
+    const topbar = container.querySelector(".chat-pane__topbar-row");
+
+    expect(
+      [...(topbar?.children ?? [])]
+        .filter((element) =>
+          element.matches(
+            '.chat-pane__placement-control, [data-slot="presence"], [data-slot="face"]',
+          ),
+        )
+        .map((element) => element.getAttribute("data-slot") ?? "placement"),
+    ).toEqual(["placement", "presence", "face"]);
+  });
+
   it("leads with the project, then a separator, then the session title", () => {
     const { container } = mountHeader();
     const crumbs = container.querySelector(".chat-pane__crumbs");

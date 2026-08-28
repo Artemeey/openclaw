@@ -27,7 +27,7 @@
   background: var(--panel);
 }
 
-.chat-pane__face-switch + .chat-pane__actions {
+.chat-pane__topbar-row:has(> .chat-pane__face-switch) > .chat-pane__actions {
   margin-left: 0;
 }
 

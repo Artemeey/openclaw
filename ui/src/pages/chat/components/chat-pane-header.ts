@@ -445,6 +445,7 @@ export function renderChatPaneHeader(props: ChatPaneHeaderProps) {
           variant="session"
         ></openclaw-viewer-facepile>`
       : nothing;
+  const presence = props.presence ?? nothing;
   const faceControl = props.faceControl ?? nothing;
 
   return html`
@@ -484,9 +485,11 @@ export function renderChatPaneHeader(props: ChatPaneHeaderProps) {
             >`
           : nothing}
         ${renderIdentityCrumbs(props, copied, copyPathLabel, copyBranchLabel)}
-        <div class="chat-pane__people">${owner}${participants}${props.presence ?? nothing}</div>
-        ${renderChatPanePlacement(props)} ${props.narrow ? nothing : faceControl}
-        ${props.sharingControl ?? nothing}
+        <div class="chat-pane__people">
+          ${owner}${participants}${props.narrow ? presence : nothing}
+        </div>
+        ${renderChatPanePlacement(props)} ${props.narrow ? nothing : presence}
+        ${props.narrow ? nothing : faceControl} ${props.sharingControl ?? nothing}
         ${!props.catalog && props.branches.length > 1
           ? html`
               <openclaw-tooltip
