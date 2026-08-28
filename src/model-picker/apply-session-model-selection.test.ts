@@ -189,6 +189,7 @@ describe("applySessionModelSelection", () => {
     expect(result).toMatchObject({ status: "applied", runtimeChange: { kind: "clear" } });
     expect(sessionEntry.providerOverride).toBeUndefined();
     expect(sessionEntry.modelOverride).toBeUndefined();
+    expect(sessionEntry.modelSelectionMode).toBe("default");
     expect(sessionEntry.authProfileOverride).toBeUndefined();
     expect(sessionEntry.authProfileOverrideSource).toBeUndefined();
     expect(sessionEntry.authProfileOverrideCompactionCount).toBeUndefined();
@@ -231,6 +232,7 @@ describe("applySessionModelSelection", () => {
     expect(sessionEntry.modelOverride).toBeUndefined();
     expect(sessionEntry.modelOverrideSource).toBeUndefined();
     expect(sessionEntry.modelOverrideRouteResolution).toBeUndefined();
+    expect(sessionEntry.modelSelectionMode).toBe("default");
     expect(sessionEntry).toMatchObject({
       authProfileOverride: "openai:work",
       authProfileOverrideSource: "user",

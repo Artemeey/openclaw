@@ -491,6 +491,8 @@ type SessionEntryCore = SessionRestartRecoveryState &
     responseUsage?: "on" | "off" | "tokens" | "full";
     providerOverride?: string;
     modelOverride?: string;
+    /** Explicitly selects the configured default and blocks parent model inheritance. */
+    modelSelectionMode?: "default";
     /** Session-scoped agent runtime/harness override selected with the model picker. */
     agentRuntimeOverride?: string;
     /**

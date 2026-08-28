@@ -70,7 +70,7 @@ import {
 import {
   mergeChildSessionKeys,
   resolveChildSessionKeys,
-  resolveSessionSelectedModelRef,
+  resolveSessionSelectedModel,
   resolveTranscriptUsageFallback,
 } from "./session-utils-projection.js";
 import { isGroupOrChannelDisplaySession, parseGroupKey } from "./session-utils-store.js";
@@ -230,10 +230,12 @@ export function buildGatewaySessionRow(params: {
           ? getSubagentSessionRuntimeMs(subagentRun, now)
           : undefined))
     : undefined;
-  const selectedModel = resolveSessionSelectedModelRef({
+  const selectedModel = resolveSessionSelectedModel({
     cfg,
     entry,
     agentId: sessionAgentId,
+    sessionKey: key,
+    sessionStore: store,
     rowContext,
     allowPluginNormalization: !lightweight,
   });
@@ -557,6 +559,7 @@ export function buildGatewaySessionRow(params: {
     modelProvider: rowModelProvider,
     model: rowModel,
     modelOverrideSource: resolveSessionModelOverrideSource(entry),
+    modelSelectionSource: selectedModel.source,
     modelSelectionLocked: entry?.modelSelectionLocked,
     agentRuntime: projectWorkerPlacementAgentRuntime(thinkingProjection.agentRuntime),
     contextTokens,

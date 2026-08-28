@@ -37,6 +37,18 @@ describe("resolveResetPreservedSelection", () => {
     });
   });
 
+  it("preserves an explicit configured-default selection", () => {
+    expect(
+      resolveResetPreservedSelection({
+        entry: {
+          sessionId: "explicit-default",
+          updatedAt: 1,
+          modelSelectionMode: "default",
+        },
+      }),
+    ).toEqual({ modelSelectionMode: "default" });
+  });
+
   it("preserves legacy user auth pins while dropping legacy automatic pins", () => {
     expect(
       resolveResetPreservedSelection({

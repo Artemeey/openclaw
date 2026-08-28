@@ -53,6 +53,7 @@ export function applyModelOverrideToSessionEntry(params: {
   profileOverrideSource?: "auto" | "user";
   preserveAuthProfileOverride?: boolean;
   selectionSource?: "auto" | "user";
+  explicitDefaultSelection?: boolean;
   markLiveSwitchPending?: boolean;
 }): { updated: boolean } {
   const { entry, selection, profileOverride } = params;
@@ -64,6 +65,11 @@ export function applyModelOverrideToSessionEntry(params: {
   let profileUpdated = false;
 
   if (selection.isDefault) {
+    if (params.explicitDefaultSelection && entry.modelSelectionMode !== "default") {
+      entry.modelSelectionMode = "default";
+      updated = true;
+      selectionUpdated = true;
+    }
     if (entry.providerOverride) {
       delete entry.providerOverride;
       updated = true;
@@ -84,6 +90,11 @@ export function applyModelOverrideToSessionEntry(params: {
     }
     updated = clearFallbackOrigin(entry) || updated;
   } else {
+    if (selectionSource === "user" && entry.modelSelectionMode !== undefined) {
+      delete entry.modelSelectionMode;
+      updated = true;
+      selectionUpdated = true;
+    }
     if (entry.providerOverride !== selection.provider) {
       entry.providerOverride = selection.provider;
       updated = true;

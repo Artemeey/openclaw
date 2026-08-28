@@ -86,6 +86,9 @@ export function resolveStoredModelOverride(params: {
   if (direct) {
     return direct;
   }
+  if (params.sessionEntry?.modelSelectionMode === "default") {
+    return null;
+  }
   const parentKey = resolveParentSessionKeyCandidate({
     sessionKey: params.sessionKey,
     parentSessionKey: params.parentSessionKey,

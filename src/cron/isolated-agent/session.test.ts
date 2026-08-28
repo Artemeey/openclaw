@@ -131,6 +131,26 @@ describe("resolveCronSession", () => {
     expect(result.sessionEntry.providerOverride).toBeUndefined();
   });
 
+  it("preserves an explicit configured-default selection", () => {
+    const result = resolveWithStoredEntry({
+      sessionKey: "agent:main:cron:test-job",
+      forceNew: true,
+      entry: {
+        sessionId: "old-session-id",
+        updatedAt: 1000,
+        modelSelectionMode: "default",
+        providerOverride: "anthropic",
+        modelOverride: "claude-sonnet-4-6",
+        modelOverrideSource: "auto",
+        modelOverrideFallbackOriginProvider: "openai",
+        modelOverrideFallbackOriginModel: "gpt-5.4",
+      },
+    });
+
+    expect(result.sessionEntry.modelSelectionMode).toBe("default");
+    expect(result.sessionEntry.modelOverride).toBeUndefined();
+  });
+
   it("handles no existing session entry", () => {
     const result = resolveWithStoredEntry({
       sessionKey: "agent:main:cron:new-job",

@@ -1115,6 +1115,7 @@ describe("gateway sessions patch", () => {
 
     expectModelSelection(entry, undefined, undefined);
     expect(entry.modelOverrideSource).toBeUndefined();
+    expect(entry.modelSelectionMode).toBe("default");
     expect(entry.liveModelSwitchPending).toBeUndefined();
   });
 

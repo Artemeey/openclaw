@@ -6,6 +6,7 @@ type SessionEntryRecord = Partial<Record<keyof SessionEntry, unknown>>;
 export const SESSION_MODEL_OVERRIDE_TRANSACTION_FIELDS = [
   "providerOverride",
   "modelOverride",
+  "modelSelectionMode",
   "agentRuntimeOverride",
   "modelOverrideSource",
   "modelOverrideRouteResolution",

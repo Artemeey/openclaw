@@ -70,6 +70,9 @@ function copySessionFields(
 }
 
 function preserveNonAutoModelOverride(target: SessionEntry, entry: SessionEntry): void {
+  if (entry.modelSelectionMode !== undefined) {
+    target.modelSelectionMode = entry.modelSelectionMode;
+  }
   const recoveredAutoFallbackOverride =
     entry.modelOverrideSource === undefined && hasSessionAutoModelFallbackProvenance(entry);
   if (entry.modelOverrideSource !== "auto" && !recoveredAutoFallbackOverride) {

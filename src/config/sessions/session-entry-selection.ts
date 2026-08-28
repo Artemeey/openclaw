@@ -72,6 +72,9 @@ export function inheritSessionSelection(
     ...(inheritModelSelection && parentEntry.modelOverride
       ? { modelOverride: parentEntry.modelOverride }
       : {}),
+    ...(inheritModelSelection && parentEntry.modelSelectionMode
+      ? { modelSelectionMode: parentEntry.modelSelectionMode }
+      : {}),
     ...(inheritModelSelection && parentEntry.modelOverrideSource
       ? { modelOverrideSource: parentEntry.modelOverrideSource }
       : {}),
