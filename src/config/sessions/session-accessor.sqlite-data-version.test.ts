@@ -22,6 +22,7 @@ import { readSessionEntryCache } from "./session-accessor.sqlite-entry-cache.js"
 import { ensureTranscriptSessionRoot } from "./session-accessor.sqlite-transcript-state.js";
 
 const parseSessionEntryCalls = vi.hoisted(() => vi.fn());
+const parsedEntryJson = vi.hoisted(() => [] as string[]);
 const sessionNodeVersionScans = vi.hoisted(() => ({
   onScan: undefined as ((database: DatabaseSync) => void) | undefined,
   rowCounts: [] as number[],
@@ -54,6 +55,7 @@ vi.mock("./session-accessor.sqlite-status.js", async (importOriginal) => {
     ...actual,
     parseSessionEntryJson: (row: Parameters<typeof actual.parseSessionEntryJson>[0]) => {
       parseSessionEntryCalls();
+      parsedEntryJson.push(row.entry_json);
       return actual.parseSessionEntryJson(row);
     },
   };
@@ -63,6 +65,7 @@ const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 beforeEach(() => {
   parseSessionEntryCalls.mockClear();
+  parsedEntryJson.length = 0;
   sessionNodeVersionScans.onScan = undefined;
   sessionNodeVersionScans.rowCounts.length = 0;
 });
@@ -166,13 +169,62 @@ describe("SQLite session entry cache", () => {
     expect(fullEntry.skillsSnapshot).toBeDefined();
     expect(fullEntry.systemPromptReport).toBeDefined();
 
+    // The merge-base returned stripped entries too -- by parsing both documents and
+    // deleting them afterwards. What this protects is that they never reach the
+    // parser at all. Assert on the JSON handed to the parser, not the result.
+    const expectStripped = (label: string) => {
+      expect(parsedEntryJson.length, `${label} parsed nothing`).toBeGreaterThan(0);
+      for (const json of parsedEntryJson) {
+        expect(json, label).not.toContain("skillsSnapshot");
+        expect(json, label).not.toContain("systemPromptReport");
+      }
+    };
+
     const cloneSpy = vi.spyOn(globalThis, "structuredClone");
     try {
+      // Cold load: readConsistency "latest" bypasses the snapshot cache.
+      parsedEntryJson.length = 0;
       const first = listSessionEntriesCore({
         ...scope,
         clone: false,
         projection: "list",
+        readConsistency: "latest",
       })[0]?.entry;
+      expectStripped("cold list load");
+
+      // A full read of the same rows still hands both documents to the parser.
+      parsedEntryJson.length = 0;
+      listSessionEntriesCore({ ...scope, clone: false, readConsistency: "latest" });
+      expect(parsedEntryJson.some((json) => json.includes("skillsSnapshot"))).toBe(true);
+      expect(parsedEntryJson.some((json) => json.includes("systemPromptReport"))).toBe(true);
+
+      // Incremental revalidation: an untracked same-connection insert forces the
+      // changed row to be re-read rather than served from the cached snapshot.
+      const database = openOpenClawAgentDatabase(scope);
+      database.db
+        .prepare(
+          "INSERT INTO session_nodes (session_key, current_session_id, entry_json, updated_at) VALUES (?, ?, ?, ?)",
+        )
+        .run(
+          "agent:main:list-projection-inserted",
+          "list-projection-inserted",
+          JSON.stringify({
+            label: "inserted",
+            sessionId: "list-projection-inserted",
+            updatedAt: 2,
+            skillsSnapshot: { prompt: "inserted prompt", skills: [] },
+            systemPromptReport: { source: "run", generatedAt: 2 },
+          }),
+          2,
+        );
+      parsedEntryJson.length = 0;
+      const revalidated = listSessionEntriesCore({ ...scope, clone: false, projection: "list" });
+      expectStripped("incremental list revalidation");
+      expect(
+        revalidated.find((row) => row.sessionKey === "agent:main:list-projection-inserted")?.entry
+          .skillsSnapshot,
+      ).toBeUndefined();
+
       const second = listSessionEntriesCore({
         ...scope,
         clone: false,
@@ -184,8 +236,8 @@ describe("SQLite session entry cache", () => {
       expect(first?.systemPromptReport).toBeUndefined();
       // Other fields still survive the projection.
       expect(first?.worktree).toEqual(fullEntry.worktree);
-      // The list snapshot is cached, so a second read reuses the same parsed value.
-      expect(second).toBe(first);
+      // The list snapshot is cached, so a repeat read reuses the parsed value.
+      expect(second).toBe(revalidated.find((row) => row.sessionKey === scope.sessionKey)?.entry);
       expect(cloneSpy).not.toHaveBeenCalled();
     } finally {
       cloneSpy.mockRestore();
