@@ -5455,7 +5455,7 @@ describe("deliverOutboundPayloads", () => {
     expect(sendText).not.toHaveBeenCalled();
   });
 
-  it("does not count no-op sendPayload results as delivered", async () => {
+  it("keeps identityless sendPayload results uncertain when required pinning cannot finish", async () => {
     hookMocks.runner.hasHooks.mockReturnValue(true);
     const sendText = vi.fn();
     const pinDeliveredMessage = vi.fn<OutboundPinDeliveredMessage>();
@@ -5465,23 +5465,23 @@ describe("deliverOutboundPayloads", () => {
       { sendText, sendTextOnlyErrorPayloads: true, pinDeliveredMessage, afterDeliverPayload },
     );
 
-    const results = await deliverMatrix({
-      to: "!room:1",
-      payloads: [
-        {
+    await expect(
+      deliverMatrix({
+        to: "!room:1",
+        payloads: [
+          {
+            text: "provider exploded",
+            isError: true,
+            delivery: { pin: { enabled: true, required: true } },
+          },
+        ],
+        mirror: {
+          sessionKey: "agent:main:main",
+          agentId: "main",
           text: "provider exploded",
-          isError: true,
-          delivery: { pin: { enabled: true, required: true } },
         },
-      ],
-      mirror: {
-        sessionKey: "agent:main:main",
-        agentId: "main",
-        text: "provider exploded",
-      },
-    });
-
-    expect(results).toStrictEqual([]);
+      }),
+    ).rejects.toThrow("no delivered message id was returned");
     expect(sendPayload).toHaveBeenCalledTimes(1);
     expect(sendText).not.toHaveBeenCalled();
     expect(pinDeliveredMessage).not.toHaveBeenCalled();
