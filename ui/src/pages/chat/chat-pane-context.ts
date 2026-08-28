@@ -10,6 +10,7 @@ import { loadSettings } from "../../app/settings.ts";
 import { readPresenceEntries } from "../../app/user-profile.ts";
 import { createGatewayConnectionLifecycle } from "../../lib/gateway-connection-lifecycle.ts";
 import { isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
+import { isSessionRunActive } from "../../lib/session-run-state.ts";
 import { parseCatalogSessionKey } from "../../lib/sessions/catalog-key.ts";
 import { resolveSessionKey } from "../../lib/sessions/index.ts";
 import {
@@ -34,7 +35,7 @@ import {
 } from "./chat-pane-state.ts";
 import { markQueuedChatSendsWaitingForReconnect } from "./chat-queue.ts";
 import { stopChatRealtimeTalk } from "./chat-realtime.ts";
-import { retryReconnectableQueuedChatSends } from "./chat-send-actions.ts";
+import { flushChatQueueForEvent, retryReconnectableQueuedChatSends } from "./chat-send-actions.ts";
 import { retireChatModelSelectionOwnership } from "./chat-session.ts";
 import {
   refreshChatModelAuthStatus,
@@ -57,6 +58,10 @@ import { reconcileWaitingApprovalsFromSnapshot } from "./tool-stream.ts";
 
 export abstract class ChatPaneContext extends ChatPaneLifecycle {
   private gatewayConnectionLifecycle?: ReturnType<typeof createGatewayConnectionLifecycle>;
+  private canonicalSessionList?: {
+    sessions: ApplicationContext["sessions"];
+    revision: number;
+  };
 
   override disconnectedCallback() {
     this.continueInTerminalDialog = null;
@@ -124,6 +129,14 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
     if (!state) {
       return;
     }
+    const canonicalListRevision = this.context.sessions.canonicalListRevision;
+    const canonicalListPublished =
+      this.canonicalSessionList?.sessions === this.context.sessions &&
+      canonicalListRevision > this.canonicalSessionList.revision;
+    this.canonicalSessionList = {
+      sessions: this.context.sessions,
+      revision: canonicalListRevision,
+    };
     const selectedSessionDeleted = stateValue.deletedSessions.some(({ key, agentId }) =>
       uiSessionEventMatches(
         {
@@ -177,8 +190,18 @@ export abstract class ChatPaneContext extends ChatPaneLifecycle {
     this.reconcileWaitingApprovalSnapshot();
     if (reconciledLocalCompletion) {
       void retryReconnectableQueuedChatSends(state);
-    } else if (this.presented) {
-      state.requestUpdate?.();
+    } else {
+      if (this.presented) {
+        state.requestUpdate?.();
+      }
+      if (
+        canonicalListPublished &&
+        selectedSession &&
+        !isSessionRunActive(selectedSession) &&
+        state.chatQueue.length > 0
+      ) {
+        void flushChatQueueForEvent(state);
+      }
     }
   }
 

@@ -1,10 +1,29 @@
 /* @vitest-environment jsdom */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../../test/helpers/promise.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
+import type { GatewaySessionRow, SessionsListResult } from "../../api/types.ts";
 import type { SessionCapability } from "../../lib/sessions/index.ts";
+import { createStorageMock } from "../../test-helpers/storage.ts";
+import { makeChatHost } from "./chat-host.test-support.ts";
 import { createTestChatPane, type TestChatPane } from "./chat-pane.test-support.ts";
+import { retryReconnectableQueuedChatSends } from "./chat-send-actions.ts";
+import { refreshCurrentChatSessionList } from "./chat-session.ts";
+import type { ChatPageHost } from "./chat-state-host.ts";
+import { admitStoredChatComposerQueueItem } from "./composer-persistence.ts";
+
+afterEach(() => vi.unstubAllGlobals());
+
+function sessionsResult(row: GatewaySessionRow): SessionsListResult {
+  return {
+    ts: 0,
+    path: "",
+    count: 1,
+    defaults: { modelProvider: null, model: null, contextTokens: null },
+    sessions: [row],
+  };
+}
 
 function advertiseSessionRecovery(pane: TestChatPane) {
   pane.context.gateway.snapshot.hello = {
@@ -43,6 +62,69 @@ describe("chat pane session recovery", () => {
 
     expect(state.chatRunId).toBeNull();
     expect(state.chatStream).toBeNull();
+  });
+
+  it("releases a restored queued send when the canonical session state records idle", async () => {
+    vi.stubGlobal("sessionStorage", createStorageMock());
+    const listRefresh = createDeferred<SessionsListResult>();
+    const active: GatewaySessionRow = {
+      key: "agent:main",
+      kind: "direct",
+      updatedAt: 10,
+      activeRunIds: ["server-run"],
+      hasActiveRun: true,
+      status: "running",
+    };
+    const idle: GatewaySessionRow = {
+      ...active,
+      updatedAt: 11,
+      activeRunIds: [],
+      hasActiveRun: false,
+      lastRunId: "server-run",
+      status: "done",
+    };
+    const host = makeChatHost({
+      chatQueue: [
+        {
+          id: "queued-after-server-run",
+          text: "send after idle",
+          createdAt: 1,
+          sendAttempts: 0,
+          sendRunId: "queued-send-run",
+          sendState: "waiting-idle",
+          sessionKey: "agent:main",
+        },
+      ],
+      requestHandlers: {
+        "sessions.list": () => listRefresh.promise,
+        "chat.history": { messages: [], sessionInfo: idle },
+        "chat.send": { runId: "queued-send-run", status: "ok" },
+      },
+      sessionsResult: sessionsResult(active),
+    });
+    expect(admitStoredChatComposerQueueItem(host, host.sessionKey, host.chatQueue[0]!)).toBe(true);
+    const { pane } = createTestChatPane({ client: host.client!, sessions: host.sessions });
+    pane.state = host as unknown as ChatPageHost;
+    pane.applySessionsState(host.sessions.state);
+    const unsubscribe = host.sessions.subscribe((state) => pane.applySessionsState(state));
+    try {
+      const refresh = refreshCurrentChatSessionList(host);
+      await retryReconnectableQueuedChatSends(host);
+      expect(host.request.mock.calls.map(([method]) => method)).toEqual(["sessions.list"]);
+
+      listRefresh.resolve(sessionsResult(idle));
+      await refresh;
+      await vi.waitFor(() => expect(host.chatQueue).toEqual([]));
+
+      expect(
+        host.request.mock.calls
+          .map(([method]) => method)
+          .filter((method) => method === "chat.history" || method === "chat.send"),
+      ).toEqual(["chat.history", "chat.send", "chat.history"]);
+    } finally {
+      unsubscribe();
+      host.sessions.dispose();
+    }
   });
 
   it("recovers a tombstoned session into a fresh continuing session", async () => {
