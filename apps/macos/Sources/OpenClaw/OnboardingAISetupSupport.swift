@@ -130,7 +130,7 @@ extension OnboardingAISetupModel {
         case detecting
         case ready
         case testing
-        case connected
+        case connected(OnboardingDashboardHandoff)
     }
 
     enum PendingVerificationOutcome: Equatable {
@@ -218,7 +218,8 @@ extension OnboardingAISetupModel {
     }
 
     var connected: Bool {
-        self.phase == .connected
+        if case .connected = self.phase { return true }
+        return false
     }
 
     var isBusy: Bool {
@@ -254,7 +255,7 @@ extension OnboardingAISetupModel {
     /// activating a new one. The custodian first-run handoff belongs only to
     /// fresh activations; verified reopens land on the normal dashboard.
     var verifiedExistingInference: Bool {
-        self.connected && self.selectedKind == "existing-model"
+        self.phase == .connected(.dashboard)
     }
 
     /// Once setup starts changing inference, its successful result belongs to

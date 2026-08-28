@@ -185,10 +185,12 @@ describe("ModelSetupWizardRunner", () => {
         },
       );
       const client = { request } as unknown as GatewayBrowserClient;
+      const terminalResult = vi.fn();
       const runner = new ModelSetupWizardRunner({
         getClient: () => client,
         getAgentId: () => null,
         onChange: () => undefined,
+        onTerminalResult: terminalResult,
         requestFailedMessage: () => "failed",
         cancelledMessage: () => "cancelled",
         sessionExpiredMessage: () => "expired",
@@ -206,6 +208,7 @@ describe("ModelSetupWizardRunner", () => {
       await firstStart;
 
       expect(runningSession).toBeNull();
+      expect(terminalResult).toHaveBeenCalledWith({ done: true, status: "cancelled" });
       expect(request).toHaveBeenCalledWith(
         "wizard.cancel",
         { sessionId: firstSessionId },
@@ -392,16 +395,23 @@ describe("ModelSetupWizardRunner", () => {
       const request = vi.fn(async (requestMethod: string) => {
         if (requestMethod === method) {
           return await new Promise((resolve) => {
-            resolveStart = () => resolve({ done: true, status: "done" });
+            resolveStart = () =>
+              resolve({
+                done: true,
+                status: "done",
+                modelActivation: { modelRef: "provider/late" },
+              });
           });
         }
         throw new Error(`unexpected request ${requestMethod}`);
       });
       const client = { request } as unknown as GatewayBrowserClient;
+      const terminalResult = vi.fn();
       const runner = new ModelSetupWizardRunner({
         getClient: () => client,
         getAgentId: () => null,
         onChange: () => undefined,
+        onTerminalResult: terminalResult,
         requestFailedMessage: () => "failed",
         cancelledMessage: () => "cancelled",
         sessionExpiredMessage: () => "expired",
@@ -414,6 +424,7 @@ describe("ModelSetupWizardRunner", () => {
 
       expect(request.mock.calls.map(([requestMethod]) => requestMethod)).toEqual([method]);
       expect(runner.state).toEqual({ phase: "idle" });
+      expect(terminalResult).not.toHaveBeenCalled();
     },
   );
 

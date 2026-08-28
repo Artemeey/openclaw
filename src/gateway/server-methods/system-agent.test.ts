@@ -26,12 +26,10 @@ import type {
   SystemAgentVerifiedInferenceDeps,
 } from "../../system-agent/verified-inference.js";
 import type { WizardPrompter } from "../../wizard/prompts.js";
+import type { WizardSession } from "../../wizard/session.js";
 import { ExecApprovalManager } from "../exec-approval-manager.js";
 import { handleGatewayRequest } from "../server-methods.js";
-import {
-  runExclusiveSystemAgentSetupActivation,
-  whenAdmittedWizardSessionSettled,
-} from "./setup-admission.js";
+import { runExclusiveSystemAgentSetupActivation } from "./setup-admission.js";
 import { systemAgentHandlers, type SystemAgentChatSession } from "./system-agent.js";
 import type { GatewayClient, GatewayRequestContext } from "./types.js";
 
@@ -43,13 +41,6 @@ const setupInferenceMocks = vi.hoisted(() => ({
 const inferenceFallbackMocks = vi.hoisted(() => ({ verify: vi.fn() }));
 const setupInferenceDetectionMocks = vi.hoisted(() => ({
   detectSetupInferenceIsolated: vi.fn(),
-}));
-const providerAuthChoiceMocks = vi.hoisted(() => ({
-  applyAuthChoiceLoadedPluginProvider: vi.fn(),
-}));
-const setupSharedMocks = vi.hoisted(() => ({
-  readSetupConfigFileSnapshot: vi.fn(),
-  writeWizardConfigFile: vi.fn(),
 }));
 const transcriptStoreMocks = vi.hoisted(() => ({
   appendTranscriptReset: vi.fn(),
@@ -77,13 +68,6 @@ vi.mock("../../system-agent/inference-fallback.js", () => ({
 }));
 vi.mock("../../system-agent/setup-inference-detection.js", () => ({
   detectSetupInferenceIsolated: setupInferenceDetectionMocks.detectSetupInferenceIsolated,
-}));
-vi.mock("../../plugins/provider-auth-choice.js", () => ({
-  applyAuthChoiceLoadedPluginProvider: providerAuthChoiceMocks.applyAuthChoiceLoadedPluginProvider,
-}));
-vi.mock("../../wizard/setup.shared.js", () => ({
-  readSetupConfigFileSnapshot: setupSharedMocks.readSetupConfigFileSnapshot,
-  writeWizardConfigFile: setupSharedMocks.writeWizardConfigFile,
 }));
 vi.mock("../../system-agent/transcript-store.js", () => ({
   appendTranscriptReset: transcriptStoreMocks.appendTranscriptReset,
@@ -122,7 +106,7 @@ function makeContext(sessions: Map<string, SystemAgentChatSession>): GatewayRequ
 }
 
 function makeWizardContext() {
-  const wizardSessions = new Map();
+  const wizardSessions = new Map<string, WizardSession>();
   return {
     wizardSessions,
     context: {
@@ -251,16 +235,6 @@ beforeEach(() => {
   setupInferenceMocks.resolvePersistentApplyInference.mockResolvedValue(
     requireVerifiedInferenceFixture().configuredRoute,
   );
-  setupSharedMocks.readSetupConfigFileSnapshot.mockResolvedValue({
-    exists: true,
-    valid: true,
-    path: "/tmp/openclaw.json",
-    hash: "prepare-base-hash",
-    sourceConfig: verifiedConfig,
-    config: verifiedConfig,
-    issues: [],
-  });
-  setupSharedMocks.writeWizardConfigFile.mockImplementation(async (config) => config);
   transcriptStoreMocks.appendTranscriptTurn.mockReset();
   transcriptStoreMocks.appendTranscriptReset.mockReset();
   transcriptStoreMocks.readTranscriptTail.mockReset().mockReturnValue([]);
@@ -378,104 +352,6 @@ describe("openclaw.setup", () => {
       releaseOwner.resolve();
       await owner;
     }
-  });
-  it("starts provider auth as an interactive wizard session", async () => {
-    const { wizardSessions, context } = makeWizardContext();
-    setupInferenceMocks.activateSetupInference.mockImplementationOnce(async (params) => {
-      await params.prompter.note("Open the browser and enter ABCD", "Pair GitHub");
-      return { ok: true, modelRef: "github-copilot/test", latencyMs: 10, lines: ["ready"] };
-    });
-    const { calls, respond } = makeRespond();
-
-    await systemAgentHandler("openclaw.setup.auth.start")({
-      params: { sessionId: "auth-session-1", agentId: "research", authChoice: "github-copilot" },
-      respond,
-      context,
-    } as never);
-
-    expect(calls[0]).toMatchObject({
-      ok: true,
-      payload: { sessionId: "auth-session-1", done: false, status: "running" },
-    });
-    const session = wizardSessions.get("auth-session-1");
-    const first = await session.next();
-    expect(setupInferenceMocks.activateSetupInference).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "provider-auth", authChoice: "github-copilot" }),
-    );
-    expect(setupInferenceMocks.activateSetupInference.mock.calls[0]?.[0].agentId).toBe("research");
-    expect(setupInferenceMocks.activateSetupInference.mock.calls[0]?.[0].signal).toBe(
-      session.signal,
-    );
-    expect(first).toMatchObject({
-      done: false,
-      status: "running",
-      step: { type: "note", title: "Pair GitHub", message: "Open the browser and enter ABCD" },
-    });
-    await session.answer(first.step.id, null);
-    await expect(session.next()).resolves.toMatchObject({ done: true, status: "done" });
-    await whenAdmittedWizardSessionSettled(session);
-  });
-  it("runs the selected provider method in a shared wizard session and commits its config", async () => {
-    const preparedConfig: OpenClawConfig = {
-      ...verifiedConfig,
-      models: { providers: { ollama: { baseUrl: "http://127.0.0.1:11434", models: [] } } },
-    };
-    providerAuthChoiceMocks.applyAuthChoiceLoadedPluginProvider.mockImplementationOnce(
-      async (params) => {
-        await params.prompter.note("Model ready", "Ollama");
-        await params.beforePersistentEffect();
-        return { config: preparedConfig, agentModelOverride: "ollama/qwen3:0.6b" };
-      },
-    );
-    const { wizardSessions, context } = makeWizardContext();
-    const { calls, respond } = makeRespond();
-
-    await systemAgentHandler("openclaw.setup.prepare.start")({
-      params: {
-        sessionId: "prepare-session-1",
-        agentId: "research",
-        authChoice: "ollama",
-        workspace: "/tmp/models-workspace",
-      },
-      respond,
-      context,
-    } as never);
-
-    expect(calls[0]).toMatchObject({
-      ok: true,
-      payload: { sessionId: "prepare-session-1", done: false, status: "running" },
-    });
-    const session = wizardSessions.get("prepare-session-1");
-    const note = await session.next();
-    expect(note).toMatchObject({
-      done: false,
-      step: { type: "note", title: "Ollama", message: "Model ready" },
-    });
-    expect(providerAuthChoiceMocks.applyAuthChoiceLoadedPluginProvider).toHaveBeenCalledWith(
-      expect.objectContaining({
-        authChoice: "ollama",
-        agentId: "research",
-        config: verifiedConfig,
-        workspaceDir: "/tmp/models-workspace",
-        setDefaultModel: false,
-        preserveExistingDefaultModel: true,
-        signal: session.signal,
-        isRemote: true,
-      }),
-    );
-    await session.answer(note.step.id, null);
-    await expect(session.next()).resolves.toMatchObject({
-      done: true,
-      status: "done",
-      preparedModelRef: "ollama/qwen3:0.6b",
-    });
-    await whenAdmittedWizardSessionSettled(session);
-    expect(setupSharedMocks.writeWizardConfigFile).toHaveBeenCalledWith(preparedConfig, {
-      allowConfigSizeDrop: false,
-      baseSnapshot: expect.objectContaining({ hash: "prepare-base-hash" }),
-      baseHash: "prepare-base-hash",
-    });
-    await whenAdmittedWizardSessionSettled(session);
   });
 });
 

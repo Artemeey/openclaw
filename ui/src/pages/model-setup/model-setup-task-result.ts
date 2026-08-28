@@ -10,6 +10,7 @@ export type ModelSetupTaskResult<T> =
 export type ModelSetupActivationTaskResult = {
   result: SystemAgentSetupActivateResult;
   refreshError: string | null;
+  isCurrent: () => boolean;
 };
 
 export function formatModelSetupError(error: unknown): string {

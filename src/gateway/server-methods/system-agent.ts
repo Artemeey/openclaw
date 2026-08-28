@@ -342,6 +342,10 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
             if (!result.ok) {
               throw new Error(result.error);
             }
+            runnerSession.setModelActivation({
+              modelRef: result.modelRef,
+              ...(result.gatewayRestartRequired ? { gatewayRestartRequired: true } : {}),
+            });
           },
           { timeoutMs: PROVIDER_AUTH_SESSION_TIMEOUT_MS },
         ),

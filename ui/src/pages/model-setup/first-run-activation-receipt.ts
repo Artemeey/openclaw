@@ -15,7 +15,7 @@ export type FirstRunActivationReceipt = {
   version: 1;
   gatewayUrl: string;
   agentId: string;
-  modelRef: string;
+  modelRef: string | null;
   kind: string;
   deadlineMs: number;
   owner: string;
@@ -49,7 +49,7 @@ function activationOwner(
     const values = [
       receipt.gatewayUrl,
       receipt.agentId,
-      receipt.modelRef,
+      receipt.modelRef ?? "",
       receipt.kind,
       String(receipt.deadlineMs),
       connection.token,
@@ -93,7 +93,7 @@ export function readFirstRunActivationReceipt(
       receipt?.version !== 1 ||
       typeof receipt.gatewayUrl !== "string" ||
       typeof receipt.agentId !== "string" ||
-      typeof receipt.modelRef !== "string" ||
+      (receipt.modelRef !== null && typeof receipt.modelRef !== "string") ||
       typeof receipt.kind !== "string" ||
       typeof receipt.deadlineMs !== "number" ||
       !Number.isFinite(receipt.deadlineMs) ||
@@ -117,9 +117,13 @@ export function readFirstRunActivationReceipt(
   }
 }
 
+export function firstRunActivationDeadline(kind: string): number {
+  return Date.now() + activationTimeoutForKind(kind) + ACTIVATION_DEADLINE_SAFETY_MS;
+}
+
 export function persistFirstRunActivationReceipt(
   context: ActivationContext,
-  candidate: { kind: string; modelRef: string },
+  candidate: { kind: string; modelRef?: string | null; deadlineMs?: number },
 ): FirstRunActivationReceipt | null {
   const storage = getSafeLocalStorage();
   if (!storage || context.gateway.snapshot.phase !== "connected") {
@@ -130,10 +134,9 @@ export function persistFirstRunActivationReceipt(
       version: 1 as const,
       gatewayUrl: gatewayCredentialScope(context.gateway.connection.gatewayUrl),
       agentId: context.agentSelection.state.selectedId ?? "",
-      modelRef: candidate.modelRef,
+      modelRef: candidate.modelRef ?? null,
       kind: candidate.kind,
-      deadlineMs:
-        Date.now() + activationTimeoutForKind(candidate.kind) + ACTIVATION_DEADLINE_SAFETY_MS,
+      deadlineMs: candidate.deadlineMs ?? firstRunActivationDeadline(candidate.kind),
     };
     const owner = activationOwner(context, receipt, storage);
     if (!owner) {

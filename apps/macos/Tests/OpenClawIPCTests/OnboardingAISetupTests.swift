@@ -1133,6 +1133,144 @@ struct OnboardingAISetupTests {
         #expect(model.authError == nil)
     }
 
+    @Test(arguments: ["timeout", "replacement-unavailable", "commit-locked", "commit-locked-after-completion"])
+    func `unresolved provider auth cancellation reports recovery without discarding the session`(
+        failure: String) async throws
+    {
+        let defaults = try #require(isolatedAISetupDefaults(prefix: "OnboardingUnresolvedAuthCancellationTests"))
+        let cancellationFails = LockIsolated(true)
+        let cancelledSessions = LockIsolated<[String]>([])
+        let modelUnderTest = LockIsolated<OnboardingAISetupModel?>(nil)
+        let recorder = AISetupRequestRecorder()
+        let session = makeAISetupRequestSession(
+            recorder: recorder,
+            handler: { task, request in
+                switch request.method {
+                case "openclaw.setup.detect":
+                    if failure == "commit-locked-after-completion", !cancelledSessions.value.isEmpty {
+                        task.emitReceiveSuccess(.data(Data(
+                            """
+                            {"type":"res","id":"\(request.id)","ok":true,"payload":{
+                              "candidates":[],"configuredModel":"openai/gpt-5.5","setupComplete":true}}
+                            """.utf8)))
+                        return
+                    }
+                    task.emitReceiveSuccess(.data(detectedSetupResponse(id: request.id)))
+                case "openclaw.setup.auth.start":
+                    let sessionID = try #require(request.params["sessionId"] as? String)
+                    task.emitReceiveSuccess(.data(Data(
+                        """
+                        {"type":"res","id":"\(request.id)","ok":true,"payload":{
+                          "sessionId":"\(sessionID)","done":false,"status":"running",
+                          "step":{"id":"login","type":"text","executor":"client",
+                            "message":"Enter the sign-in response"}}}
+                        """.utf8)))
+                case "wizard.cancel":
+                    let sessionID = try #require(request.params["sessionId"] as? String)
+                    cancelledSessions.withValue { $0.append(sessionID) }
+                    if cancellationFails.value {
+                        switch failure {
+                        case "commit-locked-after-completion":
+                            await MainActor.run {
+                                guard let model = modelUnderTest.value, model.activeAuthOption != nil else { return }
+                                model._test_applyAuthWizardResult(done: true, status: "done", error: nil)
+                            }
+                            task.emitReceiveSuccess(.data(Data(
+                                #"{"type":"res","id":"\#(request.id)","ok":true,"payload":{"status":"running"}}"#
+                                    .utf8)))
+                            return
+                        case "timeout":
+                            throw URLError(.timedOut)
+                        case "replacement-unavailable":
+                            task.emitReceiveFailure(URLError(.networkConnectionLost))
+                            return
+                        default:
+                            // A commit-locked wizard remains running; cancellation did not succeed.
+                            task.emitReceiveSuccess(.data(Data(
+                                #"{"type":"res","id":"\#(request.id)","ok":true,"payload":{"status":"running"}}"#
+                                    .utf8)))
+                            return
+                        }
+                    }
+                    task.emitReceiveSuccess(.data(Data(
+                        #"{"type":"res","id":"\#(request.id)","ok":true,"payload":{"status":"cancelled"}}"#
+                            .utf8)))
+                default:
+                    Issue.record("Unexpected setup mutation: \(request.method)")
+                }
+            },
+            receiveHook: { task, receiveIndex in
+                if failure == "replacement-unavailable", !cancelledSessions.value.isEmpty, cancellationFails.value {
+                    throw URLError(.cannotConnectToHost)
+                }
+                if receiveIndex == 0 {
+                    return .data(GatewayWebSocketTestSupport.connectChallengeData())
+                }
+                return .data(GatewayWebSocketTestSupport.connectOkData(
+                    id: task.snapshotConnectRequestID() ?? "connect"))
+            })
+        let url = try #require(URL(string: "ws://example.invalid"))
+        let gateway = makeAISetupGateway(url: url, session: session)
+        let model = makeAISetupModel(gateway: gateway, defaults: defaults)
+        modelUnderTest.setValue(model)
+        defer { modelUnderTest.setValue(nil) }
+        let option = OnboardingAISetupModel.AuthOption(
+            id: "test-provider-login", brandId: nil, label: "Test provider", hint: nil,
+            groupLabel: nil, icon: nil, website: nil, kind: "oauth", featured: false)
+
+        await model.detectAndAutoConnect()
+        model.startProviderAuth(option)
+        for _ in 0..<200 where model.authStep == nil {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        #expect(model.authStep?.id == "login")
+        #expect(!model.authBusy)
+        let sessionID = try #require(model._test_authSessionID)
+
+        model.cancelProviderAuth()
+        for _ in 0..<200 where model.authError == nil {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+
+        if failure == "commit-locked-after-completion" {
+            await settleQueuedAISetupTasks()
+            #expect(cancelledSessions.value.count >= 2)
+            #expect(model.connected)
+            #expect(model.authError == nil)
+            #expect(model.activeAuthOption == nil)
+            #expect(model._test_authSessionID == nil)
+            #expect(!model.authBusy)
+            await gateway.shutdown()
+            return
+        }
+
+        #expect(!cancelledSessions.value.isEmpty)
+        #expect(
+            model.authError?.summary.isEmpty == false,
+            "Unconfirmed cancellation must explain how to recover, not silently leave Submit disabled.")
+        #expect(model.authError?.summary.contains("Cancel") == true)
+        #expect(model.authBusy)
+        #expect(model.activeAuthOption == option)
+        #expect(model._test_authSessionID == sessionID)
+        #expect(!model.connected)
+
+        cancellationFails.setValue(false)
+        model.cancelProviderAuth()
+        for _ in 0..<200 where model.activeAuthOption != nil {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+
+        #expect(model.activeAuthOption == nil)
+        #expect(model.authError == nil)
+        #expect(!model.authBusy)
+        #expect(cancelledSessions.value.count >= 2)
+        #expect(cancelledSessions.value.allSatisfy { $0 == sessionID })
+        #expect(await recorder.snapshot().methods.allSatisfy {
+            ["openclaw.setup.detect", "openclaw.setup.auth.start", "wizard.cancel"].contains($0)
+        })
+        await gateway.shutdown()
+    }
+
     @Test func `provider auth mismatch cancels returned server session id`() {
         #expect(OnboardingAISetupModel.providerAuthCancellationSessionID(
             requested: "requested-session",

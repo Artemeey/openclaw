@@ -2738,8 +2738,15 @@ export const en: TranslationMap = {
       action: "Review connection",
     },
     loading: "Checking this Gateway for available AI access…",
+    testing: "Testing — asking the selected model for a quick reply…",
     retry: "Retry",
     checkAgain: "Check again",
+    recovery: {
+      unknown:
+        "The previous activation is unresolved. You can verify and use the selected model, or check again after the setup attempt has finished. No activation will be repeated automatically.",
+      wait: "The previous setup attempt may still be running. Wait for its bounded setup window to finish, then choose Check again to retry.",
+      useCurrent: "Verify & use selected model",
+    },
     verify: {
       title: "Selected model",
       button: "Check model",
@@ -2764,7 +2771,6 @@ export const en: TranslationMap = {
       testAndUse: "Test & use",
       retry: "Retry test",
       testingButton: "Testing…",
-      testing: "Testing — asking {modelRef} for a quick reply…",
     },
     empty: {
       title: "Recommended installs",

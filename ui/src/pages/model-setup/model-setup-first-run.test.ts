@@ -1,171 +1,15 @@
 /* @vitest-environment jsdom */
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GatewayBrowserClient } from "../../api/gateway.ts";
-import type { SystemAgentSetupDetectResult } from "../../api/types.ts";
-import type { ApplicationContext, ApplicationGateway } from "../../app/context.ts";
 import { i18n } from "../../i18n/index.ts";
-import { createRuntimeConfigCapability } from "../../lib/config/runtime-config-capability.ts";
-import { createApplicationContextProvider } from "../../test-helpers/application-context.ts";
-import { createTestGatewayClient } from "../../test-helpers/gateway-client.ts";
 import { createStorageMock } from "../../test-helpers/storage.ts";
 import { waitForFast } from "../../test-helpers/wait-for.ts";
-import { ModelSetupPage, type ModelSetupRouteData } from "./model-setup-page.ts";
-
-const detection: SystemAgentSetupDetectResult = {
-  candidates: [],
-  unavailableCandidates: [],
-  manualProviders: [],
-  authOptions: [],
-  prepareOptions: [],
-  recommendedInstalls: [],
-  workspace: "/tmp/workspace",
-  setupComplete: false,
-};
-
-function mutableGatewaySnapshot(snapshot: ApplicationGateway["snapshot"]) {
-  return snapshot;
-}
-
-function createFirstRunContext(refreshError?: string) {
-  const request = vi.fn<(method: string, params?: unknown) => Promise<unknown>>();
-  const client = createTestGatewayClient(request);
-  const listeners = new Set<(snapshot: ApplicationGateway["snapshot"]) => void>();
-  const snapshot = {
-    client,
-    phase: "connected",
-    offlineStable: false,
-    hello: {
-      type: "hello-ok",
-      protocol: 1,
-      auth: { role: "operator", scopes: ["operator.read", "operator.admin"] },
-      features: {
-        methods: [
-          "config.set",
-          "openclaw.setup.detect",
-          "openclaw.setup.verify",
-          "openclaw.setup.activate",
-          "openclaw.setup.prepare.start",
-        ],
-      },
-    },
-    canvasPluginSurfaceUrl: null,
-    assistantAgentId: "main",
-    sessionKey: "main",
-    lastError: null,
-    lastErrorCode: null,
-  } satisfies ApplicationGateway["snapshot"];
-  const gateway = {
-    snapshot: mutableGatewaySnapshot(snapshot),
-    connection: {
-      gatewayUrl: window.location.origin.replace(/^http/u, "ws"),
-      token: "test-token",
-      password: "",
-      bootstrapToken: "",
-    },
-    connectionRevision: 0,
-    eventLog: [],
-    connect: () => undefined,
-    setSessionKey: () => undefined,
-    start: () => undefined,
-    stop: () => undefined,
-    subscribe: (listener: (next: ApplicationGateway["snapshot"]) => void) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    subscribeEventLog: () => () => undefined,
-    subscribeEvents: () => () => undefined,
-  } satisfies ApplicationGateway;
-  const runtimeConfig = createRuntimeConfigCapability(gateway);
-  const runExternalMutation = vi.fn(
-    async (task: (connectedClient: GatewayBrowserClient) => Promise<unknown>) => {
-      try {
-        const value = await task(client);
-        return {
-          ok: true as const,
-          value,
-          refresh: refreshError
-            ? { ok: false as const, error: refreshError }
-            : { ok: true as const },
-        };
-      } catch (error) {
-        return {
-          ok: false as const,
-          reason: "error" as const,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
-    },
-  );
-  const context = {
-    gateway,
-    agentSelection: {
-      state: { selectedId: "main", scopeId: "main" },
-      subscribe: () => () => undefined,
-    },
-    basePath: "/openclaw",
-    resourceBasePath: "/openclaw",
-    navigate: vi.fn(),
-    runtimeConfig: { ...runtimeConfig, runExternalMutation },
-    // SAFETY: the first-run page consumes only the gateway, agent selection,
-    // navigation, and runtime config fixtures defined above.
-  } as unknown as ApplicationContext;
-  return {
-    client,
-    context,
-    request,
-    snapshot,
-    publishGatewaySnapshot: (next: ApplicationGateway["snapshot"]) => {
-      gateway.snapshot = next;
-      for (const listener of listeners) {
-        listener(next);
-      }
-    },
-  };
-}
-
-async function mountPage(
-  context: ApplicationContext,
-  routeData: Omit<ModelSetupRouteData, "connection"> & { client: GatewayBrowserClient | null },
-) {
-  const provider = createApplicationContextProvider(context);
-  const page = new ModelSetupPage();
-  const { client, ...data } = routeData;
-  page.routeData = {
-    ...data,
-    connection: {
-      client,
-      hello: context.gateway.snapshot.hello,
-      agentId: context.agentSelection.state.selectedId,
-    },
-  };
-  provider.append(page);
-  document.body.append(provider);
-  await page.updateComplete;
-  return { page, provider };
-}
-
-function candidate(
-  kind: SystemAgentSetupDetectResult["candidates"][number]["kind"],
-  modelRef: string,
-  credentials?: boolean,
-): SystemAgentSetupDetectResult["candidates"][number] {
-  return {
-    kind,
-    label: kind,
-    detail: "Available on this Gateway",
-    modelRef,
-    recommended: false,
-    ...(credentials === undefined ? {} : { credentials }),
-  };
-}
-
-function requestParameters(params: unknown) {
-  if (!params || typeof params !== "object") {
-    throw new Error("Expected Gateway request parameters.");
-  }
-  return params;
-}
+import {
+  candidate,
+  createFirstRunContext,
+  detection,
+  mountPage,
+  requestParameters,
+} from "./model-setup-first-run.test-support.ts";
 
 describe("ModelSetupPage first-run inference", () => {
   beforeEach(async () => {
@@ -593,10 +437,11 @@ describe("ModelSetupPage first-run inference", () => {
     });
 
     await waitForFast(() => {
-      expect(page.textContent).toContain("The model could not be activated");
+      expect(page.textContent).toContain("previous activation is unresolved");
       expect(page.textContent).toContain("Check again");
     });
     expect(relaunched.request).not.toHaveBeenCalled();
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 500_000);
     page.querySelector<HTMLButtonElement>(".model-setup__intro .btn")?.click();
 
     await waitForFast(() => {
@@ -804,13 +649,26 @@ describe("ModelSetupPage first-run inference", () => {
     });
 
     await waitForFast(() => {
-      expect(page.textContent).toContain("The model could not be activated");
+      expect(page.textContent).toContain("previous activation is unresolved");
       expect(page.textContent).toContain("Check again");
     });
     expect(activationCount).toBe(1);
     expect(context.navigate).not.toHaveBeenCalled();
 
-    page.querySelector<HTMLButtonElement>(".model-setup__intro .btn")?.click();
+    await waitForFast(() =>
+      expect(page.querySelector(".model-setup__recovery .btn")).not.toBeNull(),
+    );
+    const retry = page.querySelector<HTMLButtonElement>(".model-setup__recovery .btn")!;
+    expect(retry.disabled).toBe(false);
+    expect(
+      JSON.parse(localStorage.getItem("openclaw.modelSetup.pendingActivation.v1")!).deadlineMs,
+    ).toBeGreaterThan(Date.now());
+    retry.click();
+    await page.updateComplete;
+    expect(activationCount).toBe(1);
+    await waitForFast(() => expect(page.textContent).toContain("may still be running"));
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 500_000);
+    retry.click();
 
     await waitForFast(() => {
       expect(activationCount).toBe(2);
@@ -1020,7 +878,8 @@ describe("ModelSetupPage first-run inference", () => {
     await page.updateComplete;
     resolveActivation?.({ ok: false, status: "auth", error: "The first login expired" });
 
-    await waitForFast(() => expect(page.textContent).toContain("The first login expired"));
+    await page.updateComplete;
+    expect(page.textContent).not.toContain("The first login expired");
     expect(request).toHaveBeenCalledOnce();
     expect(context.navigate).not.toHaveBeenCalled();
   });

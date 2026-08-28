@@ -1,3 +1,4 @@
+import type { WizardStatusResult } from "../../../../packages/gateway-protocol/src/schema/wizard.ts";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type { SystemAgentSetupAuthStartResult, WizardNextResult } from "../../api/types.ts";
 import { formatUiError } from "../../lib/format-error.ts";
@@ -16,12 +17,14 @@ export type ModelSetupWizardStartMethod =
 export type ModelSetupWizardCompletion = {
   startMethod: ModelSetupWizardStartMethod;
   preparedModelRef?: string;
+  modelActivation?: WizardNextResult["modelActivation"];
 };
 
 type WizardRunnerOptions = {
   getClient: () => GatewayBrowserClient | null;
   getAgentId: () => string | null;
   onChange: (state: ModelSetupWizardState) => void;
+  onTerminalResult?: (result: WizardNextResult) => void;
   requestFailedMessage: () => string;
   cancelledMessage: () => string;
   sessionExpiredMessage: () => string;
@@ -66,11 +69,18 @@ export class ModelSetupWizardRunner {
         },
         { timeoutMs: null },
       );
-      const started = await this.awaitWizardStart(client, request, sessionId, startMethod);
+      const started = await this.awaitWizardStart(
+        client,
+        request,
+        sessionId,
+        startMethod,
+        generation,
+      );
       if (generation !== this.generation) {
         if (!started.done) {
           // Admission can finish after cancellation; release only this generation's original session.
-          await this.cancelSession(client, sessionId);
+          const cancelled = await this.cancelSession(client, sessionId);
+          this.reportCancellation(cancelled, generation + 1);
         }
         return null;
       }
@@ -103,7 +113,7 @@ export class ModelSetupWizardRunner {
   async cancel(options: { settleActiveRequest?: boolean } = {}): Promise<void> {
     const client = this.options.getClient();
     const sessionId = this.sessionId;
-    this.generation += 1;
+    const generation = ++this.generation;
     this.sessionId = null;
     if (!options.settleActiveRequest) {
       this.abortController?.abort();
@@ -113,7 +123,7 @@ export class ModelSetupWizardRunner {
     if (!client || !sessionId) {
       return;
     }
-    await this.cancelSession(client, sessionId);
+    this.reportCancellation(await this.cancelSession(client, sessionId), generation);
   }
 
   close(): void {
@@ -135,13 +145,14 @@ export class ModelSetupWizardRunner {
     request: Promise<SystemAgentSetupAuthStartResult>,
     sessionId: string,
     startMethod: ModelSetupWizardStartMethod,
+    generation: number,
   ): Promise<SystemAgentSetupAuthStartResult> {
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     // Gateway request abort/deadline retirement discards the late session needed for cleanup.
     const retainedRequest = request.then(async (result) => {
       if (timedOut && !result.done) {
-        await this.cancelSession(client, sessionId);
+        this.reportCancellation(await this.cancelSession(client, sessionId), generation);
       }
       return result;
     });
@@ -210,6 +221,9 @@ export class ModelSetupWizardRunner {
         ? this.options.cancelledMessage()
         : this.options.requestFailedMessage(),
     );
+    if (result.done) {
+      this.options.onTerminalResult?.(result);
+    }
     this.setState(next);
     if (next.phase !== "done") {
       return null;
@@ -219,6 +233,7 @@ export class ModelSetupWizardRunner {
     return {
       startMethod: this.startMethod,
       ...(next.preparedModelRef ? { preparedModelRef: next.preparedModelRef } : {}),
+      ...(result.modelActivation ? { modelActivation: result.modelActivation } : {}),
     };
   }
 
@@ -233,7 +248,9 @@ export class ModelSetupWizardRunner {
     this.abortController = null;
     const sessionExpired = isWizardNotFoundError(error);
     if (!sessionExpired && client && sessionId) {
-      void this.cancelSession(client, sessionId);
+      void this.cancelSession(client, sessionId).then((result) =>
+        this.reportCancellation(result, generation),
+      );
     }
     const message = sessionExpired
       ? this.options.sessionExpiredMessage()
@@ -241,15 +258,25 @@ export class ModelSetupWizardRunner {
     this.setState({ phase: "error", message });
   }
 
-  private async cancelSession(client: GatewayBrowserClient, sessionId: string): Promise<void> {
+  private reportCancellation(result: WizardStatusResult | null, generation: number): void {
+    if (generation === this.generation && result?.status === "cancelled") {
+      this.options.onTerminalResult?.({ done: true, status: "cancelled" });
+    }
+  }
+
+  private async cancelSession(
+    client: GatewayBrowserClient,
+    sessionId: string,
+  ): Promise<WizardStatusResult | null> {
     try {
-      await client.request(
+      return await client.request<WizardStatusResult>(
         "wizard.cancel",
         { sessionId },
         { timeoutMs: MODEL_SETUP_AUTH_START_TIMEOUT_MS },
       );
     } catch {
       // The Gateway may already have completed or purged the session.
+      return null;
     }
   }
 
