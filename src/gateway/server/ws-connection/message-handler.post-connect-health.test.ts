@@ -287,6 +287,7 @@ function captureSecurityEvents(): {
 function attachGatewayHarness(options: {
   connId: string;
   connectNonce: string;
+  deferSocketSend?: boolean;
   socket?: WebSocket;
   refreshHealthSnapshot?: GatewayRequestContext["refreshHealthSnapshot"];
   requestOrigin?: string;
@@ -304,7 +305,12 @@ function attachGatewayHarness(options: {
   setCloseCause?: SetCloseCause;
   clearHandshakeTimer?: () => void;
 }) {
+  let finishSocketSend: (() => void) | undefined;
   const socketSend = vi.fn((_payload: string, cb?: (err?: Error) => void) => {
+    if (options.deferSocketSend) {
+      finishSocketSend = () => cb?.();
+      return;
+    }
     cb?.();
   });
   let onMessage: ((data: Buffer) => void) | undefined;
@@ -429,6 +435,7 @@ function attachGatewayHarness(options: {
   return {
     advanceHandshakePhase,
     clearHandshakeTimer,
+    finishSocketSend: () => finishSocketSend?.(),
     logWsControl,
     refreshConnectedUserProfile,
     send,
@@ -624,6 +631,35 @@ describe("attachGatewayWsMessageHandler post-connect health refresh", () => {
     expect(harness.setClient.mock.invocationCallOrder[0]).toBeLessThan(
       clearHandshakeTimer.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
+  });
+
+  it("dispatches registered-client frames while hello completion is pending", async () => {
+    const close = createCloseMock();
+    const harness = attachGatewayHarness({
+      connId: "conn-registered-hello-pending",
+      connectNonce: "nonce-registered-hello-pending",
+      deferSocketSend: true,
+      close,
+    });
+
+    try {
+      harness.sendConnect("connect-before-registered-burst", BACKEND_CONNECT_PARAMS);
+      await waitForFast(() => {
+        expect(harness.setClient).toHaveBeenCalledOnce();
+        expect(harness.socketSend).toHaveBeenCalledOnce();
+      });
+
+      for (let index = 0; index < MAX_QUEUED_GATEWAY_PREAUTH_FRAMES; index += 1) {
+        harness.sendRequest(`registered-request-${index}`, "status.summary");
+      }
+
+      await waitForFast(() => {
+        expect(handleGatewayRequest).toHaveBeenCalledTimes(MAX_QUEUED_GATEWAY_PREAUTH_FRAMES);
+      });
+      expect(close).not.toHaveBeenCalled();
+    } finally {
+      harness.finishSocketSend();
+    }
   });
 
   it("rejects an oversized queued frame before the initial handshake completes", async () => {

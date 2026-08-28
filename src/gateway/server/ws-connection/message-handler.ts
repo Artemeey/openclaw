@@ -522,15 +522,31 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
   };
 
   let queuedHandshakeFrames: RawData[] | undefined;
+  const flushQueuedHandshakeFrames = () => {
+    const frames = queuedHandshakeFrames?.splice(0) ?? [];
+    queuedHandshakeFrames = undefined;
+    if (isClosed()) {
+      return;
+    }
+    for (const frame of frames) {
+      onMessage(frame);
+    }
+  };
 
   const onMessage = (data: RawData): void => {
     if (isClosed()) {
       return;
     }
     if (queuedHandshakeFrames) {
+      // Registration ends preauth ownership even if hello bookkeeping is still pending.
+      if (getClient()) {
+        queuedHandshakeFrames.push(data);
+        flushQueuedHandshakeFrames();
+        return;
+      }
       // Keep the preauth cap authoritative for pipelined frames until this
       // connection actually owns an admitted client.
-      if (!getClient() && rejectOversizedPreauthFrame(data)) {
+      if (rejectOversizedPreauthFrame(data)) {
         queuedHandshakeFrames.length = 0;
         return;
       }
@@ -556,16 +572,7 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
     queuedHandshakeFrames = [];
     void runWithDiagnosticTraceContext(createDiagnosticTraceContext(), () =>
       handleIncomingMessage(data),
-    ).finally(() => {
-      const frames = queuedHandshakeFrames?.splice(0) ?? [];
-      queuedHandshakeFrames = undefined;
-      if (isClosed()) {
-        return;
-      }
-      for (const frame of frames) {
-        onMessage(frame);
-      }
-    });
+    ).finally(flushQueuedHandshakeFrames);
   };
 
   socket.on("message", onMessage);
