@@ -26,11 +26,6 @@ import {
   SWARM_CODE_MODE_REQUEST_FINGERPRINT,
 } from "./subagents/swarm/swarm-code-mode.js";
 import { resolveSwarmConfig } from "./subagents/swarm/swarm-config.js";
-import {
-  consumeToolEffectReceipt,
-  registerToolEffectReceipt,
-  type ToolEffectReceipt,
-} from "./tool-effect-receipt.js";
 import { isToolExecutionAllowed, TOOL_EXECUTION_GATED_MESSAGE } from "./tool-policy-shared.js";
 import {
   consumeTrustedToolNoStartError,
@@ -403,7 +398,6 @@ export async function runBridgeRequest(params: {
   onUpdate?: AgentToolUpdateCallback;
 }): Promise<SettledBridgeRequest> {
   const catalogProjection = params.catalogProjection;
-  let effectReceipt: ToolEffectReceipt | undefined;
   try {
     const values = Array.isArray(params.request.args) ? params.request.args : [];
     let value: unknown;
@@ -479,7 +473,6 @@ export async function runBridgeRequest(params: {
           signal: params.signal,
           onUpdate: params.onUpdate,
         });
-        effectReceipt = consumeToolEffectReceipt(called.result);
         value =
           isRecord(called.result) && "details" in called.result
             ? called.result.details
@@ -530,7 +523,6 @@ export async function runBridgeRequest(params: {
               signal: params.signal,
               onUpdate: params.onUpdate,
             });
-            effectReceipt = consumeToolEffectReceipt(called.result);
             if (request.catalogId) {
               const guestResult = consumeMcpCodeModeGuestResult(called.result);
               if (guestResult === undefined) {
@@ -545,7 +537,6 @@ export async function runBridgeRequest(params: {
               : called.result;
           },
         );
-        effectReceipt ??= consumeToolEffectReceipt(value);
         break;
       }
       case "agentSpawn": {
@@ -600,20 +591,16 @@ export async function runBridgeRequest(params: {
         "Search results exceed the output budget. Narrow the query or lower the limit.",
       );
     }
-    const settled: SettledBridgeRequest = { id: params.request.id, ok: true, value };
-    return effectReceipt ? registerToolEffectReceipt(settled, effectReceipt) : settled;
+    return { id: params.request.id, ok: true, value };
   } catch (error) {
     const settled: SettledBridgeRequest = {
       id: params.request.id,
       ok: false,
       error: redactCodeModeCatalogIds(formatErrorMessage(error), catalogProjection.bindings),
     };
-    const trustedNoStart = consumeTrustedToolNoStartError(error);
-    if (trustedNoStart) {
+    if (consumeTrustedToolNoStartError(error)) {
       registerTrustedToolNoStartError(settled);
     }
-    effectReceipt =
-      consumeToolEffectReceipt(error) ?? (trustedNoStart ? { state: "not_started" } : undefined);
-    return effectReceipt ? registerToolEffectReceipt(settled, effectReceipt) : settled;
+    return settled;
   }
 }

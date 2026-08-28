@@ -16,18 +16,13 @@ import {
   type SettledBridgeRequest,
 } from "./code-mode-runtime.js";
 import type { AgentToolUpdateCallback } from "./runtime/index.js";
-import {
-  consumeToolEffectReceipt,
-  toolEffectStateProvesNoEffect,
-  type ToolEffectReceipt,
-} from "./tool-effect-receipt.js";
 import { consumeTrustedToolNoStartError } from "./tool-result-error.js";
 import { ToolSearchRuntime, type ToolSearchToolContext } from "./tool-search.js";
 import { ToolInputError } from "./tools/common.js";
 
 export type CodeModeBridgeDispatchState = {
   started: boolean;
-  operations: Map<string, "pending" | ToolEffectReceipt["state"]>;
+  potentiallyMutatingDispatches: number;
 };
 
 export type PendingBridgeState = PendingBridgeRequest & {
@@ -72,18 +67,12 @@ let nextPendingBridgeSettlementSequence = 0;
 let activeRunExpiryTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function createCodeModeBridgeDispatchState(): CodeModeBridgeDispatchState {
-  return { started: false, operations: new Map() };
+  return { started: false, potentiallyMutatingDispatches: 0 };
 }
 
 /** Read the host-only side-effect classification for one Code Mode run. */
 export function isCodeModeBridgeRepairEligible(state: CodeModeBridgeDispatchState): boolean {
-  return (
-    state.started &&
-    state.operations.size > 0 &&
-    [...state.operations.values()].every(
-      (effect) => effect !== "pending" && toolEffectStateProvesNoEffect(effect),
-    )
-  );
+  return state.started && state.potentiallyMutatingDispatches === 0;
 }
 
 // One unreferenced timer owns parked snapshots even when no later exec or wait
@@ -392,7 +381,9 @@ export function createPendingBridgeStates(params: {
         isPendingBridgeRequestReplaySafe(request, params.runtime, params.catalogProjection));
     if (tracksDispatch) {
       params.bridgeDispatch.started = true;
-      params.bridgeDispatch.operations.set(request.id, "pending");
+      if (!recoverySafe) {
+        params.bridgeDispatch.potentiallyMutatingDispatches += 1;
+      }
     }
     const bridgeCall = runBridgeRequest({
       runtime: params.runtime,
@@ -417,15 +408,11 @@ export function createPendingBridgeStates(params: {
     const state: PendingBridgeState = {
       ...request,
       promise: completion.then((settled) => {
-        // The effect receipt owns classification; consume the predecessor marker
-        // so reusing this settled object cannot preserve stale no-start authority.
-        consumeTrustedToolNoStartError(settled);
-        const effectReceipt = consumeToolEffectReceipt(settled);
-        if (tracksDispatch) {
-          params.bridgeDispatch.operations.set(
-            request.id,
-            effectReceipt?.state ??
-              (recoverySafe ? (settled.ok ? "read_completed" : "failed_no_effect") : "uncertain"),
+        const trustedNoStart = tracksDispatch && consumeTrustedToolNoStartError(settled);
+        if (trustedNoStart && !recoverySafe) {
+          params.bridgeDispatch.potentiallyMutatingDispatches = Math.max(
+            0,
+            params.bridgeDispatch.potentiallyMutatingDispatches - 1,
           );
         }
         state.settledSequence = ++nextPendingBridgeSettlementSequence;

@@ -364,7 +364,7 @@ export function prepareEmbeddedAttemptStream(input: {
         toolName: toolParams.toolName,
         toolCallId: toolParams.toolCallId,
         args: toolParams.input,
-        replaySafe: toolParams.replaySafe ?? input.isReplaySafeTool(toolParams.tool),
+        replaySafe: input.isReplaySafeTool(toolParams.tool),
         hideFromChannelProgress:
           "hideFromChannelProgress" in toolParams.tool &&
           toolParams.tool.hideFromChannelProgress === true,

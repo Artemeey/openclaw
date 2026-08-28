@@ -13,7 +13,6 @@ describe("dynamic tool owner timeout", () => {
     const observeToolTerminal = vi.fn(() => ({
       executionStarted: true,
       sideEffectEvidence: true,
-      effectReceipt: { state: "uncertain" as const },
     }));
     const response = handleDynamicToolCallWithTimeout({
       call: {
