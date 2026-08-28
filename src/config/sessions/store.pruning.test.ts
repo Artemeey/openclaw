@@ -1106,6 +1106,27 @@ describe("getActiveSessionMaintenanceWarning", () => {
 
     expect(warning?.wouldCap).toBe(true);
     expect(warning?.wouldPrune).toBe(false);
+    expect(warning?.capOutcome).toBe("archive");
+  });
+
+  it("classifies synthetic cap overflow as removal", () => {
+    const now = Date.now();
+    const activeSessionKey = "agent:main:subagent:active";
+    const store = makeStore([
+      ["newest", makeEntry(now)],
+      [activeSessionKey, makeEntry(now - 1)],
+    ]);
+
+    const warning = getActiveSessionMaintenanceWarning({
+      store,
+      activeSessionKey,
+      pruneAfterMs: DAY_MS,
+      maxEntries: 1,
+      nowMs: now,
+    });
+
+    expect(warning?.wouldCap).toBe(true);
+    expect(warning?.capOutcome).toBe("remove");
   });
 
   it("preserves insertion order tie behavior from stable sorting", () => {

@@ -40,6 +40,7 @@ export type SessionMaintenanceWarning = {
   maxEntries: number;
   wouldPrune: boolean;
   wouldCap: boolean;
+  capOutcome?: "archive" | "remove" | null;
 };
 
 export type ResolvedSessionMaintenanceConfig = {
@@ -636,6 +637,11 @@ export function getActiveSessionMaintenanceWarning(params: {
     params.preserveKeys,
     params.preserveRecentMs,
   ).includes(activeSessionKey);
+  const capOutcome = wouldCap
+    ? isSyntheticSessionMaintenanceKey(activeSessionKey)
+      ? "remove"
+      : "archive"
+    : null;
 
   if (!wouldPrune && !wouldCap) {
     return null;
@@ -649,6 +655,7 @@ export function getActiveSessionMaintenanceWarning(params: {
     maxEntries: params.maxEntries,
     wouldPrune,
     wouldCap,
+    capOutcome,
   };
 }
 
