@@ -473,17 +473,18 @@ NODE
 
 install_companion_plugins() {
   local authored_config="$OPENCLAW_UPGRADE_SURVIVOR_ARTIFACT_ROOT/companion-install-authored.json"
+  local capability_consent_mode=""
   local install_status=0
   local restore_status=0
   node "$OPENCLAW_UPGRADE_SURVIVOR_CONFIG_PARKING_HELPER" \
     park-companion-install "$OPENCLAW_CONFIG_PATH" "$authored_config"
 
   set +e
-  openclaw_e2e_fixture_plugin_command openclaw -- \
+  openclaw_e2e_fixture_plugin_command --consent-mode-output capability_consent_mode openclaw -- \
     plugins install "npm:@openclaw/discord@$package_version" --pin
   install_status=$?
   if [ "$install_status" -eq 0 ]; then
-    openclaw_e2e_fixture_plugin_command openclaw -- \
+    openclaw_e2e_fixture_plugin_command --consent-mode-output capability_consent_mode openclaw -- \
       plugins install "clawhub:@openclaw/whatsapp@$package_version"
     install_status=$?
   fi
@@ -493,7 +494,7 @@ install_companion_plugins() {
     install_status=$?
   fi
   if [ "$install_status" -eq 0 ]; then
-    openclaw_e2e_fixture_plugin_command openclaw -- \
+    openclaw_e2e_fixture_plugin_command --consent-mode-output capability_consent_mode openclaw -- \
       plugins install "npm:@openclaw/codex@$package_version" --pin
     install_status=$?
   fi
@@ -509,7 +510,7 @@ install_companion_plugins() {
     return "$restore_status"
   fi
   node scripts/e2e/lib/upgrade-survivor/assertions.mjs \
-    assert-companion-installs "$package_version"
+    assert-companion-installs "$package_version" "$capability_consent_mode"
 }
 
 openclaw_e2e_eval_test_state_from_b64 "${OPENCLAW_TEST_STATE_FUNCTION_B64:?missing OPENCLAW_TEST_STATE_FUNCTION_B64}"

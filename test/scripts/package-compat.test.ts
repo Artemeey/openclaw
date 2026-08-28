@@ -205,6 +205,32 @@ ${fixtureCommand} plugins update fixture`,
     ]);
   });
 
+  it.each([
+    [true, "required"],
+    [false, "unsupported"],
+  ])("reports capability consent mode from the help probe (supported=%s)", (supported, mode) => {
+    const root = tempDirs.make("openclaw-consent-mode-");
+    const entry = writeCandidate(root, { commands: supported ? undefined : [] });
+    const result = runShell(
+      root,
+      entry,
+      `
+source scripts/lib/openclaw-e2e-instance.sh
+consent_mode=
+openclaw_e2e_fixture_plugin_command --consent-mode-output consent_mode \
+  openclaw_e2e_maybe_timeout 5s node "$OPENCLAW_ENTRY" -- \
+  plugins install fixture
+printf 'consent-mode=%s\\n' "$consent_mode"
+`,
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain(`consent-mode=${mode}`);
+    expect(result.calls).toEqual([
+      ["plugins", "install", "--help"],
+      ["plugins", "install", "fixture", ...(supported ? [consent] : [])],
+    ]);
+  });
+
   it.each([true, false])(
     "consents to ClawHub install but not unchanged update (supported=%s)",
     (supported) => {

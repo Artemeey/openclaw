@@ -2583,21 +2583,23 @@ docker_e2e_docker_run_cmd run demo
       publishedRunner.indexOf("phase doctor run_doctor"),
     );
     const discordInstallIndex = runner.indexOf(
-      'openclaw_e2e_fixture_plugin_command openclaw -- \\\n    plugins install "npm:@openclaw/discord@$package_version" --pin',
+      'openclaw_e2e_fixture_plugin_command --consent-mode-output capability_consent_mode openclaw -- \\\n    plugins install "npm:@openclaw/discord@$package_version" --pin',
     );
     const whatsappInstallIndex = runner.indexOf(
-      'openclaw_e2e_fixture_plugin_command openclaw -- \\\n      plugins install "clawhub:@openclaw/whatsapp@$package_version"',
+      'openclaw_e2e_fixture_plugin_command --consent-mode-output capability_consent_mode openclaw -- \\\n      plugins install "clawhub:@openclaw/whatsapp@$package_version"',
     );
     const clawhubRequestIndex = runner.indexOf(
       'assert-prepublish-requests "$OPENCLAW_CLAWHUB_URL" "@openclaw/whatsapp" "$package_version"',
     );
     const codexInstallIndex = runner.indexOf(
-      'openclaw_e2e_fixture_plugin_command openclaw -- \\\n      plugins install "npm:@openclaw/codex@$package_version" --pin',
+      'openclaw_e2e_fixture_plugin_command --consent-mode-output capability_consent_mode openclaw -- \\\n      plugins install "npm:@openclaw/codex@$package_version" --pin',
     );
     const restoreCompanionIndex = runner.indexOf(
       'restore "$OPENCLAW_CONFIG_PATH" "$authored_config"',
     );
-    const assertCompanionIndex = runner.indexOf('assert-companion-installs "$package_version"');
+    const assertCompanionIndex = runner.indexOf(
+      'assert-companion-installs "$package_version" "$capability_consent_mode"',
+    );
     expect(discordInstallIndex).toBeGreaterThan(-1);
     expect(discordInstallIndex).toBeLessThan(whatsappInstallIndex);
     expect(whatsappInstallIndex).toBeLessThan(clawhubRequestIndex);
@@ -2606,7 +2608,9 @@ docker_e2e_docker_run_cmd run demo
     expect(restoreCompanionIndex).toBeLessThan(assertCompanionIndex);
     expect(assertCompanionIndex).toBeLessThan(runnerPrepareIndex);
     expect(
-      runner.match(/openclaw_e2e_fixture_plugin_command openclaw -- \\\n\s+plugins install/gu),
+      runner.match(
+        /openclaw_e2e_fixture_plugin_command --consent-mode-output capability_consent_mode openclaw -- \\\n\s+plugins install/gu,
+      ),
     ).toHaveLength(3);
     expect(runner).not.toContain("--accept-capabilities");
     expect(runner).toContain('park-companion-install "$OPENCLAW_CONFIG_PATH" "$authored_config"');

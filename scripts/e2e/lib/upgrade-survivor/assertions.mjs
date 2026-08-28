@@ -1075,8 +1075,26 @@ function assertCompanionPluginConsent(record, pluginId) {
   );
 }
 
-function assertCompanionPluginInstalls([expectedVersion]) {
+function assertLegacyCompanionPluginConsent(record, pluginId) {
+  for (const property of [
+    "acceptedSurface",
+    "acceptedSurfaceHash",
+    "acceptedSurfaceAt",
+    "acceptedSurfaceIntegrity",
+  ]) {
+    assert(
+      !Object.hasOwn(record, property),
+      `${pluginId} plugin legacy install retained consent property: ${property}`,
+    );
+  }
+}
+
+function assertCompanionPluginInstalls([expectedVersion, consentMode]) {
   assert(expectedVersion, "assert-companion-installs requires <expected-version>");
+  assert(
+    consentMode === "required" || consentMode === "unsupported",
+    "assert-companion-installs requires consent mode required or unsupported",
+  );
   const records = readInstalledPluginIndex().installRecords ?? {};
   for (const [pluginId, packageName, source] of [
     ["discord", "@openclaw/discord", "npm"],
@@ -1095,7 +1113,11 @@ function assertCompanionPluginInstalls([expectedVersion]) {
       packageJson.version === expectedVersion,
       `${pluginId} installed package version changed: ${String(packageJson.version)}`,
     );
-    assertCompanionPluginConsent(record, pluginId);
+    if (consentMode === "required") {
+      assertCompanionPluginConsent(record, pluginId);
+    } else {
+      assertLegacyCompanionPluginConsent(record, pluginId);
+    }
   }
 }
 

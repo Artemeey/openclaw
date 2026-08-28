@@ -527,13 +527,18 @@ openclaw_e2e_run_command() {
   openclaw_e2e_maybe_timeout "$timeout_value" "$@"
 }
 openclaw_e2e_fixture_plugin_command() {
+  local consent_mode_output=""
+  if [[ "${1:-}" == "--consent-mode-output" ]]; then
+    consent_mode_output="$2"
+    shift 2
+  fi
   local runner=()
   while [[ "${1:-}" != "--" && "$#" -gt 0 ]]; do
     runner+=("$1")
     shift
   done
   shift
-  local help consent
+  local help consent detected_consent_mode="unsupported"
   # Use the caller's bounded runner for both calls; never cache across package replacement.
   help="$("${runner[@]}" "$1" "$2" --help)" || {
     local probe_status=$?
@@ -542,7 +547,11 @@ openclaw_e2e_fixture_plugin_command() {
   }
   consent="$(printf '%s' "$help" | node scripts/e2e/lib/package-compat.mjs fixture-consent)" || return $?
   if [[ -n "$consent" ]]; then
+    detected_consent_mode="required"
     set -- "$@" "$consent"
+  fi
+  if [[ -n "$consent_mode_output" ]]; then
+    printf -v "$consent_mode_output" '%s' "$detected_consent_mode"
   fi
   "${runner[@]}" "$@"
 }

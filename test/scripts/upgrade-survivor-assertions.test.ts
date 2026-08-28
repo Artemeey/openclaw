@@ -308,6 +308,12 @@ const ACCEPTED_SURFACE = {
   skills: [],
   dangerousConfigFlags: [],
 };
+const CONSENT_PROPERTIES = [
+  "acceptedSurface",
+  "acceptedSurfaceHash",
+  "acceptedSurfaceAt",
+  "acceptedSurfaceIntegrity",
+] as const;
 
 function acceptedSurfaceHash(): string {
   return createHash("sha256").update(JSON.stringify(ACCEPTED_SURFACE)).digest("hex");
@@ -318,6 +324,7 @@ function assertCompanionPluginRecords(
     records: Record<string, Record<string, unknown>>,
     installPaths: Record<"codex" | "discord" | "whatsapp", string>,
   ) => void,
+  consentMode: string | null = "required",
 ): void {
   const root = mkdtempSync(join(tmpdir(), "openclaw-upgrade-survivor-companions-"));
   try {
@@ -397,7 +404,11 @@ function assertCompanionPluginRecords(
     mkdirSync(join(stateDir, "plugins"), { recursive: true });
     writeJson(join(stateDir, "plugins", "installs.json"), { installRecords: records });
 
-    execFileSync(process.execPath, [ASSERTIONS_PATH, "assert-companion-installs", version], {
+    const assertionArgs = [ASSERTIONS_PATH, "assert-companion-installs", version];
+    if (consentMode !== null) {
+      assertionArgs.push(consentMode);
+    }
+    execFileSync(process.execPath, assertionArgs, {
       env: {
         ...process.env,
         OPENCLAW_STATE_DIR: stateDir,
@@ -710,6 +721,42 @@ describe("upgrade survivor assertions", () => {
         Reflect.deleteProperty(discord, "acceptedSurfaceIntegrity");
       }),
     ).toThrow(/discord plugin consent integrity/);
+  });
+
+  it("accepts legacy companion records only when capability consent is unsupported", () => {
+    const removeConsent = (records: Record<string, Record<string, unknown>>) => {
+      for (const record of Object.values(records)) {
+        for (const property of CONSENT_PROPERTIES) {
+          Reflect.deleteProperty(record, property);
+        }
+      }
+    };
+    expect(() => assertCompanionPluginRecords(removeConsent, "unsupported")).not.toThrow();
+  });
+
+  it.each(CONSENT_PROPERTIES)(
+    "rejects legacy companion records retaining %s",
+    (retainedProperty) => {
+      expect(() =>
+        assertCompanionPluginRecords((records) => {
+          for (const record of Object.values(records)) {
+            for (const property of CONSENT_PROPERTIES) {
+              if (property !== retainedProperty) {
+                Reflect.deleteProperty(record, property);
+              }
+            }
+          }
+        }, "unsupported"),
+      ).toThrow(
+        new RegExp(`discord plugin legacy install retained consent property: ${retainedProperty}`),
+      );
+    },
+  );
+
+  it.each([null, "optional"])("rejects invalid companion consent mode %j", (mode) => {
+    expect(() => assertCompanionPluginRecords(undefined, mode)).toThrow(
+      /assert-companion-installs requires consent mode required or unsupported/,
+    );
   });
 
   it.each([
