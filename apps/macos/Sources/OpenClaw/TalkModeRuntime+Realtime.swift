@@ -196,7 +196,8 @@ extension TalkModeRuntime {
         lifecycleGeneration: Int,
         recognitionGeneration: Int,
         relayGeneration: UInt64,
-        status: String?) async -> Bool
+        status: String?,
+        failureStatus: String = String(localized: "Realtime unavailable — native speech could not start")) async -> Bool
     {
         let ownsFallback = {
             self.canCommitRecognitionStart(
@@ -211,8 +212,7 @@ extension TalkModeRuntime {
             if recognitionStarted, let status {
                 TalkModeController.shared.updatePartialTranscript(status)
             } else if !recognitionStarted {
-                TalkModeController.shared.updatePartialTranscript(
-                    String(localized: "Realtime unavailable — native speech could not start"))
+                TalkModeController.shared.updatePartialTranscript(failureStatus)
             }
             TalkModeController.shared.updatePhase(recognitionStarted ? .listening : .idle)
         }
@@ -237,9 +237,7 @@ extension TalkModeRuntime {
             return
         }
         guard isEnabled, !isPaused, phase == .listening else { return }
-        logger.info("talk input selection changed; restarting capture")
-        let lifecycleGeneration = self.lifecycleGeneration
-        _ = await startRecognition(lifecycleGeneration: lifecycleGeneration)
+        await self.restartNativeRecognition(reason: "input selection changed")
     }
 
     func shouldAttemptRealtimeRelay() -> Bool {
@@ -768,6 +766,22 @@ extension TalkModeRuntime {
 
     func _test_setRecognitionCleanupProbe(_ probe: (@Sendable () -> Void)?) {
         self.recognitionCleanupProbe = probe
+    }
+
+    func _test_setRecognitionStartOverride(_ start: (@Sendable () -> Bool)?) {
+        self.recognitionStartOverride = start
+    }
+
+    func _test_prepareListeningNativeCapture() {
+        self.isEnabled = true
+        self.isPaused = false
+        self.phase = .listening
+    }
+
+    func _test_restartNativeRecognition(expectedRecognitionGeneration: Int) async {
+        await self.restartNativeRecognition(
+            reason: "audio configuration changed",
+            expectedRecognitionGeneration: expectedRecognitionGeneration)
     }
 
     func _test_setVoiceWakeReadiness(supported: Bool, permissionGranted: Bool) {

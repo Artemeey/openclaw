@@ -1,8 +1,36 @@
+import AppKit
+@preconcurrency import AVFoundation
 import Foundation
 import Testing
 @testable import OpenClaw
 
 struct AudioInputDeviceObserverTests {
+    @Test func `capture invalidation follows the current engine and system wake`() {
+        let configurationCenter = NotificationCenter()
+        let wakeCenter = NotificationCenter()
+        let wakeObject = NSObject()
+        let observer = AudioCaptureInvalidationObserver(
+            configurationCenter: configurationCenter,
+            wakeCenter: wakeCenter,
+            wakeObject: wakeObject)
+        let firstEngine = AVAudioEngine()
+        let secondEngine = AVAudioEngine()
+        let counter = AudioInvalidationCounter()
+
+        observer.start(engine: firstEngine) { counter.increment() }
+        configurationCenter.post(name: .AVAudioEngineConfigurationChange, object: firstEngine)
+        configurationCenter.post(name: .AVAudioEngineConfigurationChange, object: secondEngine)
+        wakeCenter.post(name: NSWorkspace.didWakeNotification, object: wakeObject)
+        #expect(counter.value == 2)
+
+        observer.start(engine: secondEngine) { counter.increment() }
+        configurationCenter.post(name: .AVAudioEngineConfigurationChange, object: firstEngine)
+        configurationCenter.post(name: .AVAudioEngineConfigurationChange, object: secondEngine)
+        observer.stop()
+        wakeCenter.post(name: NSWorkspace.didWakeNotification, object: wakeObject)
+        #expect(counter.value == 3)
+    }
+
     @Test func `selected available input wins over system default`() {
         let result = AudioInputDeviceSelectionResolver.resolve(
             selectedUID: "desk-mic",
@@ -72,5 +100,18 @@ struct AudioInputDeviceObserverTests {
         let alive = AudioInputDeviceObserver.aliveInputDeviceUIDs()
         let expected = uid.map { alive.contains($0) } ?? false
         #expect(AudioInputDeviceObserver.hasUsableDefaultInputDevice() == expected)
+    }
+}
+
+private final class AudioInvalidationCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        self.lock.withLock { self.count }
+    }
+
+    func increment() {
+        self.lock.withLock { self.count += 1 }
     }
 }

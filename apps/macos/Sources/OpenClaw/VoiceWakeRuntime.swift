@@ -23,6 +23,7 @@ enum VoiceWakeRuntimeTaskSupport {
 /// Background listener that keeps the voice-wake pipeline alive outside the settings test view.
 actor VoiceWakeRuntime {
     static let shared = VoiceWakeRuntime()
+    private static let invalidationRestartDelays: [UInt64] = [500_000_000, 2_000_000_000]
 
     private let logger = Logger(subsystem: "ai.openclaw", category: "voicewake.runtime")
 
@@ -32,6 +33,7 @@ actor VoiceWakeRuntime {
     private var audioEngine: AVAudioEngine?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
+    private let audioCaptureInvalidationObserver = AudioCaptureInvalidationObserver()
     private var recognitionGeneration: Int = 0 // drop stale callbacks after restarts
     private var lastHeard: Date?
     private var noiseFloorRMS: Double = 1e-4
@@ -58,6 +60,8 @@ actor VoiceWakeRuntime {
     private var preDetectTask: Task<Void, Never>?
     private var isStarting: Bool = false
     private var triggerOnlyTask: Task<Void, Never>?
+    private var captureRecoveryGeneration: UInt64 = 0
+    private var captureRecoveryAttempt = 0
 
     /// Tunables
     /// Silence threshold once we've captured user speech (post-trigger).
@@ -77,6 +81,7 @@ actor VoiceWakeRuntime {
     private func haltRecognitionPipeline() {
         // Bump generation first so any in-flight callbacks from the cancelled task get dropped.
         self.recognitionGeneration &+= 1
+        self.audioCaptureInvalidationObserver.stop()
         self.recognitionTask?.cancel()
         self.recognitionTask = nil
         self.recognitionRequest?.endAudio()
@@ -146,11 +151,12 @@ actor VoiceWakeRuntime {
         }
 
         self.stop()
-        await self.start(with: config)
+        _ = await self.start(with: config)
     }
 
-    private func start(with config: RuntimeConfig) async {
-        if self.isStarting { return }
+    @discardableResult
+    private func start(with config: RuntimeConfig) async -> Bool {
+        if self.isStarting { return false }
         self.isStarting = true
         defer { self.isStarting = false }
         do {
@@ -161,11 +167,11 @@ actor VoiceWakeRuntime {
 
             guard let recognizer, recognizer.isAvailable else {
                 self.logger.error("voicewake runtime: speech recognizer unavailable")
-                return
+                return false
             }
 
             self.recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-            guard let request = self.recognitionRequest else { return }
+            guard let request = self.recognitionRequest else { return false }
             try SpeechRecognitionRequestPolicy.configurePassiveVoiceWake(
                 request,
                 supportsOnDeviceRecognition: recognizer.supportsOnDeviceRecognition)
@@ -174,7 +180,7 @@ actor VoiceWakeRuntime {
             if self.audioEngine == nil {
                 self.audioEngine = AVAudioEngine()
             }
-            guard let audioEngine = self.audioEngine else { return }
+            guard let audioEngine = self.audioEngine else { return false }
 
             guard AudioInputDeviceObserver.hasUsableDefaultInputDevice() else {
                 self.audioEngine = nil
@@ -198,7 +204,7 @@ actor VoiceWakeRuntime {
                 let rms = TalkAudioLevel.rms(buffer: buffer)
                 Task.detached { [weak self] in
                     await self?.noteAudioLevel(rms: rms)
-                    await self?.noteAudioTap(rms: rms)
+                    await self?.noteAudioTap(rms: rms, generation: generation)
                 }
             }
 
@@ -226,6 +232,9 @@ actor VoiceWakeRuntime {
                     generation: generation)
                 Task { await self.handleRecognition(update, config: config) }
             }
+            self.audioCaptureInvalidationObserver.start(engine: audioEngine) { [weak self] in
+                Task { await self?.restartAfterCaptureInvalidation(generation: generation, config: config) }
+            }
 
             let preferred = config.micID?.isEmpty == false ? config.micID! : "system-default"
             self.logger.info(
@@ -236,14 +245,18 @@ actor VoiceWakeRuntime {
                 "locale": config.localeID ?? "",
                 "micID": config.micID ?? "",
             ])
+            return true
         } catch {
             self.logger.error("voicewake runtime failed to start: \(error.localizedDescription, privacy: .public)")
-            self.stop()
+            self.stop(cancelScheduledRestart: false)
+            return false
         }
     }
 
     private func stop(dismissOverlay: Bool = true, cancelScheduledRestart: Bool = true) {
         if cancelScheduledRestart {
+            self.captureRecoveryGeneration &+= 1
+            self.captureRecoveryAttempt = 0
             self.scheduledRestartTask?.cancel()
             self.scheduledRestartTask = nil
         }
@@ -291,6 +304,8 @@ actor VoiceWakeRuntime {
         }
         if let error = update.error {
             self.logger.debug("voicewake recognition error: \(error.localizedDescription, privacy: .public)")
+            await self.recoverInvalidatedCapture(generation: update.generation, config: config)
+            return
         }
 
         guard let transcript = update.transcript else { return }
@@ -430,7 +445,9 @@ actor VoiceWakeRuntime {
                 "\(matchSummary) segments=[\(segmentSummary, privacy: .private)]")
     }
 
-    private func noteAudioTap(rms: Double) {
+    private func noteAudioTap(rms: Double, generation: Int) {
+        guard generation == self.recognitionGeneration else { return }
+        self.captureRecoveryAttempt = 0
         let now = Date()
         if let last = self.lastTapLogAt, now.timeIntervalSince(last) < 1.0 {
             return
@@ -731,18 +748,95 @@ actor VoiceWakeRuntime {
         }
     }
 
-    private func restartRecognizer() {
+    private func restartRecognizer() async {
         // Restart the recognizer so we listen for the next trigger with a clean buffer.
         let current = self.currentConfig
-        self.stop(dismissOverlay: false, cancelScheduledRestart: false)
+        self.stop(dismissOverlay: false)
         if let current {
-            Task { await self.start(with: current) }
+            await self.start(with: current)
         }
     }
 
     private func restartRecognizerIfIdleAndOverlayHidden() async {
         if self.isCapturing { return }
-        self.restartRecognizer()
+        await self.restartRecognizer()
+    }
+
+    private func restartAfterCaptureInvalidation(
+        generation: Int,
+        config: RuntimeConfig) async
+    {
+        guard generation == self.recognitionGeneration, config == self.currentConfig else { return }
+        self.logger.warning("voicewake audio capture invalidated; restarting")
+        await self.recoverInvalidatedCapture(generation: generation, config: config)
+    }
+
+    private func recoverInvalidatedCapture(generation: Int, config: RuntimeConfig) async {
+        guard generation == self.recognitionGeneration, config == self.currentConfig else { return }
+        self.captureRecoveryGeneration &+= 1
+        let recoveryGeneration = self.captureRecoveryGeneration
+        self.scheduledRestartTask?.cancel()
+        self.scheduledRestartTask = nil
+        self.stop(cancelScheduledRestart: false)
+        if self.captureRecoveryAttempt == 0 {
+            await self.performInvalidatedCaptureRestart(
+                config: config,
+                recoveryGeneration: recoveryGeneration)
+        } else {
+            let delayIndex = self.captureRecoveryAttempt - 1
+            guard delayIndex < Self.invalidationRestartDelays.count else { return }
+            self.scheduleInvalidatedCaptureRestart(
+                config: config,
+                delayIndex: delayIndex,
+                recoveryGeneration: recoveryGeneration)
+        }
+    }
+
+    private func scheduleInvalidatedCaptureRestart(
+        config: RuntimeConfig,
+        delayIndex: Int,
+        recoveryGeneration: UInt64)
+    {
+        guard delayIndex < Self.invalidationRestartDelays.count else { return }
+        self.scheduledRestartTask = Task { [weak self] in
+            let delay = Self.invalidationRestartDelays[delayIndex]
+            guard await VoiceWakeRuntimeTaskSupport.wait(nanoseconds: delay), let self else { return }
+            guard await self.consumeCaptureRecovery(recoveryGeneration) else { return }
+            let shouldRetry = await MainActor.run {
+                AppStateStore.shared.swabbleEnabled && !AppStateStore.shared.talkEnabled
+            }
+            guard shouldRetry, await self.captureRecoveryGeneration == recoveryGeneration else { return }
+            guard await self.canRetryInvalidatedCapture() else { return }
+            await self.performInvalidatedCaptureRestart(
+                config: config,
+                recoveryGeneration: recoveryGeneration)
+        }
+    }
+
+    private func performInvalidatedCaptureRestart(
+        config: RuntimeConfig,
+        recoveryGeneration: UInt64) async
+    {
+        guard recoveryGeneration == self.captureRecoveryGeneration,
+              self.captureRecoveryAttempt <= Self.invalidationRestartDelays.count
+        else { return }
+        self.captureRecoveryAttempt += 1
+        let restarted = await self.start(with: config)
+        guard !restarted else { return }
+        self.scheduleInvalidatedCaptureRestart(
+            config: config,
+            delayIndex: self.captureRecoveryAttempt - 1,
+            recoveryGeneration: recoveryGeneration)
+    }
+
+    private func consumeCaptureRecovery(_ generation: UInt64) -> Bool {
+        guard generation == self.captureRecoveryGeneration else { return false }
+        self.scheduledRestartTask = nil
+        return true
+    }
+
+    private func canRetryInvalidatedCapture() -> Bool {
+        self.currentConfig == nil && self.recognitionTask == nil && !self.isStarting
     }
 
     private func scheduleRestartRecognizer(delay: TimeInterval = 0.7) {

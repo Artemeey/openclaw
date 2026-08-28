@@ -120,6 +120,21 @@ struct MacRealtimeTalkAudioCaptureTests {
         #expect(capture.suppressesInputDuringOutput)
     }
 
+    @Test @MainActor func `capture invalidation reaches the owner restart path`() async throws {
+        let capture = MacRealtimeTalkAudioCapture(selectedInputUID: { nil })
+        let failure = AsyncStream<String>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        capture._testPrepareCaptureInvalidation(
+            restart: { throw MacRealtimeTalkAudioCaptureError.inputUnavailable },
+            onFailure: { message in
+                failure.continuation.yield(message)
+                failure.continuation.finish()
+            })
+
+        capture._testInvalidateCapture()
+        let message = await failure.stream.first(where: { _ in true })
+        #expect(message?.contains("Realtime microphone became unavailable") == true)
+    }
+
     @Test @MainActor func `queued route callback is ignored after observation retires`() async throws {
         let capture = MacRealtimeTalkAudioCapture(selectedInputUID: { nil })
         let probe = capture._test_replaceOutputRouteObserver()

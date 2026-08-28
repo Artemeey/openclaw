@@ -1174,6 +1174,21 @@ struct TalkModeRuntimeSpeechTests {
         await runtime.setEnabled(false)
     }
 
+    @Test @MainActor func `failed native capture restart exits listening phase`() async {
+        let runtime = TalkModeRuntime()
+        await runtime._test_prepareListeningNativeCapture()
+        await runtime._test_setRecognitionStartOverride { false }
+        let generation = await runtime.recognitionGeneration
+
+        await runtime._test_restartNativeRecognition(expectedRecognitionGeneration: generation)
+
+        #expect(await runtime.phase == .idle)
+        #expect(TalkModeController.shared.phase == .idle)
+        #expect(TalkModeController.shared.partialTranscript ==
+            String(localized: "Realtime unavailable — native speech could not start"))
+        await runtime.setEnabled(false)
+    }
+
     @Test @MainActor func `stale relay fallback cannot replace successor recognition owner`() async throws {
         let runtime = TalkModeRuntime()
         let lifecycleGeneration = await runtime._test_prepareEnabledLifecycle()

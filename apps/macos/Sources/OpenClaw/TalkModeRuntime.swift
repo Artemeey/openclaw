@@ -53,10 +53,14 @@ actor TalkModeRuntime {
     private var recognizer: SFSpeechRecognizer?
     private var audioEngine: AVAudioEngine?
     private var audioInputObserver: AudioInputDeviceObserver?
+    private let audioCaptureInvalidationObserver = AudioCaptureInvalidationObserver()
     private var activeInputResolution: AudioInputDeviceResolution?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     var recognitionGeneration: Int = 0
+    #if DEBUG
+    var recognitionStartOverride: (@Sendable () -> Bool)?
+    #endif
     private var rmsTask: Task<Void, Never>?
     private let rmsMeter = RMSMeter()
 
@@ -271,18 +275,19 @@ actor TalkModeRuntime {
     func startAudioInputObserver() {
         guard self.audioInputObserver == nil else { return }
         let observer = AudioInputDeviceObserver()
-        observer.start {
-            Task { await TalkModeRuntime.shared.audioInputDevicesDidChange() }
+        observer.start { [weak self] in
+            Task { await self?.audioInputDevicesDidChange() }
         }
         self.audioInputObserver = observer
     }
 
     private func audioInputDevicesDidChange() async {
-        guard self.isEnabled, !self.isPaused, self.phase == .listening else { return }
-        let lifecycleGeneration = self.lifecycleGeneration
+        guard self.isEnabled, !self.isPaused,
+              self.phase == .listening || self.audioEngine == nil
+        else { return }
         let availableUIDs = AudioInputDeviceObserver.aliveInputDeviceUIDs()
         guard let activeInputResolution else {
-            _ = await self.startRecognition(lifecycleGeneration: lifecycleGeneration)
+            await self.restartNativeRecognition(reason: "input became available")
             return
         }
         guard activeInputResolution.shouldRestart(
@@ -291,7 +296,39 @@ actor TalkModeRuntime {
         else { return }
 
         self.logger.warning("talk active/default input changed; restarting capture")
-        _ = await self.startRecognition(lifecycleGeneration: lifecycleGeneration)
+        await self.restartNativeRecognition(reason: "active/default input changed")
+    }
+
+    func restartNativeRecognition(
+        reason: StaticString,
+        expectedRecognitionGeneration: Int? = nil) async
+    {
+        guard self.isEnabled, !self.isPaused, self.phase == .listening,
+              self.realtimeSession == nil, self.realtimeRelayStartGeneration == nil,
+              expectedRecognitionGeneration.map({ $0 == self.recognitionGeneration }) ?? true
+        else { return }
+
+        self.logger.warning("talk \(reason); restarting capture")
+        self.lastTranscript = ""
+        self.lastHeard = nil
+        self.lastSpeechEnergyAt = nil
+        let lifecycleGeneration = self.lifecycleGeneration
+        let relayGeneration = self.realtimeRelayGeneration
+        let priorRecognitionGeneration = self.recognitionGeneration
+        guard expectedRecognitionGeneration.map({ $0 == priorRecognitionGeneration }) ?? true else { return }
+        let started = await self.startRecognition(lifecycleGeneration: lifecycleGeneration)
+        let recognitionGeneration = priorRecognitionGeneration &+ 1
+        guard self.recognitionGeneration == recognitionGeneration else { return }
+        _ = await self.commitNativeFallback(
+            recognitionStarted: started,
+            lifecycleGeneration: lifecycleGeneration,
+            recognitionGeneration: recognitionGeneration,
+            relayGeneration: relayGeneration,
+            status: nil,
+            failureStatus: String(localized: "Realtime unavailable — native speech could not start"))
+        if !started {
+            self.startAudioInputObserver()
+        }
     }
 
     // MARK: - Speech recognition
@@ -308,6 +345,11 @@ actor TalkModeRuntime {
         guard let recognitionAttempt = beginRecognitionAttempt(
             lifecycleGeneration: lifecycleGeneration)
         else { return false }
+        #if DEBUG
+        if let recognitionStartOverride {
+            return recognitionStartOverride()
+        }
+        #endif
 
         let voiceWakeLocale = await MainActor.run { AppStateStore.shared.voiceWakeLocaleID }
         let selectedInputUID = await MainActor.run { AppStateStore.shared.voiceWakeMicID }
@@ -385,6 +427,15 @@ actor TalkModeRuntime {
                 }
             })
         guard started else { return false }
+        if let audioEngine = self.audioEngine {
+            self.audioCaptureInvalidationObserver.start(engine: audioEngine) { [weak self] in
+                Task {
+                    await self?.restartNativeRecognition(
+                        reason: "audio configuration changed",
+                        expectedRecognitionGeneration: recognitionAttempt)
+                }
+            }
+        }
         self.startRMSTicker(meter: self.rmsMeter)
         return true
     }
@@ -410,6 +461,7 @@ actor TalkModeRuntime {
         #if DEBUG
         self.recognitionCleanupProbe?()
         #endif
+        self.audioCaptureInvalidationObserver.stop()
         self.recognitionTask?.cancel()
         self.recognitionTask = nil
         self.recognitionRequest?.endAudio()

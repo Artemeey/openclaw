@@ -12,6 +12,7 @@ final class MacRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
     private let logger = Logger(subsystem: "ai.openclaw", category: "talk.realtime.capture")
     private let selectedInputUID: @MainActor () -> String?
     private let deliveryGate = TalkGenerationDeliveryGate()
+    private let audioCaptureInvalidationObserver = AudioCaptureInvalidationObserver()
 
     private var audioEngine: AVAudioEngine?
     private var inputNode: AVAudioInputNode?
@@ -25,8 +26,10 @@ final class MacRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
     private var suppressInputDuringOutput = true
     private var outputRouteDecisionState = MacRealtimeTalkOutputRouteDecisionState()
     private var outputRouteObservationGeneration: UInt64 = 0
+    private var captureGeneration: UInt64 = 0
     #if DEBUG
     private var testOutputRouteCallbackHandled: (@Sendable () -> Void)?
+    private var testCaptureRestart: (@MainActor () throws -> Void)?
     #endif
 
     var suppressesInputDuringOutput: Bool {
@@ -153,6 +156,13 @@ final class MacRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
         engine.prepare()
         try engine.start()
         self.activeInputResolution = activeResolution
+        self.captureGeneration &+= 1
+        let captureGeneration = self.captureGeneration
+        self.audioCaptureInvalidationObserver.start(engine: engine) { [weak self] in
+            Task { @MainActor in
+                self?.audioCaptureDidInvalidate(generation: captureGeneration)
+            }
+        }
     }
 
     private func bindSelectedInputIfNeeded(
@@ -265,6 +275,22 @@ final class MacRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
         }
     }
 
+    private func audioCaptureDidInvalidate(generation: UInt64) {
+        guard generation == self.captureGeneration,
+              let targetSampleRate, let onAudio
+        else { return }
+        self.logger.warning("realtime audio configuration changed; restarting capture")
+        self.restartCaptureAfterInputChange {
+            #if DEBUG
+            if let testCaptureRestart = self.testCaptureRestart {
+                try testCaptureRestart()
+                return
+            }
+            #endif
+            try self.startCaptureEngine(targetSampleRate: targetSampleRate, onAudio: onAudio)
+        }
+    }
+
     private func restartCaptureAfterInputChange(_ restart: () throws -> Void) {
         self.deliveryGate.deactivate()
         self.teardownEngine()
@@ -282,6 +308,8 @@ final class MacRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
     }
 
     private func teardownEngine() {
+        self.captureGeneration &+= 1
+        self.audioCaptureInvalidationObserver.stop()
         if self.tapInstalled, let inputNode {
             inputNode.removeTap(onBus: 0)
         }
@@ -304,6 +332,28 @@ final class MacRealtimeTalkAudioCapture: RealtimeTalkAudioCapturing {
             handled.continuation.finish()
         }
         return (self.replaceOutputRouteObserver(MacRealtimeTalkOutputRouteObserver()), handled.stream)
+    }
+
+    func _testInvalidateCapture() {
+        self.audioCaptureInvalidationObserver._testInvalidate()
+    }
+
+    func _testPrepareCaptureInvalidation(
+        restart: @escaping @MainActor () throws -> Void,
+        onFailure: @escaping @MainActor (String) -> Void)
+    {
+        let engine = AVAudioEngine()
+        self.targetSampleRate = 24000
+        self.onAudio = { _ in }
+        self.onFailure = onFailure
+        self.testCaptureRestart = restart
+        self.captureGeneration &+= 1
+        let captureGeneration = self.captureGeneration
+        self.audioCaptureInvalidationObserver.start(engine: engine) { [weak self] in
+            Task { @MainActor in
+                self?.audioCaptureDidInvalidate(generation: captureGeneration)
+            }
+        }
     }
     #endif
 }
