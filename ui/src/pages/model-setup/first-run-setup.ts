@@ -12,6 +12,7 @@ import {
   clearFirstRunActivationReceipt,
   persistFirstRunActivationReceipt,
   readFirstRunActivationReceipt,
+  subscribeFirstRunActivationCleared,
   type FirstRunActivationReceipt,
   firstRunActivationDeadline,
 } from "./first-run-activation-receipt.ts";
@@ -35,14 +36,14 @@ export type ModelSetupRouteData = {
 type Candidate = SystemAgentSetupDetectResult["candidates"][number];
 type SetupOutcome<T> = ModelSetupTaskResult<T> | undefined;
 
-export type FirstRunOwner = {
+type FirstRunOwner = {
   generation: number;
   connectionRevision: number;
   routeData: ModelSetupRouteData;
   connection: ModelSetupDetectionConnection;
 };
 
-type PendingActivation = {
+type FirstRunActivation = {
   owner: FirstRunOwner;
   modelRef: string | null;
   kind: string;
@@ -73,9 +74,20 @@ export class FirstRunSetup {
   private started = false;
   private readonly attempts = new Set<string>();
   private readyConnection: ModelSetupDetectionConnection | null = null;
-  private pending: PendingActivation | null = null;
+  private pending: FirstRunActivation | null = null;
 
   constructor(private readonly host: FirstRunSetupHost) {}
+
+  subscribe(notify: () => void): () => void {
+    return subscribeFirstRunActivationCleared((receipt) => {
+      // A new page can restore this receipt before the old session confirms cancellation.
+      if (this.pending?.receipt && JSON.stringify(this.pending.receipt) === receipt) {
+        this.pending = null;
+        this.host.setVerifyState({ phase: "idle" });
+        notify();
+      }
+    });
+  }
 
   setReadyConnection(connection: ModelSetupDetectionConnection | null): void {
     this.readyConnection = connection;
@@ -199,7 +211,7 @@ export class FirstRunSetup {
     void this.run(this.owner(routeData), pageState.result);
   }
 
-  beginActivation(intent: { kind: string; modelRef?: string }): FirstRunOwner | null {
+  beginActivation(intent: { kind: string; modelRef?: string }): FirstRunActivation | null {
     const routeData = this.host.routeData();
     if (!routeData?.firstRun) {
       return null;
@@ -215,18 +227,24 @@ export class FirstRunSetup {
       deadlineMs: receipt?.deadlineMs ?? firstRunActivationDeadline(intent.kind),
     };
     this.started = true;
-    return owner;
+    return this.pending;
   }
 
-  recordActivation(owner: FirstRunOwner | null, result: SystemAgentSetupActivateResult): void {
-    if (!owner || !this.owns(owner) || this.pending?.owner !== owner) {
+  recordActivation(
+    activation: FirstRunActivation | null,
+    result: SystemAgentSetupActivateResult,
+  ): void {
+    if (!activation) {
       return;
     }
     if (!result.ok) {
-      this.clearPending();
+      clearFirstRunActivationReceipt(activation.receipt);
+      if (this.pending === activation) {
+        this.pending = null;
+      }
       return;
     }
-    if (!result.modelRef) {
+    if (!result.modelRef || this.pending !== activation || !this.owns(activation.owner)) {
       return;
     }
     // Capture the verified target before config refresh can replace the hello
@@ -301,8 +319,8 @@ export class FirstRunSetup {
     clearFirstRunActivationReceipt();
   }
 
-  ownsActivation(owner: FirstRunOwner | null): boolean {
-    return owner ? this.owns(owner) : !this.host.routeData()?.firstRun;
+  ownsActivation(activation: FirstRunActivation | null = this.pending): boolean {
+    return activation ? this.owns(activation.owner) : !this.host.routeData()?.firstRun;
   }
 
   continueSetup(): void {
@@ -338,8 +356,6 @@ export class FirstRunSetup {
     const context = this.host.context();
     const snapshot = context.gateway.snapshot;
     return (
-      (!this.pending?.receipt ||
-        readFirstRunActivationReceipt(context)?.owner === this.pending.receipt.owner) &&
       owner.generation === this.generation &&
       owner.connectionRevision === context.gateway.connectionRevision &&
       owner.routeData === this.host.routeData() &&
@@ -347,7 +363,9 @@ export class FirstRunSetup {
       snapshot.phase === "connected" &&
       snapshot.client === owner.connection.client &&
       snapshot.hello === owner.connection.hello &&
-      context.agentSelection.state.selectedId === owner.connection.agentId
+      context.agentSelection.state.selectedId === owner.connection.agentId &&
+      (!this.pending?.receipt ||
+        readFirstRunActivationReceipt(context)?.owner === this.pending.receipt.owner)
     );
   }
 

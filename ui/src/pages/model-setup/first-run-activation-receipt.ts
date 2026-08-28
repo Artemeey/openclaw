@@ -8,6 +8,27 @@ import { activationTimeoutForKind } from "./state.ts";
 const FIRST_RUN_ACTIVATION_RECEIPT_KEY = "openclaw.modelSetup.pendingActivation.v1";
 const DEVICE_IDENTITY_KEY = "openclaw-device-identity-v1";
 const ACTIVATION_DEADLINE_SAFETY_MS = 5_000;
+const receiptClearedListeners = new Set<(receipt: string) => void>();
+
+export function subscribeFirstRunActivationCleared(
+  listener: (receipt: string) => void,
+): () => void {
+  const onStorage = (event: StorageEvent) => {
+    if (
+      event.key === FIRST_RUN_ACTIVATION_RECEIPT_KEY &&
+      event.newValue === null &&
+      event.oldValue
+    ) {
+      listener(event.oldValue);
+    }
+  };
+  receiptClearedListeners.add(listener);
+  window.addEventListener("storage", onStorage);
+  return () => {
+    receiptClearedListeners.delete(listener);
+    window.removeEventListener("storage", onStorage);
+  };
+}
 
 type ActivationContext = Pick<ApplicationContext, "gateway" | "agentSelection">;
 
@@ -68,9 +89,19 @@ function activationOwner(
   }
 }
 
-function clearReceipt(storage: Storage): void {
+function clearReceipt(storage: Storage, expected?: FirstRunActivationReceipt | null): void {
   try {
-    storage.removeItem(FIRST_RUN_ACTIVATION_RECEIPT_KEY);
+    // Late cancellation may only remove its captured receipt, never validate
+    // a replacement against the cancelled operation's old authentication context.
+    const previous = storage.getItem(FIRST_RUN_ACTIVATION_RECEIPT_KEY);
+    if (expected === undefined || (expected && previous === JSON.stringify(expected))) {
+      storage.removeItem(FIRST_RUN_ACTIVATION_RECEIPT_KEY);
+      if (previous) {
+        for (const listener of receiptClearedListeners) {
+          listener(previous);
+        }
+      }
+    }
   } catch {
     // Disabled or quota-blocked browser storage must never block onboarding.
   }
@@ -150,10 +181,10 @@ export function persistFirstRunActivationReceipt(
   }
 }
 
-export function clearFirstRunActivationReceipt(): void {
+export function clearFirstRunActivationReceipt(expected?: FirstRunActivationReceipt | null): void {
   const storage = getSafeLocalStorage();
   if (storage) {
-    clearReceipt(storage);
+    clearReceipt(storage, expected);
   }
 }
 

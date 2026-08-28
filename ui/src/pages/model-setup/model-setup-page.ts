@@ -17,7 +17,7 @@ import { readSessionDefaults } from "../../lib/sessions/session-key.ts";
 import { OpenClawLightDomElement } from "../../lit/openclaw-element.ts";
 import { SubscriptionsController } from "../../lit/subscriptions-controller.ts";
 import type { ModelSetupDetectionConnection } from "./detect-cache.ts";
-import { FirstRunSetup, type FirstRunOwner, type ModelSetupRouteData } from "./first-run-setup.ts";
+import { FirstRunSetup, type ModelSetupRouteData } from "./first-run-setup.ts";
 import { ModelSetupIconLoader } from "./model-setup-icon-loader.ts";
 import {
   captureModelSetupResult,
@@ -74,7 +74,6 @@ export class ModelSetupPage extends OpenClawLightDomElement {
   private pendingPrepareOption: ModelSetupPrepareOption | null = null;
   private wizardMutationGeneration = 0;
   private wizardMutationActive = false;
-  private wizardActivationOwner: FirstRunOwner | null = null;
   private readonly firstRun = new FirstRunSetup({
     context: () => this.context,
     routeData: () => this.routeData,
@@ -106,6 +105,10 @@ export class ModelSetupPage extends OpenClawLightDomElement {
       () => this.context?.agentSelection,
       (selection, notify) => selection.subscribe(notify),
       () => this.synchronizeGateway(this.context.gateway.snapshot),
+    )
+    .watch(
+      () => this.firstRun,
+      (firstRun, notify) => firstRun.subscribe(notify),
     );
   private readonly wizard = new ModelSetupWizardRunner({
     getClient: () => this.context?.gateway.snapshot.client ?? null,
@@ -118,19 +121,19 @@ export class ModelSetupPage extends OpenClawLightDomElement {
         this.wizardValue = initialWizardValue(next.step);
       }
     },
-    onTerminalResult: (result) => {
-      if (this.wizardMode !== "auth") {
-        return;
+    onStart: (method) => {
+      if (method !== "openclaw.setup.auth.start") {
+        return undefined;
       }
-      if (result.status === "done" && result.modelActivation) {
-        this.firstRun.recordActivation(this.wizardActivationOwner, {
-          ok: true,
-          ...result.modelActivation,
-        });
-      } else if (result.status === "cancelled") {
-        this.firstRun.recordActivation(this.wizardActivationOwner, { ok: false });
-        this.requestUpdate();
-      }
+      const activation = this.firstRun.beginActivation({ kind: "provider-auth" });
+      return (result) => {
+        if (result.status === "done" && result.modelActivation) {
+          this.firstRun.recordActivation(activation, { ok: true, ...result.modelActivation });
+        } else if (result.status === "cancelled") {
+          this.firstRun.recordActivation(activation, { ok: false });
+          this.requestUpdate();
+        }
+      };
     },
     requestFailedMessage: () => t("modelSetup.errors.requestFailed"),
     cancelledMessage: () => t("modelSetup.wizard.cancelled"),
@@ -202,7 +205,7 @@ export class ModelSetupPage extends OpenClawLightDomElement {
         return initialState;
       }
       return captureModelSetupResult(client, async () => {
-        let owner: FirstRunOwner | null = null;
+        let owner: ReturnType<FirstRunSetup["beginActivation"]> = null;
         const mutation = await this.context.runtimeConfig.runExternalMutation(
           async (mutationClient) => {
             if (mutationClient !== client) {
@@ -375,7 +378,6 @@ export class ModelSetupPage extends OpenClawLightDomElement {
   private resetActivity(): void {
     this.wizardMutationGeneration += 1;
     this.wizardMutationActive = false;
-    this.wizardActivationOwner = null;
     void this.detectTask.run([null, null, null]);
     this.activationState = { phase: "idle" };
     void this.activationTask.run([null, null]);
@@ -526,7 +528,7 @@ export class ModelSetupPage extends OpenClawLightDomElement {
       return;
     }
     if (startMethod === "openclaw.setup.auth.start") {
-      if (!this.firstRun.ownsActivation(this.wizardActivationOwner)) {
+      if (!this.firstRun.ownsActivation()) {
         return;
       }
       if (!modelActivation) {
@@ -594,9 +596,6 @@ export class ModelSetupPage extends OpenClawLightDomElement {
         async (mutationClient) => {
           if (mutationClient !== client) {
             throw new Error("Connection changed before model setup continued.");
-          }
-          if (this.wizardMode === "auth" && this.wizard.state.phase === "idle") {
-            this.wizardActivationOwner = this.firstRun.beginActivation({ kind: "provider-auth" });
           }
           return await task();
         },
