@@ -6609,8 +6609,9 @@ exit 1
 
     const absentFramework = runBuildFixture("absent", "fail");
     expect(absentFramework.status).toBe(1);
-    expect(absentFramework.calls.filter((call) => call.startsWith("build "))).toHaveLength(1);
-    expect(absentFramework.calls.filter((call) => call.startsWith("package "))).toHaveLength(0);
+    expect(absentFramework.calls).toEqual([
+      "build --package-path apps/macos --product OpenClaw --configuration release",
+    ]);
 
     const recovered = runBuildFixture("incomplete", "recover");
     expect(recovered.status).toBe(0);
@@ -6629,7 +6630,7 @@ exit 1
     expect(secondFailure.calls.filter((call) => call.startsWith("package "))).toHaveLength(1);
   });
 
-  it("preserves the first macOS Swift test failure", () => {
+  it("uses native macOS Swift tests and preserves the first failure", () => {
     const workflow = readCiWorkflow();
     const macosSwift = workflow.jobs["macos-swift"];
     const testStep = macosSwift.steps.find((step: WorkflowStep) => step.name === "Swift test");
@@ -6637,17 +6638,6 @@ exit 1
     expect(macosSwift.env.SWIFT_TEST_EXECUTION).toBe(
       "${{ (github.event_name == 'workflow_dispatch' || github.run_attempt > 1) && 'serial' || 'parallel' }}",
     );
-    expect(testStep.run).toContain(
-      "swift_test_args=(--package-path apps/macos --enable-code-coverage)",
-    );
-    expect(testStep.run).toContain('if [[ "$SWIFT_TEST_EXECUTION" == "parallel" ]]');
-    expect(testStep.run).toContain("swift_test_args+=(--parallel)");
-    expect(testStep.run).toContain("swift_test_args+=(--no-parallel)");
-    expect(testStep.run).toContain('swift test "${swift_test_args[@]}"');
-    expect(testStep.run).not.toContain(
-      "swift test --package-path apps/macos --parallel --enable-code-coverage",
-    );
-    expect(testStep.run).not.toContain("for attempt in");
 
     for (const execution of ["parallel", "serial"] as const) {
       const root = tempDirs.make(`openclaw-swift-test-first-attempt-${execution}-`);
@@ -6677,7 +6667,7 @@ test_count="$(grep -c '^test ' "$SWIFT_CALLS")"
       const calls = readFileSync(callsPath, "utf8").trim().split("\n");
       expect(result.status).toBe(1);
       expect(calls).toEqual([
-        `test --package-path apps/macos --enable-code-coverage --${
+        `test --package-path apps/macos --build-system native --enable-code-coverage --${
           execution === "parallel" ? "parallel" : "no-parallel"
         }`,
       ]);
