@@ -7,7 +7,8 @@ import { resolveNpmJsonEntries } from "./npm-json-output.mts";
 // and gateway runtime dependencies. Keep the budget below the 2026.3.12 bloat
 // level while allowing that mirrored runtime surface and the installed agent's
 // bundled user documentation.
-const NPM_PACK_UNPACKED_SIZE_BUDGET_BYTES = 204 * 1024 * 1024;
+// Preserve the existing headroom after the accepted dual-layout fs-safe native payload.
+const NPM_PACK_UNPACKED_SIZE_BUDGET_BYTES = 235 * 1024 * 1024;
 
 function formatMiB(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;

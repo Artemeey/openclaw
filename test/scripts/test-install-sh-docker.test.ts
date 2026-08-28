@@ -1250,7 +1250,7 @@ printf 'status=%s\\n' "$status"
 
     expect(script).toContain("assert_pack_unpacked_size_budget");
     expect(script).toContain('assert_pack_unpacked_size_budget "update" "$pack_json_file"');
-    expect(script).toContain("204 * 1024 * 1024");
+    expect(script).toContain("235 * 1024 * 1024");
     expect(script).toContain("install smoke cannot verify pack budget");
   });
 
