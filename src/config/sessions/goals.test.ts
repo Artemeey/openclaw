@@ -5,7 +5,6 @@ import {
   createSessionGoal,
   formatSessionGoalStatus,
   getSessionGoal,
-  projectSessionGoalCreate,
   projectSessionGoalTransition,
   resolveSessionGoalDisplayState,
   updateSessionGoalObjective,
@@ -15,6 +14,7 @@ import {
   loadSessionEntry,
   upsertSessionEntryCore as upsertAccessorSessionEntry,
 } from "./session-accessor.js";
+import { projectSessionGoalCreate } from "./session-goal-create.js";
 import { useTempSessionsFixture } from "./test-helpers.js";
 import type { SessionEntry } from "./types.js";
 

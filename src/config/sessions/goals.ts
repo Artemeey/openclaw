@@ -156,8 +156,6 @@ function requireExpectedGoal(goal: SessionGoal | undefined, expectedGoalId: stri
   return goal;
 }
 
-export { projectSessionGoalCreate } from "./session-goal-create.js";
-
 export function projectSessionGoalTransition(
   entry: SessionEntry,
   params: { expectedGoalId: string; now: number; transition: SessionGoalTransition },
