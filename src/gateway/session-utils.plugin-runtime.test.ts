@@ -3,27 +3,20 @@
  */
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import { resolveSessionStorePathCore, type SessionEntry } from "../config/sessions.js";
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
+import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
 import { withStateDirEnv } from "../test-helpers/state-dir-env.js";
 
 const normalizeProviderModelIdWithPluginMock = vi.fn();
 const loadPluginManifestRegistryCoreMock = vi.hoisted(() =>
   vi.fn(() => ({ plugins: [], diagnostics: [] })),
 );
-const emptyPluginMetadataSnapshot = vi.hoisted(() => ({
-  configFingerprint: "gateway-session-utils-plugin-runtime-test-empty-plugin-metadata",
-  plugins: [],
-}));
 
 vi.mock("../agents/provider-model-normalization.runtime.js", () => ({
   normalizeProviderModelIdWithRuntime: (params: unknown) =>
     normalizeProviderModelIdWithPluginMock(params),
-}));
-
-vi.mock("../plugins/current-plugin-metadata-snapshot.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../plugins/current-plugin-metadata-snapshot.js")>()),
-  getCurrentPluginMetadataSnapshot: () => emptyPluginMetadataSnapshot,
 }));
 
 vi.mock("../plugins/manifest-registry.js", async (importOriginal) => ({
@@ -32,6 +25,18 @@ vi.mock("../plugins/manifest-registry.js", async (importOriginal) => ({
 }));
 
 let sessionUtils: typeof import("./session-utils.js");
+
+function withPreparedPluginMetadata<T>(config: OpenClawConfig, run: () => T): T {
+  // Retained empty facts must win over an ambient collection owner without rediscovery.
+  return withPluginMetadataSnapshotScope(
+    createPluginMetadataSnapshot({
+      config,
+      manifestRegistry: { plugins: [], diagnostics: [] },
+    }),
+    run,
+    { config, trustConfigIdentity: true },
+  );
+}
 
 describe("gateway session list plugin runtime normalization", () => {
   beforeAll(async () => {
@@ -66,10 +71,8 @@ describe("gateway session list plugin runtime normalization", () => {
       },
     };
 
-    const defaults = sessionUtils.getSessionDefaults(
-      cfg,
-      undefined,
-      agentId ? { agentId } : undefined,
+    const defaults = withPreparedPluginMetadata(cfg, () =>
+      sessionUtils.getSessionDefaults(cfg, undefined, agentId ? { agentId } : undefined),
     );
 
     expect(defaults).toMatchObject({ modelProvider: "custom-provider", model });
@@ -91,12 +94,14 @@ describe("gateway session list plugin runtime normalization", () => {
         ]),
       );
 
-      const listed = await sessionUtils[listMethod]({
-        cfg,
-        storePath: "",
-        store,
-        opts: {},
-      });
+      const listed = await withPreparedPluginMetadata(cfg, () =>
+        sessionUtils[listMethod]({
+          cfg,
+          storePath: "",
+          store,
+          opts: {},
+        }),
+      );
 
       expect(listed.sessions.map((session) => session.model)).toEqual([
         "custom-legacy-model",
@@ -123,12 +128,14 @@ describe("gateway session list plugin runtime normalization", () => {
       },
     } as OpenClawConfig;
 
-    const row = sessionUtils.buildGatewaySessionRow({
-      cfg,
-      storePath: "",
-      store: {},
-      key: "main",
-    });
+    const row = withPreparedPluginMetadata(cfg, () =>
+      sessionUtils.buildGatewaySessionRow({
+        cfg,
+        storePath: "",
+        store: {},
+        key: "main",
+      }),
+    );
 
     expect(row.model).toBe("custom-modern-model");
     expect(normalizeProviderModelIdWithPluginMock).toHaveBeenCalled();
@@ -148,24 +155,29 @@ describe("gateway session list plugin runtime normalization", () => {
         },
       } as OpenClawConfig;
       const configRuntime = await import("../config/config.js");
-      configRuntime.resetConfigRuntimeState();
-      configRuntime.setRuntimeConfigSnapshot(cfg, cfg);
-      const sessionKey = "agent:main:lifecycle-plugin-runtime";
-      const storePath = resolveSessionStorePathCore(cfg.session?.store, { agentId: "main" });
-      await replaceSessionEntry({ sessionKey, storePath }, {
-        sessionId: "lifecycle-plugin-runtime",
-        updatedAt: 1,
-      } satisfies SessionEntry);
+      await withPreparedPluginMetadata(cfg, async () => {
+        configRuntime.resetConfigRuntimeState();
+        try {
+          configRuntime.setRuntimeConfigSnapshot(cfg, cfg);
+          const sessionKey = "agent:main:lifecycle-plugin-runtime";
+          const storePath = resolveSessionStorePathCore(cfg.session?.store, { agentId: "main" });
+          await replaceSessionEntry({ sessionKey, storePath }, {
+            sessionId: "lifecycle-plugin-runtime",
+            updatedAt: 1,
+          } satisfies SessionEntry);
 
-      const lifecycle = sessionUtils.loadGatewaySessionLifecycleSnapshot(sessionKey);
+          const lifecycle = sessionUtils.loadGatewaySessionLifecycleSnapshot(sessionKey);
 
-      expect(lifecycle.row?.model).toBe("custom-legacy-model");
-      expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
-      expect(loadPluginManifestRegistryCoreMock).not.toHaveBeenCalled();
+          expect(lifecycle.row?.model).toBe("custom-legacy-model");
+          expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
+          expect(loadPluginManifestRegistryCoreMock).not.toHaveBeenCalled();
 
-      expect(sessionUtils.loadGatewaySessionRow(sessionKey)?.model).toBe("custom-modern-model");
-      expect(normalizeProviderModelIdWithPluginMock).toHaveBeenCalled();
-      configRuntime.resetConfigRuntimeState();
+          expect(sessionUtils.loadGatewaySessionRow(sessionKey)?.model).toBe("custom-modern-model");
+          expect(normalizeProviderModelIdWithPluginMock).toHaveBeenCalled();
+        } finally {
+          configRuntime.resetConfigRuntimeState();
+        }
+      });
     });
   });
 });

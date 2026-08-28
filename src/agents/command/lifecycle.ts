@@ -101,11 +101,11 @@ export function createAgentCommandLifecycle(params: {
   };
 
   return {
-    // A rejected live switch has no completed candidate receipt to project.
-    emitAttemptError(error: string) {
+    emitBasicError(error: string, extraData?: Record<string, unknown>) {
       if (params.state.lifecycleEnded) {
         return;
       }
+      params.state.lifecycleEnded = true;
       emitAgentEvent({
         runId: params.runId,
         lifecycleGeneration: params.lifecycleGeneration(),
@@ -114,7 +114,8 @@ export function createAgentCommandLifecycle(params: {
           phase: "error",
           startedAt: params.startedAt,
           endedAt: Date.now(),
-          error,
+          error: formatErrorMessage(error),
+          ...extraData,
         },
       });
     },

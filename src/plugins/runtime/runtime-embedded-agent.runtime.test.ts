@@ -251,9 +251,13 @@ describe("plugin embedded-agent runtime admission", () => {
   });
 
   it.each(
-    ["admittedRunContext", "preparedRunAdmission", "expectedInitialModel"].flatMap((field) =>
-      [false, true].map((inherited) => ({ field, inherited })),
-    ),
+    [
+      "admittedRunContext",
+      "preparedRunAdmission",
+      "expectedInitialModel",
+      "onDeferredLifecycleOwner",
+      "onDeferredLifecycleAbort",
+    ].flatMap((field) => [false, true].map((inherited) => ({ field, inherited }))),
   )("rejects a plugin-supplied $field (inherited: $inherited)", async ({ field, inherited }) => {
     const input = { ...params };
     if (inherited) {

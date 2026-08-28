@@ -22,7 +22,9 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
   if (
     "admittedRunContext" in params ||
     "preparedRunAdmission" in params ||
-    "expectedInitialModel" in params
+    "expectedInitialModel" in params ||
+    "onDeferredLifecycleOwner" in params ||
+    "onDeferredLifecycleAbort" in params
   ) {
     throw new Error("Plugin embedded-agent execution cannot supply host run authority.");
   }

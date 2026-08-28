@@ -328,9 +328,7 @@ export function projectPluginMetadataSnapshot(
 }
 
 /** Uses semantic inputs only: checking freshness here would defeat first-access reuse. */
-function resolvePluginMetadataSnapshotCacheKey(
-  params: LoadPluginMetadataSnapshotParams,
-): string {
+function resolvePluginMetadataSnapshotCacheKey(params: LoadPluginMetadataSnapshotParams): string {
   return hashJson({
     env: resolvePluginMetadataEnvFingerprint(params.env ?? process.env),
     policy: resolveInstalledPluginIndexPolicyHash(params.config),
