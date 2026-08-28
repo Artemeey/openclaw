@@ -391,14 +391,25 @@ describe("chat pane header", () => {
     expect(container.querySelector(".chat-pane__placement-chip")).toBeNull();
   });
 
-  it("places pane presence between the identity trail and face control", () => {
+  it("groups owner, participants, and viewers before the mobile face row", () => {
     const { container } = mountHeader({
+      narrow: true,
+      showOwnerChip: true,
+      session: row({
+        owner: { actor: { type: "human", id: "profile-ada", label: "Ada" } },
+        participants: [{ identity: { type: "profile", id: "profile-bob" }, label: "Bob" }],
+        participantCount: 1,
+      }),
       presence: html`<span data-slot="presence"></span>`,
       faceControl: html`<span data-slot="face"></span>`,
     });
-    const crumbs = container.querySelector(".chat-pane__crumbs");
-    expect(crumbs?.nextElementSibling?.getAttribute("data-slot")).toBe("presence");
-    expect(crumbs?.nextElementSibling?.nextElementSibling?.getAttribute("data-slot")).toBe("face");
+    const people = container.querySelector(".chat-pane__people");
+
+    expect(people?.querySelector("openclaw-session-owner-chip")).not.toBeNull();
+    expect(people?.querySelector(".chat-pane__participants")).not.toBeNull();
+    expect(people?.querySelector('[data-slot="presence"]')).not.toBeNull();
+    expect(container.querySelector(".chat-pane__topbar-row [data-slot=face]")).toBeNull();
+    expect(container.querySelector(".chat-pane__face-row [data-slot=face]")).not.toBeNull();
   });
 
   it("leads with the project, then a separator, then the session title", () => {
