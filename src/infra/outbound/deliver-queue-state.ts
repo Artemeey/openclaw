@@ -2,7 +2,11 @@
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { formatErrorMessage } from "../errors.js";
 import type { OutboundDeliveryQueuePolicy, PlatformSendRoute } from "./deliver-contracts.js";
-import { OutboundDeliveryError } from "./deliver-types.js";
+import {
+  OutboundDeliveryError,
+  type OutboundDeliveryResult,
+  type OutboundPayloadDeliveryOutcome,
+} from "./deliver-types.js";
 import {
   ackDelivery,
   failDelivery,
@@ -25,6 +29,23 @@ export type QueuedPostSendState = "marked" | "acked" | "failed";
 export type QueuedPreSendState = "marked" | "acked";
 
 type QueuedDeliveryFailureRecorder = typeof failDelivery | typeof failDeliveryAfterPlatformSend;
+
+/** A surviving receipt cannot settle a batch that also contains an unidentified send. */
+export function hasUnconfirmedOutboundSends(params: {
+  results: readonly OutboundDeliveryResult[];
+  payloadOutcomes: readonly OutboundPayloadDeliveryOutcome[];
+  platformSendStarted: boolean;
+}): boolean {
+  return (
+    params.payloadOutcomes.some(
+      (outcome) =>
+        outcome.status === "suppressed" && outcome.reason === "adapter_returned_no_identity",
+    ) ||
+    (params.results.length === 0 &&
+      params.platformSendStarted &&
+      !params.payloadOutcomes.some((outcome) => outcome.status === "failed"))
+  );
+}
 
 /** Keeps live and recovered queue transitions on the same producer claim. */
 export function createQueuedDeliveryOwner(params: {

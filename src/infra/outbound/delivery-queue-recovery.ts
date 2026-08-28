@@ -26,6 +26,7 @@ import { OUTBOUND_DELIVERY_LOG_SCOPE } from "./deliver-log.js";
 import { buildPayloadSummary } from "./deliver-payload.js";
 import {
   createQueuedDeliveryOwner,
+  hasUnconfirmedOutboundSends,
   persistQueuedPostSendState,
   type QueuedPostSendState,
 } from "./deliver-queue-state.js";
@@ -884,11 +885,7 @@ async function drainQueuedEntry(opts: {
       },
     });
     const results = isOutboundDeliveryResultArray(result) ? result : [];
-    const adapterReturnedNoIdentity = payloadOutcomes.some(
-      (outcome) =>
-        outcome.status === "suppressed" && outcome.reason === "adapter_returned_no_identity",
-    );
-    if (adapterReturnedNoIdentity || (results.length === 0 && platformSendStarted)) {
+    if (hasUnconfirmedOutboundSends({ results, payloadOutcomes, platformSendStarted })) {
       const error = "recovered platform send returned no delivery identity";
       await recordRecoveredFailure(
         failDeliveryAfterPlatformSend,

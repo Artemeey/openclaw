@@ -93,74 +93,92 @@ describe("pending-final durable delivery completion", () => {
     expect(await loadPendingDeliveries(tmpDir)).toEqual([]);
   });
 
-  it("keeps an uncertainty notice owed when a live send returns no delivery identity", async () => {
-    process.env.OPENCLAW_STATE_DIR = tmpDir;
-    const sessionKey = "agent:main:matrix:direct:unknown-live";
-    const storePath = path.join(tmpDir, "sessions.json");
-    const deliveryId = "pending-final-unknown-live";
-    const completion = {
-      kind: "pending-final" as const,
-      deliveryId,
-      intentId: "pending-final-intent-unknown-live",
-      sessionId: "session-unknown-live",
-      sessionKey,
-      storePath,
-    };
-    const context = { channel: "matrix", to: "!room:example" };
-    await replaceSessionEntry(
-      { sessionKey, storePath },
-      {
-        sessionId: completion.sessionId,
-        status: "running",
-        updatedAt: Date.now(),
-        pendingFinalDelivery: {
-          kind: "replayable",
-          text: "delivery identity may have been lost",
-          context,
-          createdAt: Date.now(),
-          intentId: completion.intentId,
-          deliveries: [{ id: deliveryId, state: "prepared" }],
+  it.each([false, true])(
+    "keeps an uncertainty notice owed after identity loss (confirmed prefix=%s)",
+    async (confirmedPrefix) => {
+      process.env.OPENCLAW_STATE_DIR = tmpDir;
+      const sessionKey = "agent:main:matrix:direct:unknown-live";
+      const storePath = path.join(tmpDir, "sessions.json");
+      const deliveryId = "pending-final-unknown-live";
+      const completion = {
+        kind: "pending-final" as const,
+        deliveryId,
+        intentId: "pending-final-intent-unknown-live",
+        sessionId: "session-unknown-live",
+        sessionKey,
+        storePath,
+      };
+      const context = { channel: "matrix", to: "!room:example" };
+      await replaceSessionEntry(
+        { sessionKey, storePath },
+        {
+          sessionId: completion.sessionId,
+          status: "running",
+          updatedAt: Date.now(),
+          pendingFinalDelivery: {
+            kind: "replayable",
+            text: "delivery identity may have been lost",
+            context,
+            createdAt: Date.now(),
+            intentId: completion.intentId,
+            deliveries: [{ id: deliveryId, state: "prepared" }],
+          },
         },
-      },
-    );
-    const sendMatrix = vi.fn().mockResolvedValue({});
-    const auditEvents: TrustedMessageAuditEvent[] = [];
-    const unsubscribe = onTrustedMessageAuditEvent((event) => auditEvents.push(event));
+      );
+      const sendMatrix = vi.fn().mockResolvedValue({ messageId: "" });
+      if (confirmedPrefix) {
+        sendMatrix.mockResolvedValueOnce({ messageId: "confirmed-prefix" });
+      }
+      const auditEvents: TrustedMessageAuditEvent[] = [];
+      const unsubscribe = onTrustedMessageAuditEvent((event) => auditEvents.push(event));
 
-    try {
-      await expect(
-        deliverOutboundPayloads({
+      try {
+        const sending = deliverOutboundPayloads({
           cfg: {} as OpenClawConfig,
           channel: "matrix",
           to: "!room:example",
-          payloads: [{ text: "delivery identity may have been lost" }],
+          payloads: [
+            ...(confirmedPrefix ? [{ text: "confirmed prefix" }] : []),
+            { text: "delivery identity may have been lost" },
+          ],
           deps: { matrix: sendMatrix },
           queuePolicy: "required",
           deliveryIntentId: deliveryId,
           deliveryCompletion: completion,
-        }),
-      ).resolves.toEqual([]);
-    } finally {
-      unsubscribe();
-    }
+        });
+        if (confirmedPrefix) {
+          await expect(sending).rejects.toThrow(
+            "platform send returned no delivery identity for part of the delivery batch",
+          );
+        } else {
+          await expect(sending).resolves.toEqual([]);
+        }
+      } finally {
+        unsubscribe();
+      }
 
-    expect((await loadPendingDeliveries(tmpDir))[0]).toMatchObject({
-      id: deliveryId,
-      recoveryState: "unknown_after_send",
-    });
-    expect(loadSessionEntry({ sessionKey, storePath })).toMatchObject({
-      pendingFinalDelivery: {
-        deliveries: [{ id: deliveryId, state: "unknown" }],
-      },
-      pendingDeliveryNotice: {
-        intentId: completion.intentId,
-        state: "owed",
-        context,
-      },
-    });
-    expect(auditEvents.map((event) => event.outcome)).toEqual(["queued", "platform_started"]);
-    expect(auditEvents).not.toContainEqual(
-      expect.objectContaining({ action: "message.outbound.finished" }),
-    );
-  });
+      expect((await loadPendingDeliveries(tmpDir))[0]).toMatchObject({
+        id: deliveryId,
+        recoveryState: "unknown_after_send",
+      });
+      expect(loadSessionEntry({ sessionKey, storePath })).toMatchObject({
+        pendingFinalDelivery: {
+          deliveries: [{ id: deliveryId, state: "unknown" }],
+        },
+        pendingDeliveryNotice: {
+          intentId: completion.intentId,
+          state: "owed",
+          context,
+        },
+      });
+      expect(auditEvents.map((event) => event.outcome)).toEqual(
+        confirmedPrefix
+          ? ["queued", "queued", "platform_started", "platform_started"]
+          : ["queued", "platform_started"],
+      );
+      expect(auditEvents).not.toContainEqual(
+        expect.objectContaining({ action: "message.outbound.finished" }),
+      );
+    },
+  );
 });
