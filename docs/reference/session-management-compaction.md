@@ -214,7 +214,7 @@ When splitting a long transcript into compaction chunks, OpenClaw keeps assistan
 The built-in OpenClaw runtime has three scheduling paths:
 
 1. **Overflow recovery**: the model returns a context-overflow error (`request_too_large`, `context length exceeded`, `input exceeds the maximum number of tokens`, `input token count exceeds the maximum number of input tokens`, `input is too long for the model`, `ollama error: context length exceeded`, and other provider-shaped variants) - compact, then retry. When the provider reports the attempted token count, OpenClaw forwards that observed count into overflow-recovery compaction; if the provider confirms overflow but exposes no parseable count, OpenClaw passes a minimally over-budget synthetic count to compaction engines and diagnostics. If overflow recovery still fails, OpenClaw surfaces explicit guidance and preserves the current session mapping instead of silently rotating to a fresh session id - retry the message, run `/compact`, or run `/new`.
-2. **Usage-based maintenance**: normal replies check projected usage before their turn; successful direct commands, including `agent --local` and Gateway agent RPC runs, check after the completed turn is persisted and any pending final reply is protected. Both use the active model budget and shared maintenance headroom. Disabling memory flush does not disable this compaction. Direct-command maintenance respects `compaction.enabled: false` and skips a second compaction when the completed run already compacted.
+2. **Usage-based maintenance**: normal replies check projected usage before their turn; successful direct commands, including `agent --local` and Gateway agent RPC runs, check after the completed turn is persisted and any pending final reply is protected. Both block on projected usage at or above the active model window minus the selected compaction reserve, subject to an applicable server compaction threshold floor. The memory-flush soft margin does not lower this blocking threshold. Disabling memory flush does not disable this compaction. Direct-command maintenance respects `compaction.enabled: false` and skips a second compaction when the completed run already compacted.
 3. **Session-internal threshold maintenance**: default-mode sessions can also compact when actual context usage exceeds the model window minus the session reserve. Safeguard mode disables this competing session-internal path and leaves proactive scheduling to the maintenance owner above.
 
 The persisted `contextBudgetStatus` is a pre-prompt pressure estimate, not an execution command. Completed direct commands, normal replies, and queued follow-up replies record it when the runtime supplies one. `/status` can show this estimate, marked with `~` and `est`, when fresh token usage is unavailable. Compaction and session resets invalidate old estimates; a completed run without a diagnostic clears the previous one unless that run preserves the session's model state (for example, a heartbeat). Its `route` and `shouldCompact` fields can report pressure while the provider attempt is still admitted. Use completed compaction counts and transcript entries to verify that compaction actually happened.
@@ -288,6 +288,14 @@ Config (`agents.defaults.compaction.memoryFlush`), full reference at [/gateway/c
 | `model`                     | unset            | exact provider/model override for the flush turn only, for example `ollama/qwen3:8b`                                                                   |
 | `softThresholdTokens`       | `4000`           | gap below the compaction threshold that triggers a flush                                                                                               |
 | `forceFlushTranscriptBytes` | unset (disabled) | force a flush once active transcript history reaches this estimated byte size (or string like `"2mb"`), even if token counters are stale; `0` disables |
+
+For a 32,768-token window, a 20,000-token reserve and a 4,000-token soft margin,
+early flushing starts at 8,768 projected tokens. Blocking token compaction starts
+at 12,768, or later if an applicable server threshold is higher. Between those
+thresholds, flushing can run without blocking the next user turn on compaction.
+The selected memory provider owns the reserve and flush margin; without a flush
+plan, maintenance still uses the effective compaction reserve. Nonpositive
+thresholds suppress token triggers. Transcript byte guards remain independent.
 
 Notes:
 
