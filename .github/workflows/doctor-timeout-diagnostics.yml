@@ -1,0 +1,138 @@
+name: Doctor timeout diagnostic (one-off)
+
+on:
+  push:
+    branches: ["diagnostics/doctor-timeout-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: doctor-timeout-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  diagnose:
+    # Match the failed CI runner and its private cache; no Testbox hydration.
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - name: Check out the exact failing merge tree
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: b5c8a9ec85a54c53db5e1f857ef568128eb6a233
+          persist-credentials: false
+
+      - name: Check out diagnostic payloads from this workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .doctor-diagnostic-harness
+          persist-credentials: false
+          sparse-checkout: .github/diagnostics/doctor-timeout
+
+      - name: Install pinned Node and repository-pinned dependencies
+        uses: ./.github/actions/setup-node-env
+        with:
+          node-version: "24.19.0"
+          install-bun: "false"
+          install-trufflehog: "false"
+          cache-mode: restore
+          dependency-cache: "false"
+          restore-test-caches: "false"
+
+      # The failed job missed the Vitest transform cache but restored this exact
+      # Node seed. Do not substitute a newer seed or enable child compile caching.
+      - name: Restore the failed job's exact Node orchestration cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/tmp/openclaw-node-compile-cache
+          key: openclaw/openclaw-node-compile-v3-test-protected-Linux-X64-node-24.x-33186324828-1
+          fail-on-cache-miss: true
+
+      - name: Reproduce the failed cache envelope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = v24.19.0
+          test "$(git rev-parse HEAD)" = b5c8a9ec85a54c53db5e1f857ef568128eb6a233
+          test -d /var/tmp/openclaw-node-compile-cache
+          cache_root=/var/tmp/openclaw-vitest-fs-cache
+          test ! -e "$cache_root"
+          mkdir -p "$cache_root"
+          printf '%s\n' 2cd049c5b70e1bf6d9419a94f2911342b8421592df953d21e546ab2c9359b8dd > "$cache_root/.openclaw-transform-generation"
+          printf '%s\n' \
+            'NODE_COMPILE_CACHE=/var/tmp/openclaw-node-compile-cache' \
+            'NODE_COMPILE_CACHE_PORTABLE=1' \
+            'OPENCLAW_NODE_COMPILE_CACHE_WRITER=0' \
+            'OPENCLAW_VITEST_FS_MODULE_CACHE_PATH=/var/tmp/openclaw-vitest-fs-cache' \
+            'OPENCLAW_VITEST_FS_MODULE_CACHE_WRITER=0' >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/doctor-inputs" "$RUNNER_TEMP/doctor-evidence"
+
+      - name: Download and verify the exact failed-run runtime artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_api=https://api.github.com/repos/openclaw/openclaw/actions/artifacts/9693062200
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "$artifact_api" > "$RUNNER_TEMP/doctor-inputs/artifact-metadata.json"
+          python3 - "$RUNNER_TEMP/doctor-inputs/artifact-metadata.json" "$RUNNER_TEMP/doctor-evidence/artifact-identity.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          value = json.loads(Path(sys.argv[1]).read_text())
+          expected = {
+              'id': 9693062200,
+              'name': 'dist-runtime-build',
+              'digest': 'sha256:66ea5becc611c69f69cf00af7a362256e0db011008c1bc8cacde8c5ec889b618',
+              'expired': False,
+          }
+          if any(value.get(key) != item for key, item in expected.items()):
+              raise SystemExit('Artifact identity/digest/expiry does not match the failed run')
+          if value.get('workflow_run', {}).get('id') != 33188970656:
+              raise SystemExit('Artifact belongs to a different workflow run')
+          Path(sys.argv[2]).write_text(json.dumps({**expected, 'runId': 33188970656}, indent=2) + '\n')
+          PY
+          # curl does not forward Authorization on a cross-host redirect.
+          curl --fail --silent --show-error --location \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "$artifact_api/zip" -o "$RUNNER_TEMP/doctor-inputs/runtime.zip"
+          printf '%s  %s\n' \
+            66ea5becc611c69f69cf00af7a362256e0db011008c1bc8cacde8c5ec889b618 \
+            "$RUNNER_TEMP/doctor-inputs/runtime.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/doctor-inputs/runtime.zip" -d "$RUNNER_TEMP/doctor-inputs/runtime"
+          tar --extract --file "$RUNNER_TEMP/doctor-inputs/runtime/dist-runtime-build.tar.zst" --use-compress-program unzstd
+          test -f dist/index.js
+          test -f dist/.buildstamp
+          test -f dist/.runtime-postbuildstamp
+
+      - name: Run the unchanged fixture once with owned-child diagnostics
+        shell: bash
+        env:
+          DIAGNOSTIC_WORKFLOW_SHA: ${{ github.sha }}
+          DIAGNOSTIC_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python3 .doctor-diagnostic-harness/.github/diagnostics/doctor-timeout/run-diagnostic.py \
+            --source "$GITHUB_WORKSPACE" \
+            --node "$NODE_BIN/node" \
+            --output "$RUNNER_TEMP/doctor-evidence" \
+            --scratch "$RUNNER_TEMP/doctor-private"
+
+      - name: Upload bounded sanitized diagnostics, never fixture state
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: doctor-timeout-diagnostic-${{ github.run_id }}
+          path: ${{ runner.temp }}/doctor-evidence/
+          if-no-files-found: warn
+          retention-days: 3
