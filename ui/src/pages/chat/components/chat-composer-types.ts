@@ -39,6 +39,21 @@ export type ChatQueuedEditProps = {
 
 export type CapabilityMenuProps = ChatComposerCapabilityMenuProps;
 
+export type ChatGoalUpdate =
+  | { action: "pause" | "resume" | "complete" }
+  | { action: "edit"; objective: string };
+
+export type ChatGoalManagementProps = {
+  pending: boolean;
+  error: string | null;
+  editObjective: string | null;
+  onEditStart?: (objective: string) => void;
+  onEditChange?: (objective: string) => void;
+  onEditCancel?: () => void;
+  onUpdate?: (update: ChatGoalUpdate) => void;
+  onClear?: () => void;
+};
+
 type ChatComposerDisabledBannerContent = {
   title?: string;
   text: string;
@@ -134,8 +149,12 @@ export type ChatComposerProps = ChatAttachmentControlsProps & {
   onQueueSteer?: (id: string) => void;
   onQueueMove?: (id: string, toIndex: number) => void;
   queuedEdit?: ChatQueuedEditProps;
+  goalManagement?: ChatGoalManagementProps;
+  /** True when supported, false when explicitly unavailable, undefined while reconnecting. */
+  goalStartAvailable?: boolean;
   onClearReply?: () => void;
   onGoalCommand?: (command: string) => void;
+  onGoalStart?: (onDurableAdmission: () => void, submissionAction?: Event) => void;
   onGatewayQuestionChange?: () => void;
   onGatewayQuestionSubmit?: (id: string, answers: Record<string, string[]>) => void | Promise<void>;
   onGatewayQuestionSkip?: (id: string) => void | Promise<void>;
@@ -158,6 +177,7 @@ export type ChatComposerState = SkillMenuState &
     composerInputIntentKey: string | null;
     pendingClearedSubmittedDraft: PendingClearedSubmittedDraft | null;
     goalExpandedId: string | null;
+    goalMode: boolean;
     activeGatewayQuestionId: string | null;
     gatewayQuestionCollapsed: boolean;
     questionTakeoverActive: boolean;

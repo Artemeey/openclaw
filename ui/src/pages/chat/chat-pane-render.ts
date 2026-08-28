@@ -1,4 +1,4 @@
-import type { ProgressCard } from "@openclaw/gateway-protocol";
+import { GATEWAY_SERVER_CAPS, type ProgressCard } from "@openclaw/gateway-protocol";
 import { html, nothing } from "lit";
 import { findInlineApproval } from "../../app/approval-presentation.ts";
 import { hasOperatorAdminAccess, hasOperatorWriteAccess } from "../../app/operator-access.ts";
@@ -14,7 +14,10 @@ import {
 } from "../../lib/chat/follow-up-mode.ts";
 import { isChatModelUnavailable } from "../../lib/chat/model-select-state.ts";
 import { formatUiError } from "../../lib/format-error.ts";
-import { isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
+import {
+  isGatewayCapabilityAdvertised,
+  isGatewayMethodAdvertised,
+} from "../../lib/gateway-methods.ts";
 import {
   pickFreshestObserverDigest,
   projectSessionObserverDigest,
@@ -25,6 +28,7 @@ import { isSessionRunActive } from "../../lib/session-run-state.ts";
 import { buildAgentMainSessionKey } from "../../lib/sessions/session-key.ts";
 import { showToast } from "../../lib/toast.ts";
 import { generateUUID } from "../../lib/uuid.ts";
+import { createChatGoalManagementProps } from "./chat-goal-management.ts";
 import { clearChatHistory } from "./chat-history.ts";
 import { resolveChatMessageAccess } from "./chat-message-access.ts";
 import { requiresChatModelSetup } from "./chat-model-setup.ts";
@@ -289,6 +293,23 @@ export class ChatPane extends ChatPaneLayoutRender {
           toastAnchor: this,
           onModelSetup: () => this.context.navigate("model-setup"),
         });
+    const goalManagement =
+      !catalogKey && selectedSession?.goal && state.client
+        ? createChatGoalManagementProps(this, {
+            client: state.client,
+            sessions: state.sessions,
+            sessionKey: selectedSession.key,
+            agentId: currentAgentId,
+            goalId: selectedSession.goal.id,
+            canUpdate:
+              hasOperatorWriteAccess(gatewaySnapshot.hello?.auth ?? null) &&
+              isGatewayMethodAdvertised(gatewaySnapshot, "sessions.goal.update") === true,
+            canClear:
+              hasOperatorWriteAccess(gatewaySnapshot.hello?.auth ?? null) &&
+              isGatewayMethodAdvertised(gatewaySnapshot, "sessions.goal.clear") === true,
+            requestUpdate: () => state.requestUpdate?.(),
+          })
+        : undefined;
     const props: ChatProps = {
       transcript: this.transcript,
       paneId: this.presentationId,
@@ -599,7 +620,28 @@ export class ChatPane extends ChatPaneLayoutRender {
         onEditSubmit: sessionParticipationBlocked ? undefined : state.submitQueuedChatMessageEdit,
         onCancel: state.cancelQueuedChatMessageEdit,
       },
-      onGoalCommand: (command) => void state.handleSendChat(command),
+      goalManagement,
+      goalStartAvailable:
+        catalogKey || suggestionViewer || selectedSession?.goal
+          ? false
+          : hasOperatorWriteAccess(gatewaySnapshot.hello?.auth ?? null)
+            ? (isGatewayCapabilityAdvertised(
+                gatewaySnapshot,
+                GATEWAY_SERVER_CAPS.SESSION_GOAL_START,
+              ) ?? undefined)
+            : false,
+      onGoalCommand: hasOperatorWriteAccess(gatewaySnapshot.hello?.auth ?? null)
+        ? (command) => void state.handleSendChat(command)
+        : undefined,
+      onGoalStart: (onDurableAdmission, submissionAction) =>
+        void state.handleSendChat(
+          undefined,
+          {
+            intent: { kind: "session-goal-start", version: 1 },
+            onDurableAdmission,
+          },
+          submissionAction,
+        ),
       onCompanionQuestion: (question) => void this.submitSessionCompanionQuestion(question),
       onCompanionPrefill: this.prefillSessionCompanionQuestion,
       replyTarget: state.chatReplyTarget ?? null,

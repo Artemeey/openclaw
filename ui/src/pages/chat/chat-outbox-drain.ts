@@ -32,6 +32,7 @@ import {
   syncVisibleChatQueueProjection,
   updateQueuedMessageForSession,
 } from "./chat-queue.ts";
+import { clearAcceptedGoalComposerDraft } from "./chat-send-composer.ts";
 import type { ChatHost } from "./chat-send-contract.ts";
 import {
   chatMessagesContainQueuedSend,
@@ -52,6 +53,8 @@ import { isChatBusy } from "./run-lifecycle.ts";
 export type QueuedChatSendResult = "sent" | "pending" | "failed";
 export type QueuedChatStorageMode = "durable" | "memory";
 export type QueuedChatSendOptions = {
+  /** Fires only after the Gateway confirms durable admission of this exact turn. */
+  onAccepted?: () => void;
   /** Fresh selected-session sends may let the Gateway resolve its effective active-run mode. */
   allowActiveRunSend?: boolean;
   /** Exact submit-time leaf; restored drains omit it so intervening advances park the draft. */
@@ -224,11 +227,17 @@ async function readCurrentStoredChatHistory(
   if (chatMessagesContainQueuedSend(history.messages, item)) {
     // Materialize server history locally before removing the queue bubble.
     preserveQueuedUserTurn(host, item);
+    const clearedAttachments =
+      item.intent?.kind === "session-goal-start" &&
+      visibleSessionMatches(host, outbox.sessionKey, outbox.agentId)
+        ? clearAcceptedGoalComposerDraft(host, item)
+        : [];
     const removed = removeQueuedMessageWithoutReleasing(host, item.id, outbox.sessionKey);
     if (!removed) {
       return "blocked";
     }
     releaseChatAttachmentPayloads(excludeComposerAttachments(host, removed.attachments));
+    releaseChatAttachmentPayloads(clearedAttachments);
     if (visibleSessionMatches(host, outbox.sessionKey, outbox.agentId)) {
       void loadChatHistory(host);
     }

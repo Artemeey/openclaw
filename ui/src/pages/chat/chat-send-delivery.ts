@@ -5,7 +5,10 @@ import { t } from "../../i18n/index.ts";
 import type { ChatQueueItem } from "../../lib/chat/chat-types.ts";
 import { scopedAgentIdForSession, visibleSessionMatches } from "../../lib/sessions/index.ts";
 import { generateUUID } from "../../lib/uuid.ts";
-import { discardChatAttachmentDataUrls } from "./attachment-payload-store.ts";
+import {
+  discardChatAttachmentDataUrls,
+  releaseChatAttachmentPayloads,
+} from "./attachment-payload-store.ts";
 import { readChatResetTargetAccess } from "./chat-commands.ts";
 import { loadChatBranches, loadChatHistory } from "./chat-history.ts";
 import {
@@ -27,7 +30,11 @@ import {
 } from "./chat-queue.ts";
 import { createResetSlashCommandSender } from "./chat-reset-delivery.ts";
 import { isTerminalFailureChatSendAck } from "./chat-send-ack.ts";
-import { cancelChatDelivery, canRestoreComposer } from "./chat-send-composer.ts";
+import {
+  cancelChatDelivery,
+  canRestoreComposer,
+  clearAcceptedGoalComposerDraft,
+} from "./chat-send-composer.ts";
 import type { ChatHost } from "./chat-send-contract.ts";
 import {
   captureChatConnectionOwner,
@@ -285,6 +292,7 @@ async function sendQueuedChatMessage(
       runId,
       sessionKey,
       agentId: prepared.agentId,
+      ...(prepared.intent ? { intent: prepared.intent } : {}),
       ...(prepared.queueMode ? { queueMode: prepared.queueMode } : {}),
       ...(prepared.queueMode !== "steer" && options?.expectedLeafEntryId !== undefined
         ? { expectedLeafEntryId: options.expectedLeafEntryId }
@@ -343,6 +351,12 @@ async function sendQueuedChatMessage(
       });
       return "failed";
     }
+    if (prepared.intent?.kind === "session-goal-start" && isVisible()) {
+      const clearedAttachments = clearAcceptedGoalComposerDraft(host, prepared);
+      releaseChatAttachmentPayloads(clearedAttachments);
+      resetChatInputHistoryNavigation(host);
+    }
+    options?.onAccepted?.();
     const retireOnAck = ack.status === "ok" || storageMode === "memory";
     let retirementFailed = false;
     if (retireOnAck) {
@@ -453,6 +467,13 @@ async function sendQueuedChatMessage(
         err.message === "gateway not connected";
       const retryDelayMs = retryableGatewayDelayMs(err);
       const safelyRejected = failedBeforeTransport || retryDelayMs !== null;
+      if (prepared.intent?.kind === "session-goal-start" && safelyRejected && options?.onAccepted) {
+        removeQueuedMessageWithoutReleasing(host, id, sessionKey);
+        finishScopedChatSending(host, scope);
+        surfaceChatDeliveryFailure(host, sessionKey, prepared.agentId, error);
+        recordChatSendTiming(host, prepared, "failed", prepared.sendSubmittedAtMs, { error });
+        return "failed";
+      }
       const rollbackAttempt = safelyRejected
         ? {
             sendAttempts: queued.sendAttempts,

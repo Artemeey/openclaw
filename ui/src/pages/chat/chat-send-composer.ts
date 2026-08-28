@@ -1,6 +1,10 @@
+import { sha256 } from "@noble/hashes/sha2.js";
 import type { ChatAttachment, ChatQueueItem } from "../../lib/chat/chat-types.ts";
 import { visibleSessionMatches } from "../../lib/sessions/index.ts";
-import { releaseChatAttachmentPayloads } from "./attachment-payload-store.ts";
+import {
+  getChatAttachmentDataUrl,
+  releaseChatAttachmentPayloads,
+} from "./attachment-payload-store.ts";
 import {
   captureChatComposerMemoryFallbackOwnership,
   clearChatComposerMemoryFallback,
@@ -15,6 +19,42 @@ import {
 import type { ChatHost } from "./chat-send-contract.ts";
 import type { ChatPageHost } from "./chat-state-host.ts";
 import type { StoredChatOutboxScope } from "./composer-persistence.ts";
+
+export function goalComposerDraftSignature(
+  text: string,
+  attachments: readonly ChatAttachment[],
+): string {
+  const source = JSON.stringify([
+    text,
+    attachments.map((attachment) => [
+      attachment.mimeType,
+      attachment.fileName ?? "",
+      attachment.sizeBytes ?? -1,
+      attachment.browserAnnotation ?? null,
+      getChatAttachmentDataUrl(attachment),
+    ]),
+  ]);
+  return Array.from(sha256(new TextEncoder().encode(source)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+export function clearAcceptedGoalComposerDraft(
+  host: ChatHost,
+  item: Pick<ChatQueueItem, "goalDraftSignature">,
+): ChatAttachment[] {
+  if (
+    !item.goalDraftSignature ||
+    item.goalDraftSignature !==
+      goalComposerDraftSignature(host.chatMessage.trim(), host.chatAttachments)
+  ) {
+    return [];
+  }
+  const attachments = host.chatAttachments;
+  host.chatMessage = "";
+  host.chatAttachments = [];
+  return attachments;
+}
 
 export type ChatCommandComposerRecovery = {
   client: ChatHost["client"];

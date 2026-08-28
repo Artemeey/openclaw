@@ -61,6 +61,8 @@ function createContext(
       { value: "staging", label: "Staging" },
       { value: "production", label: "Production" },
     ],
+    placement: "standalone",
+    goalStartAvailable: false,
   };
 }
 
@@ -131,5 +133,52 @@ describe("command activation planning", () => {
         provider,
       ]).kind,
     ).toBe("insert-text");
+  });
+
+  it.each([
+    { name: "typed", source: "typed" as const },
+    { name: "sheet", source: "sheet" as const },
+  ])("activates Goal mode from a bare $name command", ({ source }) => {
+    const command = createCommand("native");
+    command.key = "goal";
+    command.name = "goal";
+    command.definition = defineChatCommand({
+      key: "goal",
+      textAlias: "/goal",
+      description: "Goal",
+    });
+    const context = createContext(command, { source });
+    context.invocation = parseCommandInvocation(command.definition, "/goal")!;
+    context.goalStartAvailable = true;
+
+    expect(resolveCommandActivation(context)).toEqual({
+      kind: "activate-composer-mode",
+      mode: { kind: "goal" },
+    });
+  });
+
+  it("opens management for an existing Goal and keeps unsupported or inline use textual", () => {
+    const command = createCommand("native");
+    command.key = "goal";
+    command.name = "goal";
+    command.definition = defineChatCommand({
+      key: "goal",
+      textAlias: "/goal",
+      description: "Goal",
+    });
+    const context = createContext(command);
+    context.invocation = parseCommandInvocation(command.definition, "/goal")!;
+    context.goal = { id: "goal-1" };
+
+    expect(resolveCommandActivation(context)).toEqual({
+      kind: "open-surface",
+      surface: "goal-management",
+      focus: "goal-1",
+    });
+    context.goal = undefined;
+    expect(resolveCommandActivation(context).kind).toBe("insert-text");
+    context.goalStartAvailable = true;
+    context.placement = "inline";
+    expect(resolveCommandActivation(context).kind).toBe("insert-text");
   });
 });

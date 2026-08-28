@@ -6,6 +6,7 @@ import type { SessionGoal } from "../../api/types.ts";
 import { i18n } from "../../i18n/index.ts";
 import { renderChatGoal, clearGoalElapsedTimers } from "./components/chat-composer-goal.ts";
 import { getChatComposerState, resetChatComposerState } from "./components/chat-composer-state.ts";
+import type { ChatGoalManagementProps } from "./components/chat-composer-types.ts";
 
 const goal: SessionGoal = {
   schemaVersion: 1,
@@ -19,12 +20,21 @@ const goal: SessionGoal = {
   continuationTurns: 0,
 };
 
-function mountGoal(initial: SessionGoal) {
+function mountGoal(initial: SessionGoal, management?: ChatGoalManagementProps) {
   const container = document.createElement("div");
   document.body.append(container);
   const state = getChatComposerState("goal-timing");
-  const draw = (value: SessionGoal | undefined) =>
-    render(renderChatGoal(state, value, { canAct: false, requestUpdate: () => {} }), container);
+  const draw = (value: SessionGoal | undefined, nextManagement = management) =>
+    render(
+      renderChatGoal(state, value, {
+        canAct: Boolean(nextManagement),
+        paneId: "goal-timing",
+        management: nextManagement,
+        onGoalEdit: () => {},
+        requestUpdate: () => {},
+      }),
+      container,
+    );
   const part = draw(initial);
   return {
     container,
@@ -97,5 +107,59 @@ describe("goal elapsed presentation", () => {
     view.part.setConnected(true);
     expect(view.elapsed()).toBe("3m");
     expect(vi.getTimerCount()).toBe(1);
+  });
+});
+
+describe("goal management presentation", () => {
+  beforeEach(async () => {
+    await i18n.setLocale("en");
+  });
+
+  afterEach(() => {
+    clearGoalElapsedTimers();
+    resetChatComposerState();
+    document.body.replaceChildren();
+  });
+
+  it("makes the management group focusable and disables every control while pending", () => {
+    const view = mountGoal(goal, {
+      pending: true,
+      error: null,
+      editObjective: null,
+      onEditStart: () => {},
+      onUpdate: () => {},
+      onClear: () => {},
+    });
+
+    const group = view.container.querySelector<HTMLElement>(".agent-chat__goal");
+    const buttons = [...view.container.querySelectorAll<HTMLButtonElement>("button")];
+    expect(group?.tabIndex).toBe(-1);
+    expect(group?.getAttribute("aria-busy")).toBe("true");
+    expect(buttons.length).toBeGreaterThan(0);
+    expect(buttons.every((button) => button.disabled)).toBe(true);
+  });
+
+  it("keeps a failed edit visible and retryable", async () => {
+    const onUpdate = vi.fn();
+    const view = mountGoal(goal, {
+      pending: false,
+      error: "Goal update failed",
+      editObjective: "Retry deployment verification",
+      onEditChange: () => {},
+      onEditCancel: () => {},
+      onUpdate,
+      onClear: () => {},
+    });
+
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toBe("Goal update failed");
+    const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Edit goal"]');
+    expect(input?.value).toBe("Retry deployment verification");
+    await Promise.resolve();
+    expect(input).toBe(document.activeElement);
+    input?.closest("form")?.dispatchEvent(new SubmitEvent("submit", { cancelable: true }));
+    expect(onUpdate).toHaveBeenCalledWith({
+      action: "edit",
+      objective: "Retry deployment verification",
+    });
   });
 });

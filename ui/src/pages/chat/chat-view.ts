@@ -53,6 +53,7 @@ import type {
   CapabilityMenuProps,
   ChatComposerDisabledBanner,
   ChatComposerProps,
+  ChatGoalManagementProps,
   ChatQueuedEditProps,
 } from "./components/chat-composer-types.ts";
 import { isChatRunWorking, renderChatComposer } from "./components/chat-composer.ts";
@@ -239,7 +240,10 @@ export type ChatProps = ChatTaskSuggestionTrayProps &
     onQueueSteer?: (id: string) => void;
     onQueueMove?: (id: string, toIndex: number) => void;
     queuedEdit?: ChatQueuedEditProps;
+    goalManagement?: ChatGoalManagementProps;
+    goalStartAvailable?: boolean;
     onGoalCommand?: (command: string) => void;
+    onGoalStart?: ChatComposerProps["onGoalStart"];
     onHistoryIntent?: (event: Event) => void;
     onCompanionQuestion?: (question: string) => void;
     onCompanionPrefill?: (question: string) => void;
@@ -494,7 +498,10 @@ export function renderChat(props: ChatProps) {
     onQueueSteer: props.onQueueSteer,
     onQueueMove: props.onQueueMove,
     queuedEdit: props.queuedEdit,
+    goalManagement: props.goalManagement,
+    goalStartAvailable: props.goalStartAvailable,
     onGoalCommand: props.onGoalCommand,
+    onGoalStart: props.onGoalStart,
     onGatewayQuestionChange: props.onGatewayQuestionChange,
     onGatewayQuestionSubmit: props.onGatewayQuestionSubmit,
     onGatewayQuestionSkip: props.onGatewayQuestionSkip,

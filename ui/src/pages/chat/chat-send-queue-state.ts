@@ -42,6 +42,8 @@ export function enqueuePendingSendMessage(
   replyToId?: string,
   resumedOrderKey?: number,
   queueMode?: ChatQueueItem["queueMode"],
+  intent?: ChatQueueItem["intent"],
+  goalDraftSignature?: string,
 ): ChatQueueItem | null {
   const trimmed = text.trim();
   const hasAttachments = Boolean(attachments && attachments.length > 0);
@@ -62,6 +64,8 @@ export function enqueuePendingSendMessage(
     sendRunId: generateUUID(),
     sendState,
     ...(queueMode ? { queueMode } : {}),
+    ...(intent ? { intent } : {}),
+    ...(goalDraftSignature ? { goalDraftSignature } : {}),
     sendSubmittedAtMs: submittedAtMs,
     sessionKey: host.sessionKey,
     agentId: scopedAgentIdForSession(host, host.sessionKey),

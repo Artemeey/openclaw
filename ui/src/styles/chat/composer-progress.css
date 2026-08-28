@@ -404,6 +404,38 @@
   border-color: color-mix(in srgb, var(--text-strong) 11%, var(--border));
 }
 
+.agent-chat__goal-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  margin: 8px 8px 0;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--card);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agent-chat__goal-mode-dismiss {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  background: transparent;
+}
+
+.agent-chat__goal-mode-dismiss:hover {
+  color: var(--text);
+  background: var(--secondary);
+}
+
 .agent-chat__goal--active .agent-chat__goal-icon,
 .agent-chat__goal--active .agent-chat__goal-actions {
   color: var(--muted);

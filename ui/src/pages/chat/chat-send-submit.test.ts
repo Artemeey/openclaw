@@ -10,8 +10,11 @@ import {
 } from "./attachment-payload-store.ts";
 import { composeBrowserAnnotationContext } from "./browser-annotation-context.ts";
 import { makeChatHost } from "./chat-host.test-support.ts";
+import { retryQueuedChatMessage } from "./chat-send-actions.ts";
 import type { ChatHost } from "./chat-send-contract.ts";
+import { requestChatSend } from "./chat-send-request.ts";
 import { handleSendChat } from "./chat-send-submit.ts";
+import { loadChatComposerSnapshot } from "./composer-persistence.ts";
 
 const attachmentsToRelease: ChatAttachment[] = [];
 const attachmentDataUrl = "data:application/pdf;base64,JVBERi0xLjQK";
@@ -537,5 +540,205 @@ describe("handleSendChat session ownership", () => {
     expect(host.chatQueue).toEqual([]);
     expect(host.lastError).toBe("The active session is unavailable; refresh and try again.");
     expect(host.chatError).toBe(host.lastError);
+  });
+});
+
+describe("handleSendChat structured Goal start", () => {
+  const intent = { kind: "session-goal-start", version: 1 } as const;
+
+  it("shapes structured and ordinary chat.send controls independently", async () => {
+    const host = makeChatHost({
+      requestHandlers: { "chat.send": { runId: "request-shape", status: "started" } },
+    });
+
+    await requestChatSend(host, {
+      intent,
+      message: "Structured objective",
+      queueMode: "steer",
+      runId: "goal-request",
+    });
+    const goalPayload = findChatSendPayload(host);
+    expect(goalPayload.intent).toEqual(intent);
+    expect(goalPayload).not.toHaveProperty("deliver");
+    expect(goalPayload).not.toHaveProperty("queueMode");
+
+    host.request.mockClear();
+    await requestChatSend(host, {
+      message: "Ordinary message",
+      queueMode: "steer",
+      runId: "ordinary-request",
+    });
+    expect(findChatSendPayload(host)).toEqual({
+      sessionKey: "agent:main",
+      message: "Ordinary message",
+      deliver: false,
+      queueMode: "steer",
+      idempotencyKey: "ordinary-request",
+      attachments: undefined,
+    });
+  });
+
+  it("sends the raw objective without local command or browser annotation interpretation", async () => {
+    const annotation = createBrowserAnnotationAttachment("goal", "Do not prepend this context");
+    const onDurableAdmission = vi.fn();
+    const createChatSession = vi.fn(async () => true);
+    const host = makeChatHost({
+      requestHandlers: { "chat.send": { runId: "goal-run", status: "started" } },
+      createChatSession,
+    });
+
+    await handleSendChat(host, "/new\nFinish the migration", {
+      attachmentsOverride: [annotation],
+      intent,
+      onDurableAdmission,
+    });
+
+    expect(createChatSession).not.toHaveBeenCalled();
+    expect(onDurableAdmission).toHaveBeenCalledOnce();
+    expect(host.chatQueue[0]).toMatchObject({
+      intent,
+      text: "/new\nFinish the migration",
+    });
+    expect(host.chatQueue[0]).not.toHaveProperty("queueMode");
+    const payload = findChatSendPayload(host);
+    expect(payload).toMatchObject({
+      intent,
+      message: "/new\nFinish the migration",
+    });
+    expect(payload).not.toHaveProperty("deliver");
+    expect(payload).not.toHaveProperty("queueMode");
+  });
+
+  it("does not apply active-run queue policy to a Goal start", async () => {
+    const host = makeChatHost({
+      requestHandlers: { "chat.send": { runId: "goal-active-run", status: "started" } },
+      chatFollowUpMode: "queue",
+      chatRunId: "active-run",
+    });
+
+    await handleSendChat(host, "Start after the current work", { intent });
+
+    expect(host.chatQueue).toEqual([
+      expect.objectContaining({
+        intent,
+        sendState: "sending",
+        text: "Start after the current work",
+      }),
+    ]);
+    expect(host.chatQueue[0]).not.toHaveProperty("queueMode");
+    expect(findChatSendPayload(host)).not.toHaveProperty("queueMode");
+  });
+
+  it("retains caller-owned Goal input when durable admission fails", async () => {
+    const storage = createStorageMock();
+    vi.spyOn(storage, "setItem").mockImplementation(() => {
+      throw new DOMException("quota exceeded", "QuotaExceededError");
+    });
+    vi.stubGlobal("sessionStorage", storage);
+    const attachment = createStagedAttachment("goal-admission-failure");
+    const caller = {
+      mode: "goal" as const,
+      text: "Keep this objective",
+      attachments: [attachment],
+    };
+    const onDurableAdmission = vi.fn(() => {
+      caller.text = "";
+      caller.attachments = [];
+    });
+    const host = makeChatHost({
+      requestHandlers: { "chat.send": { runId: "must-not-send", status: "started" } },
+    });
+
+    await handleSendChat(host, caller.text, {
+      attachmentsOverride: caller.attachments,
+      intent,
+      onDurableAdmission,
+    });
+
+    expect(onDurableAdmission).not.toHaveBeenCalled();
+    expect(caller).toEqual({
+      mode: "goal",
+      text: "Keep this objective",
+      attachments: [attachment],
+    });
+    expect(getChatAttachmentDataUrl(caller.attachments[0]!)).toBe(attachmentDataUrl);
+    expect(host.request).not.toHaveBeenCalledWith("chat.send", expect.anything());
+    expect(host.chatQueue).toEqual([]);
+  });
+
+  it("keeps Goal input when the Gateway rejects before admission", async () => {
+    const caller = {
+      mode: "goal" as "chat" | "goal",
+      text: "Durably owned objective",
+      attachments: [createStagedAttachment("owned-goal")],
+    };
+    const host = makeChatHost({
+      requestHandlers: { "chat.send": { runId: "failed-goal", status: "error" } },
+    });
+
+    await handleSendChat(host, caller.text, {
+      attachmentsOverride: caller.attachments,
+      intent,
+      onDurableAdmission: () => {
+        caller.mode = "chat";
+        caller.text = "";
+        caller.attachments = [];
+      },
+    });
+
+    expect(caller).toEqual({
+      mode: "goal",
+      text: "Durably owned objective",
+      attachments: [expect.objectContaining({ id: "owned-goal" })],
+    });
+    expect(host.chatQueue).toEqual([
+      expect.objectContaining({
+        intent,
+        sendState: "failed",
+        text: "Durably owned objective",
+      }),
+    ]);
+  });
+
+  it("preserves intent through storage, reconnect, and retry", async () => {
+    const offline = makeChatHost({
+      requestHandlers: {},
+      connected: false,
+    });
+
+    await handleSendChat(offline, "Reconnect this Goal", { intent });
+
+    const restored = loadChatComposerSnapshot(offline, offline.sessionKey)?.queue;
+    expect(restored).toEqual([
+      expect.objectContaining({
+        intent,
+        sendState: "waiting-reconnect",
+        text: "Reconnect this Goal",
+      }),
+    ]);
+
+    const reconnected = makeChatHost({
+      requestHandlers: {
+        "chat.history": {
+          messages: [],
+          sessionInfo: {
+            key: "agent:main",
+            kind: "direct",
+            updatedAt: null,
+            hasActiveRun: false,
+            status: "done",
+          },
+        },
+        "chat.send": { runId: "reconnected-goal", status: "started" },
+      },
+      chatQueue: restored,
+    });
+
+    await retryQueuedChatMessage(reconnected, restored![0]!.id);
+
+    const payload = findChatSendPayload(reconnected);
+    expect(payload.intent).toEqual(intent);
+    expect(payload).not.toHaveProperty("deliver");
+    expect(payload).not.toHaveProperty("queueMode");
   });
 });

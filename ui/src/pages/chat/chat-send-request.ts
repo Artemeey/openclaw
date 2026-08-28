@@ -1,6 +1,6 @@
 import type { QueueMode } from "../../../../packages/gateway-protocol/src/schema/logs-chat.js";
 import { GatewayRequestError } from "../../api/gateway.ts";
-import type { ChatAttachment } from "../../lib/chat/chat-types.ts";
+import type { ChatAttachment, ChatSendIntent } from "../../lib/chat/chat-types.ts";
 import {
   isUiGlobalSessionKey,
   normalizeAgentId,
@@ -18,6 +18,7 @@ export async function requestChatSend(
     runId: string;
     sessionKey?: string;
     agentId?: string;
+    intent?: ChatSendIntent;
     queueMode?: QueueMode;
     replyToId?: string;
     expectedLeafEntryId?: string | null;
@@ -35,9 +36,9 @@ export async function requestChatSend(
     ...(routing.sessionId ? { sessionId: routing.sessionId } : {}),
     ...(controlUiReconnectResume ? { __controlUiReconnectResume: true } : {}),
     message: params.message,
-    deliver: false,
+    ...(params.intent ? { intent: params.intent } : { deliver: false }),
     ...(params.replyToId ? { replyToId: params.replyToId } : {}),
-    ...(params.queueMode ? { queueMode: params.queueMode } : {}),
+    ...(!params.intent && params.queueMode ? { queueMode: params.queueMode } : {}),
     ...(params.expectedLeafEntryId !== undefined
       ? { expectedLeafEntryId: params.expectedLeafEntryId }
       : {}),

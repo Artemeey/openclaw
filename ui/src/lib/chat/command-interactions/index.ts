@@ -5,9 +5,9 @@ import type {
 import type { CommandArgDefinition } from "../../../../../src/auto-reply/commands-registry.types.js";
 import type { SlashCommandDef } from "../commands.ts";
 
-type KnownControlUiSurface = "command-help" | "device-pairing";
+type KnownControlUiSurface = "command-help" | "device-pairing" | "goal-management";
 type StructuredCommandAction = { kind: "run-local-command"; commandKey: string };
-type ComposerModeActivation = { kind: string };
+type ComposerModeActivation = { kind: "goal" };
 type KnownControlUiRoute = { path: string };
 
 type ExplicitArgumentCollectionPlan = {
@@ -37,6 +37,9 @@ export type CommandActivationContext = {
   command: SlashCommandDef;
   invocation: CanonicalCommandInvocation;
   resolveChoices: (arg: CommandArgDefinition) => ResolvedCommandArgChoice[];
+  placement: "standalone" | "inline";
+  goal?: { id: string };
+  goalStartAvailable: boolean;
 };
 
 export interface ControlUiCommandInteractionProvider {
@@ -76,7 +79,26 @@ const declaredInteractionProvider: ControlUiCommandInteractionProvider = {
   },
 };
 
-const DEFAULT_PROVIDERS = [declaredInteractionProvider, localCommandProvider];
+const goalProvider: ControlUiCommandInteractionProvider = {
+  id: "session-goal",
+  resolve(context) {
+    if (
+      context.command.key !== "goal" ||
+      context.placement !== "standalone" ||
+      !context.invocation.isExactBare
+    ) {
+      return null;
+    }
+    if (context.goal) {
+      return { kind: "open-surface", surface: "goal-management", focus: context.goal.id };
+    }
+    return context.goalStartAvailable
+      ? { kind: "activate-composer-mode", mode: { kind: "goal" } }
+      : null;
+  },
+};
+
+const DEFAULT_PROVIDERS = [goalProvider, declaredInteractionProvider, localCommandProvider];
 
 /** Resolves interaction policy separately from command grammar. */
 export function resolveCommandActivation(

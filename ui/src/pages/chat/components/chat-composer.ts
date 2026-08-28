@@ -100,6 +100,9 @@ export function renderChatComposer(props: ChatComposerProps) {
   const activeSession = props.sessions?.sessions?.find((row) =>
     areUiSessionKeysEquivalent(row.key, props.sessionKey),
   );
+  if (state.goalMode && (props.goalStartAvailable === false || activeSession?.goal)) {
+    state.goalMode = false;
+  }
   const draftKey = composerDraftKey(props);
   if (state.dictationDraftKey !== null && state.dictationDraftKey !== draftKey) {
     state.dictation?.dispose();
@@ -190,6 +193,23 @@ export function renderChatComposer(props: ChatComposerProps) {
     canRunInlineCommand: () => state.slashCommandDispatchConnected && Boolean(props.onSlashCommand),
     runInlineCommand: props.connected ? props.onSlashCommand : undefined,
     refreshCommands: props.onSlashIntent,
+    goal: activeSession?.goal ? { id: activeSession.goal.id } : undefined,
+    goalStartAvailable: props.goalStartAvailable,
+    activateGoalMode: () => {
+      state.goalMode = true;
+      state.restoreComposerFocus = true;
+      requestUpdate();
+    },
+    openGoalManagement: (goalId) => {
+      state.goalExpandedId = goalId;
+      requestUpdate();
+      queueMicrotask(() => {
+        const shell = state.composerInput?.closest(".agent-chat__composer-shell");
+        shell
+          ?.querySelector<HTMLElement>(`#${CSS.escape(paneDomId(props.paneId, "goal-management"))}`)
+          ?.focus({ preventScroll: true });
+      });
+    },
   };
   const sendShortcut = normalizeChatSendShortcut(props.sendShortcut);
   const steerNowEnabled =
@@ -269,9 +289,11 @@ export function renderChatComposer(props: ChatComposerProps) {
   state.questionTakeoverActive = questionTakeoverActive;
   const showComposer = !questionTakeoverActive;
 
-  const placeholder = hasVisualAttachments
-    ? t("chat.composer.placeholderWithAttachments")
-    : t("chat.composer.placeholder", { name: props.assistantName || "agent" });
+  const placeholder = state.goalMode
+    ? t("chat.goals.modePlaceholder")
+    : hasVisualAttachments
+      ? t("chat.composer.placeholderWithAttachments")
+      : t("chat.composer.placeholder", { name: props.assistantName || "agent" });
 
   // Offline text and attachments may enter the persisted reconnect queue, but
   // slash commands are live controls and must not execute against stale state.
@@ -280,6 +302,7 @@ export function renderChatComposer(props: ChatComposerProps) {
     state.dictation?.locksComposer !== true &&
     !(state.skillMenuOpen && state.skillCommandRefreshPending) &&
     (props.getPendingAttachmentReads?.() ?? props.pendingAttachmentReads ?? 0) === 0 &&
+    (!state.goalMode || (Boolean(draft.trim()) && Boolean(props.onGoalStart))) &&
     (props.connected || !draft.trimStart().startsWith("/"));
 
   const syncComposerDraftAfterSend = (target: HTMLTextAreaElement | null) => {
@@ -399,7 +422,14 @@ export function renderChatComposer(props: ChatComposerProps) {
     state.composingDraft = null;
     commitComposerDraft(props, draft);
     props.onTypingChange?.(false);
-    props.onSend(undefined, submissionAction);
+    if (state.goalMode && props.onGoalStart) {
+      props.onGoalStart(() => {
+        state.goalMode = false;
+        requestUpdate();
+      }, submissionAction);
+    } else {
+      props.onSend(undefined, submissionAction);
+    }
     syncComposerDraftAfterSend(state.composerTextarea);
   };
   state.microphonePicker ??= new ComposerMicrophonePicker(requestUpdate);

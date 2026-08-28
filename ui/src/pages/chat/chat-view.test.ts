@@ -34,6 +34,7 @@ import {
   registerChatAttachmentPayload as registerStoredChatAttachmentPayload,
   releaseChatAttachmentPayloads,
 } from "./attachment-payload-store.ts";
+import { createChatGoalManagementProps } from "./chat-goal-management.ts";
 import * as chatProgress from "./chat-progress.ts";
 import { switchChatFastMode, switchChatModel, switchChatThinkingLevel } from "./chat-session.ts";
 import * as chatThread from "./chat-thread.ts";
@@ -1854,16 +1855,49 @@ describe("chat goal status", () => {
     expect(goal?.closest(".agent-chat__composer-status-stack")).toBeNull();
   });
 
-  it("dispatches goal commands from the pill controls", () => {
+  it("keeps textual goal controls when typed methods are unavailable", () => {
     const onGoalCommand = vi.fn();
     const container = renderChatView({ sessions: goalSessions(), onGoalCommand });
 
     container.querySelector<HTMLButtonElement>('button[aria-label="Pause goal"]')?.click();
+    container.querySelector<HTMLButtonElement>('button[aria-label="Complete goal"]')?.click();
     container.querySelector<HTMLButtonElement>('button[aria-label="Clear goal"]')?.click();
 
     expect(onGoalCommand).toHaveBeenNthCalledWith(1, "/goal pause");
-    expect(onGoalCommand).toHaveBeenNthCalledWith(2, "/goal clear");
+    expect(onGoalCommand).toHaveBeenNthCalledWith(2, "/goal complete");
+    expect(onGoalCommand).toHaveBeenNthCalledWith(3, "/goal clear");
     expect(container.querySelector('button[aria-label="Resume goal"]')).toBeNull();
+  });
+
+  it("uses typed management callbacks independently for advertised methods", () => {
+    const onGoalCommand = vi.fn();
+    const onDraftChange = vi.fn();
+    const onEditStart = vi.fn();
+    const onUpdate = vi.fn();
+    const container = renderChatView({
+      sessions: goalSessions(),
+      onGoalCommand,
+      onDraftChange,
+      goalManagement: {
+        pending: false,
+        error: null,
+        editObjective: null,
+        onEditStart,
+        onUpdate,
+      },
+    });
+
+    container.querySelector<HTMLButtonElement>('button[aria-label="Edit goal"]')?.click();
+    container.querySelector<HTMLButtonElement>('button[aria-label="Pause goal"]')?.click();
+    container.querySelector<HTMLButtonElement>('button[aria-label="Complete goal"]')?.click();
+    container.querySelector<HTMLButtonElement>('button[aria-label="Clear goal"]')?.click();
+
+    expect(onEditStart).toHaveBeenCalledWith("Land the web goal UI");
+    expect(onDraftChange).not.toHaveBeenCalled();
+    expect(onUpdate).toHaveBeenNthCalledWith(1, { action: "pause" });
+    expect(onUpdate).toHaveBeenNthCalledWith(2, { action: "complete" });
+    expect(onGoalCommand).toHaveBeenCalledOnce();
+    expect(onGoalCommand).toHaveBeenCalledWith("/goal clear");
   });
 
   it("offers resume instead of pause for paused goals", () => {
@@ -1936,6 +1970,187 @@ describe("chat goal status", () => {
 
     expect(container.querySelector('button[aria-label="Pause goal"]')).toBeNull();
     expect(container.querySelector('button[aria-label="Show goal details"]')).not.toBeNull();
+  });
+});
+
+describe("chat goal RPC management", () => {
+  const rpcGoal = {
+    schemaVersion: 1 as const,
+    id: "goal-1",
+    objective: "Land the web goal UI",
+    status: "active" as const,
+    createdAt: 1,
+    updatedAt: 2,
+    tokenStart: 0,
+    tokensUsed: 0,
+    continuationTurns: 0,
+  };
+
+  it("uses a fresh operation id for each RPC and projects successful results", async () => {
+    const updatedGoal = {
+      schemaVersion: 1 as const,
+      id: "goal-1",
+      objective: "Land the web goal UI",
+      status: "paused" as const,
+      createdAt: 1,
+      updatedAt: 2,
+      tokenStart: 0,
+      tokensUsed: 0,
+      continuationTurns: 0,
+      pausedAt: 2,
+    };
+    const request = vi.fn(async (method: string, params: { operationId: string }) =>
+      method === "sessions.goal.update"
+        ? { ok: true, sessionKey: "main", operationId: params.operationId, goal: updatedGoal }
+        : {
+            ok: true,
+            sessionKey: "main",
+            goalId: "goal-1",
+            operationId: params.operationId,
+          },
+    );
+    const patchRowLocal = vi.fn();
+    const target = {
+      client: { request } as unknown as GatewayBrowserClient,
+      sessions: { patchRowLocal },
+      sessionKey: "main",
+      agentId: "main",
+      goalId: "goal-1",
+      canUpdate: true,
+      canClear: true,
+      requestUpdate: vi.fn(),
+    };
+    const owner = {};
+
+    createChatGoalManagementProps(owner, target)?.onUpdate?.({ action: "pause" });
+    await vi.waitFor(() =>
+      expect(patchRowLocal).toHaveBeenCalledWith("main", { goal: updatedGoal }),
+    );
+    createChatGoalManagementProps(owner, target)?.onClear?.();
+    await vi.waitFor(() => expect(patchRowLocal).toHaveBeenCalledWith("main", { goal: undefined }));
+
+    expect(request).toHaveBeenNthCalledWith(1, "sessions.goal.update", {
+      sessionKey: "main",
+      agentId: "main",
+      goalId: "goal-1",
+      operationId: expect.any(String),
+      action: "pause",
+    });
+    expect(request).toHaveBeenNthCalledWith(2, "sessions.goal.clear", {
+      sessionKey: "main",
+      agentId: "main",
+      goalId: "goal-1",
+      operationId: expect.any(String),
+    });
+    expect(request.mock.calls[0]?.[1].operationId).not.toBe(request.mock.calls[1]?.[1].operationId);
+    expect(request.mock.calls.some(([method]) => method === "chat.send")).toBe(false);
+  });
+
+  it("keeps rejected edits available for retry with a visible error", async () => {
+    const target = {
+      client: {
+        request: vi.fn(async () => {
+          throw new Error("Goal changed; retry the request");
+        }),
+      } as unknown as GatewayBrowserClient,
+      sessions: { patchRowLocal: vi.fn() },
+      sessionKey: "main",
+      agentId: "main",
+      goalId: "goal-1",
+      canUpdate: true,
+      canClear: true,
+      requestUpdate: vi.fn(),
+    };
+    const owner = {};
+    const management = createChatGoalManagementProps(owner, target);
+    management?.onEditStart?.("Retry this objective");
+    createChatGoalManagementProps(owner, target)?.onUpdate?.({
+      action: "edit",
+      objective: "Retry this objective",
+    });
+
+    await vi.waitFor(() =>
+      expect(createChatGoalManagementProps(owner, target)).toMatchObject({
+        pending: false,
+        error: "Goal changed; retry the request",
+        editObjective: "Retry this objective",
+      }),
+    );
+    expect(target.sessions.patchRowLocal).not.toHaveBeenCalled();
+  });
+
+  it("keeps an edit and operation identity across reconnect retry", async () => {
+    const firstRequest = vi.fn(async (_method: string, _params: { operationId: string }) => {
+      throw new Error("Gateway disconnected");
+    });
+    const secondRequest = vi.fn(async (_method: string, params: { operationId: string }) => ({
+      ok: true,
+      sessionKey: "main",
+      operationId: params.operationId,
+      goal: rpcGoal,
+    }));
+    const target = {
+      client: { request: firstRequest } as unknown as GatewayBrowserClient,
+      sessions: { patchRowLocal: vi.fn() },
+      sessionKey: "main",
+      agentId: "main",
+      goalId: "goal-1",
+      canUpdate: true,
+      canClear: true,
+      requestUpdate: vi.fn(),
+    };
+    const owner = {};
+    const update = { action: "edit" as const, objective: "Retry this objective" };
+    const first = createChatGoalManagementProps(owner, target)!;
+    first.onEditStart?.(update.objective);
+    first.onUpdate?.(update);
+    await vi.waitFor(() => expect(firstRequest).toHaveBeenCalledOnce());
+    const operationId = firstRequest.mock.calls[0]![1].operationId;
+
+    target.client = { request: secondRequest } as unknown as GatewayBrowserClient;
+    const reconnected = createChatGoalManagementProps(owner, target)!;
+    expect(reconnected.editObjective).toBe(update.objective);
+    reconnected.onUpdate?.(update);
+    await vi.waitFor(() => expect(secondRequest).toHaveBeenCalledOnce());
+    expect(secondRequest.mock.calls[0]?.[1].operationId).toBe(operationId);
+  });
+
+  it.each([
+    { update: { action: "pause" as const }, expectedAction: "pause" },
+    { update: { action: "resume" as const }, expectedAction: "resume" },
+    { update: { action: "complete" as const }, expectedAction: "complete" },
+    {
+      update: { action: "edit" as const, objective: "Updated objective" },
+      expectedAction: "edit",
+    },
+  ])("sends typed $expectedAction updates directly", async ({ update, expectedAction }) => {
+    const request = vi.fn(async (_method: string, params: { operationId: string }) => ({
+      ok: true,
+      sessionKey: "main",
+      operationId: params.operationId,
+      goal: rpcGoal,
+    }));
+    const management = createChatGoalManagementProps(
+      {},
+      {
+        client: { request } as unknown as GatewayBrowserClient,
+        sessions: { patchRowLocal: vi.fn() },
+        sessionKey: "main",
+        agentId: "main",
+        goalId: "goal-1",
+        canUpdate: true,
+        canClear: true,
+        requestUpdate: vi.fn(),
+      },
+    );
+    management?.onUpdate?.(update);
+
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce());
+    expect(request.mock.calls[0]?.[0]).toBe("sessions.goal.update");
+    expect(request.mock.calls[0]?.[1]).toMatchObject({
+      action: expectedAction,
+      operationId: expect.any(String),
+    });
   });
 });
 

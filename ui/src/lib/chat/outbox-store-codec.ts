@@ -90,6 +90,18 @@ export function normalizeStoredQueueItem(value: unknown): ChatQueueItem | null {
   if (attachments.length) {
     item.attachments = attachments;
   }
+  if (
+    isRecord(entry.intent) &&
+    Object.keys(entry.intent).length === 2 &&
+    entry.intent.kind === "session-goal-start" &&
+    entry.intent.version === 1
+  ) {
+    item.intent = { kind: "session-goal-start", version: 1 };
+    const goalDraftSignature = normalizeOptionalString(entry.goalDraftSignature);
+    if (goalDraftSignature) {
+      item.goalDraftSignature = goalDraftSignature;
+    }
+  }
   const refreshSessions = normalizeOptionalBoolean(entry.refreshSessions);
   if (refreshSessions !== undefined) {
     item.refreshSessions = refreshSessions;

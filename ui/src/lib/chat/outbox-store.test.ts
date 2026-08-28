@@ -1,6 +1,7 @@
 /* @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createStorageMock } from "../../test-helpers/storage.ts";
+import { normalizeStoredQueueItem } from "./outbox-store-codec.ts";
 import { listStoredChatOutboxes, summarizeStoredChatOutboxes } from "./outbox-store-projection.ts";
 import {
   readProjectedOutboxStore,
@@ -20,6 +21,38 @@ afterEach(() => {
 });
 
 describe("stored outbox summaries", () => {
+  it("restores only the closed structured Goal start intent", () => {
+    const stored = {
+      id: "goal-start",
+      text: "Finish the migration",
+      createdAt: 1,
+    };
+
+    expect(
+      normalizeStoredQueueItem({
+        ...stored,
+        intent: { kind: "session-goal-start", version: 1 },
+        goalDraftSignature: '["Ship",[]]',
+      }),
+    ).toMatchObject({
+      ...stored,
+      intent: { kind: "session-goal-start", version: 1 },
+      goalDraftSignature: '["Ship",[]]',
+    });
+    expect(
+      normalizeStoredQueueItem({
+        ...stored,
+        intent: { kind: "session-goal-start", version: 1, unexpected: true },
+      }),
+    ).not.toHaveProperty("intent");
+    expect(
+      normalizeStoredQueueItem({
+        ...stored,
+        intent: { kind: "session-goal-start", version: 2 },
+      }),
+    ).not.toHaveProperty("intent");
+  });
+
   it("normalizes an unchanged projection once and refreshes after an external write", () => {
     const unsubscribe = subscribeStoredChatOutboxChanges(() => undefined);
     const gatewayUrl = "ws://gateway.test/control";

@@ -3,7 +3,10 @@
  */
 
 import type { MediaKind } from "@openclaw/media-core/constants";
-import type { QueueMode } from "../../../../packages/gateway-protocol/src/schema/logs-chat.js";
+import type {
+  ChatSendIntent as GatewayChatSendIntent,
+  QueueMode,
+} from "../../../../packages/gateway-protocol/src/schema/logs-chat.js";
 import type { toolIcons } from "../../components/icons-tools.ts";
 import type { SenderIdentity } from "./sender-label.ts";
 
@@ -39,6 +42,8 @@ export type ChatComposerMemoryFallback = {
   sequence: number;
 };
 
+export type ChatSendIntent = GatewayChatSendIntent;
+
 export type ChatGuardianNotice = {
   key: string;
   runId: string;
@@ -67,6 +72,9 @@ export type ChatQueueItem = {
   /** Operator-owned queue position; absent means "wherever arrival put it". */
   orderKey?: number;
   attachments?: ChatAttachment[];
+  intent?: ChatSendIntent;
+  /** Stable Goal draft identity excludes hydration-local attachment ids. */
+  goalDraftSignature?: string;
   refreshSessions?: boolean;
   /** Transcript id of the replied-to message; Gateway hydrates reply context. */
   replyToId?: string;

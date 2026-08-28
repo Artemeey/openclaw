@@ -54,6 +54,10 @@ export type SlashMenuHost = {
   runInlineCommand?: (command: string) => void;
   refreshCommands?: () => void | Promise<void>;
   commandFilter?: (command: SlashCommandDef) => boolean;
+  goal?: { id: string };
+  goalStartAvailable?: boolean;
+  activateGoalMode?: () => void;
+  openGoalManagement?: (goalId: string) => void;
 };
 export function resetSlashMenuState(state: SlashMenuState): void {
   state.slashMenuOpen = false;

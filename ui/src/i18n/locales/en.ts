@@ -5741,9 +5741,13 @@ export const en: TranslationMap = {
       imageCount: "Image ({count})",
     },
     goals: {
+      modeLabel: "Goal",
+      modePlaceholder: "Describe your goal; measurable outcomes help",
+      removeMode: "Remove Goal mode",
       edit: "Edit goal",
       pause: "Pause goal",
       resume: "Resume goal",
+      complete: "Complete goal",
       clear: "Clear goal",
       showDetails: "Show goal details",
       hideDetails: "Hide goal details",

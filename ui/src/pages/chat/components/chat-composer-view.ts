@@ -290,6 +290,8 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
     ? html`<div class="agent-chat__goal-float">
         ${renderChatGoal(state, activeSession.goal, {
           canAct: props.connected && canCompose,
+          paneId: props.paneId,
+          management: props.goalManagement,
           onGoalCommand: props.onGoalCommand,
           onGoalEdit: (updatedGoal) => {
             commitComposerDraft(props, `/goal edit ${updatedGoal.objective}`);
@@ -349,6 +351,24 @@ export function renderChatComposerView(context: ChatComposerViewContext) {
             ${skillMenuVisible ? renderSkillMenu(state, skillMenuHost, requestUpdate) : nothing}
             <div class="agent-chat__composer-lede">
               ${renderAttachmentPreview(props)}
+              ${state.goalMode
+                ? html`<div class="agent-chat__goal-mode" role="status">
+                    <span>${t("chat.goals.modeLabel")}</span>
+                    <button
+                      type="button"
+                      class="agent-chat__goal-mode-dismiss"
+                      aria-label=${t("chat.goals.removeMode")}
+                      title=${t("chat.goals.removeMode")}
+                      @click=${() => {
+                        state.goalMode = false;
+                        state.restoreComposerFocus = true;
+                        requestUpdate();
+                      }}
+                    >
+                      ${icons.x}
+                    </button>
+                  </div>`
+                : nothing}
               ${props.replyTarget
                 ? html`
                     <div class="chat-reply-preview">

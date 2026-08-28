@@ -18,6 +18,7 @@ function createChatComposerState(): ChatComposerState {
     composerInputIntentKey: null,
     pendingClearedSubmittedDraft: null,
     goalExpandedId: null,
+    goalMode: false,
     activeGatewayQuestionId: null,
     gatewayQuestionCollapsed: false,
     questionTakeoverActive: false,

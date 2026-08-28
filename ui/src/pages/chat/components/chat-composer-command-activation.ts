@@ -38,6 +38,9 @@ export function resolveComposerCommandActivation(
     trigger,
     command,
     invocation,
+    placement: state.slashMenuCompletion?.inline ? "inline" : "standalone",
+    goal: host.goal,
+    goalStartAvailable: host.goalStartAvailable === true,
     resolveChoices: () => host.resolveArgOptions(command).map((value) => ({ value, label: value })),
   });
 }
@@ -72,6 +75,12 @@ export function applyComposerCommandActivation(
   } else if (plan.kind === "insert-text") {
     const acceptsTail = command.definition?.acceptsArgs === true;
     host.commitDraft(`${plan.invocation.text}${acceptsTail ? " " : ""}`);
+  } else if (plan.kind === "activate-composer-mode" && plan.mode.kind === "goal") {
+    host.commitDraft("");
+    host.activateGoalMode?.();
+  } else if (plan.kind === "open-surface" && plan.surface === "goal-management") {
+    host.commitDraft("");
+    host.openGoalManagement?.(plan.focus ?? "");
   }
   requestUpdate();
 }

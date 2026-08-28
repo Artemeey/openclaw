@@ -62,6 +62,13 @@ export function createComposerKeyDownHandler({
       return;
     }
 
+    if (event.key === "Escape" && state.goalMode) {
+      event.preventDefault();
+      state.goalMode = false;
+      requestUpdate();
+      return;
+    }
+
     if ((event.key === "ArrowUp" || event.key === "ArrowDown") && props.onHistoryKeydown) {
       commitDraft(target.value);
       const result = props.onHistoryKeydown({
@@ -132,7 +139,12 @@ export function createComposerKeyDownHandler({
       event.preventDefault();
       commitDraft(target.value);
       const steerImmediately = steerNowEnabled && (event.metaKey || event.ctrlKey) && !event.altKey;
-      if (steerImmediately) {
+      if (state.goalMode && props.onGoalStart) {
+        props.onGoalStart(() => {
+          state.goalMode = false;
+          requestUpdate();
+        }, event);
+      } else if (steerImmediately) {
         props.onSend("steer", event);
       } else {
         props.onSend(undefined, event);
