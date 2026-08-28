@@ -46,6 +46,8 @@ import {
 } from "./targets.js";
 import type { SessionEntry } from "./types.js";
 
+export { resolveSessionCleanupAction } from "./cleanup-action.js";
+
 export type SessionsCleanupOptions = SessionStoreSelectionOptions & {
   dryRun?: boolean;
   enforce?: boolean;
@@ -54,16 +56,6 @@ export type SessionsCleanupOptions = SessionStoreSelectionOptions & {
   fixMissing?: boolean;
   fixDmScope?: boolean;
 };
-
-type SessionCleanupAction =
-  | "keep"
-  | "archive-dashboard"
-  | "archive-cap"
-  | "prune-missing"
-  | "prune-model-run"
-  | "prune-stale"
-  | "cap-overflow"
-  | "retire-dm-scope";
 
 export type SessionCleanupSummary = {
   agentId: string;
@@ -76,6 +68,7 @@ export type SessionCleanupSummary = {
   dmScopeRetired: number;
   modelRunPruned: number;
   archived?: number;
+  capArchived?: number;
   pruned: number;
   capped: number;
   unreferencedArtifacts: SessionUnreferencedArtifactSweepResult;
@@ -172,38 +165,6 @@ function inspectConfirmedMessageFreeTranscript(params: {
   } catch {
     return undefined;
   }
-}
-
-/** Resolves the action label for one session key from cleanup key sets. */
-export function resolveSessionCleanupAction(params: {
-  key: string;
-  missingKeys: Set<string>;
-  modelRunPrunedKeys: Set<string>;
-  archivedKeys?: Set<string>;
-  capArchivedKeys?: Set<string>;
-  staleKeys: Set<string>;
-  cappedKeys: Set<string>;
-  dmScopeRetiredKeys: Set<string>;
-}): SessionCleanupAction {
-  if (params.dmScopeRetiredKeys.has(params.key)) {
-    return "retire-dm-scope";
-  }
-  if (params.missingKeys.has(params.key)) {
-    return "prune-missing";
-  }
-  if (params.modelRunPrunedKeys.has(params.key)) {
-    return "prune-model-run";
-  }
-  if (params.archivedKeys?.has(params.key) || params.capArchivedKeys?.has(params.key)) {
-    return params.archivedKeys?.has(params.key) ? "archive-dashboard" : "archive-cap";
-  }
-  if (params.staleKeys.has(params.key)) {
-    return "prune-stale";
-  }
-  if (params.cappedKeys.has(params.key)) {
-    return "cap-overflow";
-  }
-  return "keep";
 }
 
 function isMainScopeStaleDirectSessionKey(params: {
@@ -428,7 +389,7 @@ async function previewStoreCleanup(params: {
         },
       })
     : 0;
-  let archived = archiveStaleDashboardEntries(
+  const archived = archiveStaleDashboardEntries(
     previewStore,
     params.maintenance.archiveDashboardAfterMs,
     {
@@ -447,12 +408,13 @@ async function previewStoreCleanup(params: {
       staleKeys.add(key);
     },
   });
+  let capArchived = 0;
   const capped = capEntryCount(previewStore, params.maintenance.maxEntries, {
     log: false,
     preserveKeys: preserveSessionKeys,
     preserveRecentMs: params.maintenance.preserveRecentMs,
     onArchived: ({ key }) => {
-      archived += 1;
+      capArchived += 1;
       capArchivedKeys.add(key);
     },
     onRemoved: ({ key }) => {
@@ -507,6 +469,7 @@ async function previewStoreCleanup(params: {
     dmScopeRetired > 0 ||
     modelRunPruned > 0 ||
     archived > 0 ||
+    capArchived > 0 ||
     pruned > 0 ||
     capped > 0 ||
     unreferencedArtifacts.removedFiles > 0 ||
@@ -525,6 +488,7 @@ async function previewStoreCleanup(params: {
     dmScopeRetired,
     modelRunPruned,
     archived,
+    capArchived,
     pruned,
     capped,
     unreferencedArtifacts,
@@ -674,7 +638,8 @@ export async function runSessionsCleanup(params: {
         missing,
         dmScopeRetired,
         modelRunPruned: lifecycleResult.modelRunPruned,
-        archived: lifecycleResult.archived,
+        archived: lifecycleResult.archived - (lifecycleResult.capArchived ?? 0),
+        capArchived: lifecycleResult.capArchived ?? 0,
         pruned: lifecycleResult.pruned,
         capped: lifecycleResult.capped,
         unreferencedArtifacts,

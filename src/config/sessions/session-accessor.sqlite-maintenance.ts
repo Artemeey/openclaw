@@ -321,6 +321,7 @@ export function applySessionEntryMaintenance(
       entryRemovals: [],
       stateDeletePlans: [],
       archived: 0,
+      capArchived: 0,
       modelRunPruned: 0,
       pruned: 0,
       capped: 0,
@@ -334,6 +335,7 @@ export function applySessionEntryMaintenance(
       entryRemovals: [],
       stateDeletePlans: [],
       archived: 0,
+      capArchived: 0,
       modelRunPruned: 0,
       pruned: 0,
       capped: 0,
@@ -386,6 +388,7 @@ export function applySessionEntryMaintenance(
       entryRemovals: [],
       stateDeletePlans: [],
       archived: 0,
+      capArchived: 0,
       modelRunPruned: 0,
       pruned: 0,
       capped: 0,
@@ -460,6 +463,7 @@ export function applySessionEntryMaintenance(
     remainingEntryCount -= pruned;
   }
   let capped = 0;
+  let capArchived = 0;
   if (
     shouldRunSessionEntryMaintenance({
       entryCount: remainingEntryCount,
@@ -471,6 +475,7 @@ export function applySessionEntryMaintenance(
       log: false,
       onArchived: ({ key, entry }) => {
         archived += 1;
+        capArchived += 1;
         writeSessionEntry(database, key, entry);
       },
       onRemoved: rememberRemovedEntry("capped"),
@@ -507,6 +512,7 @@ export function applySessionEntryMaintenance(
     })),
     stateDeletePlans: deletePlans,
     archived,
+    capArchived,
     modelRunPruned,
     pruned,
     capped,
@@ -557,6 +563,7 @@ async function finalizeSqliteSessionEntryMaintenancePlansWithCommit(
   };
   const committedCounts = {
     archived: plans.reduce((count, plan) => count + plan.archived, 0),
+    capArchived: plans.reduce((count, plan) => count + plan.capArchived, 0),
     modelRunPruned: 0,
     pruned: 0,
     capped: plans.reduce(

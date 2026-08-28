@@ -185,6 +185,7 @@ function renderStoreDryRunPlan(params: {
   params.runtime.log(`Would retire stale direct DM sessions: ${params.summary.dmScopeRetired}`);
   params.runtime.log(`Would prune stale model-run probes: ${params.summary.modelRunPruned}`);
   params.runtime.log(`Would archive inactive dashboard sessions: ${params.summary.archived ?? 0}`);
+  params.runtime.log(`Would archive cap overflow: ${params.summary.capArchived ?? 0}`);
   params.runtime.log(`Would prune stale: ${params.summary.pruned}`);
   params.runtime.log(`Would cap overflow: ${params.summary.capped}`);
   if (params.summary.unreferencedArtifacts?.scannedFiles) {

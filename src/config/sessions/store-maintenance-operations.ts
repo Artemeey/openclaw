@@ -24,6 +24,7 @@ export type SessionMaintenanceApplyReport = {
   beforeCount: number;
   afterCount: number;
   archived: number;
+  capArchived: number;
   modelRunPruned: number;
   pruned: number;
   capped: number;
@@ -149,6 +150,7 @@ async function applyWarnOnlyMaintenance(params: {
     beforeCount: params.beforeCount,
     afterCount: Object.keys(params.operation.store).length,
     archived: 0,
+    capArchived: 0,
     modelRunPruned: 0,
     pruned: 0,
     capped: 0,
@@ -246,10 +248,12 @@ async function applyEnforcedMaintenance(params: {
       entryCount: countAfterPrune,
       maxEntries: params.maintenance.maxEntries,
     });
+  let capArchived = 0;
   const capped = shouldRunCapMaintenance
     ? capEntryCount(params.operation.store, params.maintenance.maxEntries, {
         onArchived: () => {
           archived += 1;
+          capArchived += 1;
         },
         onRemoved: ({ entry }) => {
           rememberRemovedSessionFile(removedSessionFiles, entry);
@@ -284,6 +288,7 @@ async function applyEnforcedMaintenance(params: {
     beforeCount: params.beforeCount,
     afterCount: Object.keys(params.operation.store).length,
     archived,
+    capArchived,
     modelRunPruned,
     pruned,
     capped,

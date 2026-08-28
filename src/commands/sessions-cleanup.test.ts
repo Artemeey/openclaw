@@ -82,6 +82,7 @@ describe("sessionsCleanupCommand", () => {
         missingKeys: Set<string>;
         staleKeys: Set<string>;
         cappedKeys: Set<string>;
+        capArchivedKeys?: Set<string>;
         dmScopeRetiredKeys: Set<string>;
         modelRunPrunedKeys?: Set<string>;
       }) => {
@@ -93,6 +94,9 @@ describe("sessionsCleanupCommand", () => {
         }
         if (params.staleKeys.has(params.key)) {
           return "prune-stale";
+        }
+        if (params.capArchivedKeys?.has(params.key)) {
+          return "archive-cap";
         }
         if (params.cappedKeys.has(params.key)) {
           return "cap-overflow";
@@ -461,11 +465,13 @@ describe("sessionsCleanupCommand", () => {
             storePath: "/resolved/sessions.json",
             mode: "warn",
             dryRun: true,
-            beforeCount: 2,
-            afterCount: 1,
+            beforeCount: 3,
+            afterCount: 3,
             missing: 0,
             dmScopeRetired: 0,
             modelRunPruned: 0,
+            archived: 0,
+            capArchived: 1,
             pruned: 1,
             capped: 0,
             unreferencedArtifacts: {
@@ -480,9 +486,11 @@ describe("sessionsCleanupCommand", () => {
           beforeStore: {
             stale: { sessionId: "stale", updatedAt: 1, model: "test:opus" },
             fresh: { sessionId: "fresh", updatedAt: 2, model: "test:opus" },
+            capArchived: { sessionId: "cap-archived", updatedAt: 0, model: "test:opus" },
           },
           missingKeys: new Set<string>(),
           staleKeys: new Set(["stale"]),
+          capArchivedKeys: new Set(["capArchived"]),
           cappedKeys: new Set<string>(),
           dmScopeRetiredKeys: new Set<string>(),
           modelRunPrunedKeys: new Set<string>(),
@@ -502,6 +510,7 @@ describe("sessionsCleanupCommand", () => {
     expectLogsToInclude(logs, "Session store: /resolved/openclaw-agent.sqlite");
     expectLogsToInclude(logs, "Planned session actions:");
     expectLogsToInclude(logs, "Would prune unreferenced artifacts: 2");
+    expectLogsToInclude(logs, "Would archive cap overflow: 1");
     const tableHeaderLines = logs.filter((line) => line.includes("Action") && line.includes("Key"));
     expect(tableHeaderLines.length).toBeGreaterThan(0);
     const freshKeepLines = logs.filter((line) => line.includes("fresh") && line.includes("keep"));
@@ -510,6 +519,7 @@ describe("sessionsCleanupCommand", () => {
       (line) => line.includes("stale") && line.includes("prune-stale"),
     );
     expect(stalePruneLines.length).toBeGreaterThan(0);
+    expectLogsToInclude(logs, "archive-cap");
   });
 
   it("renders a dry-run summary grouped by session label", async () => {
