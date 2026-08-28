@@ -1,4 +1,4 @@
-name: pnpm 12 frozen-candidate replay
+name: pnpm 12 explicit plugin recovery
 
 on:
   push:
@@ -8,39 +8,140 @@ on:
 permissions:
   actions: read
   contents: read
-  packages: read
-  pull-requests: read
 
 jobs:
-  replay:
+  recovery:
     if: github.repository == 'openclaw/openclaw' && !github.event.deleted
-    uses: openclaw/openclaw/.github/workflows/package-acceptance.yml@6fec2bca44e5701f460ca331c0b5dc6bd5b52397
-    with:
-      workflow_ref: 6fec2bca44e5701f460ca331c0b5dc6bd5b52397
-      source: artifact
-      artifact_run_id: "33141189863"
-      artifact_run_attempt: "1"
-      artifact_id: "9674172823"
-      artifact_name: package-under-test-33141189863-1
-      artifact_digest: 63dba7a58aa4d443ac7634de177b3178887ca71040b251547ed1712e67bed2f4
-      package_file_name: openclaw-current.tgz
-      package_source_sha: 570ee21030ad2523baeac1d99e9e59829e1f1c05
-      package_version: "2026.8.1"
-      package_sha256: cebada2e3a240cd4b7fa80ccf01783dcb4376fea3a1b5da55cf202e38a08a5f4
-      prepublish_plugin_registry_json: >-
-        {
-          "prepublishPluginRegistryArtifactName": "docker-e2e-prepublish-plugin-registry-33141189863-1",
-          "prepublishPluginRegistryArtifactId": "9674278593",
-          "prepublishPluginRegistryArtifactDigest": "aecb3d3300b6648956d1926c71a9dd64c8f429afdefa3c785952992f59e2eabb",
-          "prepublishPluginRegistryArtifactRunId": "33141189863",
-          "prepublishPluginRegistryArtifactRunAttempt": "1",
-          "prepublishPluginRegistryManifestSha256": "c2838aba9b77664c1d93c26d95ce2ca247e5cbbf97b6a19ac900e46dc1858886"
-        }
-      shared_image_policy: no-push-artifact
-      shared_image_artifact_namespace: pnpm12-replay
-      suite_profile: custom
-      docker_lanes: update-restart-auth
-      published_upgrade_survivor_baseline: openclaw@2026.7.1-2
-      published_upgrade_survivor_scenarios: base
-      telegram_mode: none
-      advisory: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout reviewed harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 6fec2bca44e5701f460ca331c0b5dc6bd5b52397
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup trusted Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          cache-mode: restore
+          node-version: "24.19.0"
+          install-bun: "false"
+          install-deps: "true"
+
+      - name: Checkout immutable proof driver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .proof-source
+          sparse-checkout: pnpm12-explicit-plugin-recovery.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Checkout original package source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 570ee21030ad2523baeac1d99e9e59829e1f1c05
+          path: .candidate-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate original artifact identities
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_artifact() {
+            local id="$1" name="$2" digest="$3"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}" |
+              jq -e --arg id "$id" --arg name "$name" --arg digest "sha256:$digest" '
+                (.id | tostring) == $id and .name == $name and
+                .expired == false and .digest == $digest and
+                .workflow_run.id == 33141189863
+              ' >/dev/null
+          }
+          verify_artifact 9674172823 package-under-test-33141189863-1 \
+            63dba7a58aa4d443ac7634de177b3178887ca71040b251547ed1712e67bed2f4
+          verify_artifact 9674278593 docker-e2e-prepublish-plugin-registry-33141189863-1 \
+            aecb3d3300b6648956d1926c71a9dd64c8f429afdefa3c785952992f59e2eabb
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/33141189863/attempts/1" |
+            jq -e '.id == 33141189863 and .run_attempt == 1' >/dev/null
+
+      - name: Download original core artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: "9674172823"
+          path: ${{ runner.temp }}/pnpm12-frozen/core
+          run-id: "33141189863"
+          github-token: ${{ github.token }}
+
+      - name: Download original plugin registry
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          artifact-ids: "9674278593"
+          path: ${{ runner.temp }}/pnpm12-frozen/registry
+          run-id: "33141189863"
+          github-token: ${{ github.token }}
+
+      - name: Run separate explicit plugin recovery
+        id: recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 6fec2bca44e5701f460ca331c0b5dc6bd5b52397
+          test "$(git -C .candidate-source rev-parse HEAD)" = 570ee21030ad2523baeac1d99e9e59829e1f1c05
+          test ! -e pnpm12-explicit-plugin-recovery.sh
+          cp .proof-source/pnpm12-explicit-plugin-recovery.sh pnpm12-explicit-plugin-recovery.sh
+          sha256sum pnpm12-explicit-plugin-recovery.sh >> "$GITHUB_STEP_SUMMARY"
+          bash pnpm12-explicit-plugin-recovery.sh \
+            "$RUNNER_TEMP/pnpm12-frozen/core/openclaw-current.tgz" \
+            "$RUNNER_TEMP/pnpm12-frozen/registry" \
+            "$GITHUB_WORKSPACE/.candidate-source" \
+            "$RUNNER_TEMP/pnpm12-explicit-recovery-proof" \
+            > "$RUNNER_TEMP/pnpm12-recovery-driver.log" 2>&1
+
+      - name: Publish bounded host driver diagnostics
+        if: always() && steps.recovery.outcome != 'skipped'
+        env:
+          DRIVER_LOG: ${{ runner.temp }}/pnpm12-recovery-driver.log
+          PUBLIC_DIR: ${{ runner.temp }}/pnpm12-explicit-recovery-proof/public
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --import ./scripts/tsx.mjs --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import {redactSensitiveText} from './src/logging/redact.ts';
+          const file = process.env.DRIVER_LOG;
+          let text = 'Host driver log unavailable; inspect the failed setup step.\n';
+          if (fs.existsSync(file)) {
+            const stat = fs.lstatSync(file);
+            if (!stat.isFile() || stat.nlink !== 1 || stat.size > 1024 * 1024) {
+              text = 'Host driver log unavailable: unsafe or over the 1 MiB bound.\n';
+            } else {
+              text = redactSensitiveText(fs.readFileSync(file, 'utf8'), {mode:'tools'});
+              const lines = text.split('\n');
+              const kept = [];
+              const notice = '[Earlier redacted host log lines omitted by the 16 KiB bound.]\n';
+              let bytes = Buffer.byteLength(notice);
+              for (let index = lines.length - 1; index >= 0; index--) {
+                bytes += Buffer.byteLength(lines[index]) + 1;
+                if (bytes > 16 * 1024) break;
+                kept.push(lines[index]);
+              }
+              text = (kept.length < lines.length ? notice : '') + kept.reverse().join('\n');
+            }
+          }
+          fs.mkdirSync(process.env.PUBLIC_DIR, {recursive:true});
+          fs.writeFileSync(path.join(process.env.PUBLIC_DIR, 'driver.log'), text, {flag:'wx',mode:0o600});
+          NODE
+
+      - name: Upload sanitized recovery evidence only
+        if: always() && steps.recovery.outcome != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pnpm12-explicit-plugin-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pnpm12-explicit-recovery-proof/public/
+          if-no-files-found: error
