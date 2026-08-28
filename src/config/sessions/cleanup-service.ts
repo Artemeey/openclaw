@@ -423,7 +423,7 @@ async function previewStoreCleanup(params: {
         },
       })
     : 0;
-  const archived = archiveStaleDashboardEntries(
+  let archived = archiveStaleDashboardEntries(
     previewStore,
     params.maintenance.archiveDashboardAfterMs,
     {
@@ -446,7 +446,11 @@ async function previewStoreCleanup(params: {
     log: false,
     preserveKeys: preserveSessionKeys,
     preserveRecentMs: params.maintenance.preserveRecentMs,
-    onCapped: ({ key }) => {
+    onArchived: ({ key }) => {
+      archived += 1;
+      archivedKeys.add(key);
+    },
+    onRemoved: ({ key }) => {
       cappedKeys.add(key);
     },
   });

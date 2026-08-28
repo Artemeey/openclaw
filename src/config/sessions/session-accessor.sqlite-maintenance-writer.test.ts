@@ -36,7 +36,7 @@ afterEach(() => {
 it("releases the store writer before maintenance archive sizing completes", async () => {
   const tempDir = tempDirs.make("openclaw-session-maintenance-writer-");
   const storePath = path.join(tempDir, "agents", "main", "sessions", "sessions.json");
-  const removedKey = "agent:main:maintenance-sizing-removed";
+  const removedKey = "agent:main:subagent:maintenance-sizing-removed";
   const writerKey = "agent:main:maintenance-sizing-writer";
   replaceSessionEntrySync(
     { sessionKey: removedKey, storePath },

@@ -570,14 +570,15 @@ function selectSessionEntryCapVictims(
   preserveKeys?: ReadonlySet<string>,
   preserveRecentMs?: number | null,
 ): string[] {
-  const keys = Object.keys(store);
+  const keys = Object.keys(store).filter((key) => store[key]?.archivedAt === undefined);
   const overflow = keys.length - Math.max(0, maxEntries);
   if (overflow <= 0) {
     return [];
   }
 
-  // All persisted rows consume the cap, but protected rows are never victims. If protected rows
-  // alone exceed the cap, maintenance removes every eligible row and leaves the excess intact.
+  // Only unarchived rows consume the browsing cap. Protected rows are never victims. If protected
+  // rows alone exceed the cap, maintenance archives or removes every eligible row and leaves the
+  // excess intact.
   const eligibleKeys = keys.filter(
     (key) =>
       !shouldPreserveMaintenanceEntry({
@@ -652,9 +653,10 @@ export function getActiveSessionMaintenanceWarning(params: {
 }
 
 /**
- * Cap the total store to N entries by removing the oldest eviction-eligible rows.
- * Protected rows count toward the cap but are never removed, so a store whose protected rows
- * alone exceed the cap remains above it until protection is released or rows are deleted.
+ * Cap the unarchived store to N entries. Ordinary sessions are archived; synthetic runtime rows
+ * remain disposable and are removed. Protected rows count toward the cap but are never changed,
+ * so a store whose protected rows alone exceed the cap remains above it until protection is
+ * released.
  * Mutates `store` in-place.
  */
 export function capEntryCount(
@@ -662,29 +664,49 @@ export function capEntryCount(
   maxEntries: number,
   opts: {
     log?: boolean;
-    onCapped?: (params: { key: string; entry: SessionEntry }) => void;
+    nowMs?: number;
+    onArchived?: (params: { key: string; entry: SessionEntry }) => void;
+    onRemoved?: (params: { key: string; entry: SessionEntry }) => void;
     preserveKeys?: ReadonlySet<string>;
     preserveRecentMs?: number | null;
   } = {},
 ): number {
-  const toRemove = selectSessionEntryCapVictims(
+  const victims = selectSessionEntryCapVictims(
     store,
     maxEntries,
     opts.preserveKeys,
     opts.preserveRecentMs,
   );
-  if (toRemove.length === 0) {
+  if (victims.length === 0) {
     return 0;
   }
-  for (const key of toRemove) {
+  const now = opts.nowMs ?? Date.now();
+  let archived = 0;
+  let removed = 0;
+  for (const key of victims) {
     const entry = store[key];
-    if (entry) {
-      opts.onCapped?.({ key, entry });
+    if (!entry) {
+      continue;
     }
-    delete store[key];
+    if (isSyntheticSessionMaintenanceKey(key)) {
+      opts.onRemoved?.({ key, entry });
+      delete store[key];
+      removed += 1;
+    } else {
+      entry.archivedAt = now;
+      opts.onArchived?.({ key, entry });
+      archived += 1;
+    }
   }
   if (opts.log !== false) {
-    log.info("capped session entry count", { removed: toRemove.length, maxEntries });
+    log.info("capped unarchived session entry count", { archived, removed, maxEntries });
   }
-  return toRemove.length;
+  return archived + removed;
+}
+
+export function countUnarchivedSessionEntries(store: Record<string, SessionEntry>): number {
+  return Object.values(store).reduce(
+    (count, entry) => count + (entry.archivedAt === undefined ? 1 : 0),
+    0,
+  );
 }
