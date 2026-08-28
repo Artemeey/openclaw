@@ -60,7 +60,10 @@ const sessionEntryListCaches = new WeakMap<DatabaseSync, SqliteSessionEntryCache
 /** Selects entry_json without the two fields no list consumer reads. json_remove is
  *  the SQLite primitive that keeps those bytes out of the row before they reach the
  *  parser; the canonical document on disk is unchanged. */
-const LIST_ENTRY_JSON = sql<string>`json_remove(entry_json, '$.skillsSnapshot', '$.systemPromptReport')`;
+const LIST_ENTRY_JSON =
+  /* kysely-allow-raw: json_remove has no Kysely builder form, and the column must stay
+     typed as text so parseSessionEntryJson keeps its row contract. */
+  sql<string>`json_remove(entry_json, '$.skillsSnapshot', '$.systemPromptReport')`;
 
 function cachesFor(projection: SessionEntrySnapshotProjection) {
   return projection === "list" ? sessionEntryListCaches : sessionEntryCaches;
