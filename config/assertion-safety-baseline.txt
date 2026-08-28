@@ -190,7 +190,6 @@ extensions/codex/src/app-server/dynamic-tools.ts	6
 extensions/codex/src/app-server/effective-mcp-catalog.ts	1
 extensions/codex/src/app-server/elicitation-bridge.ts	1
 extensions/codex/src/app-server/event-projector-reasoning.ts	1
-extensions/codex/src/app-server/event-projector-snapshot.ts	2
 extensions/codex/src/app-server/event-projector-tool-items.ts	1
 extensions/codex/src/app-server/event-projector-tool-transcript.ts	4
 extensions/codex/src/app-server/event-projector-values.ts	2
@@ -2872,7 +2871,6 @@ src/gateway/local-request-context.ts	2
 src/gateway/managed-image-attachments.ts	8
 src/gateway/mcp-app-operations.ts	3
 src/gateway/mcp-app-reconstruction.ts	3
-src/gateway/mcp-app-standalone.ts	7
 src/gateway/mcp-grant-store.ts	2
 src/gateway/mcp-http.handlers.ts	4
 src/gateway/mcp-http.request.ts	2
@@ -3358,7 +3356,6 @@ src/media-understanding/runtime.ts	2
 src/media-understanding/shared.ts	2
 src/media/audio-transcode.ts	1
 src/media/bounded-read-file.ts	2
-src/media/configured-max-bytes.ts	3
 src/media/fetch.ts	2
 src/media/input-files.ts	1
 src/media/local-media-access.ts	1
@@ -3445,7 +3442,7 @@ src/plugin-sdk/provider-auth-result.ts	4
 src/plugin-sdk/provider-auth-runtime.ts	1
 src/plugin-sdk/provider-auth.ts	1
 src/plugin-sdk/provider-catalog-live-runtime.ts	2
-src/plugin-sdk/provider-catalog-shared.ts	4
+src/plugin-sdk/provider-catalog-shared.ts	1
 src/plugin-sdk/provider-enable-config.ts	2
 src/plugin-sdk/provider-entry.ts	3
 src/plugin-sdk/provider-onboard.ts	6

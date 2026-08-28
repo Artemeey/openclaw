@@ -2034,6 +2034,7 @@ describe("gateway server chat", () => {
               agentId,
               snapshot: catalogSnapshot,
               metadataSnapshot: pluginMetadataSnapshot,
+              pluginRegistry: undefined,
               preparedAuthStore: requirePreparedAuthStore(agentId),
               ...(profileId ? { preferredProfileId: profileId } : {}),
               ...(profileId && (profileSource === "user" || legacyUserProfile)
@@ -2095,6 +2096,7 @@ describe("gateway server chat", () => {
             agentId: "work",
             snapshot: catalogSnapshot,
             metadataSnapshot: pluginMetadataSnapshot,
+            pluginRegistry: undefined,
             preparedAuthStore: requirePreparedAuthStore("work"),
             preferredProfileId: "openai:expired",
           }).evaluateEntry(subscriptionRoute, catalogSnapshot.routeVariants);

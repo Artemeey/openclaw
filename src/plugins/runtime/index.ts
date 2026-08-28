@@ -279,7 +279,7 @@ export function createPluginRuntime(_options: CreatePluginRuntimeOptions = {}): 
     nodes: _options.nodes ?? createUnavailableNodesRuntime(),
     sandbox: createRuntimeSandbox(agent),
     worktrees: createRuntimeWorktrees(),
-    system: createRuntimeSystem(),
+    system: _options.system ?? createRuntimeSystem(),
     media: createRuntimeMedia(),
     webSearch: {
       listProviders: listWebSearchProviders,

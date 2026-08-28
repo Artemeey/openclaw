@@ -15,7 +15,6 @@ import {
   createPluginLoaderModuleCacheKey,
   buildPluginLoaderJitiOptions,
   resolvePluginLoaderModuleConfig,
-  resolvePluginLoaderTryNative,
   resolvePluginRuntimeModulePathWithDiagnostics,
   type PluginSdkResolutionPreference,
 } from "./sdk-alias.js";
@@ -1603,103 +1602,85 @@ describe("plugin sdk alias helpers", () => {
     expect(options.nativeModules).toEqual(["native-addon", "openclaw"]);
   });
 
-  it("uses transpiled module loads for source TypeScript plugin entries", () => {
-    expect(resolvePluginLoaderTryNative("/repo/dist/plugins/runtime/index.js")).toBe(true);
-    expect(
-      resolvePluginLoaderTryNative(
-        `/repo/${bundledPluginFile("discord", "src/channel.runtime.ts")}`,
-      ),
-    ).toBe(false);
-  });
-
-  it("disables native module loads under Bun even for built JavaScript entries", () => {
+  it.each([
+    {
+      name: "uses transpiled module loads for source TypeScript plugin entries",
+      bun: false,
+      windows: false,
+      preferBuiltDist: false,
+      entries: [
+        { file: "dist/plugins/runtime/index.js", native: true },
+        { file: bundledPluginFile("discord", "src/channel.runtime.ts"), native: false },
+      ],
+    },
+    {
+      name: "disables native module loads under Bun even for built JavaScript entries",
+      bun: true,
+      windows: false,
+      preferBuiltDist: false,
+      entries: [
+        { file: "dist/plugins/runtime/index.js", native: false },
+        { file: bundledDistPluginFile("browser", "index.js"), native: false },
+      ],
+    },
+    {
+      name: "enables native module loads on Windows for built JavaScript entries",
+      bun: false,
+      windows: true,
+      preferBuiltDist: false,
+      entries: [
+        { file: "dist/plugins/runtime/index.js", native: true },
+        { file: bundledDistPluginFile("browser", "index.js"), native: true },
+      ],
+    },
+    {
+      name: "keeps plugin loader dist shortcuts on native module loading on Windows for JS entries",
+      bun: false,
+      windows: true,
+      preferBuiltDist: true,
+      entries: [
+        { file: bundledDistPluginFile("browser", "index.js"), native: true },
+        { file: bundledDistPluginFile("browser", "helper.ts"), native: false },
+      ],
+    },
+    {
+      name: "prefers native module loading for bundled plugin dist .js modules, keeps .ts on aliased path",
+      bun: false,
+      windows: false,
+      preferBuiltDist: true,
+      entries: [
+        { file: bundledDistPluginFile("browser", "index.js"), native: true },
+        { file: bundledDistPluginFile("browser", "helper.ts"), native: false },
+        { file: "dist/plugins/runtime/index.js", native: true },
+      ],
+    },
+  ])("$name", ({ bun, windows, preferBuiltDist, entries }) => {
+    const fixture = createPluginSdkAliasFixture();
     const originalVersions = process.versions;
+    const originalPlatform = process.platform;
     Object.defineProperty(process, "versions", {
       configurable: true,
-      value: {
-        ...originalVersions,
-        bun: "1.2.0",
-      },
+      value: bun ? { ...originalVersions, bun: "1.2.0" } : originalVersions,
     });
-
-    try {
-      expect(resolvePluginLoaderTryNative("/repo/dist/plugins/runtime/index.js")).toBe(false);
-      expect(
-        resolvePluginLoaderTryNative(`/repo/${bundledDistPluginFile("browser", "index.js")}`),
-      ).toBe(false);
-    } finally {
-      Object.defineProperty(process, "versions", {
-        configurable: true,
-        value: originalVersions,
-      });
-    }
-  });
-
-  it("enables native module loads on Windows for built JavaScript entries", () => {
-    const originalPlatform = process.platform;
     Object.defineProperty(process, "platform", {
       configurable: true,
-      value: "win32",
+      value: windows ? "win32" : originalPlatform,
     });
-
     try {
-      expect(resolvePluginLoaderTryNative("/repo/dist/plugins/runtime/index.js")).toBe(true);
-      expect(
-        resolvePluginLoaderTryNative(`/repo/${bundledDistPluginFile("browser", "index.js")}`),
-      ).toBe(true);
+      for (const entry of entries) {
+        expect(
+          resolvePluginLoaderModuleConfig({
+            modulePath: path.join(fixture.root, entry.file),
+            argv1: path.join(fixture.root, "openclaw.mjs"),
+            moduleUrl: pathToFileURL(path.join(fixture.root, "src/plugins/loader.ts")).href,
+            preferBuiltDist,
+          }).tryNative,
+        ).toBe(entry.native);
+      }
     } finally {
-      Object.defineProperty(process, "platform", {
-        configurable: true,
-        value: originalPlatform,
-      });
+      Object.defineProperty(process, "versions", { configurable: true, value: originalVersions });
+      Object.defineProperty(process, "platform", { configurable: true, value: originalPlatform });
     }
-  });
-
-  it("keeps plugin loader dist shortcuts on native module loading on Windows for JS entries", () => {
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "platform", {
-      configurable: true,
-      value: "win32",
-    });
-
-    try {
-      expect(
-        resolvePluginLoaderTryNative(`/repo/${bundledDistPluginFile("browser", "index.js")}`, {
-          preferBuiltDist: true,
-        }),
-      ).toBe(true);
-      expect(
-        resolvePluginLoaderTryNative(`/repo/${bundledDistPluginFile("browser", "helper.ts")}`, {
-          preferBuiltDist: true,
-        }),
-      ).toBe(false);
-    } finally {
-      Object.defineProperty(process, "platform", {
-        configurable: true,
-        value: originalPlatform,
-      });
-    }
-  });
-
-  it("prefers native module loading for bundled plugin dist .js modules, keeps .ts on aliased path", () => {
-    // Built .js/.mjs/.cjs files under dist/extensions/ should now delegate
-    // to native loading on Node for compiled artifacts, avoiding the slow jiti transform path.
-    expect(
-      resolvePluginLoaderTryNative(`/repo/${bundledDistPluginFile("browser", "index.js")}`, {
-        preferBuiltDist: true,
-      }),
-    ).toBe(true);
-    // TypeScript source files still need jiti's transform pipeline.
-    expect(
-      resolvePluginLoaderTryNative(`/repo/${bundledDistPluginFile("browser", "helper.ts")}`, {
-        preferBuiltDist: true,
-      }),
-    ).toBe(false);
-    expect(
-      resolvePluginLoaderTryNative("/repo/dist/plugins/runtime/index.js", {
-        preferBuiltDist: true,
-      }),
-    ).toBe(true);
   });
 
   it("keeps plugin loader module cache keys stable across alias insertion order", () => {

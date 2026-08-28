@@ -28,6 +28,7 @@ describe("models.list provider catalog outcomes", () => {
       workspaceDir: "/tmp/models-list-provider-outcomes-workspace",
       config,
       authModes: {},
+      pluginRegistry: undefined,
       authStore: emptyAuthStore,
       metadataSnapshot,
       authMaterializations: [],
@@ -87,6 +88,7 @@ describe("models.list provider catalog outcomes", () => {
       ],
     });
     const projector = createGatewayAgentModelCatalogProjector({
+      pluginRegistry: undefined,
       cfg: config,
       agentId: "main",
       snapshot,
@@ -163,6 +165,7 @@ describe("models.list provider catalog outcomes", () => {
       ],
     };
     const projector = createGatewayAgentModelCatalogProjector({
+      pluginRegistry: undefined,
       cfg: config,
       agentId: "main",
       snapshot,

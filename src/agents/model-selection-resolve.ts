@@ -9,7 +9,7 @@ import { resolveAgentModelFallbacksOverride } from "./agent-scope.js";
 import type { ModelCatalogEntry } from "./model-catalog.types.js";
 import type { ModelRef } from "./model-ref-shared.js";
 import {
-  buildModelAliasIndex,
+  buildModelAliasIndexCore as buildModelAliasIndex,
   createModelManifestPluginContext,
   getModelRefStatus,
   resolveAllowedModelRefFromAliasIndex,
@@ -17,7 +17,7 @@ import {
 } from "./model-selection-shared.js";
 
 export {
-  buildModelAliasIndex,
+  buildModelAliasIndexCore as buildModelAliasIndex,
   getModelRefStatus,
   normalizeModelSelection,
   resolveConfiguredModelRef,

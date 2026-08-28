@@ -287,6 +287,7 @@ function requestModelsList(params: {
       workspaceDir: agentDir,
       config,
       authModes: params.preparedAuthModes ?? {},
+      pluginRegistry: undefined,
       authStore:
         getPreparedRuntimeAuthProfileStoreSnapshot(agentDir) ??
         loadAuthProfileStoreWithoutExternalProfiles(agentDir, { allowKeychainPrompt: false }),

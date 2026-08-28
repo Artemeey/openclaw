@@ -234,21 +234,6 @@ type HarnessAuthProfileSelection = {
   authProfileMode?: string;
 };
 
-function resolveProfileAuthFromStore(params: { agentDir: string; profileId: string | undefined }): {
-  provider?: string;
-  mode?: string;
-} {
-  const profileId = params.profileId?.trim();
-  if (!profileId) {
-    return {};
-  }
-  const credential = ensureAuthProfileStore(params.agentDir, {
-    allowKeychainPrompt: false,
-    externalCliProfileIds: [profileId],
-  }).profiles[profileId];
-  return { provider: credential?.provider, mode: credential?.type };
-}
-
 function resolveHarnessAuthProfileSelection(params: {
   config: OpenClawConfig;
   agentDir: string;
@@ -263,17 +248,25 @@ function resolveHarnessAuthProfileSelection(params: {
   providerAuthAliasesEnabled?: boolean;
   allowHarnessAuthProfileForwarding: boolean;
 }): HarnessAuthProfileSelection {
+  // External auth hooks run again for each read. A retained plugin graph does
+  // not restore the config and workspace facts omitted by its caller.
+  const storeOptions = {
+    config: params.config,
+    workspaceDir: params.workspaceDir,
+    pluginMetadataSnapshot: params.metadataSnapshot,
+    allowKeychainPrompt: false,
+  };
   const sessionAuthProfileId = params.sessionAuthProfileId?.trim();
   if (sessionAuthProfileId) {
-    const profileAuth = resolveProfileAuthFromStore({
-      agentDir: params.agentDir,
-      profileId: sessionAuthProfileId,
-    });
+    const credential = ensureAuthProfileStore(params.agentDir, {
+      ...storeOptions,
+      externalCliProfileIds: [sessionAuthProfileId],
+    }).profiles[sessionAuthProfileId];
     return {
       authProfileId: sessionAuthProfileId,
       authProfileIdSource: params.sessionAuthProfileSource,
-      authProfileProvider: profileAuth.provider ?? params.authProfileProvider,
-      authProfileMode: profileAuth.mode,
+      authProfileProvider: credential?.provider ?? params.authProfileProvider,
+      authProfileMode: credential?.type,
     };
   }
 
@@ -281,30 +274,20 @@ function resolveHarnessAuthProfileSelection(params: {
     return { authProfileProvider: params.authProfileProvider };
   }
 
-  const runtimeAuthPlan = buildAgentRuntimeAuthPlan({
-    provider: params.provider,
-    authProfileProvider: params.authProfileProvider,
-    config: params.config,
-    workspaceDir: params.workspaceDir,
-    ...(params.metadataSnapshot ? { metadataSnapshot: params.metadataSnapshot } : {}),
-    providerAuthAliasesEnabled: params.providerAuthAliasesEnabled,
-    harnessId: params.harnessId,
-    harnessRuntime: params.harnessRuntime,
-    allowHarnessAuthProfileForwarding: params.allowHarnessAuthProfileForwarding,
-  });
-  const harnessAuthProvider = runtimeAuthPlan.harnessAuthProvider;
+  const { harnessAuthProvider } = buildAgentRuntimeAuthPlan(params);
   if (!harnessAuthProvider) {
     return { authProfileProvider: params.authProfileProvider };
   }
 
   const store = ensureAuthProfileStore(params.agentDir, {
-    allowKeychainPrompt: false,
+    ...storeOptions,
     externalCliProviderIds: [harnessAuthProvider],
   });
   const authProfileId = resolveAuthProfileOrder({
     cfg: params.config,
     store,
     provider: harnessAuthProvider,
+    authAliasLookupParams: params,
   })[0];
 
   return authProfileId
@@ -532,7 +515,7 @@ export function runAgentAttempt(params: {
     stream: string;
     data?: Record<string, unknown>;
     sessionKey?: string;
-  }) => void;
+  }) => void | Promise<void>;
   deferTerminalLifecycle?: boolean;
   authProfileProvider: string;
   sessionStore?: Record<string, SessionEntry>;
@@ -555,6 +538,13 @@ export function runAgentAttempt(params: {
     authProfileIdSource?: "auto" | "user";
   }) => void;
 }) {
+  const onRuntimeActivity = (info: { phase: string }) => {
+    // CLI preparation and child launch do not prove a native turn. Parsed
+    // assistant/tool activity does, even when the backend omits lifecycle events.
+    if (info.phase === "assistant_output_started" || info.phase === "tool_execution_started") {
+      void params.onAgentEvent({ stream: "lifecycle", data: { phase: "start" } });
+    }
+  };
   const sessionAuthProfileId = params.sessionEntry?.authProfileOverride?.trim();
   const sessionAuthProfileSource = resolveSessionAuthProfileOverrideSource(params.sessionEntry);
   // An explicit session choice owns the conversation. Otherwise the profile
@@ -694,6 +684,7 @@ export function runAgentAttempt(params: {
           agentId: params.sessionAgentId,
           modelId: params.modelOverride,
           authProfileId: selectedAuthProfile?.id,
+          metadataSnapshot: params.metadataSnapshot,
         })
       : undefined;
   const cliExecutionProvider = isRawModelRun
@@ -781,6 +772,8 @@ export function runAgentAttempt(params: {
         authProfileProvider: params.authProfileProvider,
         config: params.cfg,
         agentDir: params.agentDir,
+        workspaceDir: params.workspaceDir,
+        metadataSnapshot: params.metadataSnapshot,
         selected: harnessAuthSelection,
       })
     : undefined;
@@ -953,6 +946,7 @@ export function runAgentAttempt(params: {
             runId: params.runId,
             lifecycleGeneration: params.lifecycleGeneration,
             onExecutionStarted: params.opts.onExecutionStarted,
+            onExecutionPhase: onRuntimeActivity,
             lane: params.opts.lane,
             extraSystemPrompt: params.opts.extraSystemPrompt,
             inputProvenance: params.opts.inputProvenance,
@@ -1261,6 +1255,7 @@ export function runAgentAttempt(params: {
     disableTools,
     allowEmptyAssistantReplyAsSilent: isSubagentLane || isSubagentAnnounceHandoff,
     onAgentEvent: params.onAgentEvent,
+    onExecutionPhase: onRuntimeActivity,
     deferTerminalLifecycle: params.deferTerminalLifecycle,
     suppressNextUserMessagePersistence: params.suppressPromptPersistenceOnRetry === true,
     userTurnTranscriptRecorder: params.userTurnTranscriptRecorder,

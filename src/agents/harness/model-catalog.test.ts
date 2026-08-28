@@ -138,8 +138,7 @@ describe("agent harness model catalog", () => {
       agentId: "main",
       agentDir: "/tmp/main-agent",
       workspaceDir: "/tmp/workspace",
-      defaultProvider: "anthropic",
-      defaultModel: "openai/gpt-5.6-sol",
+      modelRef: { provider: "openai", model: "gpt-5.6-sol" },
       snapshot,
       pluginRegistry: registryWithCatalog(loadModelCatalog as never),
     });
@@ -186,8 +185,7 @@ describe("agent harness model catalog", () => {
       agentId: "main",
       agentDir: "/tmp/main-agent",
       workspaceDir: "/tmp/workspace",
-      defaultProvider: "anthropic",
-      defaultModel: "openai/gpt-5.6-sol",
+      modelRef: { provider: "openai", model: "gpt-5.6-sol" },
       snapshot,
       pluginRegistry: registryWithCatalog(async () => {
         throw new Error("model/list unavailable");

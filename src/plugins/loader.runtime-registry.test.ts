@@ -38,6 +38,7 @@ import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.
 import { normalizeProviderModelIdWithPlugin } from "./provider-runtime.js";
 import { createEmptyPluginRegistry } from "./registry.js";
 import { getActivePluginRegistry, setActivePluginRegistry } from "./runtime.js";
+import { createRuntimeSystem } from "./runtime/runtime-system.js";
 import type { PluginRuntime } from "./runtime/types.js";
 
 afterEach(() => {
@@ -52,12 +53,16 @@ it("keeps an empty scoped handle load from replacing the root registry", () => {
   expect(getActivePluginRegistry()).toBe(root);
 });
 
-it("keeps injected instance runtime surfaces independent of the broad runtime module", () => {
+it("keeps instance system commands independent of the broad runtime module", async () => {
   const gateway = {} as PluginRuntime["gateway"];
   const nodes = {} as PluginRuntime["nodes"];
   const subagent = {} as PluginRuntime["subagent"];
+  const runtimeModule: { value?: typeof import("./runtime/index.js") } = {};
   const loadPluginModule = vi.fn((_modulePath: string): unknown => {
-    throw new Error("broad runtime should stay lazy");
+    if (!runtimeModule.value) {
+      throw new Error("broad runtime should stay lazy");
+    }
+    return runtimeModule.value;
   });
   const runtime = createLazyPluginRuntime({
     loadPluginModule,
@@ -67,8 +72,61 @@ it("keeps injected instance runtime surfaces independent of the broad runtime mo
   expect(runtime.gateway).toBe(gateway);
   expect(runtime.nodes).toBe(nodes);
   expect(runtime.subagent).toBe(subagent);
+  const system = runtime.system;
+  const otherRuntime = createLazyPluginRuntime({ loadPluginModule });
+  expect(otherRuntime.system).not.toBe(system);
+  await expect(
+    system.runCommandWithTimeout(
+      [process.execPath, "-e", "process.stdout.write('lazy-system-marker')"],
+      { timeoutMs: 1_000 },
+    ),
+  ).resolves.toMatchObject({ code: 0, stdout: "lazy-system-marker", stderr: "" });
+  const formatHint = () => "instance-owned-hint";
+  system.formatNativeDependencyHint = formatHint;
+  expect(otherRuntime.system.formatNativeDependencyHint).not.toBe(formatHint);
+  const descriptor = Object.getOwnPropertyDescriptor(runtime, "system");
+  expect(descriptor).toMatchObject({
+    configurable: true,
+    enumerable: true,
+    get: expect.any(Function),
+    set: expect.any(Function),
+  });
+  expect(Object.keys(runtime)).toContain("system");
   expect(loadPluginModule).not.toHaveBeenCalled();
+
+  runtimeModule.value = await import("./runtime/index.js");
+  expect(runtime.version).toEqual(expect.any(String));
+  expect(runtime.system).toBe(system);
+  expect(runtime.system.formatNativeDependencyHint({ packageName: "fixture" })).toBe(
+    "instance-owned-hint",
+  );
+  expect(descriptor?.get?.call(runtime)).toBe(system);
+  expect(loadPluginModule).toHaveBeenCalledOnce();
 });
+
+it.each(["define", "delete"] as const)(
+  "preserves a system property %s before its first lazy read",
+  async (operation) => {
+    const runtimeModule = await import("./runtime/index.js");
+    const loadPluginModule = vi.fn((_modulePath: string): unknown => runtimeModule);
+    const runtime = createLazyPluginRuntime({ loadPluginModule });
+    const replacement = createRuntimeSystem();
+    if (operation === "define") {
+      expect(
+        Reflect.defineProperty(runtime, "system", {
+          configurable: true,
+          enumerable: true,
+          writable: true,
+          value: replacement,
+        }),
+      ).toBe(true);
+    } else {
+      expect(Reflect.deleteProperty(runtime, "system")).toBe(true);
+    }
+    expect(runtime.system).toBe(operation === "define" ? replacement : undefined);
+    expect(loadPluginModule).toHaveBeenCalledOnce();
+  },
+);
 
 describe("cached plugin load failures", () => {
   it.each([

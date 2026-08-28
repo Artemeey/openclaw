@@ -40,6 +40,13 @@ import { AuthStorage } from "./sessions/auth-storage.js";
 
 const PROVIDER_ID = "worker-catalog-fixture";
 const HARNESS_ID = "worker-catalog-fixture-harness";
+// Full browse retains the prepared harness row while the auth-specific rows change.
+const UNAVAILABLE_HARNESS_MODEL = {
+  provider: PROVIDER_ID,
+  id: "account-scoped-model",
+  name: "Account scoped model",
+  available: false,
+};
 const SHARED_AUTH_PROVIDER_ID = `${PROVIDER_ID}-shared-auth`;
 const PLUGIN_ID = "worker-catalog-fixture";
 const PROFILE_ID = `${SHARED_AUTH_PROVIDER_ID}:named`;
@@ -528,7 +535,10 @@ describe("prepared model catalog worker boundary", () => {
     const added = await projectModels();
     expect(added).toMatchObject({
       result: {
-        models: [expect.objectContaining({ id: "durable-model", available: true })],
+        models: [
+          UNAVAILABLE_HARNESS_MODEL,
+          expect.objectContaining({ id: "durable-model", available: true }),
+        ],
       },
       projected: {
         authStore: {
@@ -557,7 +567,10 @@ describe("prepared model catalog worker boundary", () => {
     const removed = await projectModels();
     expect(removed).toMatchObject({
       result: {
-        models: [expect.objectContaining({ id: "durable-model", available: false })],
+        models: [
+          UNAVAILABLE_HARNESS_MODEL,
+          expect.objectContaining({ id: "durable-model", available: false }),
+        ],
       },
     });
     expect(removed.projected.authStore).toBeDefined();
@@ -694,7 +707,10 @@ describe("prepared model catalog worker boundary", () => {
     };
 
     await expect(listModels()).resolves.toMatchObject({
-      models: [expect.objectContaining({ id: "gpt-5.4", available: false })],
+      models: [
+        expect.objectContaining({ id: "gpt-5.4", available: false }),
+        UNAVAILABLE_HARNESS_MODEL,
+      ],
     });
     fs.writeFileSync(
       path.join(codexHome, "auth.json"),
@@ -709,11 +725,17 @@ describe("prepared model catalog worker boundary", () => {
     );
 
     await expect(listModels()).resolves.toMatchObject({
-      models: [expect.objectContaining({ id: "gpt-5.4", available: true })],
+      models: [
+        expect.objectContaining({ id: "gpt-5.4", available: true }),
+        UNAVAILABLE_HARNESS_MODEL,
+      ],
     });
     fs.rmSync(path.join(codexHome, "auth.json"));
     await expect(listModels()).resolves.toMatchObject({
-      models: [expect.objectContaining({ id: "gpt-5.4", available: false })],
+      models: [
+        expect.objectContaining({ id: "gpt-5.4", available: false }),
+        UNAVAILABLE_HARNESS_MODEL,
+      ],
     });
   });
 

@@ -67,7 +67,7 @@ export async function persistActivatedSetupInference(input: {
   stagedOwnerPluginArtifacts: SystemAgentOwnerPluginArtifactSnapshot;
   baselineTargetModelMetadata: unknown;
   sourceTargetModelMetadata: unknown;
-  routeDeps: Pick<SystemAgentConfiguredRouteDeps, "pluginMetadataPlugins">;
+  routeDeps: Pick<SystemAgentConfiguredRouteDeps, "pluginMetadataSnapshot">;
   readSnapshot: NonNullable<ActivateSetupInferenceDeps["readConfigFileSnapshot"]>;
   hasPreparedAuthProfiles: boolean;
   state: SetupInferenceActivationPersistenceState;

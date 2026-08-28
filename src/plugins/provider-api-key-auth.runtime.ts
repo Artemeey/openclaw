@@ -1,4 +1,5 @@
 // Runtime bridge for provider API-key auth configured by plugins.
+import { upsertAuthProfileWithLockOrThrow } from "../agents/auth-profiles/profiles.js";
 import { applyAuthProfileConfig, buildApiKeyCredential } from "./provider-auth-helpers.js";
 import {
   ensureApiKeyFromOptionEnvOrPrompt,
@@ -14,5 +15,6 @@ export const providerApiKeyAuthRuntime = {
   buildApiKeyCredential,
   ensureApiKeyFromOptionEnvOrPrompt,
   normalizeApiKeyInput,
+  upsertAuthProfileWithLockOrThrow,
   validateApiKeyInput,
 };

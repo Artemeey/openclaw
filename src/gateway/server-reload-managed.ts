@@ -134,6 +134,7 @@ export function startManagedGatewayConfigReloader(
     applyHotReload,
     acceptRestartConfig,
     beginGatewayRestartLifecycle,
+    hasOutstandingGatewayRestart,
     pauseGatewayRestartForConfigCandidate,
     publishAppliedConfigHash,
     publishAcceptedRestartTarget,
@@ -491,6 +492,7 @@ export function startManagedGatewayConfigReloader(
       params.commitTerminalConfig(nextConfig);
     },
     onConfigRevisionApplied: publishAppliedConfigHash,
+    hasOutstandingGatewayRestart,
     onEffectiveConfigUnchanged,
     onNoopConfigCommit: async (plan, nextConfig, ownership, sourceConfig) => {
       // Cleared per transaction so a rebuild can never inherit a config committed

@@ -10,7 +10,7 @@ import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import type { ModelManifestNormalizationContext } from "./model-ref-shared.js";
 import { resolveConfiguredModelFallbacks } from "./model-selection-resolve.js";
 import {
-  buildModelAliasIndex,
+  buildModelAliasIndexCore as buildModelAliasIndex,
   inferUniqueProviderFromConfiguredModels,
   type ModelAliasIndex,
   resolveConfiguredModelRef,

@@ -20,7 +20,7 @@ import {
   resolveSubagentConfiguredModelSelection,
 } from "../agents/model-selection-config.js";
 import {
-  buildModelAliasIndex,
+  buildModelAliasIndexCore as buildModelAliasIndex,
   resolveModelRefFromString,
 } from "../agents/model-selection-shared.js";
 import { resolveOpenAIImplicitAgentRuntime } from "../agents/openai-routing.js";

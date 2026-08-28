@@ -735,7 +735,7 @@ function indexModelAliases(
 }
 
 /** Build lookup maps from user-facing aliases to normalized model refs. */
-export function buildModelAliasIndex(params: BuildModelAliasIndexParams): ModelAliasIndex {
+export function buildModelAliasIndexCore(params: BuildModelAliasIndexParams): ModelAliasIndex {
   const { aliases, disabledKeys } = buildEffectiveModelAliases({
     ...params,
     manifestPluginContext: params.manifestPluginContext ?? createModelManifestPluginContext(params),
@@ -1208,7 +1208,7 @@ function prepareModelPolicy(params: ModelPolicyPreparationParams) {
     params.manifestPluginContext ?? createModelManifestPluginContext(params);
   const visibility = parseConfiguredModelVisibilityEntries(params);
   const policyAliasAgentId = resolvePolicyAliasAgentId(visibility.configPath, params.agentId);
-  const policyAliasIndex = buildModelAliasIndex({
+  const policyAliasIndex = buildModelAliasIndexCore({
     ...params,
     agentId: policyAliasAgentId,
     manifestPluginContext,
@@ -1217,7 +1217,7 @@ function prepareModelPolicy(params: ModelPolicyPreparationParams) {
   // aliases still honor the selected agent's overrides.
   const selectionAliasIndex =
     params.agentId && policyAliasAgentId !== params.agentId
-      ? buildModelAliasIndex({ ...params, manifestPluginContext })
+      ? buildModelAliasIndexCore({ ...params, manifestPluginContext })
       : policyAliasIndex;
   const configuredCatalog = buildConfiguredModelCatalog({
     ...params,
@@ -1635,7 +1635,7 @@ export function resolveHooksGmailModel(
 
   const manifestPluginContext =
     params.manifestPluginContext ?? createModelManifestPluginContext(params);
-  const aliasIndex = buildModelAliasIndex({ ...params, manifestPluginContext });
+  const aliasIndex = buildModelAliasIndexCore({ ...params, manifestPluginContext });
 
   const resolved = resolveModelRefFromString({
     ...params,

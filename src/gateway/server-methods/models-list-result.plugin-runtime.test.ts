@@ -7,6 +7,12 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { withPluginMetadataSnapshotScope } from "../../plugins/current-plugin-metadata-snapshot.js";
 import { createPluginMetadataOwner } from "../../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadata-lifecycle.js";
+import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import {
+  captureActivePluginRegistrySnapshot,
+  rollbackStagedPluginRegistry,
+  stageActivePluginRegistry,
+} from "../../plugins/runtime.js";
 import {
   createColdPluginConfig,
   createColdPluginFixture,
@@ -71,7 +77,7 @@ describe("models.list plugin metadata handoff", () => {
     }));
   });
 
-  it.each(["entries", "staticEntries"] as const)(
+  it.each(["entries", "staticEntries", "harness"] as const)(
     "keeps captured workspace runtime aliases in configured %s",
     async (catalogSource) => {
       const { prepareModelsListHarnessCatalog } = await vi.importActual<
@@ -103,7 +109,12 @@ describe("models.list plugin metadata handoff", () => {
               defaults: {
                 workspace: state.path(`${name}-workspace`),
                 model: { primary: "custom/legacy" },
-                models: { "custom/legacy": { alias: "friendly" } },
+                models: {
+                  "custom/legacy": { alias: "friendly" },
+                  ...(catalogSource === "harness"
+                    ? { "custom/captured-runtime": { agentRuntime: { id: "workspace-catalog" } } }
+                    : {}),
+                },
                 modelPolicy: { allow: ["custom/legacy"] },
               },
             },
@@ -112,9 +123,30 @@ describe("models.list plugin metadata handoff", () => {
         const cfg = configs.get("captured")!;
         const ambientConfig = configs.get("ambient")!;
         const owner = createPluginMetadataOwner();
+        const previousRegistry =
+          catalogSource === "harness" ? captureActivePluginRegistrySnapshot() : undefined;
         try {
           const captured = owner.prepare({ config: cfg }).selectedSnapshot;
           const ambient = owner.prepare({ config: ambientConfig }).selectedSnapshot;
+          const registry = catalogSource === "harness" ? createEmptyPluginRegistry() : undefined;
+          if (registry) {
+            registry.agentHarnesses.push({
+              pluginId: "workspace-catalog",
+              source: "test",
+              harness: {
+                id: "workspace-catalog",
+                label: "Workspace catalog",
+                supports: () => ({ supported: true }),
+                runAttempt: async () => {
+                  throw new Error("catalog fixture must not execute a turn");
+                },
+                loadModelCatalog: async () => [
+                  { ...catalogEntry("captured-runtime"), name: "Captured harness model" },
+                ],
+              },
+            });
+            stageActivePluginRegistry(registry, null, "default", ambient.workspaceDir);
+          }
           const normalize = vi
             .spyOn(providerModelNormalizationRuntime, "normalizeProviderModelIdWithRuntime")
             .mockImplementation((params) => {
@@ -130,7 +162,7 @@ describe("models.list plugin metadata handoff", () => {
           onTestFinished(() => normalize.mockRestore());
           const entries = [catalogEntry("captured-runtime"), catalogEntry("ambient-runtime")];
           const snapshot: ModelCatalogSnapshot = {
-            entries: catalogSource === "entries" ? entries : [],
+            entries: catalogSource === "staticEntries" ? [] : entries,
             routeVariants: [],
             ...(catalogSource === "staticEntries" ? { staticEntries: entries } : {}),
           };
@@ -139,6 +171,7 @@ describe("models.list plugin metadata handoff", () => {
             agentId: "main",
             snapshot,
             metadataSnapshot: captured,
+            pluginRegistry: registry,
             preparedAuthStore: { version: 1, profiles: {} },
           });
           const context = {
@@ -154,7 +187,7 @@ describe("models.list plugin metadata handoff", () => {
                 agentId: "main",
                 params: { view: "configured" },
                 preloadedCatalog: { agentId: "main", config: cfg, snapshot },
-                preloadedOnly: true,
+                preloadedOnly: catalogSource !== "harness",
                 catalogProjector: projector,
               }),
             { config: ambientConfig, workspaceDir: ambient.workspaceDir },
@@ -162,7 +195,13 @@ describe("models.list plugin metadata handoff", () => {
           expect(result.models.map(({ id, alias }) => ({ id, alias }))).toEqual([
             { id: "captured-runtime", alias: "friendly" },
           ]);
+          if (catalogSource === "harness") {
+            expect(result.models[0]?.name).toBe("Captured harness model");
+          }
         } finally {
+          if (previousRegistry) {
+            rollbackStagedPluginRegistry(previousRegistry);
+          }
           owner.dispose();
           clearPluginMetadataLifecycleCaches();
         }
@@ -199,6 +238,7 @@ describe("models.list plugin metadata handoff", () => {
           agentId: "main",
           snapshot,
           metadataSnapshot: preparedMetadataSnapshot(),
+          pluginRegistry: undefined,
           preparedAuthStore: { version: 1, profiles: {} },
         });
         await projector.projectCatalog();
@@ -239,6 +279,7 @@ describe("models.list plugin metadata handoff", () => {
       agentId: "main",
       snapshot,
       metadataSnapshot: preparedMetadataSnapshot(),
+      pluginRegistry: undefined,
       preparedAuthStore: { version: 1, profiles: {} },
     });
 
@@ -267,6 +308,7 @@ describe("models.list plugin metadata handoff", () => {
       agentId: "main",
       snapshot,
       metadataSnapshot: preparedMetadataSnapshot(),
+      pluginRegistry: undefined,
       preparedAuthStore: { version: 1, profiles: {} },
     });
     const context = {

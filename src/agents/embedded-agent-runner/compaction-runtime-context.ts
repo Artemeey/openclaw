@@ -15,7 +15,7 @@ import { DEFAULT_CONTEXT_TOKENS, DEFAULT_PROVIDER } from "../defaults.js";
 import { splitTrailingAuthProfile } from "../model-ref-profile.js";
 import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
 import {
-  buildModelAliasIndex,
+  buildModelAliasIndexCore as buildModelAliasIndex,
   inferUniqueProviderFromConfiguredModels,
   listModelAliasCandidates,
 } from "../model-selection-shared.js";

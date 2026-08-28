@@ -13,7 +13,7 @@ import { DEFAULT_PROVIDER } from "../agents/defaults.js";
 import { splitTrailingAuthProfile } from "../agents/model-ref-profile.js";
 import { resolveDefaultModelForAgent } from "../agents/model-selection-config.js";
 import {
-  buildModelAliasIndex,
+  buildModelAliasIndexCore as buildModelAliasIndex,
   type ModelSelectionNormalizationContext,
   resolveConfiguredModelRef,
   resolveModelRefFromString,

@@ -1,6 +1,12 @@
 import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
 import { resolveConfiguredModelPolicyAllow } from "../../agents/model-selection-shared.js";
 import { resolveConfiguredThinkingDefault } from "../../agents/model-thinking-default.js";
+import { resolvePublishedModelCatalogOwner } from "../../agents/prepared-model-catalog-owner.js";
+import { withPreparedModelRuntimePluginGenerationScope } from "../../agents/prepared-model-runtime-generation-scope.js";
+import {
+  acquireAgentRunPreparedModelRuntime,
+  loadPublishedGatewayReplyDispatchRuntime,
+} from "../../agents/prepared-model-runtime.js";
 import {
   hasResolvedThinkingCatalogEntry,
   normalizeThinkingCatalogProviders,
@@ -9,6 +15,7 @@ import { normalizeThinkLevel, type ThinkLevel } from "../../auto-reply/thinking.
 /** Resolves provider/model precedence for isolated cron runs. */
 import type { AgentConfig } from "../../config/types.agents.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
 import type { CronJob } from "../types.js";
 import { resolveCronAgentConfig } from "./run-config.js";
 import {
@@ -85,7 +92,7 @@ function formatCronPayloadModelRejection(params: {
   return `automation model override '${modelOverride}' rejected: ${error}`;
 }
 
-export async function resolveCronModelSelectionOwner(params: {
+async function resolveCronModelSelectionOwner(params: {
   cfg: OpenClawConfig;
   agentId?: string;
   requiredAgentId?: string;
@@ -100,15 +107,81 @@ export async function resolveCronModelSelectionOwner(params: {
     readOnly: true,
     allowGatewaySubagentBinding: true,
   });
-  if (
-    params.requiredAgentId &&
-    !publishedModelCatalogOwnerMatchesAgent(owner, params.requiredAgentId)
-  ) {
-    throw new Error(
-      `cron model catalog owner changed from ${params.requiredAgentId} to ${owner.agentId}`,
-    );
+  return assertCronModelSelectionOwner(owner, params.requiredAgentId);
+}
+
+function assertCronModelSelectionOwner(
+  owner: ResolvedPublishedModelCatalogOwner,
+  requiredAgentId?: string,
+): ResolvedPublishedModelCatalogOwner {
+  if (requiredAgentId && !publishedModelCatalogOwnerMatchesAgent(owner, requiredAgentId)) {
+    throw new Error(`cron model catalog owner changed from ${requiredAgentId} to ${owner.agentId}`);
   }
   return owner;
+}
+
+export type CronModelSelectionOwnerLease = {
+  owner: ResolvedPublishedModelCatalogOwner;
+  run<T>(operation: () => T): T;
+  release(): void;
+};
+
+/** Captures the executable owner before asynchronous cron preparation can cross a reload. */
+export async function acquireCronModelSelectionOwner(
+  params: Parameters<typeof resolveCronModelSelectionOwner>[0] & {
+    agentId: string;
+    abortSignal?: AbortSignal;
+  },
+): Promise<CronModelSelectionOwnerLease> {
+  const dispatch = await loadPublishedGatewayReplyDispatchRuntime({
+    agentId: params.agentId,
+    abortSignal: params.abortSignal,
+  });
+  if (!dispatch) {
+    const owner = await resolveCronModelSelectionOwner(params);
+    return {
+      owner,
+      run: (operation) => operation(),
+      release: () => {},
+    };
+  }
+  const lease = await acquireAgentRunPreparedModelRuntime(
+    {
+      config: dispatch.config,
+      agentId: dispatch.agentId,
+      agentDir: dispatch.agentDir,
+      allowGatewaySubagentBinding: true,
+      workspaceDir: dispatch.workspaceDir,
+    },
+    {
+      catalogMode: "static",
+      pluginGeneration: dispatch.pluginGeneration,
+      abortSignal: params.abortSignal,
+    },
+  );
+  try {
+    const owner = assertCronModelSelectionOwner(
+      resolvePublishedModelCatalogOwner(lease.snapshot),
+      params.requiredAgentId,
+    );
+    let active = true;
+    return {
+      owner,
+      run: (operation) =>
+        withPreparedModelRuntimePluginGenerationScope(
+          dispatch.pluginGeneration,
+          () => withPluginRuntimeGenerationScope(lease.snapshot, operation),
+          () => (active ? lease.snapshot : undefined),
+        ),
+      release: () => {
+        active = false;
+        lease.release();
+      },
+    };
+  } catch (error) {
+    lease.release();
+    throw error;
+  }
 }
 
 async function resolveCronThinkingCatalog(params: {
@@ -204,8 +277,8 @@ export async function resolveCronModelSelection(
     config: owner.config,
     agentConfigOverride: ownerAgentConfigOverride,
   });
-  // Selection precedes the run generation lease; every precedence branch must
-  // retain the published owner's workspace metadata, including flattened defaults.
+  // Every precedence branch retains the captured owner's workspace metadata,
+  // including when isolated defaults derive a distinct config object.
   const modelContext = {
     cfg: owner.config,
     catalog: owner.modelCatalog.entries,

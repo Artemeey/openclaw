@@ -15,7 +15,7 @@ import {
 } from "../../tasks/task-status-access.js";
 import { createTrajectoryRuntimeRecorder } from "../../trajectory/runtime.js";
 import { resolveMessageChannel } from "../../utils/message-channel.js";
-import type { PreparedAgentRunAdmission } from "../admitted-run-context.js";
+import type { prepareAgentCommandExecutionIdentity } from "../agent-command-execution-identity.js";
 import {
   clearAutoFallbackPrimaryProbeSelection,
   entryMatchesAutoFallbackPrimaryProbe,
@@ -65,7 +65,7 @@ const log = createSubsystemLogger("agents/agent-command");
 const MAX_LIVE_SWITCH_RETRIES = 5;
 
 export async function runEmbeddedAgentAttempt(params: {
-  preparedRunAdmission: PreparedAgentRunAdmission;
+  preparedRunAdmission: ReturnType<typeof prepareAgentCommandExecutionIdentity>;
   prepared: PreparedAgentCommandExecution;
   opts: AgentCommandOpts;
   sessionEntry?: SessionEntry;
@@ -158,7 +158,10 @@ export async function runEmbeddedAgentAttempt(params: {
     lifecycleFinishing: false,
     lifecycleEnded: false,
   };
-  const attemptLifecycleCallbacks = createAgentAttemptLifecycleCallbacks(attemptLifecycleState);
+  const attemptLifecycleCallbacks = createAgentAttemptLifecycleCallbacks(
+    attemptLifecycleState,
+    params.preparedRunAdmission.onRuntimeTurnStarted,
+  );
   const transcriptMedia = params.opts.transcriptMedia ?? [];
   const hasTranscriptMedia = transcriptMedia.length > 0;
   const suppressUserTurnPersistence =
@@ -552,19 +555,7 @@ export async function runEmbeddedAgentAttempt(params: {
     } catch (err) {
       if (err instanceof LiveSessionModelSwitchError) {
         if (isModelSelectionLocked(sessionEntry)) {
-          if (!attemptLifecycleState.lifecycleEnded) {
-            emitAgentEvent({
-              runId,
-              lifecycleGeneration,
-              stream: "lifecycle",
-              data: {
-                phase: "error",
-                startedAt,
-                endedAt: Date.now(),
-                error: MODEL_SELECTION_LOCKED_MESSAGE,
-              },
-            });
-          }
+          lifecycle.emitAttemptError(MODEL_SELECTION_LOCKED_MESSAGE);
           await fallbackTrajectoryRecorder?.flush();
           throw new ModelSelectionLockedError();
         }
@@ -578,19 +569,7 @@ export async function runEmbeddedAgentAttempt(params: {
         if (liveSwitchRetries > MAX_LIVE_SWITCH_RETRIES) {
           const retryLimitMessage = `Exceeded maximum live model switch retries (${MAX_LIVE_SWITCH_RETRIES})`;
           log.error(`Live session model switch in subagent run ${runId}: ${retryLimitMessage}`);
-          if (!attemptLifecycleState.lifecycleEnded) {
-            emitAgentEvent({
-              runId,
-              lifecycleGeneration,
-              stream: "lifecycle",
-              data: {
-                phase: "error",
-                startedAt,
-                endedAt: Date.now(),
-                error: "Agent run failed",
-              },
-            });
-          }
+          lifecycle.emitAttemptError("Agent run failed");
           await fallbackTrajectoryRecorder?.flush();
           throw new Error(retryLimitMessage, { cause: err });
         }
@@ -605,19 +584,7 @@ export async function runEmbeddedAgentAttempt(params: {
             `Live session model switch in subagent run ${runId}: ` +
               `rejected ${sanitizeForLog(err.provider)}/${sanitizeForLog(err.model)} (not in allowlist)`,
           );
-          if (!attemptLifecycleState.lifecycleEnded) {
-            emitAgentEvent({
-              runId,
-              lifecycleGeneration,
-              stream: "lifecycle",
-              data: {
-                phase: "error",
-                startedAt,
-                endedAt: Date.now(),
-                error: "Agent run failed",
-              },
-            });
-          }
+          lifecycle.emitAttemptError("Agent run failed");
           await fallbackTrajectoryRecorder?.flush();
           throw new Error(
             `Live model switch rejected: ${sanitizeForLog(err.provider)}/${sanitizeForLog(err.model)} is not in the agent allowlist`,

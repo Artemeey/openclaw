@@ -152,6 +152,7 @@ async function expectAvailable(
     agentId: "main",
     snapshot: owner.modelCatalog,
     metadataSnapshot: owner.metadataSnapshot,
+    pluginRegistry: owner.pluginRegistry,
     preparedAuthStore: mocks.preparedAuthStore ?? { version: 1, profiles: {} },
     preparedRuntimeAuthModes: owner.authModes,
     preparedRuntimeAuthMaterializations: getPreparedModelRuntimeAuthMaterializations(owner),

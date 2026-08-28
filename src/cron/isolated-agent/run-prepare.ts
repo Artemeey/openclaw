@@ -31,9 +31,10 @@ import { resolveCronScheduledToolPolicy } from "../scheduled-tool-policy.js";
 import { isDetachedCronSessionTarget } from "../session-target.js";
 import type { CronJob, CronRunDiagnostics } from "../types.js";
 import {
+  acquireCronModelSelectionOwner,
   resolveCronModelSelection,
-  resolveCronModelSelectionOwner,
   resolveCronThinkingSelection,
+  type CronModelSelectionOwnerLease,
 } from "./model-selection.js";
 import { resolveCronCommandPromptPreflight } from "./run-command-preflight.js";
 import { resolveCronActiveRuntimeConfig, resolveCronAgentConfig } from "./run-config.js";
@@ -131,8 +132,8 @@ export type PreparedCronRunContext = {
    */
   runTimeoutOverrideMs?: number;
   pluginRegistry?: PluginRegistry;
-  // Final accounting retains static pricing facts after the runtime lease is released.
   metadataSnapshot: PluginMetadataSnapshot;
+  modelOwnerLease: CronModelSelectionOwnerLease;
 };
 
 type CronPreparationResult =
@@ -158,17 +159,39 @@ export async function prepareCronRunContext(params: {
     { agentId: requiredAgentId },
     tryResolveAmbientOwnerAgentId(requestedRuntimeCfg),
   );
-  const modelOwner = await resolveCronModelSelectionOwner({
+  const modelOwnerLease = await acquireCronModelSelectionOwner({
     cfg: requestedRuntimeCfg,
+    agentId: initialAgentId,
+    abortSignal: input.abortSignal ?? input.signal,
     ...(requiredAgentId
       ? {
-          agentId: initialAgentId,
           requiredAgentId,
           agentDir: resolveAgentDir(requestedRuntimeCfg, initialAgentId),
           workspaceDir: resolveAgentWorkspaceDir(requestedRuntimeCfg, initialAgentId),
         }
       : {}),
   });
+  try {
+    const prepared = await modelOwnerLease.run(() =>
+      prepareCronRunContextWithModelOwner(params, modelOwnerLease, requiredAgentId),
+    );
+    if (!prepared.ok) {
+      modelOwnerLease.release();
+    }
+    return prepared;
+  } catch (error) {
+    modelOwnerLease.release();
+    throw error;
+  }
+}
+
+async function prepareCronRunContextWithModelOwner(
+  params: Parameters<typeof prepareCronRunContext>[0],
+  modelOwnerLease: CronModelSelectionOwnerLease,
+  requiredAgentId: string | undefined,
+): Promise<CronPreparationResult> {
+  const { input } = params;
+  const modelOwner = modelOwnerLease.owner;
   const { agentId, agentDir } = modelOwner;
   const agentConfigOverride = requiredAgentId
     ? resolveAgentConfig(modelOwner.config, agentId)
@@ -673,6 +696,7 @@ export async function prepareCronRunContext(params: {
         preflightDiagnostics,
         runTimeoutOverrideMs,
         metadataSnapshot: modelOwner.metadataSnapshot,
+        modelOwnerLease,
         ...(pluginRegistry ? { pluginRegistry } : {}),
       },
     };

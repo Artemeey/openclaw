@@ -12,6 +12,7 @@ import {
 import { installOpenClawPluginSdkNativeResolver } from "./plugin-sdk-native-resolver.js";
 import type { PluginRegistry } from "./registry-types.js";
 import { withPluginRegistrationContext } from "./runtime.js";
+import { createRuntimeSystem } from "./runtime/runtime-system.js";
 import type { CreatePluginRuntimeOptions, PluginRuntime } from "./runtime/types.js";
 import {
   buildPluginLoaderAliasMap,
@@ -201,8 +202,13 @@ export function createLazyPluginRuntime(params: {
   };
 
   let resolvedRuntime: PluginRuntime | null = null;
+  let system: PluginRuntime["system"] | undefined;
+  const resolveSystem = () => (system ??= params.runtimeOptions?.system ?? createRuntimeSystem());
   const resolveRuntime = (): PluginRuntime => {
-    resolvedRuntime ??= resolveCreatePluginRuntime()(params.runtimeOptions);
+    resolvedRuntime ??= resolveCreatePluginRuntime()({
+      ...params.runtimeOptions,
+      system: resolveSystem(),
+    });
     return resolvedRuntime;
   };
   const lazyRuntimeReflectionKeySet = new Set<PropertyKey>(LAZY_RUNTIME_REFLECTION_KEYS);
@@ -223,6 +229,11 @@ export function createLazyPluginRuntime(params: {
   };
   return new Proxy({} as PluginRuntime, {
     get(_target, prop, receiver) {
+      // Registration probes need only the system facade. Once initialized, the
+      // full runtime owns property replacement/deletion and retains this same instance.
+      if (prop === "system" && !resolvedRuntime) {
+        return resolveSystem();
+      }
       // Instance-bound surfaces are complete runtime objects. Keep them direct so
       // the first Gateway call does not materialize the broad plugin runtime graph.
       if (prop === "gateway" || prop === "nodes" || prop === "subagent") {

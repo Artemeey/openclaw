@@ -1,14 +1,4 @@
 import { retireSessionMcpRuntime } from "../../agents/agent-bundle-mcp-tools.js";
-import { withPreparedModelRuntimePluginGenerationScope } from "../../agents/prepared-model-runtime-generation-scope.js";
-import {
-  PreparedModelRuntimeOwnerNotPublishedError,
-  acquireAgentRunPreparedModelRuntime,
-  loadPublishedGatewayReplyDispatchRuntime,
-} from "../../agents/prepared-model-runtime.js";
-import type {
-  PreparedModelRuntimePluginGeneration,
-  PreparedModelRuntimeSnapshot,
-} from "../../agents/prepared-model-runtime.types.js";
 import { createAgentRunRestartAbortError } from "../../agents/run-termination.js";
 import { cleanupBrowserSessionsForLifecycleEnd } from "../../browser-lifecycle-cleanup.js";
 import type { CliDeps } from "../../cli/outbound-send-deps.js";
@@ -27,7 +17,7 @@ import {
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { isFastTestRuntimeEnv } from "../../infra/env.js";
 import { createDiagnosticMessageLifecycle } from "../../logging/message-lifecycle.js";
-import { withPluginRuntimeRegistryScope } from "../../plugins/runtime/gateway-request-scope.js";
+import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
 import { isCommandLaneTaskTimeoutError } from "../../process/command-queue.js";
 import { CommandLane } from "../../process/lanes.js";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
@@ -50,66 +40,6 @@ import type { RunCronAgentTurnResult } from "./run.types.js";
 import { cleanupCronRunSessionAfterRun } from "./session-cleanup.js";
 
 const cronExecutorRuntimeLoader = createLazyImportLoader(() => import("./run-executor.runtime.js"));
-
-type CronRunPluginGenerationLease = {
-  pluginGeneration: PreparedModelRuntimePluginGeneration;
-  borrowSnapshot: () => PreparedModelRuntimeSnapshot | undefined;
-  release: () => void;
-};
-
-/**
- * Gateway-hosted isolated runs reuse the published plugin generation instead of
- * rebuilding metadata snapshots per run (#125596 carried this for the channel
- * path; hook/cron turns share the invariant). Standalone hosts (no Gateway
- * lifecycle) and startup/replacement races return undefined so the embedded
- * orchestrator admits on whatever generation is current at execution time.
- */
-async function acquireCronRunPluginGeneration(context: {
-  agentId: string;
-  workspaceDir: string;
-  abortSignal?: AbortSignal;
-}): Promise<CronRunPluginGenerationLease | undefined> {
-  try {
-    const dispatchRuntime = await loadPublishedGatewayReplyDispatchRuntime({
-      agentId: context.agentId,
-      abortSignal: context.abortSignal,
-    });
-    if (!dispatchRuntime) {
-      return undefined;
-    }
-    // Holding this static lease across the run anchors the admitted generation:
-    // a config/plugin reload mid-run lets nested embedded admissions borrow the
-    // leased snapshot instead of failing on the superseded configured owner.
-    const lease = await acquireAgentRunPreparedModelRuntime(
-      {
-        config: dispatchRuntime.config,
-        agentId: dispatchRuntime.agentId,
-        agentDir: dispatchRuntime.agentDir,
-        allowGatewaySubagentBinding: true,
-        workspaceDir: context.workspaceDir,
-      },
-      {
-        catalogMode: "static",
-        pluginGeneration: dispatchRuntime.pluginGeneration,
-        abortSignal: context.abortSignal,
-      },
-    );
-    let leaseActive = true;
-    return {
-      pluginGeneration: dispatchRuntime.pluginGeneration,
-      borrowSnapshot: () => (leaseActive ? lease.snapshot : undefined),
-      release: () => {
-        leaseActive = false;
-        lease.release();
-      },
-    };
-  } catch (error) {
-    if (error instanceof PreparedModelRuntimeOwnerNotPublishedError) {
-      return undefined;
-    }
-    throw error;
-  }
-}
 
 function isCronNestedLaneTaskTimeoutError(err: unknown): boolean {
   return isCommandLaneTaskTimeoutError(err, CommandLane.CronNested);
@@ -193,283 +123,283 @@ export async function runCronIsolatedAgentTurn(params: {
   if (!prepared.ok) {
     return { ...prepared.result, admissionDisposition: "rejected" };
   }
-  // Capture the stable run id before execution can rotate its persisted session.
-  const initialSessionId = prepared.context.cronSession.sessionEntry.sessionId;
-  const ownsRunContext = params.job.sessionTarget === "isolated";
-  let runContextOwnerToken: string | undefined;
-  let runLifecycleGeneration = admittedLifecycleGeneration;
-  let executionStarted = false;
-  const notifyExecutionStarted = (info?: {
-    lifecycleGeneration?: string;
-    isFallback?: boolean;
-    provider?: string;
-    model?: string;
-  }) => {
-    executionStarted = true;
-    if (info?.lifecycleGeneration) {
-      runLifecycleGeneration = info.lifecycleGeneration;
-    }
-    params.onExecutionStarted?.({
-      jobId: params.job.id,
-      agentId: prepared.context.agentId,
-      sessionId: prepared.context.currentRunSessionId(),
-      sessionKey: prepared.context.runSessionKey,
-      ...(info?.isFallback === true ? { isFallback: true } : {}),
-      phase: "runner_entered",
-      provider: info?.provider ?? prepared.context.liveSelection.provider,
-      model: info?.model ?? prepared.context.liveSelection.model,
-    });
-  };
-  const notifyExecutionPhase = (
-    info: Pick<CronAgentExecutionPhaseUpdate, "phase"> &
-      Partial<Omit<CronAgentExecutionPhaseUpdate, "jobId" | "phase">>,
-  ) => {
-    params.onExecutionPhase?.({
-      jobId: params.job.id,
-      agentId: prepared.context.agentId,
-      sessionId: prepared.context.currentRunSessionId(),
-      sessionKey: prepared.context.runSessionKey,
-      provider: prepared.context.liveSelection.provider,
-      model: prepared.context.liveSelection.model,
-      ...info,
-    });
-  };
-
-  const turnStartedAtMs = Date.now();
-  const messageLifecycle = (() => {
-    try {
-      const lifecycle = createDiagnosticMessageLifecycle({
-        enabled: isDiagnosticsEnabled(params.cfg),
-        sessionId: prepared.context.runSessionId,
+  const runPrepared = async (): Promise<RunCronAgentTurnResult> => {
+    // Capture the stable run id before execution can rotate its persisted session.
+    const initialSessionId = prepared.context.cronSession.sessionEntry.sessionId;
+    const ownsRunContext = params.job.sessionTarget === "isolated";
+    let runContextOwnerToken: string | undefined;
+    let runLifecycleGeneration = admittedLifecycleGeneration;
+    let executionStarted = false;
+    const notifyExecutionStarted = (info?: {
+      lifecycleGeneration?: string;
+      isFallback?: boolean;
+      provider?: string;
+      model?: string;
+    }) => {
+      executionStarted = true;
+      if (info?.lifecycleGeneration) {
+        runLifecycleGeneration = info.lifecycleGeneration;
+      }
+      params.onExecutionStarted?.({
+        jobId: params.job.id,
+        agentId: prepared.context.agentId,
+        sessionId: prepared.context.currentRunSessionId(),
         sessionKey: prepared.context.runSessionKey,
-        channel: "cron",
-        source: "cron-isolated",
-        startedAtMs: turnStartedAtMs,
-        trackSessionState: true,
+        ...(info?.isFallback === true ? { isFallback: true } : {}),
+        phase: "runner_entered",
+        provider: info?.provider ?? prepared.context.liveSelection.provider,
+        model: info?.model ?? prepared.context.liveSelection.model,
       });
-      lifecycle.markProcessing();
-      return lifecycle;
-    } catch (error) {
-      prepared.context.sessionWorkAdmission.release();
-      throw error;
-    }
-  })();
-
-  let outcome: "completed" | "error" = "completed";
-  let outcomeError: string | undefined;
-  let cronRunSessionCleanupHandled = false;
-  try {
-    assertAgentRunLifecycleGenerationCurrent(runLifecycleGeneration);
-    const existingRunContext = getAgentRunContext(initialSessionId);
-    runContextOwnerToken = claimAgentRunContext(
-      initialSessionId,
-      {
-        sessionKey:
-          ownsRunContext || !existingRunContext?.sessionKey
-            ? prepared.context.runSessionKey
-            : existingRunContext.sessionKey,
-        sessionId: initialSessionId,
-        lifecycleGeneration: runLifecycleGeneration,
-        cronRunsByJobId: new Map([
-          [params.job.id, { pacingEnabled: params.job.pacing !== undefined }],
-        ]),
-      },
-      {
-        trackOwner: true,
-        ownsContext: ownsRunContext,
-      },
-    );
-    const { executeCronRun } = await cronExecutorRuntimeLoader.load();
-    const executionParams: Parameters<typeof executeCronRun>[0] = {
-      cfg: params.cfg,
-      cfgWithAgentDefaults: prepared.context.cfgWithAgentDefaults,
-      job: params.job,
-      agentId: prepared.context.agentId,
-      agentDir: prepared.context.agentDir,
-      agentSessionKey: prepared.context.agentSessionKey,
-      runSessionKey: prepared.context.runSessionKey,
-      usesDetachedRunSession: prepared.context.usesDetachedRunSession,
-      workspaceDir: prepared.context.workspaceDir,
-      lane: params.lane,
-      resolvedDelivery: {
-        channel: prepared.context.resolvedDelivery.channel,
-        to: prepared.context.resolvedDelivery.to,
-        accountId: prepared.context.resolvedDelivery.accountId,
-        threadId: prepared.context.resolvedDelivery.threadId,
-      },
-      resolvedDeliveryOk: prepared.context.resolvedDelivery.ok,
-      deliveryRequested: prepared.context.deliveryRequested,
-      sourceDelivery: prepared.context.sourceDelivery,
-      skillsSnapshot: prepared.context.skillsSnapshot,
-      agentPayload: prepared.context.agentPayload,
-      useSubagentFallbacks: prepared.context.useSubagentFallbacks,
-      inheritDefaultFallbacksForAgentStringModel:
-        prepared.context.inheritDefaultFallbacksForAgentStringModel,
-      modelFallbacksOverride: prepared.context.modelFallbacksOverride,
-      agentVerboseDefault: prepared.context.agentCfg?.verboseDefault,
-      liveSelection: prepared.context.liveSelection,
-      cronSession: prepared.context.cronSession,
-      commandBody: prepared.context.commandBody,
-      persistSessionEntry: prepared.context.persistSessionEntry,
-      persistRunContinuationSession: prepared.context.runContinuationSession?.sync,
-      setRunContinuationCliExecutionProvider:
-        prepared.context.runContinuationSession?.setCliExecutionProvider,
-      abortSignal,
-      onExecutionStarted: notifyExecutionStarted,
-      onExecutionPhase: notifyExecutionPhase,
-      onLaneWait: params.onLaneWait,
-      abortReason,
-      isAborted,
-      immutableThinkLevel: prepared.context.thinkingSelection.immutableThinkLevel,
-      thinkingCatalog: prepared.context.thinkingSelection.catalog,
-      loadThinkingCatalog: prepared.context.thinkingSelection.loadThinkingCatalog,
-      timeoutMs: prepared.context.timeoutMs,
-      runTimeoutOverrideMs: prepared.context.runTimeoutOverrideMs,
-      suppressExecNotifyOnExit: prepared.context.suppressExecNotifyOnExit,
-      pluginRegistry: prepared.context.pluginRegistry,
-      executionIdentity: params.executionIdentity,
     };
-    const runExecutionWithAdmission = () =>
-      prepared.context.sessionWorkAdmission.run(() =>
-        withAgentRunLifecycleGeneration(runLifecycleGeneration, () =>
-          withPluginRuntimeRegistryScope(prepared.context.pluginRegistry, () =>
+    const notifyExecutionPhase = (
+      info: Pick<CronAgentExecutionPhaseUpdate, "phase"> &
+        Partial<Omit<CronAgentExecutionPhaseUpdate, "jobId" | "phase">>,
+    ) => {
+      params.onExecutionPhase?.({
+        jobId: params.job.id,
+        agentId: prepared.context.agentId,
+        sessionId: prepared.context.currentRunSessionId(),
+        sessionKey: prepared.context.runSessionKey,
+        provider: prepared.context.liveSelection.provider,
+        model: prepared.context.liveSelection.model,
+        ...info,
+      });
+    };
+
+    const turnStartedAtMs = Date.now();
+    const messageLifecycle = (() => {
+      try {
+        const lifecycle = createDiagnosticMessageLifecycle({
+          enabled: isDiagnosticsEnabled(params.cfg),
+          sessionId: prepared.context.runSessionId,
+          sessionKey: prepared.context.runSessionKey,
+          channel: "cron",
+          source: "cron-isolated",
+          startedAtMs: turnStartedAtMs,
+          trackSessionState: true,
+        });
+        lifecycle.markProcessing();
+        return lifecycle;
+      } catch (error) {
+        prepared.context.sessionWorkAdmission.release();
+        throw error;
+      }
+    })();
+
+    let outcome: "completed" | "error" = "completed";
+    let outcomeError: string | undefined;
+    let cronRunSessionCleanupHandled = false;
+    try {
+      assertAgentRunLifecycleGenerationCurrent(runLifecycleGeneration);
+      const existingRunContext = getAgentRunContext(initialSessionId);
+      runContextOwnerToken = claimAgentRunContext(
+        initialSessionId,
+        {
+          sessionKey:
+            ownsRunContext || !existingRunContext?.sessionKey
+              ? prepared.context.runSessionKey
+              : existingRunContext.sessionKey,
+          sessionId: initialSessionId,
+          lifecycleGeneration: runLifecycleGeneration,
+          cronRunsByJobId: new Map([
+            [params.job.id, { pacingEnabled: params.job.pacing !== undefined }],
+          ]),
+        },
+        {
+          trackOwner: true,
+          ownsContext: ownsRunContext,
+        },
+      );
+      const { executeCronRun } = await cronExecutorRuntimeLoader.load();
+      const executionParams: Parameters<typeof executeCronRun>[0] = {
+        cfg: prepared.context.modelOwnerLease.owner.config,
+        cfgWithAgentDefaults: prepared.context.cfgWithAgentDefaults,
+        job: params.job,
+        agentId: prepared.context.agentId,
+        agentDir: prepared.context.agentDir,
+        agentSessionKey: prepared.context.agentSessionKey,
+        runSessionKey: prepared.context.runSessionKey,
+        usesDetachedRunSession: prepared.context.usesDetachedRunSession,
+        workspaceDir: prepared.context.workspaceDir,
+        lane: params.lane,
+        resolvedDelivery: {
+          channel: prepared.context.resolvedDelivery.channel,
+          to: prepared.context.resolvedDelivery.to,
+          accountId: prepared.context.resolvedDelivery.accountId,
+          threadId: prepared.context.resolvedDelivery.threadId,
+        },
+        resolvedDeliveryOk: prepared.context.resolvedDelivery.ok,
+        deliveryRequested: prepared.context.deliveryRequested,
+        sourceDelivery: prepared.context.sourceDelivery,
+        skillsSnapshot: prepared.context.skillsSnapshot,
+        agentPayload: prepared.context.agentPayload,
+        useSubagentFallbacks: prepared.context.useSubagentFallbacks,
+        inheritDefaultFallbacksForAgentStringModel:
+          prepared.context.inheritDefaultFallbacksForAgentStringModel,
+        modelFallbacksOverride: prepared.context.modelFallbacksOverride,
+        agentVerboseDefault: prepared.context.agentCfg?.verboseDefault,
+        liveSelection: prepared.context.liveSelection,
+        cronSession: prepared.context.cronSession,
+        commandBody: prepared.context.commandBody,
+        persistSessionEntry: prepared.context.persistSessionEntry,
+        persistRunContinuationSession: prepared.context.runContinuationSession?.sync,
+        setRunContinuationCliExecutionProvider:
+          prepared.context.runContinuationSession?.setCliExecutionProvider,
+        abortSignal,
+        onExecutionStarted: notifyExecutionStarted,
+        onExecutionPhase: notifyExecutionPhase,
+        onLaneWait: params.onLaneWait,
+        abortReason,
+        isAborted,
+        immutableThinkLevel: prepared.context.thinkingSelection.immutableThinkLevel,
+        thinkingCatalog: prepared.context.thinkingSelection.catalog,
+        loadThinkingCatalog: prepared.context.thinkingSelection.loadThinkingCatalog,
+        timeoutMs: prepared.context.timeoutMs,
+        runTimeoutOverrideMs: prepared.context.runTimeoutOverrideMs,
+        suppressExecNotifyOnExit: prepared.context.suppressExecNotifyOnExit,
+        pluginRegistry: prepared.context.pluginRegistry,
+        executionIdentity: params.executionIdentity,
+      };
+      const runExecutionWithAdmission = () =>
+        prepared.context.sessionWorkAdmission.run(() =>
+          withAgentRunLifecycleGeneration(runLifecycleGeneration, () =>
             executeCronRun(executionParams),
           ),
-        ),
-      );
-    const pluginGenerationLease = await acquireCronRunPluginGeneration({
-      ...prepared.context,
-      abortSignal,
-    });
-    let execution: Awaited<ReturnType<typeof runExecutionWithAdmission>>;
-    try {
-      execution = pluginGenerationLease
-        ? await withPreparedModelRuntimePluginGenerationScope(
-            pluginGenerationLease.pluginGeneration,
-            runExecutionWithAdmission,
-            pluginGenerationLease.borrowSnapshot,
-          )
-        : await runExecutionWithAdmission();
-    } finally {
-      pluginGenerationLease?.release();
-    }
-    const finalized = await finalizeCronRun({
-      prepared: prepared.context,
-      execution,
-      abortReason,
-      isAborted,
-      markCronRunSessionCleanupHandled: () => {
-        cronRunSessionCleanupHandled = true;
-      },
-      // Self-deleting sessions must release before their own lifecycle mutation.
-      // Other runs retain admission through delivery and release in finally.
-      beforeSessionDelete: prepared.context.sessionWorkAdmission.release,
-    });
-    if (finalized.status === "error") {
+        );
+      const execution = await runExecutionWithAdmission();
+      const finalized = await finalizeCronRun({
+        prepared: prepared.context,
+        execution,
+        abortReason,
+        isAborted,
+        markCronRunSessionCleanupHandled: () => {
+          cronRunSessionCleanupHandled = true;
+        },
+        // Self-deleting sessions must release before their own lifecycle mutation.
+        // Other runs retain admission through delivery and release in finally.
+        beforeSessionDelete: prepared.context.sessionWorkAdmission.release,
+      });
+      if (finalized.status === "error") {
+        outcome = "error";
+        outcomeError = finalized.error;
+      }
+      const delayMs = consumeCronNextCheckProposal(initialSessionId, params.job.id);
+      return finalized.status !== "ok" || delayMs === undefined
+        ? finalized
+        : { ...finalized, nextCheck: { delayMs } };
+    } catch (err) {
+      consumeCronNextCheckProposal(initialSessionId, params.job.id);
+      const isCronLaneTimeout = isAborted() || isCronNestedLaneTaskTimeoutError(err);
+      const error = isCronLaneTimeout ? abortReason() : normalizeCronRunErrorText(err);
       outcome = "error";
-      outcomeError = finalized.error;
-    }
-    const delayMs = consumeCronNextCheckProposal(initialSessionId, params.job.id);
-    return finalized.status !== "ok" || delayMs === undefined
-      ? finalized
-      : { ...finalized, nextCheck: { delayMs } };
-  } catch (err) {
-    consumeCronNextCheckProposal(initialSessionId, params.job.id);
-    const isCronLaneTimeout = isAborted() || isCronNestedLaneTaskTimeoutError(err);
-    const error = isCronLaneTimeout ? abortReason() : normalizeCronRunErrorText(err);
-    outcome = "error";
-    outcomeError = error;
-    return prepared.context.withRunSession({
-      status: "error",
-      error,
-      executionStarted,
-      ...(!executionStarted
-        ? {
-            admissionDisposition:
-              err instanceof CronSessionLifecycleClaimError
-                ? err.admissionDisposition
-                : ("rejected" as const),
-          }
-        : {}),
-      // Carry the already-resolved run model into the error/timeout row so
-      // Task-run history keeps provider/model attribution instead of looking like
-      // an un-attributed cron timeout. finalizeCronRun does the same via
-      // telemetry on the aborted path; this catch never reaches it.
-      provider: prepared.context.liveSelection.provider,
-      model: prepared.context.liveSelection.model,
-      diagnostics: mergeCronRunDiagnostics(
-        prepared.context.preflightDiagnostics,
-        createCronRunDiagnosticsFromError(
-          isCronLaneTimeout ? "cron-setup" : "agent-run",
-          isCronLaneTimeout ? error : err,
+      outcomeError = error;
+      return prepared.context.withRunSession({
+        status: "error",
+        error,
+        executionStarted,
+        ...(!executionStarted
+          ? {
+              admissionDisposition:
+                err instanceof CronSessionLifecycleClaimError
+                  ? err.admissionDisposition
+                  : ("rejected" as const),
+            }
+          : {}),
+        // Carry the already-resolved run model into the error/timeout row so
+        // Task-run history keeps provider/model attribution instead of looking like
+        // an un-attributed cron timeout. finalizeCronRun does the same via
+        // telemetry on the aborted path; this catch never reaches it.
+        provider: prepared.context.liveSelection.provider,
+        model: prepared.context.liveSelection.model,
+        diagnostics: mergeCronRunDiagnostics(
+          prepared.context.preflightDiagnostics,
+          createCronRunDiagnosticsFromError(
+            isCronLaneTimeout ? "cron-setup" : "agent-run",
+            isCronLaneTimeout ? error : err,
+          ),
         ),
-      ),
-    });
-  } finally {
-    try {
-      await prepared.context.runContinuationSession?.seal();
-    } catch (sealError) {
-      logWarn(
-        `[cron:${params.job.id}] Failed to seal run continuation during cleanup: ${String(sealError)}`,
-      );
-    }
-    // Final lifecycle events use the adopted run session when the agent persisted one.
-    const finalSessionRef = {
-      sessionId: prepared.context.currentRunSessionId(),
-      sessionKey: prepared.context.runSessionKey,
-    };
-    try {
-      messageLifecycle.markIdle(undefined, finalSessionRef);
-      messageLifecycle.markProcessed(outcome, {
-        ...finalSessionRef,
-        error: outcomeError,
       });
     } finally {
       try {
-        if (!cronRunSessionCleanupHandled) {
-          await cleanupCronRunSessionAfterRun({
-            job: params.job,
-            agentSessionKey: prepared.context.agentSessionKey,
-            sessionId: prepared.context.currentRunSessionId(),
-            lifecycleRevision: prepared.context.cronSession.lifecycleRevision,
-            sessionUpdatedAt: prepared.context.cronSession.sessionEntry.updatedAt,
-            beforeDelete: prepared.context.sessionWorkAdmission.release,
-            reason: "cron-delete-after-run-finally",
-          });
-        }
+        await prepared.context.runContinuationSession?.seal();
+      } catch (sealError) {
+        logWarn(
+          `[cron:${params.job.id}] Failed to seal run continuation during cleanup: ${String(sealError)}`,
+        );
+      }
+      // Final lifecycle events use the adopted run session when the agent persisted one.
+      const finalSessionRef = {
+        sessionId: prepared.context.currentRunSessionId(),
+        sessionKey: prepared.context.runSessionKey,
+      };
+      try {
+        messageLifecycle.markIdle(undefined, finalSessionRef);
+        messageLifecycle.markProcessed(outcome, {
+          ...finalSessionRef,
+          error: outcomeError,
+        });
       } finally {
-        // Release runtime references after the run completes (success or failure).
-        // The session entry has already been persisted to disk by this point,
-        // so the in-memory store and run context can be safely dropped.
         try {
-          if (prepared.context.runContinuationSession) {
-            try {
-              await removeCronRunContinuationSessionIfIdle(prepared.context.runSessionKey);
-            } catch (error) {
-              logWarn(
-                `[cron:${params.job.id}] Failed to remove unused run continuation: ${String(error)}`,
-              );
-            }
-          }
-          await disposeCronRunContext({
-            sessionId: initialSessionId,
-            cronSession: prepared.context.cronSession,
-            ownsRunContext,
-            runContextOwnerToken,
-          });
-        } finally {
-          prepared.context.sessionWorkAdmission.release();
-          // Only run-scoped browser identities end with this invocation.
-          // Persistent cron targets keep the session and its tracked tabs alive.
-          if (prepared.context.runSessionKey !== prepared.context.agentSessionKey) {
-            await cleanupBrowserSessionsForLifecycleEnd({
-              cfg: prepared.context.cfgWithAgentDefaults,
-              sessionKeys: [prepared.context.runSessionKey],
-              onWarn: (message) => logWarn(`[cron:${params.job.id}] ${message}`),
+          if (!cronRunSessionCleanupHandled) {
+            await cleanupCronRunSessionAfterRun({
+              job: params.job,
+              agentSessionKey: prepared.context.agentSessionKey,
+              sessionId: prepared.context.currentRunSessionId(),
+              lifecycleRevision: prepared.context.cronSession.lifecycleRevision,
+              sessionUpdatedAt: prepared.context.cronSession.sessionEntry.updatedAt,
+              beforeDelete: prepared.context.sessionWorkAdmission.release,
+              reason: "cron-delete-after-run-finally",
             });
+          }
+        } finally {
+          // Release runtime references after the run completes (success or failure).
+          // The session entry has already been persisted to disk by this point,
+          // so the in-memory store and run context can be safely dropped.
+          try {
+            if (prepared.context.runContinuationSession) {
+              try {
+                await removeCronRunContinuationSessionIfIdle(prepared.context.runSessionKey);
+              } catch (error) {
+                logWarn(
+                  `[cron:${params.job.id}] Failed to remove unused run continuation: ${String(error)}`,
+                );
+              }
+            }
+            await disposeCronRunContext({
+              sessionId: initialSessionId,
+              cronSession: prepared.context.cronSession,
+              ownsRunContext,
+              runContextOwnerToken,
+            });
+          } finally {
+            prepared.context.sessionWorkAdmission.release();
+            // Only run-scoped browser identities end with this invocation.
+            // Persistent cron targets keep the session and its tracked tabs alive.
+            if (prepared.context.runSessionKey !== prepared.context.agentSessionKey) {
+              await cleanupBrowserSessionsForLifecycleEnd({
+                cfg: prepared.context.cfgWithAgentDefaults,
+                sessionKeys: [prepared.context.runSessionKey],
+                onWarn: (message) => logWarn(`[cron:${params.job.id}] ${message}`),
+              });
+            }
           }
         }
       }
     }
+  };
+  try {
+    return await prepared.context.modelOwnerLease.run(() =>
+      withPluginRuntimeGenerationScope(
+        {
+          config: prepared.context.cfgWithAgentDefaults,
+          metadataSnapshot: prepared.context.metadataSnapshot,
+          pluginRegistry: prepared.context.pluginRegistry,
+        },
+        runPrepared,
+      ),
+    );
+  } finally {
+    // Finalization and cleanup can still classify providers using this generation's metadata.
+    prepared.context.modelOwnerLease.release();
   }
 }

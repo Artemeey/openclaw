@@ -29,7 +29,7 @@ import { findNormalizedProviderValue, parseModelRef } from "./model-selection-no
 import { resolvePersistedOverrideModelRef } from "./model-selection-persisted.js";
 import {
   buildConfiguredModelCatalog,
-  buildModelAliasIndex,
+  buildModelAliasIndexCore as buildModelAliasIndex,
   inferUniqueProviderFromConfiguredModels,
   normalizeModelSelection,
   resolveBareModelDefaultProvider,

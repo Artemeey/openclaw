@@ -29,10 +29,7 @@ import { createPluginRegistryIdNormalizer } from "./plugin-registry-id-normalize
 import { loadPluginRegistrySnapshotWithMetadata } from "./plugin-registry-snapshot.js";
 import { normalizePluginIdScope, serializePluginIdScope } from "./plugin-scope.js";
 
-export {
-  pickPluginMetadataEnv,
-  resolvePluginMetadataEnvFingerprint,
-} from "./plugin-metadata-env.js";
+export { resolvePluginMetadataEnvFingerprint } from "./plugin-metadata-env.js";
 export type {
   PluginMetadataSnapshot,
   PluginMetadataSnapshotOwnerMaps,

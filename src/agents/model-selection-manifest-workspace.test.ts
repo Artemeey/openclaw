@@ -5,7 +5,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   buildAllowedModelSet,
   buildConfiguredModelCatalog,
-  buildModelAliasIndex,
+  buildModelAliasIndexCore as buildModelAliasIndex,
   resolveConfiguredModelRef,
 } from "./model-selection-shared.js";
 

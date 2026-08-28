@@ -101,6 +101,23 @@ export function createAgentCommandLifecycle(params: {
   };
 
   return {
+    // A rejected live switch has no completed candidate receipt to project.
+    emitAttemptError(error: string) {
+      if (params.state.lifecycleEnded) {
+        return;
+      }
+      emitAgentEvent({
+        runId: params.runId,
+        lifecycleGeneration: params.lifecycleGeneration(),
+        stream: "lifecycle",
+        data: {
+          phase: "error",
+          startedAt: params.startedAt,
+          endedAt: Date.now(),
+          error,
+        },
+      });
+    },
     emitFinishing(terminal: EmbeddedAgentRunEntryTerminal) {
       if (
         params.state.lifecycleEnded ||

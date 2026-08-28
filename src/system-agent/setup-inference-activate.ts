@@ -367,7 +367,7 @@ async function activateSetupInferenceUnredacted(
       ...(metadataWorkspaceDir ? { workspaceDir: metadataWorkspaceDir } : {}),
       ...(codexRegistryNeedsReload ? { allowCurrent: false } : {}),
     });
-    const routeDeps = { pluginMetadataPlugins: routeMetadataSnapshot.plugins };
+    const routeDeps = { pluginMetadataSnapshot: routeMetadataSnapshot };
     const requestedAgentId = params.agentId ? testPlan.routeAgentId : undefined;
     const baselineRoute = await projectInferenceRoute(cfg, requestedAgentId, routeDeps);
     const verifiedRoute = await projectInferenceRoute(testPlan.config, requestedAgentId, routeDeps);
