@@ -82,6 +82,7 @@ describe("board session shell", () => {
     render(
       renderBoardViewSwitch({
         hasBoard: false,
+        narrow: false,
         face: "chat",
         dock: "right",
         canChangeDock: true,
@@ -110,6 +111,7 @@ describe("board session shell", () => {
     render(
       renderBoardViewSwitch({
         hasBoard: true,
+        narrow: false,
         face,
         dock,
         canChangeDock: true,
@@ -132,6 +134,7 @@ describe("board session shell", () => {
     render(
       renderBoardViewSwitch({
         hasBoard: true,
+        narrow: false,
         face: "dashboard",
         dock: "right",
         canChangeDock: false,
@@ -150,6 +153,29 @@ describe("board session shell", () => {
     expect(container.querySelector("wa-dropdown")).toBeNull();
   });
 
+  it("keeps the mobile switcher limited to Chat and Dashboard", () => {
+    const container = createContainer();
+    render(
+      renderBoardViewSwitch({
+        hasBoard: true,
+        narrow: true,
+        face: "dashboard",
+        dock: "right",
+        canChangeDock: true,
+        fullscreenControl: html`<button data-fullscreen></button>`,
+        onSelectMode: () => {},
+        onDockSideChange: () => {},
+      }),
+      container,
+    );
+
+    expect(
+      [...container.querySelectorAll("wa-radio")].map((radio) => radio.getAttribute("value")),
+    ).toEqual(["chat", "dashboard"]);
+    expect(container.querySelector("wa-dropdown")).toBeNull();
+    expect(container.querySelector("[data-fullscreen]")).toBeNull();
+  });
+
   it.each([
     ["chat", "right", true, false],
     ["dashboard", "right", true, true],
@@ -163,6 +189,7 @@ describe("board session shell", () => {
       render(
         renderBoardViewSwitch({
           hasBoard: true,
+          narrow: false,
           face,
           dock,
           canChangeDock,
@@ -197,6 +224,7 @@ describe("board session shell", () => {
     render(
       renderBoardViewSwitch({
         hasBoard: true,
+        narrow: false,
         face: "chat",
         dock: "right",
         canChangeDock: true,

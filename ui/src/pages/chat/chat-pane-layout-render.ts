@@ -74,15 +74,19 @@ export abstract class ChatPaneLayoutRender extends ChatPaneBrowserAnnotationRend
       workspaceGit,
       sidebarLayout,
     );
+    const headerInPrimary = this.narrow || board.face === "dashboard";
     const chat = renderChat({
       ...chatProps,
       historyState: catalog ? undefined : state,
-      header: board.face === "dashboard" ? nothing : header,
+      header: headerInPrimary ? nothing : header,
     });
     // Keep this root stable across board face changes so the guarded board runtime
     // remains connected while Chat is active.
+    const boardPrimary = this.renderBoardPrimary(board, chat);
     const primary = html`<div class="chat-pane-primary-column">
-      ${board.face === "dashboard" ? header : nothing}${this.renderBoardPrimary(board, chat)}
+      ${this.narrow
+        ? html`<div class="chat-main__conversation-column">${header}${boardPrimary}</div>`
+        : html`${headerInPrimary ? header : nothing}${boardPrimary}`}
     </div>`;
     const discussion = this.buildSessionDiscussionPanel(state, state.sessionKey.trim());
     const discussionState = this.sessionDiscussionStates.get(state.sessionKey.trim());

@@ -32,13 +32,26 @@ const boardSnapshot = {
   sessionKey: session.key,
   revision: 1,
   tabs: [{ tabId: "main", title: "Main", position: 0, chatDock: "right" }],
-  widgets: [],
+  widgets: [
+    {
+      name: "progress",
+      tabId: "main",
+      title: "Progress",
+      contentKind: "html",
+      sizeW: 6,
+      sizeH: 4,
+      position: 0,
+      grantState: "pending",
+      revision: 1,
+      frameUrl: "about:blank#progress",
+    },
+  ],
 };
 
 suite.define(() => {
   for (const colorScheme of ["light", "dark"] as const) {
-    for (const board of [false, true]) {
-      it(`keeps the ${board ? "board" : "simple"} mobile topbar clean in ${colorScheme} mode`, async () => {
+    for (const face of ["chat", "dashboard"] as const) {
+      it(`keeps the mobile board topbar stable in ${colorScheme} ${face} mode`, async () => {
         const context = await suite.newBrowserContext({
           colorScheme,
           locale: "en-US",
@@ -52,9 +65,7 @@ suite.define(() => {
             { self: true, id: "profile-ada", name: "Ada" },
             { id: "profile-zoe", name: "Zoe", watchedSessions: [session.key] },
           ],
-          featureMethods: board
-            ? ["board.get", "chat.metadata", "chat.startup"]
-            : ["chat.metadata", "chat.startup"],
+          featureMethods: ["board.get", "chat.metadata", "chat.startup"],
           methodResponses: {
             "sessions.list": chatSessionListResponse([session], {
               owners: [
@@ -62,7 +73,7 @@ suite.define(() => {
                 { type: "human", id: "profile-zoe", label: "Zoe" },
               ],
             }),
-            ...(board ? { "board.get": boardSnapshot } : {}),
+            "board.get": boardSnapshot,
           },
         });
 
@@ -70,17 +81,17 @@ suite.define(() => {
           await page.goto(`${suite.server.baseUrl}chat`);
           const header = page.locator(".chat-pane__header").first();
           await header.waitFor();
-          if (board) {
-            await page.getByRole("radiogroup", { name: "Session face" }).waitFor();
+          const switcher = header.locator(".chat-pane__face-switch");
+          await switcher.waitFor();
+          if (face === "dashboard") {
+            await switcher.locator('wa-radio[value="dashboard"]').click();
+            await page.locator(".board-session-surface:not([hidden])").waitFor();
           }
           if (proofPhase) {
             await mkdir(proofDir, { recursive: true });
             await page.screenshot({
               animations: "disabled",
-              path: path.join(
-                proofDir,
-                `${proofPhase}-${colorScheme}-${board ? "switcher" : "simple"}.png`,
-              ),
+              path: path.join(proofDir, `${proofPhase}-${colorScheme}-${face}.png`),
             });
           }
 
@@ -102,13 +113,25 @@ suite.define(() => {
           expect(geometry.people).not.toBeNull();
           expect(geometry.row!.right).toBeLessThanOrEqual(geometry.header!.right + 0.1);
           expect(geometry.people!.right).toBeLessThanOrEqual(geometry.row!.right + 0.1);
-          if (board) {
-            expect(geometry.switcher).not.toBeNull();
-            expect(geometry.switcher!.top).toBeGreaterThanOrEqual(geometry.row!.bottom - 0.1);
-            expect(geometry.switcher!.width).toBeLessThan(geometry.header!.width * 0.75);
-          } else {
-            expect(geometry.switcher).toBeNull();
-            expect(geometry.header!.height).toBeCloseTo(52, 0);
+          expect(geometry.switcher).not.toBeNull();
+          expect(geometry.switcher!.top).toBeGreaterThanOrEqual(geometry.row!.bottom - 0.1);
+          expect(geometry.switcher!.width).toBeLessThan(geometry.header!.width * 0.75);
+          expect(
+            await switcher
+              .locator("wa-radio")
+              .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("value"))),
+          ).toEqual(["chat", "dashboard"]);
+          expect(await switcher.locator(".board-fullscreen-button").count()).toBe(0);
+          if (face === "dashboard") {
+            const [headerBox, boardBox] = await Promise.all([
+              header.boundingBox(),
+              page
+                .locator(".board-session-surface:not([hidden]) openclaw-board-view")
+                .boundingBox(),
+            ]);
+            expect(headerBox).not.toBeNull();
+            expect(boardBox).not.toBeNull();
+            expect(boardBox!.y).toBeGreaterThanOrEqual(headerBox!.y + headerBox!.height + 11);
           }
         } finally {
           await suite.closeBrowserContext(context);
