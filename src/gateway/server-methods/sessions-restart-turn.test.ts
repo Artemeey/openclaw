@@ -62,7 +62,7 @@ describe("sessions.restartTurn", () => {
     expect(handleTrustedInternalChatSend).toHaveBeenCalledWith(
       expect.objectContaining({
         params: expect.objectContaining({
-          idempotencyKey: "restart-1",
+          idempotencyKey: "permission-restart:run-current:restart-1",
           message: expect.stringContaining("Permissions changed to Workspace"),
           queueMode: "interrupt",
           sessionKey: "agent:main:main",

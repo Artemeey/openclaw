@@ -541,7 +541,7 @@ describe("gateway server chat", () => {
         runId: "idem-permission-restart-old",
         reason: "permission-change",
         permissionMode: "workspace",
-        idempotencyKey: "idem-permission-restart-new",
+        idempotencyKey: "idem-permission-restart-old",
       });
 
       expect(restarted).toMatchObject({
@@ -549,7 +549,7 @@ describe("gateway server chat", () => {
         payload: {
           ok: true,
           interruptedRunId: "idem-permission-restart-old",
-          runId: "idem-permission-restart-new",
+          runId: "permission-restart:idem-permission-restart-old:idem-permission-restart-old",
           status: "started",
         },
       });
@@ -557,7 +557,9 @@ describe("gateway server chat", () => {
         loadSessionEntry({ sessionKey: "main", storePath: testState.sessionStorePath })
           ?.permissionMode,
       ).toBe("workspace");
-      await waitForAgentRunDrained("idem-permission-restart-new");
+      await waitForAgentRunDrained(
+        "permission-restart:idem-permission-restart-old:idem-permission-restart-old",
+      );
     });
   });
 
@@ -653,8 +655,8 @@ describe("gateway server chat", () => {
       expect(outcomes.filter((outcome) => outcome.ok)).toHaveLength(1);
       const winningMode = workspaceRestart.ok ? "workspace" : "guarded";
       const winningRunId = workspaceRestart.ok
-        ? "idem-permission-duplicate-workspace"
-        : "idem-permission-duplicate-guarded";
+        ? "permission-restart:idem-permission-duplicate-old:idem-permission-duplicate-workspace"
+        : "permission-restart:idem-permission-duplicate-old:idem-permission-duplicate-guarded";
       expect(
         loadSessionEntry({ sessionKey: "main", storePath: testState.sessionStorePath })
           ?.permissionMode,

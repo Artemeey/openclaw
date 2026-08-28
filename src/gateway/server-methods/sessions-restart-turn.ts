@@ -32,6 +32,10 @@ function permissionModeLabel(mode: SessionPermissionMode | null): string {
   }
 }
 
+function permissionRestartRunId(interruptedRunId: string, idempotencyKey: string): string {
+  return `permission-restart:${interruptedRunId}:${idempotencyKey}`;
+}
+
 async function launchPermissionChangeRestart(params: {
   agentId?: string;
   client: GatewayRequestHandlerOptions["client"];
@@ -60,7 +64,7 @@ async function launchPermissionChangeRestart(params: {
             `Permissions changed to ${mode}. Continue the interrupted response from the existing transcript. ` +
               `Treat interrupted or missing tool results as having an unknown outcome. ${TOOL_FAILURE_INSTRUCTION}`,
           ),
-          idempotencyKey: params.idempotencyKey,
+          idempotencyKey: permissionRestartRunId(params.runId, params.idempotencyKey),
           deliver: false,
           queueMode: "interrupt",
           suppressCommandInterpretation: true,

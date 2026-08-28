@@ -6,7 +6,6 @@ import {
   readSessionMethodAccess,
   type SessionMethodAccess,
 } from "../../lib/session-method-access.ts";
-import { isSessionRunActive } from "../../lib/session-run-state.ts";
 import { scopedAgentParamsForSession } from "../../lib/sessions/index.ts";
 import { generateUUID } from "../../lib/uuid.ts";
 import { readChatSessionActionAccess } from "./chat-session-action-access.ts";
@@ -166,7 +165,6 @@ export function renderChatPaneComposerControls(params: {
         if (!permissionAccess.allowed) {
           return;
         }
-        const sessionRunActive = Boolean(selectedSession && isSessionRunActive(selectedSession));
         const listedRunIds = selectedSession?.activeRunIds ?? [];
         const activeRunId = state.chatRunId ?? (listedRunIds.length === 1 ? listedRunIds[0] : null);
         const sessionKey = state.sessionKey;
@@ -181,9 +179,6 @@ export function renderChatPaneComposerControls(params: {
           scopedAgentParamsForSession(state, sessionKey).agentId === agentScope.agentId;
         try {
           state.chatError = state.lastError = null;
-          if (sessionRunActive && !activeRunId) {
-            throw new Error("Active run identity is unavailable. Refresh and retry.");
-          }
           const patched = activeRunId
             ? await restartChatSessionTurn(state, {
                 sessionKey,

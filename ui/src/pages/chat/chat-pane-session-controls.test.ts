@@ -274,6 +274,14 @@ describe("chat pane composer controls", () => {
       status: "done",
       restarts: false,
     },
+    {
+      label: "running session with ambiguous active runs",
+      chatRunId: null,
+      activeRunIds: ["run-one", "run-two"],
+      hasActiveRun: true,
+      status: "running",
+      restarts: false,
+    },
   ] as const)("restarts only a $label session after changing permissions", async (sessionCase) => {
     const patch = vi.fn(async () => ({}));
     const restartTurn = vi.fn(async () => ({ ok: true, status: "started", runId: "run-next" }));
