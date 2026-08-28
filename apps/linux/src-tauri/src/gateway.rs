@@ -62,11 +62,11 @@ pub enum GatewayAction {
 }
 
 impl GatewayAction {
-    fn command(self) -> &'static str {
+    fn command_args(self) -> &'static [&'static str] {
         match self {
-            Self::Start => "start",
-            Self::Stop => "stop",
-            Self::Restart => "restart",
+            Self::Start => &["gateway", "start", "--json"],
+            Self::Stop => &["gateway", "stop", "--force", "--json"],
+            Self::Restart => &["gateway", "restart", "--json"],
         }
     }
 }
@@ -190,11 +190,11 @@ pub fn ensure_ready(cli: &OpenClawCli) -> Result<ReadyGateway, String> {
     }
 
     if !snapshot.installed {
-        run_service_command(cli, "install")?;
+        run_service_command(cli, &["gateway", "install", "--json"])?;
         snapshot = status(cli)?;
     }
     if !snapshot.running {
-        run_service_command(cli, "start")?;
+        run_service_command(cli, &["gateway", "start", "--json"])?;
     }
 
     snapshot = wait_until_reachable(cli)?;
@@ -218,7 +218,7 @@ fn wait_until_reachable(cli: &OpenClawCli) -> Result<GatewaySnapshot, String> {
 }
 
 pub fn act(cli: &OpenClawCli, action: GatewayAction) -> Result<GatewaySnapshot, String> {
-    run_service_command(cli, action.command())?;
+    run_service_command(cli, action.command_args())?;
     if matches!(action, GatewayAction::Stop) {
         return status(cli);
     }
@@ -290,8 +290,24 @@ fn dashboard_token(dashboard_url: &str) -> Result<Option<String>, String> {
 }
 
 #[cfg(test)]
-mod dashboard_tests {
-    use super::dashboard_token;
+mod tests {
+    use super::{dashboard_token, GatewayAction};
+
+    #[test]
+    fn gateway_actions_use_expected_cli_arguments() {
+        assert_eq!(
+            GatewayAction::Start.command_args(),
+            ["gateway", "start", "--json"]
+        );
+        assert_eq!(
+            GatewayAction::Stop.command_args(),
+            ["gateway", "stop", "--force", "--json"]
+        );
+        assert_eq!(
+            GatewayAction::Restart.command_args(),
+            ["gateway", "restart", "--json"]
+        );
+    }
 
     #[test]
     fn extracts_and_decodes_dashboard_fragment_token() {
@@ -317,9 +333,9 @@ mod dashboard_tests {
     }
 }
 
-fn run_service_command(cli: &OpenClawCli, action: &str) -> Result<(), String> {
+fn run_service_command(cli: &OpenClawCli, args: &[&str]) -> Result<(), String> {
     let (response, output) = cli
-        .json::<CommandResponse, _, _>(["gateway", action, "--json"])
+        .json::<CommandResponse, _, _>(args.iter().copied())
         .map_err(|error| error.to_string())?;
     if response.ok && output.status.success() {
         return Ok(());
@@ -327,5 +343,5 @@ fn run_service_command(cli: &OpenClawCli, action: &str) -> Result<(), String> {
     Err(response
         .error
         .or(response.message)
-        .unwrap_or_else(|| format!("Gateway {action} failed.")))
+        .unwrap_or_else(|| format!("Gateway {} failed.", args[1])))
 }
