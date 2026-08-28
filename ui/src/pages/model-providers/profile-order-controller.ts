@@ -147,6 +147,7 @@ export class ProfileOrderController {
         }
         if (draft.length > 0) {
           profileOrders[owner] = draft;
+          profileOrderProviders[owner] ??= this.providers.get(owner) ?? owner;
           profileOrderFallbacks[owner] ??=
             card.profileOrders[owner] === undefined ? "automatic" : "config";
         }

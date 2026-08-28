@@ -209,6 +209,27 @@ describe("ProfileOrderController", () => {
     expect(getData().authStatus?.providers[0]?.profileOrder).toBeUndefined();
   });
 
+  it("can reset an optimistic reorder before its first save finishes", async () => {
+    const { controller, getData, request, requests } = createHarness();
+    delete getData().authStatus!.providers[0]!.profileOrder;
+
+    controller.queue("openai", ["openai:two", "openai:one"]);
+    const optimisticCard = controller.buildCards(getData())[0]!;
+
+    expect(optimisticCard.profileOrderProviders).toEqual({ openai: "openai" });
+    controller.queue(optimisticCard.profileOrderProviders.openai!, []);
+    requests[0]?.resolve({});
+
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(request).toHaveBeenLastCalledWith(
+      "models.authOrderSet",
+      expect.objectContaining({ provider: "openai", profileIds: null }),
+    );
+
+    requests[1]?.resolve({});
+    await controller.waitFor("openai");
+  });
+
   it("keeps the configured order visible when its post-reset refresh fails", async () => {
     const { controller, getData, refresh, requests, setMessage } = createHarness();
     const provider = getData().authStatus!.providers[0]!;
