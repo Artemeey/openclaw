@@ -6654,7 +6654,16 @@ exit 1
     const renderStep = macosSwift.steps.find(
       (step: WorkflowStep) => step.name === "Render isolated macOS health fixtures",
     );
+    const buildCache = macosSwift.steps.find(
+      (step: WorkflowStep) => step.id === "swift-build-cache",
+    );
+    const nativeCachePrefix =
+      "${{ runner.os }}-swift-build-v4-native-tests-${{ steps.swift-toolchain.outputs.key }}-";
 
+    expect(buildCache.with).toMatchObject({
+      key: expect.stringContaining(nativeCachePrefix),
+      "restore-keys": `${nativeCachePrefix}\n`,
+    });
     expect(macosSwift.env.SWIFT_TEST_EXECUTION).toBe(
       "${{ (github.event_name == 'workflow_dispatch' || github.run_attempt > 1) && 'serial' || 'parallel' }}",
     );
