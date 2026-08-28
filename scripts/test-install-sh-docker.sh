@@ -118,7 +118,7 @@ const packJsonFile = process.argv[3];
 const raw = readFileSync(packJsonFile, "utf8") || "[]";
 const parsed = JSON.parse(raw);
 const budgetOverride = process.env.OPENCLAW_INSTALL_SMOKE_PACK_UNPACKED_BUDGET_BYTES;
-// Preserve the existing headroom after the accepted dual-layout fs-safe native payload.
+// Match release-check headroom above the accepted dual-layout fs-safe native payload.
 const budgetBytes = budgetOverride ? Number(budgetOverride) : 235 * 1024 * 1024;
 if (!Number.isFinite(budgetBytes)) {
   throw new Error(
