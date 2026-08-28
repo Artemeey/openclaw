@@ -164,8 +164,6 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
     }
     return persistQueuedPostSendState({
       queueId,
-      queuePolicy,
-      ...(producerClaimId ? { producerClaimId } : {}),
       ...(producerClaimId ? { expectedPlatformSendAttemptId: producerClaimId } : {}),
     });
   };
@@ -245,9 +243,13 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
     },
     onPlatformSendDispatch: async () => {
       params.abortSignal?.throwIfAborted();
-      // Once any payload returns an identity, unknown-after-send protects the whole batch.
-      // A later payload dispatch must not regress that durable evidence to attempt-started.
-      if (platformQueueId && queuedPreSendState !== "acked" && queuedPostSendState === undefined) {
+      // A failed progress marker may mean claim loss. Revalidate before another
+      // send; the dispatch owner preserves any stronger unknown-after-send state.
+      if (
+        platformQueueId &&
+        queuedPreSendState !== "acked" &&
+        (queuedPostSendState === undefined || queuedPostSendState === "unmarked")
+      ) {
         try {
           if (producerClaimId) {
             await markDeliveryPlatformSendDispatched(
@@ -406,19 +408,21 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
           queuedPostSendState ??
           (partialSendEvidence ? await persistOwnedPostSendState() : undefined);
         const error = "partial delivery failure (bestEffort)";
-        if (postSendState === undefined || postSendState === "marked") {
+        if (postSendState !== "acked" && postSendState !== "failed") {
           const recordFailure =
-            !partialSendEvidence && partialFailuresAreProvenNotSent
-              ? failDeliveryBeforePlatformSend
-              : failDelivery;
+            postSendState === "unmarked"
+              ? failDeliveryAfterPlatformSend
+              : !partialSendEvidence && partialFailuresAreProvenNotSent
+                ? failDeliveryBeforePlatformSend
+                : failDelivery;
           await recordOwnedQueueFailure(recordFailure, error).catch((err: unknown) => {
             log.warn(
               `failed to mark queued delivery ${queueId} as failed after partial failure; continuing best-effort delivery: ${formatErrorMessage(err)}`,
             );
           });
         } else if (postSendState === "acked") {
-          // Direct ack is the fallback when the post-send marker cannot be
-          // written. Once the row is gone, recovery cannot run these hooks.
+          // A best-effort pre-send ack removed custody before provider I/O.
+          // Recovery cannot run observers for that retired row.
           await runCommitHooksAfterAck();
           emitTerminals(() =>
             failedOutboundAuditTerminals({
@@ -560,7 +564,7 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
         if (sendEvidence) {
           try {
             queuedPostSendState ??= await persistOwnedPostSendState();
-            if (queuedPostSendState === "marked") {
+            if (queuedPostSendState === "marked" || queuedPostSendState === "unmarked") {
               await recordOwnedQueueFailure(failDeliveryAfterPlatformSend, formatErrorMessage(err));
               queuedPostSendState = "failed";
             }
@@ -570,10 +574,6 @@ export async function deliverOutboundPayloadsWithQueueCleanup(
             log.warn(
               `failed to preserve queued delivery ${queueId} post-send evidence: ${formatErrorMessage(persistErr)}`,
             );
-          }
-          await runCommitHooksAfterAck();
-          if (queuedPostSendState === "acked") {
-            emitFailedTerminals(platformSendFailureStage);
           }
         } else {
           const permanentRejection = findPlatformMessageRejectedError(err);

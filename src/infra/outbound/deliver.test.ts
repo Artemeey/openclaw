@@ -2460,7 +2460,7 @@ describe("deliverOutboundPayloads", () => {
     );
   });
 
-  it("retains custody when the post-send unknown marker cannot be written", async () => {
+  it("acks a fully identified batch after an intermediate marker failure", async () => {
     queueMocks.markDeliveryPlatformOutcomeUnknown.mockRejectedValueOnce(
       new Error("unknown marker offline"),
     );
@@ -2473,11 +2473,8 @@ describe("deliverOutboundPayloads", () => {
     });
 
     expect(sendMatrix).toHaveBeenCalled();
-    expect(queueMocks.ackDelivery).not.toHaveBeenCalled();
-    expect(queueMocks.failDeliveryAfterPlatformSend).toHaveBeenCalledWith(
-      "mock-queue-id",
-      expect.stringContaining("post-send state persistence failed"),
-    );
+    expect(queueMocks.ackDelivery).toHaveBeenCalledExactlyOnceWith("mock-queue-id");
+    expect(queueMocks.failDeliveryAfterPlatformSend).not.toHaveBeenCalled();
     expect(queueMocks.failDelivery).not.toHaveBeenCalled();
   });
 
@@ -2503,8 +2500,13 @@ describe("deliverOutboundPayloads", () => {
     });
 
     expect(results).toHaveLength(1);
+    expect(messageSendText).toHaveBeenCalledTimes(2);
     expect(queueMocks.ackDelivery).not.toHaveBeenCalled();
     expect(afterCommit).not.toHaveBeenCalled();
+    expect(queueMocks.failDeliveryAfterPlatformSend).toHaveBeenCalledWith(
+      "mock-queue-id",
+      "partial delivery failure (bestEffort)",
+    );
     expect(queueMocks.failDelivery).not.toHaveBeenCalled();
   });
 

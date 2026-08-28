@@ -660,24 +660,13 @@ function isPermanentDeliveryError(error: string): boolean {
 
 async function persistRecoveredPostSendState(opts: {
   entry: QueuedDelivery;
-  log: RecoveryLogger;
   stateDir?: string;
   producerClaimId?: string;
 }): Promise<QueuedPostSendState> {
-  // Recovery keeps its media lease until the adapter settles, even if the
-  // canonical post-send marker has to finalize the queue with a direct ack.
   return persistQueuedPostSendState({
     queueId: opts.entry.id,
-    queuePolicy: opts.entry.queuePolicy ?? "best_effort",
     stateDir: opts.stateDir,
-    producerClaimId: opts.producerClaimId,
     expectedPlatformSendAttemptId: recoveryPlatformAttemptId(opts.entry, opts.producerClaimId),
-    retainSpoolArtifacts: true,
-    onPostSendMarkerError: (error) => {
-      opts.log.warn(
-        `Delivery entry ${opts.entry.id} failed to persist post-send state; falling back to direct ack: ${formatErrorMessage(error)}`,
-      );
-    },
   });
 }
 
@@ -878,7 +867,6 @@ async function drainQueuedEntry(opts: {
         collectResults([deliveryResult]);
         postSendState ??= await persistRecoveredPostSendState({
           entry,
-          log: opts.log,
           stateDir: opts.stateDir,
           ...(producerClaimId ? { producerClaimId } : {}),
         });
@@ -918,22 +906,19 @@ async function drainQueuedEntry(opts: {
       if (results.length > 0 || failedOutcomes.some((outcome) => outcome.sentBeforeError)) {
         postSendState ??= await persistRecoveredPostSendState({
           entry,
-          log: opts.log,
           stateDir: opts.stateDir,
           ...(producerClaimId ? { producerClaimId } : {}),
         });
         opts.log.warn(
           `Delivery entry ${entry.id} partially sent before best-effort recovery failed; preserving unknown_after_send`,
         );
-        if (postSendState === "acked") {
-          await runCommitHooksAfterAck();
-          emitQueuedAuditTerminals(entry, () =>
-            failedOutboundAuditTerminals({
-              payloadCount: queuedPayloadCount(entry),
-              results: deliveredResults,
-              payloadOutcomes,
-              failureStage: "platform_send",
-            }),
+        if (postSendState === "unmarked") {
+          await recordRecoveredFailure(
+            failDeliveryAfterPlatformSend,
+            entry,
+            errMsg,
+            opts.stateDir,
+            producerClaimId,
           );
         }
       } else {
@@ -958,17 +943,10 @@ async function drainQueuedEntry(opts: {
       results.length > 0
         ? await persistRecoveredPostSendState({
             entry,
-            log: opts.log,
             stateDir: opts.stateDir,
             ...(producerClaimId ? { producerClaimId } : {}),
           })
         : undefined;
-    if (postSendState === "failed") {
-      const errMsg = "recovered send completed but queue finalization failed";
-      opts.onFailed?.(entry, errMsg);
-      opts.log.warn(`Delivery entry ${entry.id} ${errMsg}; preserving unknown_after_send`);
-      return "failed";
-    }
     if (postSendState !== "acked") {
       try {
         await (results.length === 0 && typeof entry.completionRetention === "object"
@@ -1031,10 +1009,18 @@ async function drainQueuedEntry(opts: {
       try {
         postSendState ??= await persistRecoveredPostSendState({
           entry,
-          log: opts.log,
           stateDir: opts.stateDir,
           ...(producerClaimId ? { producerClaimId } : {}),
         });
+        if (postSendState === "unmarked") {
+          await recordRecoveredFailure(
+            failDeliveryAfterPlatformSend,
+            entry,
+            errMsg,
+            opts.stateDir,
+            producerClaimId,
+          );
+        }
       } catch (persistErr) {
         // Never overwrite concrete send evidence with a generic retry state.
         opts.log.error(

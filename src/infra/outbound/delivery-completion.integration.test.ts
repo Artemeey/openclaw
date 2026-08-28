@@ -41,57 +41,65 @@ describe("pending-final durable delivery completion", () => {
     setActivePluginRegistry(createEmptyPluginRegistry());
   });
 
-  it("suppresses a second stable caller after the exact pending final was delivered", async () => {
-    process.env.OPENCLAW_STATE_DIR = tmpDir;
-    const sessionKey = "agent:main:matrix:direct:123";
-    const storePath = path.join(tmpDir, "sessions.json");
-    const deliveryId = "pending-final-delivery-1";
-    const completion = {
-      kind: "pending-final" as const,
-      deliveryId,
-      intentId: "pending-final-intent-1",
-      sessionId: "session-1",
-      sessionKey,
-      storePath,
-    };
-    await replaceSessionEntry(
-      { sessionKey, storePath },
-      {
+  it.each([1, 2])(
+    "settles %s identified payloads before suppressing a second stable caller",
+    async (payloadCount) => {
+      process.env.OPENCLAW_STATE_DIR = tmpDir;
+      const sessionKey = "agent:main:matrix:direct:123";
+      const storePath = path.join(tmpDir, "sessions.json");
+      const deliveryId = "pending-final-delivery-1";
+      const completion = {
+        kind: "pending-final" as const,
+        deliveryId,
+        intentId: "pending-final-intent-1",
         sessionId: "session-1",
-        status: "running",
-        updatedAt: Date.now(),
-        pendingFinalDelivery: {
-          kind: "replayable",
-          text: "deliver once",
-          createdAt: Date.now(),
-          intentId: completion.intentId,
-          deliveries: [{ id: deliveryId, state: "prepared" }],
+        sessionKey,
+        storePath,
+      };
+      await replaceSessionEntry(
+        { sessionKey, storePath },
+        {
+          sessionId: "session-1",
+          status: "running",
+          updatedAt: Date.now(),
+          pendingFinalDelivery: {
+            kind: "replayable",
+            text: "deliver once",
+            createdAt: Date.now(),
+            intentId: completion.intentId,
+            deliveries: [{ id: deliveryId, state: "prepared" }],
+          },
         },
-      },
-    );
-    const sendMatrix = vi.fn().mockResolvedValue({ messageId: "matrix-message-1" });
-    const params = {
-      cfg: {} as OpenClawConfig,
-      channel: "matrix" as const,
-      to: "!room:example",
-      payloads: [{ text: "deliver once" }],
-      deps: { matrix: sendMatrix },
-      queuePolicy: "required" as const,
-      deliveryIntentId: deliveryId,
-      deliveryCompletion: completion,
-    };
+      );
+      const payloads = Array.from({ length: payloadCount }, (_, index) => ({
+        text: `deliver ${index}`,
+      }));
+      const sendMatrix = vi.fn(async (_to: string, text: string) => ({
+        messageId: `matrix-${text}`,
+      }));
+      const params = {
+        cfg: {} as OpenClawConfig,
+        channel: "matrix" as const,
+        to: "!room:example",
+        payloads,
+        deps: { matrix: sendMatrix },
+        queuePolicy: "required" as const,
+        deliveryIntentId: deliveryId,
+        deliveryCompletion: completion,
+      };
 
-    await expect(deliverOutboundPayloads(params)).resolves.toMatchObject([
-      { messageId: "matrix-message-1" },
-    ]);
-    expect(loadSessionEntry({ sessionKey, storePath })?.pendingFinalDelivery?.deliveries).toEqual([
-      { id: deliveryId, state: "delivered" },
-    ]);
+      await expect(deliverOutboundPayloads(params)).resolves.toMatchObject(
+        payloads.map(({ text }) => ({ messageId: `matrix-${text}` })),
+      );
+      expect(loadSessionEntry({ sessionKey, storePath })?.pendingFinalDelivery?.deliveries).toEqual(
+        [{ id: deliveryId, state: "delivered" }],
+      );
 
-    await expect(deliverOutboundPayloads(params)).resolves.toEqual([]);
-    expect(sendMatrix).toHaveBeenCalledOnce();
-    expect(await loadPendingDeliveries(tmpDir)).toEqual([]);
-  });
+      await expect(deliverOutboundPayloads(params)).resolves.toEqual([]);
+      expect(sendMatrix).toHaveBeenCalledTimes(payloadCount);
+      expect(await loadPendingDeliveries(tmpDir)).toEqual([]);
+    },
+  );
 
   it.each([false, true])(
     "keeps an uncertainty notice owed after identity loss (confirmed prefix=%s)",
