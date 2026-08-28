@@ -453,3 +453,20 @@ export function isReplyRunEvidenceStale(operation: ReplyOperation): boolean {
     Date.now() - operation.lastActivityAtMs > resolveRunStaleThresholdMs(activity)
   );
 }
+
+export function expireStaleReplyOperation(
+  operation: ReplyOperation,
+  reason: ReplyOperationStaleReason,
+  options?: ReplyOperationStaleExpiryOptions,
+): boolean {
+  return expireReplyOperationByOperation.get(operation)?.(reason, options) ?? false;
+}
+
+export function forceClearReplyOperation(operation: ReplyOperation, cause?: unknown): boolean {
+  if (replyRunState.activeRunsByKey.get(operation.key) !== operation) {
+    return false;
+  }
+  operation.fail("run_failed", cause);
+  operation.complete();
+  return true;
+}

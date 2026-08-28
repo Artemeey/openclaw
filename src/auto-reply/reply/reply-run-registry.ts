@@ -19,11 +19,8 @@ export {
   finalizeReplyMessageInjectionAttempt,
   resolveReplyBackendQueueMessageMismatch,
 } from "./reply-run-registry.message-injection.js";
-export {
-  createReplyOperation,
-  expireStaleReplyOperation,
-  forceClearReplyOperation,
-} from "./reply-run-registry.operation.js";
+export { createReplyOperation } from "./reply-run-registry.operation.js";
+export { expireStaleReplyOperation, forceClearReplyOperation } from "./reply-run-registry.state.js";
 export {
   abortActiveReplyRuns,
   abortReplyRunBySessionId,
