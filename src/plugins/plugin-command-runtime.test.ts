@@ -2,8 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const cleanupReplacedPluginHostRegistry = vi.hoisted(() =>
   vi.fn(async () => ({ cleanupCount: 0, failures: [] })),
 );
+const shouldSuppressLocalExecApprovalPrompt = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock("./host-hook-cleanup.js", () => ({ cleanupReplacedPluginHostRegistry }));
+vi.mock("../channels/plugins/exec-approval-local.js", () => ({
+  shouldSuppressLocalExecApprovalPrompt,
+}));
 
 import { getPluginCommandExecutionCount } from "./command-execution-lock.js";
 import { registerPluginCommandInRegistry } from "./command-registration.js";
@@ -71,6 +75,7 @@ function requirePluginDispatch(
 
 afterEach(() => {
   cleanupReplacedPluginHostRegistry.mockClear();
+  shouldSuppressLocalExecApprovalPrompt.mockReset().mockReturnValue(false);
   resetPluginRuntimeStateForTest();
 });
 
@@ -218,6 +223,30 @@ describe("plugin command runtime", () => {
       text: expect.stringContaining("registry changed"),
     });
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("marks native exec approval replies suppressed when the channel route is active", async () => {
+    const registry = createEmptyPluginRegistry();
+    registerCommand(registry, {
+      pluginId: "approval",
+      name: "approval",
+      handler: async () => ({ text: "Approval required" }),
+    });
+    setActivePluginRegistry(registry);
+    shouldSuppressLocalExecApprovalPrompt.mockReturnValue(true);
+    const runtime = createPluginCommandRuntime();
+    const dispatch = requirePluginDispatch(runtime.listNativeCandidates("telegram")[0]!);
+
+    await expect(dispatch.execute(executionContext)).resolves.toMatchObject({
+      text: "Approval required",
+      suppressReply: true,
+    });
+    expect(shouldSuppressLocalExecApprovalPrompt).toHaveBeenCalledWith({
+      channel: "telegram",
+      cfg: {},
+      accountId: undefined,
+      payload: { text: "Approval required" },
+    });
   });
 
   it("keeps overlapping executions locked until both handlers settle", async () => {

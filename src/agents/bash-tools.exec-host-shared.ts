@@ -90,6 +90,7 @@ type ExecApprovalUnavailableReason =
 type RegisteredExecApprovalRequestContext = {
   approvalId: string;
   approvalSlug: string;
+  deliveryRoute: ExecApprovalRegistration["deliveryRoute"];
   warningText: string;
   expiresAtMs: number;
   preResolvedDecision: string | null | undefined;
@@ -306,6 +307,7 @@ async function createAndRegisterDefaultExecApprovalRequest(
   return {
     approvalId,
     approvalSlug,
+    deliveryRoute: registration.deliveryRoute,
     warningText,
     expiresAtMs: registration.expiresAtMs ?? defaultExpiresAtMs,
     preResolvedDecision:

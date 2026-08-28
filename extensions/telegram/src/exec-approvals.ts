@@ -6,11 +6,15 @@ import {
   isChannelExecApprovalTargetRecipient,
   matchesApprovalRequestFilters,
 } from "openclaw/plugin-sdk/approval-client-runtime";
-import { doesApprovalRequestSelectChannelAccount } from "openclaw/plugin-sdk/approval-native-runtime";
+import {
+  doesApprovalRequestSelectChannelAccount,
+  shouldSuppressLocalNativeExecApprovalPrompt,
+} from "openclaw/plugin-sdk/approval-native-runtime";
 import type {
   ExecApprovalRequest,
   PluginApprovalRequest,
 } from "openclaw/plugin-sdk/approval-runtime";
+import type { ChannelOutboundPayloadHint } from "openclaw/plugin-sdk/channel-contract";
 import type {
   OpenClawConfig,
   TelegramExecApprovalConfig,
@@ -128,7 +132,6 @@ const telegramExecApprovalProfile = createChannelExecApprovalProfile({
   matchesRequestAccount: matchesTelegramRequestAccount,
   // Telegram session keys often carry the only stable agent ID for approval routing.
   fallbackAgentIdFromSessionKey: true,
-  requireClientEnabledForLocalPromptSuppression: false,
 });
 
 export const isTelegramExecApprovalClientEnabled = telegramExecApprovalProfile.isClientEnabled;
@@ -162,8 +165,13 @@ export function shouldSuppressLocalTelegramExecApprovalPrompt(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
   payload: ReplyPayload;
+  hint?: ChannelOutboundPayloadHint;
 }): boolean {
-  return telegramExecApprovalProfile.shouldSuppressLocalPrompt(params);
+  return shouldSuppressLocalNativeExecApprovalPrompt({
+    ...params,
+    isNativeDeliveryEnabled: isTelegramExecApprovalClientEnabled,
+    resolveApprovalConfig: resolveTelegramExecApprovalConfig,
+  });
 }
 
 export function isTelegramExecApprovalHandlerConfigured(params: {
