@@ -135,23 +135,28 @@ function resolveReturnedAuthProfileSource(
 // Planning and immediate resolution share one scoped snapshot so provider
 // bindings and cooldown decisions cannot diverge inside a side question.
 function resolveBtwAuthProfileStore(params: {
-  cfg: OpenClawConfig;
   provider: string;
   modelId: string;
   agentId?: string;
-  agentDir: string;
-  workspaceDir?: string;
+  preparedModelRuntime: PreparedModelRuntimeSnapshot;
   authProfileId?: string;
   authProfileIdSource?: "auto" | "user";
 }): {
   store: AuthProfileStore;
   ignoreAutoPreferredProfile: boolean;
 } {
+  const { config: cfg, agentDir, workspaceDir, metadataSnapshot } = params.preparedModelRuntime;
+  const authStoreOptions = {
+    config: cfg,
+    workspaceDir,
+    pluginMetadataSnapshot: metadataSnapshot,
+    allowKeychainPrompt: false,
+  };
   if (isOpenAIProvider(params.provider)) {
     return {
-      store: ensureAuthProfileStore(params.agentDir, {
+      store: ensureAuthProfileStore(agentDir, {
         externalCliProviderIds: ["openai"],
-        allowKeychainPrompt: false,
+        ...authStoreOptions,
       }),
       ignoreAutoPreferredProfile: false,
     };
@@ -161,35 +166,33 @@ function resolveBtwAuthProfileStore(params: {
     params.authProfileIdSource === "user" ? params.authProfileId : undefined;
   let externalCliAuthScope = resolveExternalCliAuthOverlayScopeFromSelection({
     provider: params.provider,
-    cfg: params.cfg,
+    cfg,
     agentId: params.agentId,
     modelId: params.modelId,
-    workspaceDir: params.workspaceDir,
+    workspaceDir,
     userPinnedAuthProfileId,
   });
   let store: AuthProfileStore;
   if (externalCliAuthScope.providerIds) {
-    store = ensureAuthProfileStore(params.agentDir, {
+    store = ensureAuthProfileStore(agentDir, {
       externalCliProviderIds: externalCliAuthScope.providerIds,
-      allowKeychainPrompt: false,
+      ...authStoreOptions,
     });
   } else {
-    store = ensureAuthProfileStoreWithoutExternalProfiles(params.agentDir, {
-      allowKeychainPrompt: false,
-    });
+    store = ensureAuthProfileStoreWithoutExternalProfiles(agentDir, authStoreOptions);
     externalCliAuthScope = resolveExternalCliAuthOverlayScopeFromSelection({
       provider: params.provider,
-      cfg: params.cfg,
+      cfg,
       agentId: params.agentId,
       modelId: params.modelId,
-      workspaceDir: params.workspaceDir,
+      workspaceDir,
       store,
       userPinnedAuthProfileId,
     });
     if (externalCliAuthScope.providerIds) {
-      store = ensureAuthProfileStore(params.agentDir, {
+      store = ensureAuthProfileStore(agentDir, {
         externalCliProviderIds: externalCliAuthScope.providerIds,
-        allowKeychainPrompt: false,
+        ...authStoreOptions,
       });
     }
   }
@@ -518,6 +521,8 @@ async function resolveRuntimeModel(params: {
     modelId: runtimeModelId,
     harnessRuntime: params.harnessId,
     agentDir,
+    workspaceDir,
+    pluginMetadataSnapshot: preparedModelRuntime.metadataSnapshot,
     sessionEntry: params.sessionEntry,
     sessionStore: params.sessionStore,
     sessionKey: params.sessionKey,
@@ -527,12 +532,10 @@ async function resolveRuntimeModel(params: {
   const authProfileId = authSelection?.profileId;
   const authProfileIdSource = authSelection?.source;
   const authProfileStoreSelection = resolveBtwAuthProfileStore({
-    cfg,
     provider: runtimeProvider,
     modelId: runtimeModelId,
     agentId: params.agentId,
-    agentDir,
-    workspaceDir,
+    preparedModelRuntime,
     authProfileId,
     authProfileIdSource,
   });
@@ -882,12 +885,10 @@ export async function runBtwSideQuestion(
         selectedHarness.id === harness.id
           ? undefined
           : resolveBtwAuthProfileStore({
-              cfg: params.cfg,
               provider: runtime.model.provider,
               modelId: runtime.model.id,
               agentId: sessionAgentId,
-              agentDir: params.agentDir,
-              workspaceDir,
+              preparedModelRuntime,
               authProfileId: runtime.authProfileId,
               authProfileIdSource: runtime.authProfileIdSource,
             });

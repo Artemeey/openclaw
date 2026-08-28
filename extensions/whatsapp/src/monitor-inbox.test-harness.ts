@@ -257,36 +257,61 @@ export type InboxMonitorOptions = Parameters<MonitorWebInbox>[0];
 let monitorWebInbox: MonitorWebInbox;
 let resetWebInboundDedupe: ResetWebInboundDedupe;
 
-function expectInboxPairingReplyText(
-  text: string,
-  params: {
-    channel: string;
-    idLine: string;
-    code?: string;
-  },
-): string {
-  const code = text.match(/Pairing code:\s*```[\r\n]+([A-Z2-9]{6,})/)?.[1];
-  expect(code).toBeDefined();
-  const resolvedCode = params.code ?? code ?? "";
-  expect(text).toContain("OpenClaw: access not configured.");
-  expect(text).toContain(params.idLine);
-  expect(text).toContain("Pairing code:");
-  expect(text).toContain(`\n\`\`\`\n${resolvedCode}\n\`\`\`\n`);
-  expect(text).toContain(`pairing approve ${params.channel} ${resolvedCode}`);
-  return resolvedCode;
-}
-
-export function getMonitorWebInbox(): MonitorWebInbox {
-  if (!monitorWebInbox) {
-    throw new Error("monitorWebInbox not initialized");
-  }
-  return monitorWebInbox;
-}
-
+// Yields two macrotask ticks so already-scheduled inbound continuations run.
+// This deliberately does NOT wait for pending inbound work to finish — tests
+// observing intermediate states (held handlers, parked debounce batches) rely
+// on that. For final-state assertions use waitForInboundWorkDrained().
 export async function settleInboundWork() {
   await new Promise((resolve) => {
     setImmediate(resolve);
   });
+  await new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
+type InboundWorkTracker = { pending: number };
+const inboundWorkTrackers = new Set<InboundWorkTracker>();
+let inboundIdle: { promise: Promise<void>; release: () => void } | undefined;
+
+function hasPendingInboundWork(): boolean {
+  for (const tracker of inboundWorkTrackers) {
+    if (tracker.pending > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function publishInboundPendingWork(tracker: InboundWorkTracker, pending: number) {
+  tracker.pending = pending;
+  if (inboundIdle && !hasPendingInboundWork()) {
+    inboundIdle.release();
+    inboundIdle = undefined;
+  }
+}
+
+// Event-driven drain: resolves when every harness-started listener reports zero
+// pending inbound work. Unlike a vi.waitFor deadline, this cannot fail spuriously
+// when a saturated no-isolate worker stalls mid-flow (sync module fetches against
+// the shared transform queue starve waitFor's interval timers). Do not call it
+// while a handler or debounced batch is intentionally held open — it would wait
+// for that work too; use settleInboundWork/waitForMessageCalls there.
+export async function waitForInboundWorkDrained() {
+  if (inboundWorkTrackers.size === 0) {
+    throw new Error("waitForInboundWorkDrained requires a listener started via startInboxMonitor");
+  }
+  if (hasPendingInboundWork()) {
+    if (!inboundIdle) {
+      let release!: () => void;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      inboundIdle = { promise, release };
+    }
+    await inboundIdle.promise;
+  }
+  // One extra tick lets drained-callback continuations (delivery bookkeeping) run.
   await new Promise((resolve) => {
     setImmediate(resolve);
   });
@@ -316,13 +341,23 @@ export async function startInboxMonitor(
   if (!monitorWebInbox) {
     ({ monitorWebInbox } = await import("./inbound.js"));
   }
-  const listener = await monitorWebInbox({
+  const merged = {
     cfg: mockLoadConfig() as never,
     verbose: false,
     onMessage,
     accountId: DEFAULT_ACCOUNT_ID,
     authDir: getAuthDir(),
     ...extraOptions,
+  };
+  const tracker: InboundWorkTracker = { pending: 0 };
+  inboundWorkTrackers.add(tracker);
+  const callerOnPendingWorkChanged = merged.onPendingWorkChanged;
+  const listener = await monitorWebInbox({
+    ...merged,
+    onPendingWorkChanged: (pendingWorkCount: number, at?: number) => {
+      publishInboundPendingWork(tracker, pendingWorkCount);
+      callerOnPendingWorkChanged?.(pendingWorkCount, at);
+    },
   });
   return { listener, sock: getSock() };
 }
@@ -353,15 +388,26 @@ export function buildNotifyMessageUpsert(params: {
   };
 }
 
-export function expectPairingPromptSent(sock: MockSock, jid: string, senderE164: string) {
+// The mocked pairing upsert always issues PAIRCODE, so the reply text can be
+// asserted directly instead of re-extracting the code from the message.
+function expectPairingPromptSent(sock: MockSock, jid: string, senderE164: string) {
   expect(sock.sendMessage).toHaveBeenCalledTimes(1);
   const sendCall = sock.sendMessage.mock.calls.at(0);
   expect(sendCall?.[0]).toBe(jid);
-  expectInboxPairingReplyText((sendCall?.[1] as { text?: string } | undefined)?.text ?? "", {
-    channel: "whatsapp",
-    idLine: `Your WhatsApp phone number: ${senderE164}`,
-    code: "PAIRCODE",
-  });
+  const text = (sendCall?.[1] as { text?: string } | undefined)?.text ?? "";
+  expect(text).toContain("OpenClaw: access not configured.");
+  expect(text).toContain(`Your WhatsApp phone number: ${senderE164}`);
+  expect(text).toContain("Pairing code:");
+  expect(text).toContain("\n```\nPAIRCODE\n```\n");
+  expect(text).toContain("pairing approve whatsapp PAIRCODE");
+}
+
+// The pairing reply is sent before the inbound handler completes, so a full
+// drain guarantees the prompt is observable — and makes the callers' negative
+// assertions (onMessage/readMessages never called) non-vacuous.
+export async function waitForPairingPromptSent(sock: MockSock, jid: string, senderE164: string) {
+  await waitForInboundWorkDrained();
+  expectPairingPromptSent(sock, jid, senderE164);
 }
 
 let authDir: string | undefined;
@@ -379,6 +425,8 @@ export function installWebMonitorInboxUnitTestHooks(opts?: { authDir?: boolean }
   beforeEach(async () => {
     vi.useRealTimers();
     vi.clearAllMocks();
+    inboundWorkTrackers.clear();
+    inboundIdle = undefined;
     channelActivityMocks.recordChannelActivity.mockClear();
     pluginRuntimeMocks.reset();
     setWhatsAppRuntime({

@@ -2366,69 +2366,74 @@ describe("createModelSelectionState auto-failover overrides", () => {
 describe("createModelSelectionState auth-profile override flapping regression", () => {
   const sessionKey = "agent:main:telegram:direct:1";
 
-  it("keeps alias-compatible authProfileOverride when stored credential provider is 'anthropic' for a claude-cli session", async () => {
-    // Regression: the old code compared profile.provider directly to acceptedAuthProviders,
-    // which cleared an 'anthropic' credential when the session ran under the 'claude-cli'
-    // provider. The alias (claude-cli -> anthropic) must be respected so the override is kept.
-    authProfileStoreMock.store = {
-      version: 1,
-      profiles: {
-        "anthropic:claude-cli": {
-          type: "api_key",
-          provider: "anthropic",
-          key: "test-cli-oauth-token",
+  it.each(["/workspace/captured-auth", undefined])(
+    "keeps alias-compatible authProfileOverride and its captured workspace %s",
+    async (workspaceDir) => {
+      // Regression: the old code compared profile.provider directly to acceptedAuthProviders,
+      // which cleared an 'anthropic' credential when the session ran under the 'claude-cli'
+      // provider. The alias (claude-cli -> anthropic) must be respected so the override is kept.
+      authProfileStoreMock.store = {
+        version: 1,
+        profiles: {
+          "anthropic:claude-cli": {
+            type: "api_key",
+            provider: "anthropic",
+            key: "test-cli-oauth-token",
+          },
         },
-      },
-    };
-    const sessionEntry: SessionEntry = {
-      sessionId: "s-cli",
-      updatedAt: 1,
-      authProfileOverride: "anthropic:claude-cli",
-    };
-    const sessionStore = { [sessionKey]: sessionEntry };
-    const agentDir = "/tmp/captured-auth-owner";
-    const workspaceDir = "/workspace/captured-auth";
-    const cfg: OpenClawConfig = {
-      agents: { list: [{ id: "main", workspace: workspaceDir }] },
-    };
-    const pluginMetadataSnapshot = createPluginMetadataSnapshot({
-      config: cfg,
-      workspaceDir,
-      manifestRegistry: { plugins: [], diagnostics: [] },
-    });
-    const selectionParams = {
-      cfg,
-      agentId: "main",
-      agentDir,
-      workspaceDir,
-      manifestPluginContext: createModelManifestPluginContext({
+      };
+      const sessionEntry: SessionEntry = {
+        sessionId: "s-cli",
+        updatedAt: 1,
+        authProfileOverride: "anthropic:claude-cli",
+      };
+      const sessionStore = { [sessionKey]: sessionEntry };
+      const agentDir = "/tmp/captured-auth-owner";
+      const cfg: OpenClawConfig = {
+        agents: { list: [{ id: "main", workspace: workspaceDir }] },
+      };
+      const pluginMetadataSnapshot = createPluginMetadataSnapshot({
+        config: cfg,
+        workspaceDir,
+        manifestRegistry: { plugins: [], diagnostics: [] },
+      });
+      const selectionParams = {
         cfg,
         agentId: "main",
+        agentDir,
         workspaceDir,
-        pluginMetadataSnapshot,
-      }),
-      agentCfg: undefined,
-      sessionEntry,
-      sessionStore,
-      sessionKey,
-      defaultProvider: "claude-cli",
-      defaultModel: "claude-opus-4-7",
-      provider: "claude-cli",
-      model: "claude-opus-4-7",
-      hasModelDirective: false,
-    };
+        manifestPluginContext: createModelManifestPluginContext({
+          cfg,
+          agentId: "main",
+          workspaceDir,
+          pluginMetadataSnapshot,
+        }),
+        agentCfg: undefined,
+        sessionEntry,
+        sessionStore,
+        sessionKey,
+        defaultProvider: "claude-cli",
+        defaultModel: "claude-opus-4-7",
+        provider: "claude-cli",
+        model: "claude-opus-4-7",
+        hasModelDirective: false,
+      };
 
-    await createModelSelectionState(selectionParams);
+      const state = await createModelSelectionState(selectionParams);
 
-    // The override must NOT have been cleared — the anthropic credential is
-    // alias-compatible with the claude-cli provider.
-    expect(sessionStore[sessionKey]?.authProfileOverride).toBe("anthropic:claude-cli");
-    expect(sessionEntry.authProfileOverride).toBe("anthropic:claude-cli");
-    expect(authProfileStoreMock.ensureAuthProfileStore).toHaveBeenCalledWith(
-      agentDir,
-      expect.objectContaining({ config: cfg, workspaceDir, pluginMetadataSnapshot }),
-    );
-  });
+      expect(state.runtimeModelNormalization?.workspaceDir).toBe(workspaceDir);
+      expect(state.runtimeModelNormalization?.pluginMetadataSnapshot).toBe(pluginMetadataSnapshot);
+
+      // The override must NOT have been cleared — the anthropic credential is
+      // alias-compatible with the claude-cli provider.
+      expect(sessionStore[sessionKey]?.authProfileOverride).toBe("anthropic:claude-cli");
+      expect(sessionEntry.authProfileOverride).toBe("anthropic:claude-cli");
+      expect(authProfileStoreMock.ensureAuthProfileStore).toHaveBeenCalledWith(
+        agentDir,
+        expect.objectContaining({ config: cfg, workspaceDir, pluginMetadataSnapshot }),
+      );
+    },
+  );
 });
 
 describe("createModelSelectionState resolveDefaultReasoningLevel", () => {

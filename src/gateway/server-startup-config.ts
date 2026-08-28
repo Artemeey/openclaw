@@ -97,11 +97,11 @@ export type ActivateRuntimeSecrets = ((
   config: OpenClawConfig,
   params: RuntimeSecretsActivationParams,
 ) => Promise<PreparedRuntimeSecretsSnapshot>) & {
-  activatePreparedSnapshot?: (
+  activatePreparedSnapshot: (
     snapshot: PreparedRuntimeSecretsSnapshot,
     params: RuntimeSecretsActivationParams,
   ) => Promise<PreparedRuntimeSecretsSnapshot>;
-  activatePreparedSnapshotIfCurrent?: (
+  activatePreparedSnapshotIfCurrent: (
     snapshot: PreparedRuntimeSecretsSnapshot,
     expectedRevision: number,
     params: RuntimeSecretsActivationParams,
@@ -645,20 +645,17 @@ export async function prepareGatewayStartupConfig(params: {
     },
     { omitErrorMessage: true },
   );
-  const canReusePreflightPreparedSnapshot = (config: OpenClawConfig): boolean =>
-    Boolean(
-      preflightPrepared &&
-      params.activateRuntimeSecrets.activatePreparedSnapshot &&
-      isDeepStrictEqual(
-        resolveGatewayStartupSourceConfig(config, process.env),
-        preflightPrepared.sourceConfig,
-      ),
-    );
   const activateStartupSecrets = async (config: OpenClawConfig) => {
     // Reuse the preflight snapshot only if generated startup auth did not
     // change the secret-relevant source config.
-    if (preflightPrepared && canReusePreflightPreparedSnapshot(config)) {
-      return await params.activateRuntimeSecrets.activatePreparedSnapshot!(preflightPrepared, {
+    if (
+      preflightPrepared &&
+      isDeepStrictEqual(
+        resolveGatewayStartupSourceConfig(config, process.env),
+        preflightPrepared.sourceConfig,
+      )
+    ) {
+      return await params.activateRuntimeSecrets.activatePreparedSnapshot(preflightPrepared, {
         reason: "startup",
         activate: true,
       });

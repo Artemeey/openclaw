@@ -3,6 +3,7 @@ import { resolveModelCandidateChain } from "../../agents/model-fallback-candidat
 import type { ModelCandidate } from "../../agents/model-fallback.types.js";
 import { resolveAgentModelFallbackValues } from "../../config/model-input.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import type { PluginMetadataRegistryView } from "../../plugins/plugin-metadata-snapshot.types.js";
 import type { CronJob } from "../types.js";
 import {
   resolveEffectiveModelFallbacks,
@@ -56,6 +57,8 @@ export function resolveCronPreflightCandidates(params: {
   agentId: string;
   provider: string;
   model: string;
+  workspaceDir: string;
+  pluginMetadataSnapshot: PluginMetadataRegistryView;
   useSubagentFallbacks?: boolean;
   inheritDefaultFallbacksForAgentStringModel?: boolean;
 }): ModelCandidate[] {
@@ -71,6 +74,9 @@ export function resolveCronPreflightCandidates(params: {
     agentId: params.agentId,
     provider: params.provider,
     model: params.model,
+    workspaceDir: params.workspaceDir,
+    pluginMetadataSnapshot: params.pluginMetadataSnapshot,
+    manifestPlugins: params.pluginMetadataSnapshot.manifestRegistry.plugins,
     requestedRouteResolution: "resolved",
     fallbacksOverride,
   });

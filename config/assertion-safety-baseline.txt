@@ -619,7 +619,7 @@ extensions/line/src/flex-templates/basic-cards.ts	19
 extensions/line/src/flex-templates/common.ts	2
 extensions/line/src/flex-templates/media-control-cards.ts	35
 extensions/line/src/flex-templates/schedule-cards.ts	28
-extensions/line/src/gateway.ts	4
+extensions/line/src/gateway.ts	1
 extensions/line/src/group-keys.ts	1
 extensions/line/src/markdown-to-line.ts	7
 extensions/line/src/monitor-durable.ts	1
@@ -878,7 +878,7 @@ extensions/mxc/src/fs-bridge.ts	1
 extensions/nextcloud-talk/src/approval-auth.ts	1
 extensions/nextcloud-talk/src/channel.ts	2
 extensions/nextcloud-talk/src/doctor.ts	2
-extensions/nextcloud-talk/src/gateway.ts	8
+extensions/nextcloud-talk/src/gateway.ts	2
 extensions/nextcloud-talk/src/inbound.ts	9
 extensions/nextcloud-talk/src/message-actions.ts	3
 extensions/nextcloud-talk/src/message-adapter.ts	2
@@ -1267,7 +1267,6 @@ extensions/telegram/src/bot/delivery.resolve-media.ts	1
 extensions/telegram/src/bot/helpers.ts	2
 extensions/telegram/src/callback-query-answer-state.ts	1
 extensions/telegram/src/channel-actions.ts	1
-extensions/telegram/src/channel.ts	1
 extensions/telegram/src/client-fetch.ts	5
 extensions/telegram/src/doctor-contract.ts	3
 extensions/telegram/src/doctor.ts	12
@@ -2509,7 +2508,7 @@ src/commands/doctor-config-analysis.ts	3
 src/commands/doctor-config-flow.ts	3
 src/commands/doctor-config-preflight.cron.ts	4
 src/commands/doctor-db-bloat.ts	1
-src/commands/doctor-gateway-services.ts	2
+src/commands/doctor-gateway-services.ts	1
 src/commands/doctor-heartbeat-main-session-repair.ts	1
 src/commands/doctor-heartbeat-scratch-migration.ts	6
 src/commands/doctor-main-session-recovery.ts	1
@@ -2960,16 +2959,12 @@ src/gateway/server-methods/memory-search.ts	3
 src/gateway/server-methods/migrations.ts	1
 src/gateway/server-methods/models-auth-status.ts	1
 src/gateway/server-methods/models-probe.ts	1
-src/gateway/server-methods/nodes.event.ts	1
-src/gateway/server-methods/nodes.handlers.invoke-progress.ts	1
-src/gateway/server-methods/nodes.handlers.invoke-result.ts	2
+src/gateway/server-methods/nodes.handlers.invoke-result.ts	1
 src/gateway/server-methods/nodes.helpers.ts	1
 src/gateway/server-methods/nodes.invoke-foreground.ts	1
 src/gateway/server-methods/nodes.invoke-talk-events.ts	1
-src/gateway/server-methods/nodes.invoke.ts	1
-src/gateway/server-methods/nodes.pairing.ts	4
-src/gateway/server-methods/nodes.pending-work.ts	2
-src/gateway/server-methods/nodes.read.ts	3
+src/gateway/server-methods/nodes.pending-work.ts	1
+src/gateway/server-methods/nodes.read.ts	2
 src/gateway/server-methods/open-path.ts	1
 src/gateway/server-methods/optional-model-catalog.ts	2
 src/gateway/server-methods/plugin-approval.ts	3

@@ -15,7 +15,7 @@ import {
   requestActiveCronJobCancellation,
 } from "../active-jobs.js";
 import { resolveCronJobConfigRevision } from "../config-revision.js";
-import { cloneCronRuntimeAuthority, type CronRuntimeAuthority } from "../runtime-authority.js";
+import { cloneCronRuntimeAuthority } from "../runtime-authority.js";
 import { cronSchedulingInputsEqual } from "../schedule-identity.js";
 import { removeCronJobBaseSession } from "../session-reaper.js";
 import { removeStaleCronJobFamilyRows } from "../store.js";
@@ -74,11 +74,8 @@ const RETRY_ADD_AFTER_SESSION_CLEANUP = new Error("retry add after session clean
 async function resolveConfiguredChannelsForValidation(
   state: CronServiceState,
 ): Promise<readonly string[] | undefined> {
-  if (!state.deps.listConfiguredChannels) {
-    return undefined;
-  }
   try {
-    return await state.deps.listConfiguredChannels();
+    return await state.deps.listConfiguredChannels?.();
   } catch {
     // Channel discovery is advisory at mutation time. Runtime delivery remains
     // authoritative, so discovery failures must not create false rejections.
@@ -279,54 +276,45 @@ function declarativeFields(job: CronStoredJob, includeEnabled: boolean) {
 
 function reconcileRuntimeAuthority(params: {
   job: CronStoredJob;
-  captured: boolean;
-  runtimeAuthority?: CronRuntimeAuthority;
+  opts?: CronAddOptions | CronUpdateOptions;
+  validateOwner?: () => void;
   explicitlyMutatesToolsAllow: boolean;
 }): void {
-  if (!cronJobUsesToolRuntime(params.job)) {
-    // Runtime authority cannot survive a payload transition into a path that
-    // does not execute the captured tool surface and later reappear on reuse.
-    delete params.job.runtimeAuthority;
-    delete params.job.runtimeAuthorityRecoveryRequired;
-    return;
-  }
-  if (params.captured) {
-    delete params.job.runtimeAuthorityRecoveryRequired;
-    const runtimeAuthority = params.runtimeAuthority
-      ? cloneCronRuntimeAuthority(params.runtimeAuthority)
-      : undefined;
-    if (params.runtimeAuthority && !runtimeAuthority) {
-      throw new TypeError("captured cron runtime authority is invalid");
-    }
-    if (runtimeAuthority) {
-      params.job.runtimeAuthority = runtimeAuthority;
-    } else {
-      // A fresh exact-surface capture with no runtime authority intentionally
-      // replaces any older runtime-specific grant instead of retaining it.
-      delete params.job.runtimeAuthority;
-    }
-    return;
-  }
-  if (params.explicitlyMutatesToolsAllow) {
-    // Explicit tool caps are a complete replacement. Runtime-owned authority
-    // may be restored only by another authenticated exact-surface capture.
-    if (params.job.runtimeAuthority) {
-      params.job.runtimeAuthorityRecoveryRequired = true;
-      delete params.job.runtimeAuthority;
-    }
-  }
-}
-
-function consumeRuntimeAuthorityMutationOptions(
-  opts: CronAddOptions | CronUpdateOptions | undefined,
-): Pick<Parameters<typeof reconcileRuntimeAuthority>[0], "captured" | "runtimeAuthority"> {
+  const { job, opts } = params;
   // Validation-only guards must not look like an empty fresh capture: that
   // would erase an existing runtime ceiling during an otherwise routine edit.
   opts?.commitGuard?.();
-  return {
-    captured: opts?.captureRuntimeAuthority !== undefined,
-    runtimeAuthority: opts?.captureRuntimeAuthority?.(),
-  };
+  params.validateOwner?.();
+  const hasCapture = opts?.captureRuntimeAuthority !== undefined;
+  const captured = opts?.captureRuntimeAuthority?.();
+  if (!cronJobUsesToolRuntime(job)) {
+    // Runtime authority cannot survive a payload transition into a path that
+    // does not execute the captured tool surface and later reappear on reuse.
+    delete job.runtimeAuthority;
+    delete job.runtimeAuthorityRecoveryRequired;
+    return;
+  }
+  if (hasCapture) {
+    delete job.runtimeAuthorityRecoveryRequired;
+    const runtimeAuthority = captured ? cloneCronRuntimeAuthority(captured) : undefined;
+    if (captured && !runtimeAuthority) {
+      throw new TypeError("captured cron runtime authority is invalid");
+    }
+    if (runtimeAuthority) {
+      job.runtimeAuthority = runtimeAuthority;
+    } else {
+      // A fresh exact-surface capture with no runtime authority intentionally
+      // replaces any older runtime-specific grant instead of retaining it.
+      delete job.runtimeAuthority;
+    }
+    return;
+  }
+  if (params.explicitlyMutatesToolsAllow && job.runtimeAuthority) {
+    // Explicit tool caps are a complete replacement. Runtime-owned authority
+    // may be restored only by another authenticated exact-surface capture.
+    job.runtimeAuthorityRecoveryRequired = true;
+    delete job.runtimeAuthority;
+  }
 }
 
 /** Adds or converges a declaration-keyed cron job inside one store lock and write transaction. */
@@ -334,10 +322,19 @@ export async function add(
   state: CronServiceState,
   input: CronJobCreate,
   opts?: CronAddOptions,
+  validateSystemMonitorOwner?: (agentId: string) => void,
 ): Promise<CronAddResult> {
   let pendingSessionCleanup: Promise<void> | undefined;
   return await locked(state, async () => {
     warnIfDisabled(state, "add");
+    if (
+      validateSystemMonitorOwner &&
+      (opts?.systemOwned !== true ||
+        !isSystemOwnedCronPayloadKind(input.payload.kind) ||
+        !normalizeOptionalAgentId(input.agentId))
+    ) {
+      throw new Error("candidate cron ownership requires an explicitly owned system monitor");
+    }
     const declarationKey = normalizeOptionalString(input.declarationKey);
     if (
       input.payload &&
@@ -354,7 +351,12 @@ export async function add(
     }
     await ensureLoaded(state, { skipRecompute: true });
     const agentId = resolveEffectiveJobAgentId(input, resolveCurrentDefaultAgentId(state));
-    if (state.deps.isAgentAvailable?.(agentId) === false) {
+    const validateOwner = validateSystemMonitorOwner
+      ? () => validateSystemMonitorOwner(agentId)
+      : undefined;
+    if (validateOwner) {
+      validateOwner();
+    } else if (state.deps.isAgentAvailable?.(agentId) === false) {
       throw new Error(`cron job agent is unavailable: ${agentId}`);
     }
     const normalizedId = normalizeOptionalString(input.id);
@@ -397,10 +399,10 @@ export async function add(
         toolsAllowProvenance: opts?.toolsAllowProvenance,
         configuredChannels,
       });
-      const runtimeAuthorityMutation = consumeRuntimeAuthorityMutationOptions(opts);
       reconcileRuntimeAuthority({
         job: nextJob,
-        ...runtimeAuthorityMutation,
+        opts,
+        validateOwner,
         explicitlyMutatesToolsAllow: normalizedInput.payload.toolsAllow !== undefined,
       });
       const includeEnabled = opts?.enabledExplicit === true;
@@ -445,10 +447,10 @@ export async function add(
     if (opts?.createdActor) {
       job.createdActor = structuredClone(opts.createdActor);
     }
-    const runtimeAuthorityMutation = consumeRuntimeAuthorityMutationOptions(opts);
     reconcileRuntimeAuthority({
       job,
-      ...runtimeAuthorityMutation,
+      opts,
+      validateOwner,
       explicitlyMutatesToolsAllow: normalizedInput.payload.toolsAllow !== undefined,
     });
     state.store?.jobs.push(job);
@@ -490,7 +492,7 @@ export async function add(
       throw error;
     }
     await pendingSessionCleanup;
-    return await add(state, input, opts);
+    return await add(state, input, opts, validateSystemMonitorOwner);
   });
 }
 
@@ -559,10 +561,9 @@ async function updateLoadedJob(params: {
     scheduleChanged: patch.schedule !== undefined,
     explicitTriggerState: patch.state,
   });
-  const runtimeAuthorityMutation = consumeRuntimeAuthorityMutationOptions(opts);
   reconcileRuntimeAuthority({
     job: nextJob,
-    ...runtimeAuthorityMutation,
+    opts,
     explicitlyMutatesToolsAllow:
       patch.payload !== undefined && Object.hasOwn(patch.payload, "toolsAllow"),
   });

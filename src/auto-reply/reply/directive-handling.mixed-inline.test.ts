@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import type { ModelAliasIndex } from "../../agents/model-selection.js";
+import { RUNTIME_MODEL_VISIBILITY_NORMALIZATION } from "../../agents/model-visibility-policy.js";
 import { persistStickyModelSelectionBestEffort } from "../../agents/sticky-model-selection.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
@@ -96,6 +97,7 @@ async function applyMixedDirectives(params: {
   const allowedModels = params.allowedModels ?? [];
   const aliasIndex = params.aliasIndex ?? { byAlias: new Map(), byKey: new Map() };
   const modelState: Parameters<typeof applyInlineDirectiveOverrides>[0]["modelState"] = {
+    runtimeModelNormalization: RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
     provider,
     model,
     requestedRouteResolution: "resolved",

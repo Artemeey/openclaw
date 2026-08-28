@@ -246,6 +246,7 @@ vi.mock("./io.plugin-metadata.js", () => ({
 }));
 
 vi.mock("../plugins/doctor-contract-registry.js", () => ({
+  collectDoctorConfigRepairPluginIds: () => [],
   collectRelevantDoctorPluginIds: () => [],
   listPluginDoctorLegacyConfigRules: () => [],
   applyPluginDoctorCompatibilityMigrations: () => ({ next: null, changes: [] }),

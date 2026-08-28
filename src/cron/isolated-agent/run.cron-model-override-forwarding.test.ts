@@ -7,6 +7,7 @@ import {
   runInitialModelFallbackAttempt,
   type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
+import { createPluginMetadataSnapshot } from "../../config/plugin-auto-enable.test-helpers.js";
 import {
   clearCliSessionMock,
   clearFastTestEnv,
@@ -177,6 +178,13 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
       agentDir: "/tmp/owner-agent",
       workspaceDir: "/tmp/replacement-workspace",
       config: ownerConfig,
+      authModes: {},
+      authStore: { version: 1, profiles: {} },
+      metadataSnapshot: createPluginMetadataSnapshot({
+        config: ownerConfig,
+        workspaceDir: "/tmp/replacement-workspace",
+        manifestRegistry: { plugins: [], diagnostics: [] },
+      }),
       modelCatalog: { entries: ownerCatalog, routeVariants: [] },
     });
     ensureAgentWorkspaceMock.mockImplementationOnce(async ({ dir }: { dir: string }) => ({ dir }));
@@ -207,6 +215,13 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
       agentDir: "/tmp/main-agent",
       workspaceDir: "/tmp/main-workspace",
       config: callerConfig,
+      authModes: {},
+      authStore: { version: 1, profiles: {} },
+      metadataSnapshot: createPluginMetadataSnapshot({
+        config: callerConfig,
+        workspaceDir: "/tmp/main-workspace",
+        manifestRegistry: { plugins: [], diagnostics: [] },
+      }),
       modelCatalog: { entries: [], routeVariants: [] },
     });
 

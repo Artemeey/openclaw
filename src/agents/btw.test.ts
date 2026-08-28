@@ -976,6 +976,22 @@ describe("runBtwSideQuestion", () => {
     await expect(
       runSideQuestion({ cfg, provider: "local-proxy", model: "side-model" }),
     ).resolves.toEqual({ text: "Generation A / runtime-auth-a / Stream A" });
+    expect(ensureAuthProfileStoreWithoutExternalProfilesMock).toHaveBeenCalledWith(
+      DEFAULT_AGENT_DIR,
+      {
+        config: cfg,
+        workspaceDir: GENERATION_WORKSPACE_DIR,
+        pluginMetadataSnapshot: generationA.metadataSnapshot,
+        allowKeychainPrompt: false,
+      },
+    );
+    expect(resolveSessionAuthSelectionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cfg,
+        workspaceDir: GENERATION_WORKSPACE_DIR,
+        pluginMetadataSnapshot: generationA.metadataSnapshot,
+      }),
+    );
     expect(runtimeAuthA).toHaveBeenCalledOnce();
     expect(runtimeAuthB).not.toHaveBeenCalled();
     expect(streamA).toHaveBeenCalledOnce();
@@ -1903,11 +1919,19 @@ describe("runBtwSideQuestion", () => {
     expect(result).toEqual({ text: "Claude CLI answer." });
     expect(ensureAuthProfileStoreWithoutExternalProfilesMock).toHaveBeenCalledWith(
       DEFAULT_AGENT_DIR,
-      { allowKeychainPrompt: false },
+      {
+        allowKeychainPrompt: false,
+        config: expect.any(Object),
+        workspaceDir: "/tmp/workspace",
+        pluginMetadataSnapshot: defaultPluginMetadataSnapshot,
+      },
     );
     expect(ensureAuthProfileStoreMock).toHaveBeenCalledWith(DEFAULT_AGENT_DIR, {
       externalCliProviderIds: ["claude-cli"],
       allowKeychainPrompt: false,
+      config: expect.any(Object),
+      workspaceDir: "/tmp/workspace",
+      pluginMetadataSnapshot: defaultPluginMetadataSnapshot,
     });
     expect(getApiKeyForModelMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2269,6 +2293,9 @@ describe("runBtwSideQuestion", () => {
     expect(ensureAuthProfileStoreMock).toHaveBeenCalledWith(DEFAULT_AGENT_DIR, {
       externalCliProviderIds: ["claude-cli"],
       allowKeychainPrompt: false,
+      config: expect.any(Object),
+      workspaceDir: "/tmp/workspace",
+      pluginMetadataSnapshot: defaultPluginMetadataSnapshot,
     });
     expectRecordFields(mockArg(getApiKeyForModelMock, 0, 0), {
       profileId: "anthropic:api",

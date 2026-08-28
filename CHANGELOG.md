@@ -69,8 +69,10 @@ Docs: https://docs.openclaw.ai
 
 ### Fixes
 
-- **Gateway responsiveness:** reuse workspace-owned plugin metadata for status, model selection, and session cost reads, avoid provider execution during metadata-only checks, and keep plugin model overrides bound to the authorized initial target. (#130706)
+- **Android settings:** keep form fields and actions reachable above the keyboard, and respect bottom system insets without duplicating navigation padding.
+- **Nextcloud Talk diagnostics:** redact reflected credentials before displaying send, reaction, and bot-preflight errors, and suppress incomplete error bodies. (#119976) Thanks @xialonglee.
 - Codex image attachments: decode mixed-case `file://` URLs as local image paths while preserving existing file URL validation and platform behavior. (#121611) Thanks @sunlit-deng.
+- **Android gateway discovery:** resolve nearby gateways one at a time on Android 12 and 13 so simultaneously advertised gateways are not silently omitted.
 
 - **Control UI agent files:** keep confirmed saves and file metadata intact when older reads or list refreshes finish later, preserve newer drafts, and rebuild invalidated file lists without losing the open editor.
 
@@ -233,6 +235,7 @@ Docs: https://docs.openclaw.ai
 - **Plugin session catalogs:** reject unknown catalog filters, report catalogs as plugin capabilities, and preserve them in SDK registration captures instead of silently returning empty results or classifying catalog-only plugins as capability-free.
 - **Gateway service audit:** treat POSIX shell `-c` wrappers as opaque for the gateway-subcommand check, avoiding false missing-command warnings for shell-wrapped macOS LaunchAgents without parsing inner commands or ports. Fixes #81751. (#81778) Thanks @liaoandi.
 - **Memory filename search:** index paths separately from chunk bodies so exact full-path, basename, and stem queries rank the intended memory file first without changing body BM25 scores, snippets, or embeddings. (#96052, #94102) Thanks @Pick-cat.
+- **Memory REM topics:** share canonical concept normalization across new extraction and stored-tag reflections, reject numeric/date noise, and count normalized spellings once per memory while preserving multilingual and short technical terms. (#117248) Thanks @synthalorian.
 - **Outbound channel bootstrap:** suppress repeated failed plugin activation for the same channel, config, and registry generation while retrying after config or registry reloads. (#100377) Thanks @xialonglee.
 - **OpenAI Realtime client-secret deadlines:** bound voice and transcription secret acquisition to 30 seconds through the guarded fetch boundary while preserving authentication and bounded response parsing. (#102860) Thanks @Alix-007.
 - **Gateway client watchdog:** keep transport-stall detection active for unbounded and mixed pending requests so dead sockets reject pending requests, reconnect, and never replay rejected requests. (#103407) Thanks @NianJiuZst.
@@ -420,6 +423,7 @@ Docs: https://docs.openclaw.ai
 - **System-agent recovery guidance:** direct browser and app users to Settings or the OpenClaw host instead of terminal-only exit guidance while preserving the required stop, onboard, and restart lifecycle. (#114633) Thanks @jesse-merhi.
 - **Browser keyboard aliases:** accept `Esc`, `Return`, `Del`, `Ctrl`, and `Cmd` in browser actions and shortcuts, and preserve keyboard guidance in compact tool schemas. (#130401) Thanks @geekforlife.
 - **Microsoft Teams caption probes:** wait for live captions on reused, manually opened meeting tabs and report a timeout when captions do not arrive. (#111466) Thanks @zhangguiping-xydt.
+- **Gateway responsiveness:** reuse workspace-owned plugin metadata for status, model selection, authentication, and session cost reads, avoid provider execution during metadata-only checks, and keep plugin model overrides bound to the authorized initial target. (#130706)
 
 ## 2026.7.1
 

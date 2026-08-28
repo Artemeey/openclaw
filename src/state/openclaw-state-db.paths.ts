@@ -25,7 +25,13 @@ function resolveOpenClawStateRootDir(env: NodeJS.ProcessEnv): string {
         : isMainThread
           ? String(process.pid)
           : `${process.pid}-${threadId}`;
-    return path.join(os.tmpdir(), "openclaw-test-state", shardSuffix);
+    // Scope reused process IDs to the setup's unique home so old WAL files cannot
+    // leak into later runs and setup cleanup owns the database family.
+    return path.join(
+      env.OPENCLAW_TEST_HOME?.trim() || os.tmpdir(),
+      "openclaw-test-state",
+      shardSuffix,
+    );
   }
   return resolveStateDir(env);
 }

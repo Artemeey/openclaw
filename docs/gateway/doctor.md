@@ -479,7 +479,7 @@ That stages grounded durable candidates into the short-term dreaming store while
 
     Doctor also reports auth profiles that are temporarily unusable due to short cooldowns (rate limits/timeouts/auth failures) or longer disables (billing/credit failures).
 
-    Legacy Codex OAuth profiles whose tokens live in macOS Keychain (older onboarding before the file-based sidecar layout) are repaired only by doctor. Run `openclaw doctor --fix` once from an interactive terminal to migrate Keychain-backed legacy tokens inline into `auth-profiles.json`; after that, embedded turns (Telegram, cron, sub-agent dispatch) resolve them as canonical OpenAI OAuth profiles.
+    Legacy Codex OAuth profiles with encrypted sidecar credentials are repaired only by doctor. Run `openclaw doctor --fix` from an interactive terminal on the original host so it can recover the legacy encryption key, including from macOS Keychain when needed, and import supported credentials into the SQLite auth store. If the legacy material cannot be recovered, sign in again with `openclaw models auth login --provider openai` on the Gateway host.
 
   </Accordion>
   <Accordion title="6. Hooks model validation">
@@ -498,6 +498,8 @@ That stages grounded durable candidates into the short-term dreaming store while
   </Accordion>
   <Accordion title="8. Gateway service migrations and cleanup hints">
     Doctor detects legacy gateway services (launchd/systemd/schtasks) and offers to remove them and install the OpenClaw service using the current gateway port. It can also scan for extra gateway-like services and print cleanup hints. Profile-named OpenClaw gateway services are considered first-class and are not flagged as "extra."
+
+    Linux user-service cleanup preserves the unit file if stopping or disabling the service fails. An interrupted status probe does not permit file-only removal; that fallback is reported only when `systemctl` is unavailable.
 
     On Linux, if the user-level gateway service is missing but a system-level OpenClaw gateway service exists, doctor does not install a second user-level service automatically. Inspect with `openclaw gateway status --deep` or `openclaw doctor --deep`, then remove the duplicate or set `OPENCLAW_SERVICE_REPAIR_POLICY=external` when a system supervisor owns the gateway lifecycle.
 

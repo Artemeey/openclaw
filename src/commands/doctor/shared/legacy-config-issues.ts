@@ -8,8 +8,7 @@ import type {
   OpenClawConfig,
 } from "../../../config/types.js";
 import {
-  collectRelevantDoctorPluginIds,
-  collectRelevantDoctorPluginIdsForTouchedPaths,
+  collectDoctorConfigRepairPluginIds,
   listPluginDoctorLegacyConfigRules,
 } from "../../../plugins/doctor-contract-registry.js";
 import {
@@ -27,11 +26,9 @@ function collectPluginLegacyConfigRules(
   touchedPaths?: ReadonlyArray<ReadonlyArray<string>>,
 ): LegacyConfigRule[] {
   const channelIds = collectConfiguredChannelIds(raw);
-  const pluginIds = (
-    touchedPaths
-      ? collectRelevantDoctorPluginIdsForTouchedPaths({ raw, touchedPaths })
-      : collectRelevantDoctorPluginIds(raw)
-  ).filter((pluginId) => !channelIds.has(pluginId));
+  const pluginIds = collectDoctorConfigRepairPluginIds(raw, touchedPaths).filter(
+    (pluginId) => !channelIds.has(pluginId),
+  );
   if (pluginIds.length === 0) {
     return [];
   }

@@ -6,12 +6,15 @@ import {
   replaceRuntimeAuthProfileStoreSnapshots,
   setRuntimeAuthProfileStoreSnapshot,
 } from "../agents/auth-profiles/runtime-snapshots.js";
+import { resolveSessionAuthSelection } from "../agents/auth-profiles/session-override.js";
 import { saveAuthProfileStore } from "../agents/auth-profiles/store.js";
 import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
 import { FailoverError } from "../agents/failover-error.js";
 import { isFallbackSummaryError } from "../agents/model-fallback-attempt.js";
 import { runWithModelFallback } from "../agents/model-fallback-runner.js";
+import { loadSessionEntry, replaceSessionEntry } from "../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolveCronSession } from "../cron/isolated-agent/session.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { setCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-snapshot.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
@@ -284,124 +287,203 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
   });
 
   describe("resolveExternalAuthProfilesWithPlugins", () => {
-    it.each(["order", "locked profile", "exhaustion"] as const)(
-      "keeps captured auth aliases for %s",
-      async (scenario) => {
-        const previousStores = listRuntimeAuthProfileStoreSnapshots();
-        onTestFinished(() => replaceRuntimeAuthProfileStoreSnapshots(previousStores));
-        await withOpenClawTestState({ scenario: "minimal" }, async () => {
-          const models = ["one", "two"].map((id) => ({
-            id,
-            name: id,
-            reasoning: false,
-            input: ["text" as const],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            maxTokens: 1_024,
-          }));
-          const config: OpenClawConfig = {
-            plugins: { entries: { captured: { enabled: true }, published: { enabled: true } } },
-            models: {
-              providers: {
-                route: { baseUrl: "https://route.example/v1", models },
-                backup: { baseUrl: "https://backup.example/v1", models },
+    it.each([
+      "order",
+      "locked profile",
+      "exhaustion",
+      "cron automatic pin",
+      "cron user pin",
+      "cron concurrent user pin",
+    ] as const)("keeps captured auth aliases for %s", async (scenario) => {
+      const previousStores = listRuntimeAuthProfileStoreSnapshots();
+      onTestFinished(() => replaceRuntimeAuthProfileStoreSnapshots(previousStores));
+      await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+        const models = ["one", "two"].map((id) => ({
+          id,
+          name: id,
+          reasoning: false,
+          input: ["text" as const],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          maxTokens: 1_024,
+        }));
+        const config: OpenClawConfig = {
+          plugins: { entries: { captured: { enabled: true }, published: { enabled: true } } },
+          models: {
+            providers: {
+              route: { baseUrl: "https://route.example/v1", models },
+              backup: { baseUrl: "https://backup.example/v1", models },
+            },
+          },
+        };
+        const prepareAliases = (pluginId: string, workspaceDir: string) => {
+          const manifestRegistry = makeManifestRegistry(pluginId);
+          for (const plugin of manifestRegistry.plugins) {
+            plugin.providerAuthAliases = { route: pluginId };
+          }
+          loadPluginManifestRegistryForInstalledIndex.mockReturnValue(manifestRegistry);
+          return registerCurrentSnapshot(config, workspaceDir, pluginId, process.env);
+        };
+        const pluginMetadataSnapshot = prepareAliases("captured", WORKSPACE);
+        prepareAliases("published", "/workspace/b");
+        const store: AuthProfileStore = {
+          version: 1,
+          profiles: {
+            "captured:profile": { type: "api_key", provider: "captured", key: "fixture-a" },
+            "published:profile": { type: "api_key", provider: "published", key: "fixture-b" },
+            "backup:available": { type: "api_key", provider: "backup", key: "fixture-backup" },
+          },
+        };
+        const capturedCooldown = Date.now() + 60_000;
+        const publishedCooldown = capturedCooldown + 60_000;
+        if (scenario === "order") {
+          store.usageStats = {
+            "captured:profile": { disabledUntil: capturedCooldown, disabledReason: "auth" },
+          };
+        } else if (scenario === "locked profile") {
+          store.profiles["route:blocked"] = {
+            type: "api_key",
+            provider: "route",
+            key: "fixture-blocked",
+          };
+          store.order = { route: ["route:blocked"] };
+          store.usageStats = {
+            "route:blocked": { disabledUntil: capturedCooldown, disabledReason: "auth" },
+          };
+        } else if (scenario === "exhaustion") {
+          // Attempts start from prepared auth, then exhaustion must read the
+          // newer persisted cooldowns through the same captured alias owner.
+          saveAuthProfileStore(
+            {
+              ...store,
+              usageStats: {
+                "captured:profile": { disabledUntil: capturedCooldown, disabledReason: "auth" },
+                "published:profile": { disabledUntil: publishedCooldown, disabledReason: "auth" },
               },
             },
-          };
-          const prepareAliases = (pluginId: string, workspaceDir: string) => {
-            const manifestRegistry = makeManifestRegistry(pluginId);
-            for (const plugin of manifestRegistry.plugins) {
-              plugin.providerAuthAliases = { route: pluginId };
-            }
-            loadPluginManifestRegistryForInstalledIndex.mockReturnValue(manifestRegistry);
-            return registerCurrentSnapshot(config, workspaceDir, pluginId, process.env);
-          };
-          const pluginMetadataSnapshot = prepareAliases("captured", WORKSPACE);
-          prepareAliases("published", "/workspace/b");
-          const store: AuthProfileStore = {
-            version: 1,
-            profiles: {
-              "captured:profile": { type: "api_key", provider: "captured", key: "fixture-a" },
-              "published:profile": { type: "api_key", provider: "published", key: "fixture-b" },
-              "backup:available": { type: "api_key", provider: "backup", key: "fixture-backup" },
-            },
-          };
-          const capturedCooldown = Date.now() + 60_000;
-          const publishedCooldown = capturedCooldown + 60_000;
-          if (scenario === "order") {
+            undefined,
+            { filterExternalAuthProfiles: false, syncExternalCli: false },
+          );
+        }
+        if (
+          scenario === "cron automatic pin" ||
+          scenario === "cron user pin" ||
+          scenario === "cron concurrent user pin"
+        ) {
+          const agentId = "work";
+          const sessionKey = "agent:work:cron:auth-context";
+          const cronSession = resolveCronSession({
+            cfg: config,
+            sessionKey,
+            agentId,
+            nowMs: Date.now(),
+            store: {},
+          });
+          const concurrentPin = scenario === "cron concurrent user pin";
+          if (scenario !== "cron automatic pin") {
+            cronSession.sessionEntry.authProfileOverride = "captured:profile";
+            cronSession.sessionEntry.authProfileOverrideSource = concurrentPin ? "auto" : "user";
+          }
+          if (concurrentPin) {
+            store.profiles["captured:manual"] = {
+              type: "api_key",
+              provider: "captured",
+              key: "fixture-manual",
+            };
+            store.order = { route: ["captured:profile"] };
             store.usageStats = {
               "captured:profile": { disabledUntil: capturedCooldown, disabledReason: "auth" },
             };
-          } else if (scenario === "locked profile") {
-            store.profiles["route:blocked"] = {
-              type: "api_key",
-              provider: "route",
-              key: "fixture-blocked",
-            };
-            store.order = { route: ["route:blocked"] };
-            store.usageStats = {
-              "route:blocked": { disabledUntil: capturedCooldown, disabledReason: "auth" },
-            };
-          } else {
-            // Attempts start from prepared auth, then exhaustion must read the
-            // newer persisted cooldowns through the same captured alias owner.
-            saveAuthProfileStore(
-              {
-                ...store,
-                usageStats: {
-                  "captured:profile": { disabledUntil: capturedCooldown, disabledReason: "auth" },
-                  "published:profile": { disabledUntil: publishedCooldown, disabledReason: "auth" },
-                },
-              },
-              undefined,
-              { filterExternalAuthProfiles: false, syncExternalCli: false },
-            );
           }
-          setRuntimeAuthProfileStoreSnapshot(store);
-          const attempted: string[] = [];
-          const result = withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), () =>
-            runWithModelFallback({
+          const scope = { storePath: cronSession.storePath, sessionKey };
+          const latestEntry = { ...cronSession.sessionEntry };
+          if (concurrentPin) {
+            latestEntry.authProfileOverride = "captured:manual";
+            latestEntry.authProfileOverrideSource = "user";
+          }
+          await replaceSessionEntry(scope, latestEntry);
+          const agentDir = state.agentDir(agentId);
+          setRuntimeAuthProfileStoreSnapshot(store, agentDir);
+          // The seed write initializes maintenance config before auth selection starts.
+          const registryLoadsBeforeSelection =
+            loadPluginRegistrySnapshotWithMetadata.mock.calls.length;
+          const manifestLoadsBeforeSelection =
+            loadPluginManifestRegistryForInstalledIndex.mock.calls.length;
+          const selection = await withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), () =>
+            resolveSessionAuthSelection({
               cfg: config,
               provider: "route",
-              model: "one",
+              modelId: "one",
+              harnessRuntime: undefined,
+              agentDir,
               workspaceDir: WORKSPACE,
               pluginMetadataSnapshot,
-              fallbacksOverride: [scenario === "exhaustion" ? "route/two" : "backup/one"],
-              ...(scenario === "locked profile"
-                ? { userLockedAuthProfileId: "captured:profile" }
-                : {}),
-              run: async (provider, model) => {
-                attempted.push(`${provider}/${model}`);
-                if (scenario === "exhaustion") {
-                  throw new FailoverError("fixture auth failure", {
-                    reason: "auth",
-                    provider,
-                    model,
-                  });
-                }
-                return provider;
-              },
+              sessionEntry: cronSession.sessionEntry,
+              sessionStore: cronSession.store,
+              storePath: cronSession.storePath,
+              sessionKey,
+              isNewSession: false,
             }),
           );
-          if (scenario === "exhaustion") {
-            const failure = await result.catch((error: unknown) => error);
-            expect(attempted).toEqual(["route/one", "route/two"]);
-            expect(
-              isFallbackSummaryError(failure) ? failure.soonestCooldownExpiry : undefined,
-            ).toBe(capturedCooldown);
-          } else {
-            const expectedProvider = scenario === "order" ? "backup" : "route";
-            expect(await result).toMatchObject({
-              outcome: "completed",
-              result: expectedProvider,
-              provider: expectedProvider,
-              model: "one",
-            });
-          }
-          expect(loadPluginRegistrySnapshotWithMetadata.mock.calls.length).toBe(0);
-          expect(loadPluginManifestRegistryForInstalledIndex.mock.calls.length).toBe(0);
-        });
-      },
-    );
+          const profileId = concurrentPin ? "captured:manual" : "captured:profile";
+          const source = scenario === "cron automatic pin" ? "auto" : "user";
+          expect(selection).toEqual({ profileId, source, routeRequirement: "api-key" });
+          expect(loadPluginRegistrySnapshotWithMetadata.mock.calls.length).toBe(
+            registryLoadsBeforeSelection,
+          );
+          expect(loadPluginManifestRegistryForInstalledIndex.mock.calls.length).toBe(
+            manifestLoadsBeforeSelection,
+          );
+          expect(loadSessionEntry({ ...scope, readConsistency: "latest" })).toMatchObject({
+            authProfileOverride: profileId,
+            authProfileOverrideSource: source,
+          });
+          return;
+        }
+        setRuntimeAuthProfileStoreSnapshot(store);
+        const attempted: string[] = [];
+        const result = withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), () =>
+          runWithModelFallback({
+            cfg: config,
+            provider: "route",
+            model: "one",
+            workspaceDir: WORKSPACE,
+            pluginMetadataSnapshot,
+            fallbacksOverride: [scenario === "exhaustion" ? "route/two" : "backup/one"],
+            ...(scenario === "locked profile"
+              ? { userLockedAuthProfileId: "captured:profile" }
+              : {}),
+            run: async (provider, model) => {
+              attempted.push(`${provider}/${model}`);
+              if (scenario === "exhaustion") {
+                throw new FailoverError("fixture auth failure", {
+                  reason: "auth",
+                  provider,
+                  model,
+                });
+              }
+              return provider;
+            },
+          }),
+        );
+        if (scenario === "exhaustion") {
+          const failure = await result.catch((error: unknown) => error);
+          expect(attempted).toEqual(["route/one", "route/two"]);
+          expect(isFallbackSummaryError(failure) ? failure.soonestCooldownExpiry : undefined).toBe(
+            capturedCooldown,
+          );
+        } else {
+          const expectedProvider = scenario === "order" ? "backup" : "route";
+          expect(await result).toMatchObject({
+            outcome: "completed",
+            result: expectedProvider,
+            provider: expectedProvider,
+            model: "one",
+          });
+        }
+        expect(loadPluginRegistrySnapshotWithMetadata.mock.calls.length).toBe(0);
+        expect(loadPluginManifestRegistryForInstalledIndex.mock.calls.length).toBe(0);
+      });
+    });
 
     it.each([
       {
@@ -417,139 +499,200 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
         pluginIds: ["captured"],
         expected: ["captured:prepared"],
       },
+      {
+        scope: "captured workspace during cron admission",
+        surface: "cron",
+        pluginIds: ["captured"],
+        expected: ["captured:prepared"],
+      },
     ])(
       "keeps external auth on the $scope after another workspace is published",
       async ({ surface, pluginIds, expected }) => {
-        const env = surface === "fallback" ? process.env : {};
-        const configuredModel = {
-          id: "model",
-          name: "Fixture model",
-          reasoning: false,
-          input: ["text" as const],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          maxTokens: 1_024,
-        };
-        const config: OpenClawConfig = {
-          plugins: { entries: { captured: { enabled: true }, published: { enabled: true } } },
-          ...(surface === "fallback"
-            ? {
-                models: {
-                  providers: {
-                    captured: {
-                      baseUrl: "https://captured.example/v1",
-                      models: [configuredModel],
-                    },
-                    backup: {
-                      baseUrl: "https://backup.example/v1",
-                      models: [configuredModel],
+        await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+          const env = surface === "overlay" ? {} : process.env;
+          const configuredModel = {
+            id: "model",
+            name: "Fixture model",
+            reasoning: false,
+            input: ["text" as const],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            maxTokens: 1_024,
+          };
+          const config: OpenClawConfig = {
+            plugins: { entries: { captured: { enabled: true }, published: { enabled: true } } },
+            ...(surface === "fallback"
+              ? {
+                  models: {
+                    providers: {
+                      captured: {
+                        baseUrl: "https://captured.example/v1",
+                        models: [configuredModel],
+                      },
+                      backup: {
+                        baseUrl: "https://backup.example/v1",
+                        models: [configuredModel],
+                      },
                     },
                   },
-                },
-              }
-            : {}),
-        };
-        const prepareWorkspace = (pluginId: string, workspaceDir: string) => {
-          const manifestRegistry = makeManifestRegistry(pluginId);
-          for (const plugin of manifestRegistry.plugins) {
-            plugin.contracts = { externalAuthProviders: [pluginId] };
-          }
-          loadPluginManifestRegistryForInstalledIndex.mockReturnValue(manifestRegistry);
-          const snapshot = registerCurrentSnapshot(config, workspaceDir, pluginId, env);
-          const registry = createEmptyPluginRegistry();
-          const rootDir = `/plugins/${pluginId}`;
-          registry.plugins.push(
-            createPluginRecord({
-              id: pluginId,
-              origin: "global",
+                }
+              : {}),
+          };
+          const prepareWorkspace = (pluginId: string, workspaceDir: string) => {
+            const manifestRegistry = makeManifestRegistry(pluginId);
+            for (const plugin of manifestRegistry.plugins) {
+              plugin.contracts = { externalAuthProviders: [pluginId] };
+            }
+            loadPluginManifestRegistryForInstalledIndex.mockReturnValue(manifestRegistry);
+            const snapshot = registerCurrentSnapshot(config, workspaceDir, pluginId, env);
+            const registry = createEmptyPluginRegistry();
+            const rootDir = `/plugins/${pluginId}`;
+            registry.plugins.push(
+              createPluginRecord({
+                id: pluginId,
+                origin: "global",
+                rootDir,
+                source: `${rootDir}/index.js`,
+                providerIds: [pluginId],
+              }),
+            );
+            registry.providers.push({
+              pluginId,
               rootDir,
               source: `${rootDir}/index.js`,
-              providerIds: [pluginId],
-            }),
-          );
-          registry.providers.push({
-            pluginId,
-            rootDir,
-            source: `${rootDir}/index.js`,
-            provider: {
-              id: pluginId,
-              label: pluginId,
-              auth: [],
-              resolveExternalAuthProfiles: (context) => [
-                {
-                  profileId: `${pluginId}:${context.config === config && context.workspaceDir === workspaceDir ? "prepared" : "ambient"}`,
-                  credential: {
-                    type: "oauth",
-                    provider: pluginId,
-                    access: "fixture-access",
-                    refresh: "fixture-refresh",
-                    expires: Date.now() + 60_000,
+              provider: {
+                id: pluginId,
+                label: pluginId,
+                auth: [],
+                resolveExternalAuthProfiles: (context) => [
+                  {
+                    profileId: `${pluginId}:${context.config === config && context.workspaceDir === workspaceDir ? "prepared" : "ambient"}`,
+                    credential: {
+                      type: "oauth",
+                      provider: pluginId,
+                      access: "fixture-access",
+                      refresh: "fixture-refresh",
+                      expires: Date.now() + 60_000,
+                    },
                   },
-                },
-              ],
-            },
-          });
-          return { snapshot, registry };
-        };
-        const captured = prepareWorkspace("captured", WORKSPACE);
-        const pluginMetadataSnapshot = projectPluginMetadataSnapshot(captured.snapshot, {
-          pluginIds,
-        });
-        const publishedWorkspace = "/workspace/b";
-        const published = prepareWorkspace("published", publishedWorkspace);
-        setActivePluginRegistry(published.registry, undefined, "default", publishedWorkspace);
-        const overlayOptions = {
-          config,
-          workspaceDir: WORKSPACE,
-          pluginMetadataSnapshot,
-          env: {},
-          allowKeychainPrompt: false,
-        };
-
-        if (surface === "fallback") {
-          const previousStores = listRuntimeAuthProfileStoreSnapshots();
-          onTestFinished(() => replaceRuntimeAuthProfileStoreSnapshots(previousStores));
-          setRuntimeAuthProfileStoreSnapshot({
-            version: 1,
-            profiles: {
-              "captured:blocked": { type: "api_key", provider: "captured", key: "fixture-key" },
-              "backup:available": { type: "api_key", provider: "backup", key: "fixture-backup" },
-            },
-            usageStats: {
-              "captured:blocked": {
-                disabledUntil: Date.now() + 60_000,
-                disabledReason: "auth",
+                ],
               },
-            },
+            });
+            return { snapshot, registry };
+          };
+          const captured = prepareWorkspace("captured", WORKSPACE);
+          const pluginMetadataSnapshot = projectPluginMetadataSnapshot(captured.snapshot, {
+            pluginIds,
           });
-          const result = await withPluginRuntimeRegistryScope(captured.registry, () =>
-            runWithModelFallback({
+          const publishedWorkspace = "/workspace/b";
+          const published = prepareWorkspace("published", publishedWorkspace);
+          setActivePluginRegistry(published.registry, undefined, "default", publishedWorkspace);
+          const overlayOptions = {
+            config,
+            workspaceDir: WORKSPACE,
+            pluginMetadataSnapshot,
+            env: {},
+            allowKeychainPrompt: false,
+          };
+
+          if (surface === "cron") {
+            const previousStores = listRuntimeAuthProfileStoreSnapshots();
+            onTestFinished(() => replaceRuntimeAuthProfileStoreSnapshots(previousStores));
+            const agentId = "work";
+            const agentDir = state.agentDir(agentId);
+            const sessionKey = "agent:work:cron:external-auth-context";
+            const cronSession = resolveCronSession({
               cfg: config,
+              sessionKey,
+              agentId,
+              nowMs: Date.now(),
+              store: {},
+            });
+            cronSession.sessionEntry.authProfileOverride = "captured:prepared";
+            cronSession.sessionEntry.authProfileOverrideSource = "user";
+            const scope = { storePath: cronSession.storePath, sessionKey };
+            await replaceSessionEntry(scope, cronSession.sessionEntry);
+            setRuntimeAuthProfileStoreSnapshot({ version: 1, profiles: {} }, agentDir);
+            const registryLoadsBeforeSelection =
+              loadPluginRegistrySnapshotWithMetadata.mock.calls.length;
+            const manifestLoadsBeforeSelection =
+              loadPluginManifestRegistryForInstalledIndex.mock.calls.length;
+            const selection = await withPluginRuntimeRegistryScope(captured.registry, () =>
+              resolveSessionAuthSelection({
+                cfg: config,
+                provider: "captured",
+                modelId: "model",
+                harnessRuntime: undefined,
+                agentDir,
+                workspaceDir: WORKSPACE,
+                pluginMetadataSnapshot,
+                sessionEntry: cronSession.sessionEntry,
+                sessionStore: cronSession.store,
+                storePath: cronSession.storePath,
+                sessionKey,
+                isNewSession: false,
+              }),
+            );
+            expect(selection).toEqual({
+              profileId: "captured:prepared",
+              source: "user",
+              routeRequirement: "subscription",
+            });
+            expect(loadPluginRegistrySnapshotWithMetadata.mock.calls.length).toBe(
+              registryLoadsBeforeSelection,
+            );
+            expect(loadPluginManifestRegistryForInstalledIndex.mock.calls.length).toBe(
+              manifestLoadsBeforeSelection,
+            );
+            expect(loadSessionEntry({ ...scope, readConsistency: "latest" })).toMatchObject({
+              authProfileOverride: "captured:prepared",
+              authProfileOverrideSource: "user",
+            });
+          } else if (surface === "fallback") {
+            const previousStores = listRuntimeAuthProfileStoreSnapshots();
+            onTestFinished(() => replaceRuntimeAuthProfileStoreSnapshots(previousStores));
+            setRuntimeAuthProfileStoreSnapshot({
+              version: 1,
+              profiles: {
+                "captured:blocked": { type: "api_key", provider: "captured", key: "fixture-key" },
+                "backup:available": { type: "api_key", provider: "backup", key: "fixture-backup" },
+              },
+              usageStats: {
+                "captured:blocked": {
+                  disabledUntil: Date.now() + 60_000,
+                  disabledReason: "auth",
+                },
+              },
+            });
+            const result = await withPluginRuntimeRegistryScope(captured.registry, () =>
+              runWithModelFallback({
+                cfg: config,
+                provider: "captured",
+                model: "model",
+                workspaceDir: WORKSPACE,
+                pluginMetadataSnapshot,
+                fallbacksOverride: ["backup/model"],
+                userLockedAuthProfileId: "captured:prepared",
+                run: async (provider) => provider,
+              }),
+            );
+            expect(result).toMatchObject({
+              outcome: "completed",
+              result: "captured",
               provider: "captured",
               model: "model",
-              workspaceDir: WORKSPACE,
-              pluginMetadataSnapshot,
-              fallbacksOverride: ["backup/model"],
-              userLockedAuthProfileId: "captured:prepared",
-              run: async (provider) => provider,
-            }),
-          );
-          expect(result).toMatchObject({
-            outcome: "completed",
-            result: "captured",
-            provider: "captured",
-            model: "model",
-          });
-          expect(loadPluginRegistrySnapshotWithMetadata.mock.calls.length).toBe(0);
-          expect(loadPluginManifestRegistryForInstalledIndex.mock.calls.length).toBe(0);
-        } else {
-          const store = withPluginRuntimeRegistryScope(captured.registry, () =>
-            overlayExternalAuthProfiles({ version: 1, profiles: {} }, overlayOptions),
-          );
+            });
+            expect(loadPluginRegistrySnapshotWithMetadata.mock.calls.length).toBe(0);
+            expect(loadPluginManifestRegistryForInstalledIndex.mock.calls.length).toBe(0);
+          } else {
+            const store = withPluginRuntimeRegistryScope(captured.registry, () =>
+              overlayExternalAuthProfiles({ version: 1, profiles: {} }, overlayOptions),
+            );
 
-          expect(Object.keys(store.profiles)).toEqual(expected);
-          expect(loadPluginRegistrySnapshotWithMetadata).not.toHaveBeenCalled();
-          expect(loadPluginManifestRegistryForInstalledIndex).not.toHaveBeenCalled();
-        }
+            expect(Object.keys(store.profiles)).toEqual(expected);
+            expect(loadPluginRegistrySnapshotWithMetadata).not.toHaveBeenCalled();
+            expect(loadPluginManifestRegistryForInstalledIndex).not.toHaveBeenCalled();
+          }
+        });
       },
     );
 

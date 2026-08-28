@@ -471,6 +471,8 @@ async function resolveApprovedModel(params: {
         ...(configuredDefaultProfile ? { configuredProfileId: configuredDefaultProfile } : {}),
         harnessRuntime: harnessPolicy.runtime,
         agentDir,
+        workspaceDir,
+        pluginMetadataSnapshot: manifestSnapshot,
         sessionEntry: target.sessionEntry,
         sessionStore: target.sessionStore,
         sessionKey: target.sessionKey,

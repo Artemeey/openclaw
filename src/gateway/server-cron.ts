@@ -8,6 +8,7 @@ import {
   tryResolveAmbientOwnerAgentId,
 } from "../agents/agent-scope.js";
 import { abortAndDrainEmbeddedAgentRun } from "../agents/embedded-agent.js";
+import { resolveAgentWorkspaceDirsById } from "../agents/workspace-dirs.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import type { CliDeps } from "../cli/deps.types.js";
 import { resolveControlUiAutomationRunUrl } from "../config/control-ui-link-base.js";
@@ -62,6 +63,7 @@ import type { CronJob, CronPayload } from "../cron/types.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { resolveMainScopedEventSessionKey } from "../infra/event-session-routing.js";
 import { runHeartbeatOnce } from "../infra/heartbeat-runner-run.js";
+import { resolveHeartbeatSchedulerSeed } from "../infra/heartbeat-schedule.js";
 import { requestHeartbeat, type HeartbeatWakeRequest } from "../infra/heartbeat-wake.js";
 import { mergeSsrFPolicies } from "../infra/net/ssrf.js";
 import { listConfiguredMessageChannels } from "../infra/outbound/channel-selection.js";
@@ -120,6 +122,17 @@ import {
 import { buildGatewaySessionEventFields } from "./session-event-payload.js";
 import { loadGatewaySessionRow } from "./session-utils.js";
 
+export type GatewayHeartbeatReconciliationResult = "converged" | "retry-scheduled" | "superseded";
+
+class GatewayHeartbeatReconciliationSupersededError extends Error {}
+
+export type GatewayHeartbeatReconciliationCandidate = {
+  config: OpenClawConfig;
+  agentWorkspaceDirs: ReadonlyMap<string, string>;
+  schedulerSeed: string;
+  isCurrent: () => boolean;
+};
+
 export type GatewayCronState = {
   cron: GatewayCronServiceContract;
   storePath: string;
@@ -132,7 +145,9 @@ export type GatewayCronState = {
   reconcileExitWatchers: () => Promise<void>;
   reconcileStreamWatchers: () => Promise<void>;
   stopStreamWatchers: () => Promise<void>;
-  reconcileHeartbeatJobs: (cfg?: OpenClawConfig) => Promise<void>;
+  reconcileHeartbeatJobs: (
+    candidate?: GatewayHeartbeatReconciliationCandidate,
+  ) => Promise<GatewayHeartbeatReconciliationResult>;
 };
 
 export type GatewayCronExitWatcherHandoff = {
@@ -412,6 +427,10 @@ export function buildGatewayCronService(params: {
 
   const hasConfiguredAgent = (cfg: OpenClawConfig, agentId: string) =>
     Boolean(findAgentEntry(cfg, agentId));
+
+  const isAgentAvailable = (cfg: OpenClawConfig, agentId: string) =>
+    !isAgentDeletionBlocked(agentId) &&
+    listAgentIds(cfg).some((id) => normalizeAgentId(id) === agentId);
 
   const resolveCronAgent = (requested?: string | null) => {
     const runtimeConfig = getRuntimeConfig();
@@ -766,7 +785,7 @@ export function buildGatewayCronService(params: {
     }
   };
 
-  const cron = new CronService({
+  const { cron, withSystemMonitorReconciliation } = CronService.createWithMonitorReconciliation({
     storePath,
     cronEnabled,
     cronConfig: params.cfg.cron,
@@ -805,9 +824,7 @@ export function buildGatewayCronService(params: {
         return listConfiguredSessionStoreAgentIds(cfg);
       }
     },
-    isAgentAvailable: (agentId) =>
-      !isAgentDeletionBlocked(agentId) &&
-      listAgentIds(getRuntimeConfig()).some((id) => normalizeAgentId(id) === agentId),
+    isAgentAvailable: (agentId) => isAgentAvailable(getRuntimeConfig(), agentId),
     resolveSessionStorePath,
     sessionStorePath,
     enqueueSystemEvent: (text, opts) => {
@@ -1324,16 +1341,18 @@ export function buildGatewayCronService(params: {
     exitWatcherMutationRevision += 1;
     exitWatchersRef.current?.cancel(job.id);
   };
-  const addCron = cron.add.bind(cron);
-  cron.add = async (input, options) => {
-    const result = await addCron(input, options);
-    const addedJob = "job" in result ? result.job : result;
-    if (options?.enabledExplicit && !input.enabled) {
-      cancelDisabledExitWatcher(addedJob);
-    }
-    await routeCurrentStreamJob(addedJob.id, addedJob, "added");
-    return result;
-  };
+  const withCronAddLifecycle =
+    (add: typeof cron.add): typeof cron.add =>
+    async (input, options) => {
+      const result = await add(input, options);
+      const addedJob = "job" in result ? result.job : result;
+      if (options?.enabledExplicit && !input.enabled) {
+        cancelDisabledExitWatcher(addedJob);
+      }
+      await routeCurrentStreamJob(addedJob.id, addedJob, "added");
+      return result;
+    };
+  cron.add = withCronAddLifecycle(cron.add.bind(cron));
   const settleStopAfterCommittedUpdate = async (
     jobId: string,
     lifecycleStop: Promise<void> | undefined,
@@ -1528,7 +1547,8 @@ export function buildGatewayCronService(params: {
   // executes, so an older reload's convergence can never clobber a newer one.
   // A failed pass schedules one bounded retry; a newer request supersedes it.
   let heartbeatReconcileEpoch = 0;
-  let heartbeatReconcileTail: Promise<void> = Promise.resolve();
+  let heartbeatReconcileTail: Promise<GatewayHeartbeatReconciliationResult> =
+    Promise.resolve("converged");
   let heartbeatRetryTimer: NodeJS.Timeout | undefined;
   const stopHeartbeatReconcileRetry = () => {
     // Also invalidate any in-flight pass so a post-stop retry cannot fire.
@@ -1538,35 +1558,85 @@ export function buildGatewayCronService(params: {
       heartbeatRetryTimer = undefined;
     }
   };
-  const reconcileHeartbeatJobs = (cfgOverride?: OpenClawConfig): Promise<void> => {
+  const reconcileHeartbeatJobs = (
+    candidate?: GatewayHeartbeatReconciliationCandidate,
+  ): Promise<GatewayHeartbeatReconciliationResult> => {
+    if (candidate?.isCurrent() === false) {
+      return Promise.resolve("superseded");
+    }
     const epoch = ++heartbeatReconcileEpoch;
     if (heartbeatRetryTimer) {
       clearTimeout(heartbeatRetryTimer);
       heartbeatRetryTimer = undefined;
     }
-    const pass = async () => {
-      if (epoch !== heartbeatReconcileEpoch) {
-        return;
-      }
-      const { ok: heartbeatOk } = await reconcileHeartbeatMonitorJobs({
-        cron,
-        cfg: cfgOverride ?? getRuntimeConfig(),
-        logger: cronLogger,
-      });
-      const { ok: skillReviewOk } = await reconcileSkillCollectionReviewJobs({
-        cron,
-        cfg: cfgOverride ?? getRuntimeConfig(),
-        logger: cronLogger,
-      });
-      if ((!heartbeatOk || !skillReviewOk) && epoch === heartbeatReconcileEpoch) {
-        heartbeatRetryTimer = setTimeout(() => {
-          heartbeatRetryTimer = undefined;
-          void reconcileHeartbeatJobs(cfgOverride);
-        }, 30_000);
-        heartbeatRetryTimer.unref?.();
+    // Startup captures its serving inputs; reload carries prepared inputs without
+    // publishing candidate config or env to ordinary cron calls and callbacks.
+    const cfg = candidate?.config ?? getRuntimeConfig();
+    const agentWorkspaceDirs =
+      candidate?.agentWorkspaceDirs ?? resolveAgentWorkspaceDirsById(cfg, env);
+    const schedulerSeed =
+      candidate?.schedulerSeed ?? resolveHeartbeatSchedulerSeed(undefined, { env });
+    const isCurrent = () => epoch === heartbeatReconcileEpoch && (candidate?.isCurrent() ?? true);
+    const assertCurrent = () => {
+      if (!isCurrent()) {
+        throw new GatewayHeartbeatReconciliationSupersededError();
       }
     };
-    heartbeatReconcileTail = heartbeatReconcileTail.then(pass, pass);
+    const pass = async (): Promise<GatewayHeartbeatReconciliationResult> => {
+      if (!isCurrent()) {
+        return "superseded";
+      }
+      return await withSystemMonitorReconciliation(
+        {
+          assertCurrent,
+          assertAgentAvailable: (agentId) => {
+            if (!isAgentAvailable(cfg, agentId)) {
+              throw new Error(`cron job agent is unavailable: ${agentId}`);
+            }
+          },
+        },
+        async (addMonitor): Promise<GatewayHeartbeatReconciliationResult> => {
+          const monitorCron = {
+            add: withCronAddLifecycle(addMonitor),
+            list: cron.list.bind(cron),
+            remove: cron.remove.bind(cron),
+          };
+          const { ok: heartbeatOk } = await reconcileHeartbeatMonitorJobs({
+            cron: monitorCron,
+            cfg,
+            schedulerSeed,
+            logger: cronLogger,
+            commitGuard: assertCurrent,
+          });
+          assertCurrent();
+          const { ok: skillReviewOk } = await reconcileSkillCollectionReviewJobs({
+            cron: monitorCron,
+            cfg,
+            schedulerSeed,
+            agentWorkspaceDirs,
+            logger: cronLogger,
+            commitGuard: assertCurrent,
+          });
+          assertCurrent();
+          if (!heartbeatOk || !skillReviewOk) {
+            heartbeatRetryTimer = setTimeout(() => {
+              heartbeatRetryTimer = undefined;
+              if (isCurrent()) {
+                void reconcileHeartbeatJobs(candidate);
+              }
+            }, 30_000);
+            heartbeatRetryTimer.unref?.();
+          }
+          return heartbeatOk && skillReviewOk ? "converged" : "retry-scheduled";
+        },
+      );
+    };
+    heartbeatReconcileTail = heartbeatReconcileTail.then(pass, pass).catch((error: unknown) => {
+      if (error instanceof GatewayHeartbeatReconciliationSupersededError) {
+        return "superseded";
+      }
+      throw error;
+    });
     return heartbeatReconcileTail;
   };
   const startCron = cron.start.bind(cron);

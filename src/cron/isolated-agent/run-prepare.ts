@@ -35,6 +35,7 @@ import {
   resolveCronModelSelectionOwner,
   resolveCronThinkingSelection,
 } from "./model-selection.js";
+import { resolveCronCommandPromptPreflight } from "./run-command-preflight.js";
 import { resolveCronActiveRuntimeConfig, resolveCronAgentConfig } from "./run-config.js";
 import { buildCurrentConversationContextBlock } from "./run-current-context.js";
 import {
@@ -133,7 +134,7 @@ export type PreparedCronRunContext = {
   runTimeoutOverrideMs?: number;
   pluginRegistry?: PluginRegistry;
   // Final accounting retains static pricing facts after the runtime lease is released.
-  metadataSnapshot?: PluginMetadataSnapshot;
+  metadataSnapshot: PluginMetadataSnapshot;
 };
 
 type CronPreparationResult =
@@ -146,6 +147,10 @@ export async function prepareCronRunContext(params: {
   onLifecycleInterrupt: () => void;
 }): Promise<CronPreparationResult> {
   const { input } = params;
+  const commandPromptPreflight = resolveCronCommandPromptPreflight(input.job);
+  if (commandPromptPreflight) {
+    return { ok: false, result: commandPromptPreflight };
+  }
   const requestedRuntimeCfg = resolveCronActiveRuntimeConfig(input.cfg);
   const requestedAgentId = input.agentId?.trim() || input.job.agentId?.trim();
   const normalizedRequested = requestedAgentId ? normalizeAgentId(requestedAgentId) : undefined;
@@ -361,8 +366,7 @@ export async function prepareCronRunContext(params: {
       typeof ownerAgentConfig?.model === "string" &&
       resolveAgentModelPrimaryValue(ownerAgentConfig.model) ===
         resolveAgentModelPrimaryValue(modelOwner.config.agents?.defaults?.model);
-    let provider = resolvedModelSelection.provider;
-    let model = resolvedModelSelection.model;
+    let { provider, model } = resolvedModelSelection;
     const useSubagentFallbacks = resolvedModelSelection.modelSource === "subagent";
     const inheritDefaultFallbacksForAgentStringModel =
       matchesDefaultFallbackAgentStringModel &&
@@ -372,6 +376,8 @@ export async function prepareCronRunContext(params: {
     const modelPreflightRuntime = await loadCronModelPreflightRuntime();
     const preflightCandidates = resolveCronPreflightCandidates({
       cfg: cfgWithAgentDefaults,
+      workspaceDir,
+      pluginMetadataSnapshot: modelOwner.metadataSnapshot,
       job: input.job,
       agentId: modelOwner.agentId,
       provider,
@@ -485,15 +491,14 @@ export async function prepareCronRunContext(params: {
       }
     }
 
-    const explicitTimeoutSeconds =
-      input.job.payload.kind === "agentTurn" ? input.job.payload.timeoutSeconds : undefined;
+    const agentPayload = input.job.payload.kind === "agentTurn" ? input.job.payload : null;
+    const explicitTimeoutSeconds = agentPayload?.timeoutSeconds;
     const timeoutMs = resolveAgentTimeoutMs({
       cfg: cfgWithAgentDefaults,
       overrideSeconds: explicitTimeoutSeconds,
     });
     // Preserve explicit timeout provenance so the idle watchdog does not reapply 120s when defaults match.
     const runTimeoutOverrideMs = resolveCronRunTimeoutOverrideMs(explicitTimeoutSeconds);
-    const agentPayload = input.job.payload.kind === "agentTurn" ? input.job.payload : null;
     const configuredProvider = cfgWithAgentDefaults.models?.providers?.[provider];
     const modelApi =
       findModelInCatalog(thinkingSelection.catalog, provider, model)?.api ??
@@ -545,7 +550,6 @@ export async function prepareCronRunContext(params: {
     const allowUnsafeExternalContent =
       agentPayload?.allowUnsafeExternalContent === true ||
       (isGmailHook && input.cfg.hooks?.gmail?.allowUnsafeExternalContent === true);
-    const shouldWrapExternal = isExternalHook && !allowUnsafeExternalContent;
     let commandBody: string;
 
     if (isExternalHook) {
@@ -559,7 +563,7 @@ export async function prepareCronRunContext(params: {
       }
     }
 
-    if (shouldWrapExternal) {
+    if (isExternalHook && !allowUnsafeExternalContent) {
       const { buildSafeExternalPrompt } = await loadCronExternalContentRuntime();
       const hookType = mapHookExternalContentSource(hookExternalContentSource ?? "webhook");
       const safeContent = buildSafeExternalPrompt({
@@ -603,10 +607,8 @@ export async function prepareCronRunContext(params: {
       job: input.job,
       cronSession,
     });
-    const storedAuthProfileId = cronSession.sessionEntry.authProfileOverride?.trim();
-    const hasSessionAuthProfileOverride = Boolean(storedAuthProfileId);
     const authSelection =
-      !hasSessionAuthProfileOverride &&
+      !cronSession.sessionEntry.authProfileOverride?.trim() &&
       !hasConfiguredAuthProfiles(cfgWithAgentDefaults) &&
       !hasAnyAuthProfileStoreSource(agentDir)
         ? undefined
@@ -619,13 +621,14 @@ export async function prepareCronRunContext(params: {
             modelId: model,
             harnessRuntime: effectiveAgentRuntime,
             agentDir,
+            workspaceDir,
+            pluginMetadataSnapshot: modelOwner.metadataSnapshot,
             sessionEntry: cronSession.sessionEntry,
             sessionStore: cronSession.store,
             sessionKey: agentSessionKey,
             storePath: cronSession.storePath,
             isNewSession: cronSession.isNewSession && input.job.sessionTarget !== "isolated",
           });
-    const authProfileId = authSelection?.profileId;
     const liveSelection: CronLiveSelection = {
       provider,
       model,
@@ -634,20 +637,19 @@ export async function prepareCronRunContext(params: {
         entry: cronSession.sessionEntry,
         cfg: cfgWithAgentDefaults,
       }),
-      authProfileId,
+      authProfileId: authSelection?.profileId,
       authProfileIdSource: authSelection?.source,
     };
-    const runtimePluginCandidates =
-      selectedPreflightCandidateIndex >= 0
-        ? preflightCandidates.slice(selectedPreflightCandidateIndex)
-        : preflightCandidates;
+    const runtimePluginCandidates = preflightCandidates.slice(
+      Math.max(0, selectedPreflightCandidateIndex),
+    );
     const pluginRegistry = loadAgentRuntimePluginRegistryHandle({
       config: cfgWithAgentDefaults,
       workspaceDir,
       allowGatewaySubagentBinding: true,
       // The published owner already selected this run's metadata generation.
       // Reloading it here re-hashes every installed plugin on each hook/cron run.
-      ...(modelOwner.metadataSnapshot ? { metadataSnapshot: modelOwner.metadataSnapshot } : {}),
+      metadataSnapshot: modelOwner.metadataSnapshot,
       selections: runtimePluginCandidates.map((candidate) => {
         const runtime = resolveSessionRuntimeOverrideForProvider({
           provider: candidate.provider,

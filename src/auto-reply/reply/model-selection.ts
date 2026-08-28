@@ -22,6 +22,7 @@ import {
   resolveThinkingDefault,
 } from "../../agents/model-selection.js";
 import {
+  RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
   createModelVisibilityPolicy,
   type ModelVisibilityPolicy,
 } from "../../agents/model-visibility-policy.js";
@@ -47,6 +48,7 @@ import {
   mergePreparedConfiguredCatalog,
   normalizeRuntimeRef,
   resolveRuntimeNormalization,
+  type RuntimeModelNormalization,
 } from "./model-runtime-normalization.js";
 import {
   isStaleHeartbeatAutoFallbackOverride,
@@ -67,6 +69,7 @@ type ThinkingDefaultSelection = {
 };
 
 type ModelSelectionState = {
+  runtimeModelNormalization: RuntimeModelNormalization;
   provider: string;
   model: string;
   requestedRouteResolution: ModelFallbackRouteResolution;
@@ -102,6 +105,7 @@ export function createFastTestModelSelectionState(params: {
   model: string;
 }): ModelSelectionState {
   return {
+    runtimeModelNormalization: RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
     provider: params.provider,
     model: params.model,
     requestedRouteResolution: "resolved",
@@ -190,8 +194,7 @@ export async function createModelSelectionState(params: {
     }));
   const runtimeModelNormalization = resolveRuntimeNormalization(cfg, params.agentId, params);
 
-  let provider = params.provider;
-  let model = params.model;
+  let { provider, model } = params;
   let requestedRouteResolution: ModelFallbackRouteResolution = "resolved";
   const primaryProvider = params.primaryProvider ?? defaultProvider;
   const primaryModel = params.primaryModel ?? defaultModel;
@@ -354,9 +357,7 @@ export async function createModelSelectionState(params: {
     // to primary, then re-evaluate after discovery recovers; config-proven stale pins still reset.
     const shouldResetOverride =
       (staleDirectStoredOverride || !overrideAllowed) && !modelSelectionLocked;
-    const overrideTemporarilyUnavailable =
-      shouldResetOverride && !staleDirectStoredOverride && !catalogAuthoritative;
-    if (overrideTemporarilyUnavailable) {
+    if (shouldResetOverride && !staleDirectStoredOverride && !catalogAuthoritative) {
       resetModelOverrideRef = key;
       resetModelOverrideReason = "temporarily-unavailable";
     } else if (shouldResetOverride) {
@@ -598,9 +599,7 @@ export async function createModelSelectionState(params: {
         selectedCatalogEntry = manifestSelectedEntry;
       }
     }
-    const shouldHydrateRuntimeCatalog =
-      !modelCatalog && (!selectedCatalogEntry || selectedCatalogEntry.reasoning === undefined);
-    if (shouldHydrateRuntimeCatalog) {
+    if (!modelCatalog && selectedCatalogEntry?.reasoning === undefined) {
       modelCatalog = (await loadRuntimeCatalogSnapshot()).entries;
       logStage("catalog-loaded-for-thinking", `entries=${modelCatalog.length}`);
       const runtimeCatalog = buildThinkingCatalog(modelCatalog);
@@ -724,6 +723,7 @@ export async function createModelSelectionState(params: {
     agentCfg?.thinkingDefault !== undefined;
 
   return {
+    runtimeModelNormalization,
     provider,
     model,
     requestedRouteResolution,

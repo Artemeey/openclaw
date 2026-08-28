@@ -26,6 +26,7 @@ import {
   buildInboundUserContextPrefix,
   resolveInboundUserContextPromptJoiner,
 } from "./inbound-meta.js";
+import { createFastTestModelSelectionState } from "./model-selection.js";
 import {
   REPLY_RUN_IDLE_SETTLE_TIMEOUT_MS,
   createReplyOperation,
@@ -413,10 +414,11 @@ function baseParams(
     elevatedAllowed: false,
     blockStreamingEnabled: false,
     resolvedBlockStreamingBreak: "message_end",
-    modelState: {
-      resolveDefaultThinkingLevel: async () => "medium",
-      resolveThinkingCatalog: async () => [],
-    } as never,
+    modelState: createFastTestModelSelectionState({
+      agentCfg: { thinkingDefault: "medium" },
+      provider: "anthropic",
+      model: "claude-opus-4-1",
+    }),
     provider: "anthropic",
     model: "claude-opus-4-1",
     typing: {
@@ -706,7 +708,11 @@ describe("runPreparedReply media-only handling", () => {
       model: "chat-latest",
       resolvedThinkLevel: "high",
       modelState: {
-        resolveDefaultThinkingLevel: async () => "high",
+        ...createFastTestModelSelectionState({
+          agentCfg: { thinkingDefault: "high" },
+          provider: "openai",
+          model: "chat-latest",
+        }),
         resolveThinkingCatalog,
         allowedModelCatalog: [
           {
@@ -737,7 +743,11 @@ describe("runPreparedReply media-only handling", () => {
       resolvedThinkLevel: "xhigh",
       opts: { thinkingLevelOverride: "xhigh" },
       modelState: {
-        resolveDefaultThinkingLevel: async () => "high",
+        ...createFastTestModelSelectionState({
+          agentCfg: { thinkingDefault: "high" },
+          provider: "openai",
+          model: "chat-latest",
+        }),
         resolveThinkingCatalog: async () => [
           {
             provider: "openai",
@@ -780,7 +790,11 @@ describe("runPreparedReply media-only handling", () => {
       sessionStore,
       storePath: "/tmp/openclaw-sessions.json",
       modelState: {
-        resolveDefaultThinkingLevel: async () => "high",
+        ...createFastTestModelSelectionState({
+          agentCfg: { thinkingDefault: "high" },
+          provider: "openai",
+          model: "chat-latest",
+        }),
         resolveThinkingCatalog: async () => [
           {
             provider: "openai",
