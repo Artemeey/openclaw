@@ -685,6 +685,7 @@ export async function executeNodeHostCommand(
   }
   return formatNodeRunToolResult({
     raw: invocation.raw,
+    nodeId: target.nodeId,
     startedAt,
     cwd: params.workdir,
     warnings: [...params.warnings, ...(params.foregroundWarnings ?? [])],

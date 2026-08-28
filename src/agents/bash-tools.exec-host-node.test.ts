@@ -729,6 +729,7 @@ describe("executeNodeHostCommand", () => {
       {
         nodeId: "node-1",
         commands: ["system.run", "system.run.prepare"],
+        connected: true,
         platform: process.platform,
       },
     ]);
@@ -3235,6 +3236,7 @@ describe("executeNodeHostCommand", () => {
       {
         nodeId: "node-1",
         commands: ["system.run", "system.which", "system.notify"],
+        connected: true,
         platform: "darwin",
       },
     ]);
@@ -3923,7 +3925,7 @@ describe("executeNodeHostCommand", () => {
         }),
       ),
     ).rejects.toThrow(
-      "exec host=node requires a connected node (node-1 is currently disconnected)",
+      "exec host=node requires a connected node that supports system.run (node-1 is not eligible",
     );
     expect(callGatewayToolMock).not.toHaveBeenCalled();
   });
@@ -3952,7 +3954,7 @@ describe("executeNodeHostCommand", () => {
       }),
     );
 
-    expect(result.content).toEqual([{ type: "text", text: "(no output)" }]);
+    expect(result.content).toEqual([{ type: "text", text: "Node: node-1\n\n(no output)" }]);
     const details = result.details;
     expect(details?.status).toBe("completed");
     if (details?.status !== "completed") {
@@ -3960,6 +3962,7 @@ describe("executeNodeHostCommand", () => {
     }
     expect(details.exitCode).toBe(0);
     expect(details.aggregated).toBe("");
+    expect(details.nodeId).toBe("node-1");
     expect(details.cwd).toBe("/tmp/work");
   });
 
@@ -4074,6 +4077,7 @@ describe("executeNodeHostCommand", () => {
         nodeId: "f2396b588d391d30a79d300e196a17cf197f34969b5e2485d2734c953567f44e",
         displayName: "home-wsl-debian",
         commands: ["system.run"],
+        connected: true,
         platform: process.platform,
       },
     ]);
@@ -4095,6 +4099,7 @@ describe("executeNodeHostCommand", () => {
         nodeId: "f2396b588d391d30a79d300e196a17cf197f34969b5e2485d2734c953567f44e",
         displayName: "home-wsl-debian",
         commands: ["system.run"],
+        connected: true,
         platform: process.platform,
       },
     ]);
@@ -4116,12 +4121,14 @@ describe("executeNodeHostCommand", () => {
         nodeId: "f2396b588d391d30a79d300e196a17cf197f34969b5e2485d2734c953567f44e",
         displayName: "home-wsl-debian",
         commands: ["system.run"],
+        connected: true,
         platform: process.platform,
       },
       {
         nodeId: "aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaa7777bbb88889999",
         displayName: "other-node",
         commands: ["system.run"],
+        connected: true,
         platform: process.platform,
       },
     ]);
@@ -4144,6 +4151,7 @@ describe("executeNodeHostCommand", () => {
         nodeId: "f2396b588d391d30a79d300e196a17cf197f34969b5e2485d2734c953567f44e",
         displayName: "home-wsl-debian",
         commands: ["system.run"],
+        connected: true,
         platform: process.platform,
       },
     ]);
@@ -4156,9 +4164,7 @@ describe("executeNodeHostCommand", () => {
           requestedNode: "nonexistent-node",
         }),
       ),
-    ).rejects.toThrow(
-      "requested node not found: nonexistent-node (unknown node: nonexistent-node)",
-    );
+    ).rejects.toThrow("requested node not found: nonexistent-node (unknown node: nonexistent-node");
   });
 
   it("allows exec when boundNode is a display name matching the same device as requestedNode", async () => {
@@ -4167,6 +4173,7 @@ describe("executeNodeHostCommand", () => {
         nodeId: "f2396b588d391d30a79d300e196a17cf197f34969b5e2485d2734c953567f44e",
         displayName: "home-wsl-debian",
         commands: ["system.run"],
+        connected: true,
         platform: process.platform,
       },
     ]);

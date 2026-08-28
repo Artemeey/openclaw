@@ -3,7 +3,10 @@ import {
   formatNodeInvokeFailureFollowup,
   invokeNodeSystemRun,
 } from "./bash-tools.exec-host-node-failure.js";
-import { invokeNodeSystemRunDirect } from "./bash-tools.exec-host-node-phases.js";
+import {
+  invokeNodeSystemRunDirect,
+  resolveNodeExecutionTarget,
+} from "./bash-tools.exec-host-node-phases.js";
 
 const callGatewayToolMock = vi.hoisted(() => vi.fn());
 
@@ -44,6 +47,152 @@ async function invokeFailure(error: unknown) {
   }
   return result.failure;
 }
+
+type NodeTargetRequest = Parameters<typeof resolveNodeExecutionTarget>[0];
+
+function createNodeTargetRequest(overrides: Partial<NodeTargetRequest> = {}): NodeTargetRequest {
+  return {
+    command: "tool --version",
+    workdir: undefined,
+    env: {},
+    security: "full",
+    ask: "off",
+    defaultTimeoutSec: 30,
+    approvalRunningNoticeMs: 0,
+    warnings: [],
+    ...overrides,
+  };
+}
+
+describe("node exec target resolution", () => {
+  beforeEach(() => {
+    callGatewayToolMock.mockReset();
+  });
+
+  it("rejects an omitted target when multiple connected nodes support system.run", async () => {
+    callGatewayToolMock.mockResolvedValue({
+      nodes: [
+        {
+          nodeId: "mac-a",
+          displayName: "Laptop",
+          platform: "macos",
+          connected: true,
+          connectedAtMs: 1_000,
+          caps: ["canvas"],
+          commands: ["system.run"],
+        },
+        {
+          nodeId: "mac-b",
+          displayName: "Desktop",
+          platform: "macos",
+          connected: true,
+          connectedAtMs: 2_000,
+          caps: ["canvas"],
+          commands: ["system.run"],
+        },
+      ],
+    });
+
+    const target = resolveNodeExecutionTarget(createNodeTargetRequest());
+    await expect(target).rejects.toThrow(/multiple.*system\.run/is);
+    await expect(target).rejects.toThrow(/tools\.exec\.node.*Laptop \(mac-a\).*Desktop \(mac-b\)/s);
+    expect(callGatewayToolMock.mock.calls.map(([method]) => method)).toEqual(["node.list"]);
+  });
+
+  it("selects the only connected system.run node instead of a Canvas default", async () => {
+    callGatewayToolMock.mockResolvedValue({
+      nodes: [
+        {
+          nodeId: "mac-canvas",
+          displayName: "Canvas Mac",
+          platform: "macos",
+          connected: true,
+          connectedAtMs: 2_000,
+          caps: ["canvas"],
+          commands: ["canvas.present"],
+        },
+        {
+          nodeId: "linux-shell",
+          displayName: "Build Server",
+          platform: "linux",
+          connected: true,
+          connectedAtMs: 1_000,
+          commands: ["system.run"],
+        },
+      ],
+    });
+
+    await expect(resolveNodeExecutionTarget(createNodeTargetRequest())).resolves.toMatchObject({
+      nodeId: "linux-shell",
+      platform: "linux",
+    });
+  });
+
+  it("preserves an explicit target when multiple nodes support system.run", async () => {
+    callGatewayToolMock.mockResolvedValue({
+      nodes: [
+        { nodeId: "node-a", displayName: "Laptop", connected: true, commands: ["system.run"] },
+        { nodeId: "node-b", displayName: "Desktop", connected: true, commands: ["system.run"] },
+      ],
+    });
+
+    await expect(
+      resolveNodeExecutionTarget(createNodeTargetRequest({ requestedNode: "Desktop" })),
+    ).resolves.toMatchObject({ nodeId: "node-b" });
+  });
+
+  it("resolves an explicit name among eligible nodes", async () => {
+    callGatewayToolMock.mockResolvedValue({
+      nodes: [
+        { nodeId: "canvas", displayName: "Shared", connected: true, commands: [] },
+        { nodeId: "shell", displayName: "Shared", connected: true, commands: ["system.run"] },
+      ],
+    });
+
+    await expect(
+      resolveNodeExecutionTarget(createNodeTargetRequest({ requestedNode: "Shared" })),
+    ).resolves.toMatchObject({ nodeId: "shell" });
+  });
+
+  it("preserves a configured binding when multiple nodes support system.run", async () => {
+    callGatewayToolMock.mockResolvedValue({
+      nodes: [
+        { nodeId: "node-a", displayName: "Laptop", connected: true, commands: ["system.run"] },
+        { nodeId: "node-b", displayName: "Desktop", connected: true, commands: ["system.run"] },
+      ],
+    });
+
+    await expect(
+      resolveNodeExecutionTarget(createNodeTargetRequest({ boundNode: "Laptop" })),
+    ).resolves.toMatchObject({ nodeId: "node-a" });
+  });
+
+  it("rejects an ambiguous configured binding before eligibility filtering", async () => {
+    callGatewayToolMock.mockResolvedValue({
+      nodes: [
+        { nodeId: "canvas", displayName: "Shared", connected: true, commands: [] },
+        { nodeId: "shell", displayName: "Shared", connected: true, commands: ["system.run"] },
+      ],
+    });
+
+    await expect(
+      resolveNodeExecutionTarget(createNodeTargetRequest({ boundNode: "Shared" })),
+    ).rejects.toThrow(/ambiguous node: Shared.*canvas.*shell/);
+  });
+
+  it("reports when no connected node supports system.run", async () => {
+    callGatewayToolMock.mockResolvedValue({
+      nodes: [
+        { nodeId: "offline", connected: false, commands: ["system.run"] },
+        { nodeId: "canvas", connected: true, caps: ["canvas"], commands: [] },
+      ],
+    });
+
+    await expect(resolveNodeExecutionTarget(createNodeTargetRequest())).rejects.toThrow(
+      "requires a connected node that supports system.run (none available)",
+    );
+  });
+});
 
 describe("invokeNodeSystemRun failure classification", () => {
   it("classifies only proven pre-dispatch NOT_CONNECTED as retry-safe", async () => {
@@ -152,7 +301,7 @@ describe("direct node run", () => {
 
   it("forwards the original cancellation signal to the gateway", async () => {
     const controller = new AbortController();
-    await invokeNodeSystemRunDirect(createDirectNodeRun(controller.signal));
+    const result = await invokeNodeSystemRunDirect(createDirectNodeRun(controller.signal));
 
     expect(callGatewayToolMock).toHaveBeenCalledWith(
       "node.invoke",
@@ -160,6 +309,8 @@ describe("direct node run", () => {
       expect.objectContaining({ command: "system.run" }),
       { signal: controller.signal },
     );
+    expect(result.content).toEqual([{ type: "text", text: "Node: node-1\n\nok" }]);
+    expect(result.details).toMatchObject({ nodeId: "node-1", aggregated: "ok" });
   });
 
   it("combines stdout, stderr, and the node error", async () => {
@@ -179,8 +330,9 @@ describe("direct node run", () => {
     const result = await invokeNodeSystemRunDirect(createDirectNodeRun());
     const visibleText = result.content[0]?.type === "text" ? result.content[0].text : "";
 
-    expect(visibleText).toBe(`${stdout}\n${stderr}\n${errorText}\n(Command exited with code 1)`);
-    expect(result.details).toMatchObject({ aggregated: visibleText });
+    const output = `${stdout}\n${stderr}\n${errorText}\n(Command exited with code 1)`;
+    expect(visibleText).toBe(`Node: node-1\n\n${output}`);
+    expect(result.details).toMatchObject({ aggregated: output, nodeId: "node-1" });
   });
 
   it("renders a nonzero exit code in the model-visible text", async () => {
