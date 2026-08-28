@@ -23,7 +23,12 @@ import {
   isCompetingSessionWorkAdmissionActive,
 } from "../../sessions/session-lifecycle-admission.js";
 import { setGatewayDedupeEntry } from "../agent-turn/agent-job.js";
-import { registerChatAbortController, resolveChatRunExpiresAtMs } from "../chat-abort.js";
+import { waitForChatAbortControllerRemoval } from "../chat-abort-lifecycle-internal.js";
+import {
+  registerChatAbortController,
+  resolveChatRunExpiresAtMs,
+  type ChatAbortControllerEntry,
+} from "../chat-abort.js";
 import { authorizeGatewaySessionCreation, resolveCreatorSandbox } from "../operator-role-policy.js";
 import { PENDING_CHAT_SEND_DEDUPE_PREFIX, type DedupeEntry } from "../server-shared.js";
 import { loadSessionEntry } from "../session-utils.js";
@@ -37,6 +42,7 @@ import { resolveChatSendOriginatingRoute } from "./chat-origin-routing.js";
 import {
   hasRestartRecoveryTerminalRun,
   isRetryableUnadoptedChatClaim,
+  resolvePermissionRestartChatAdmission,
   resolveRestartSafeChatAdmission,
 } from "./chat-restart-recovery.js";
 import {
@@ -175,6 +181,7 @@ export async function admitChatSend(params: {
     typeof replyRunRegistry.resolveCurrentMessageInjectionTarget
   >;
   let runInterruptTarget: ReturnType<typeof replyRunRegistry.resolveCurrentInterruptTarget>;
+  let runAbortInterruptTarget: ChatAbortControllerEntry | undefined;
   let reservationSuperseded = false;
   let supersedingResult: DedupeEntry | undefined;
   const assertChatWorkAdmissionAllowed = (commitOutcome: boolean) => {
@@ -259,9 +266,30 @@ export async function admitChatSend(params: {
       p.queueMode === "interrupt"
         ? replyRunRegistry.resolveCurrentInterruptTarget(activeRunScopeKey)
         : undefined;
+    const resolvedRunAbortEntry = expectedInterruptRunId
+      ? context.chatAbortControllers.get(expectedInterruptRunId)
+      : undefined;
+    const matchesExpectedRunAbort = Boolean(
+      expectedInterruptRunId &&
+      resolvedRunAbortEntry &&
+      resolvedRunAbortEntry.kind !== "agent" &&
+      resolvedRunAbortEntry.turnKind !== "btw" &&
+      resolvedRunAbortEntry.lifecycleGeneration === lifecycleGeneration &&
+      resolvedRunAbortEntry.sessionKey === sessionKey &&
+      resolvedRunAbortEntry.sessionId === latestEntry?.sessionId,
+    );
+    if (!commitOutcome && expectedInterruptRunId && matchesExpectedRunAbort) {
+      runAbortInterruptTarget = resolvedRunAbortEntry;
+    }
+    const capturedRunAbortStillMatches = Boolean(
+      runAbortInterruptTarget &&
+      context.chatAbortControllers.get(expectedInterruptRunId!) === runAbortInterruptTarget &&
+      matchesExpectedRunAbort,
+    );
     if (
       expectedInterruptRunId &&
-      normalizeOptionalChatText(resolvedInterruptTarget?.runId) !== expectedInterruptRunId
+      normalizeOptionalChatText(resolvedInterruptTarget?.runId) !== expectedInterruptRunId &&
+      !capturedRunAbortStillMatches
     ) {
       throw new Error("active run changed before restart");
     }
@@ -535,6 +563,27 @@ export async function admitChatSend(params: {
       }
       interruptedActiveRun = interruption.aborted;
       interruptionSettled = interruption.settled;
+    } else if (expectedInterruptRunId && runAbortInterruptTarget) {
+      const currentRunAbort = context.chatAbortControllers.get(expectedInterruptRunId);
+      if (currentRunAbort !== runAbortInterruptTarget) {
+        cleanupPreDispatchAdmission();
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "Active run changed before restart."),
+        );
+        return { ok: false as const };
+      }
+      currentRunAbort.abortStopReason = "restart";
+      if (!currentRunAbort.controller.signal.aborted) {
+        currentRunAbort.controller.abort(createAgentRunRestartAbortError());
+      }
+      interruptionSettled = await waitForChatAbortControllerRemoval({
+        entries: context.chatAbortControllers,
+        targets: [{ runId: expectedInterruptRunId, entry: currentRunAbort }],
+        timeoutMs: REPLY_RUN_IDLE_SETTLE_TIMEOUT_MS,
+      });
+      interruptedActiveRun = true;
     } else if (p.queueMode === "interrupt") {
       const identities = [sessionKey, backingSessionId, admittedSessionId];
       // The fallback runs inside the new admission so the lifecycle owner excludes itself.
@@ -567,6 +616,15 @@ export async function admitChatSend(params: {
         ),
       );
       return { ok: false as const };
+    }
+    if (expectedInterruptRunId && interruptedActiveRun) {
+      restartSafeAdmission = await gatewayWorkAdmission.run(async () => {
+        const latestEntry = loadSessionEntry(sessionLoadKey, sessionLoadOptions).entry;
+        return resolvePermissionRestartChatAdmission({
+          entry: latestEntry,
+          expectedInterruptRunId,
+        });
+      });
     }
     // Reserve while the request root is live: detached dispatch retains it until terminal persistence.
     releaseGatewayRootContinuation = retainGatewayRootWorkAdmissionContinuation() ?? (() => {});

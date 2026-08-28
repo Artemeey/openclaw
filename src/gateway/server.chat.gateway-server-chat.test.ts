@@ -8,7 +8,11 @@ import { WebSocket } from "ws";
 import { createDeferred } from "../../test/helpers/promise.js";
 import type { InternalGetReplyOptions } from "../auto-reply/reply/get-reply.types.js";
 import { replyRunRegistry } from "../auto-reply/reply/reply-run-registry.js";
-import { loadSessionEntry, replaceSessionEntrySync } from "../config/sessions/session-accessor.js";
+import {
+  loadSessionEntry,
+  replaceSessionEntrySync,
+  updateSessionEntry,
+} from "../config/sessions/session-accessor.js";
 import { replaceTranscriptEvents } from "../config/sessions/session-accessor.sqlite-transcript-write.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import {
@@ -535,6 +539,13 @@ describe("gateway server chat", () => {
       expect(replyRunRegistry.resolveCurrentInterruptTarget("agent:main:main")?.runId).toBe(
         "idem-permission-restart-old",
       );
+      await updateSessionEntry({ sessionKey: "main", storePath }, () => ({
+        abortedLastRun: false,
+        lifecycleRunId: "idem-permission-restart-old",
+        restartRecoveryDeliveryRunId: "idem-permission-restart-old",
+        restartRecoveryDeliverySourceRunId: "idem-permission-restart-old",
+        status: "running",
+      }));
 
       const restarted = await rpcReq(ws, "sessions.restartTurn", {
         key: "main",
@@ -544,7 +555,17 @@ describe("gateway server chat", () => {
         idempotencyKey: "idem-permission-restart-old",
       });
 
-      expect(restarted).toMatchObject({
+      const restartedEntry = loadSessionEntry({ sessionKey: "main", storePath });
+      expect(restartedEntry, JSON.stringify(restartedEntry)).toMatchObject({
+        abortedLastRun: false,
+        restartRecoveryDeliveryRunId:
+          "permission-restart:idem-permission-restart-old:idem-permission-restart-old",
+        restartRecoveryDeliverySourceRunId:
+          "permission-restart:idem-permission-restart-old:idem-permission-restart-old",
+        restartRecoveryTerminalRunIds: ["idem-permission-restart-old"],
+        status: "running",
+      });
+      expect(restarted, JSON.stringify(restarted)).toMatchObject({
         ok: true,
         payload: {
           ok: true,
@@ -560,6 +581,71 @@ describe("gateway server chat", () => {
       await waitForAgentRunDrained(
         "permission-restart:idem-permission-restart-old:idem-permission-restart-old",
       );
+    });
+  });
+
+  test("sessions.restartTurn accepts the acknowledged run before reply registration", async () => {
+    await withMainSessionStore(async (dir) => {
+      const storePath = testState.sessionStorePath;
+      if (!storePath) {
+        throw new Error("session store path was not initialized");
+      }
+      replaceSessionEntrySync(
+        { agentId: "main", sessionKey: "main", storePath },
+        {
+          sessionId: "sess-main",
+          sessionFile: path.join(dir, "sess-main.jsonl"),
+          sessionRoot: dir,
+          updatedAt: Date.now(),
+        },
+      );
+      const dispatchStarted = createDeferred();
+      dispatchInboundMessageMock.mockImplementationOnce(async (params: unknown) => {
+        const signal = (params as { replyOptions?: { abortSignal?: AbortSignal } }).replyOptions
+          ?.abortSignal;
+        dispatchStarted.resolve();
+        if (!signal?.aborted) {
+          await new Promise<void>((resolve) =>
+            signal?.addEventListener("abort", () => resolve(), { once: true }),
+          );
+        }
+        return undefined;
+      });
+      const runId = "idem-permission-restart-before-reply-registration";
+      const active = await rpcReq(ws, "chat.send", {
+        sessionKey: "main",
+        message: "turn before reply registration",
+        idempotencyKey: runId,
+      });
+      expect(active.ok).toBe(true);
+      await dispatchStarted.promise;
+      expect(replyRunRegistry.resolveCurrentInterruptTarget("agent:main:main")).toBeUndefined();
+
+      try {
+        const restarted = await rpcReq(ws, "sessions.restartTurn", {
+          key: "main",
+          runId,
+          reason: "permission-change",
+          permissionMode: "workspace",
+          idempotencyKey: "restart-before-reply-registration",
+        });
+
+        expect(restarted, JSON.stringify(restarted)).toMatchObject({
+          ok: true,
+          payload: {
+            interruptedRunId: runId,
+            status: "started",
+          },
+        });
+        expect(loadSessionEntry({ sessionKey: "main", storePath })?.permissionMode).toBe(
+          "workspace",
+        );
+        await waitForAgentRunDrained(
+          `permission-restart:${runId}:restart-before-reply-registration`,
+        );
+      } finally {
+        await abortChatRun(runId);
+      }
     });
   });
 

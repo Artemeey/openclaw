@@ -133,6 +133,22 @@ describe("createReplyRestartRecoveryClaimController", () => {
     });
   });
 
+  it("does not adopt a recovery claim after its live operation is restart-aborted", async () => {
+    const persistApproved = vi.fn();
+    const controller = createReplyRestartRecoveryClaimController({
+      getEntry: () => undefined,
+      getSessionId: () => "session",
+      isRestartAbort: () => true,
+      resolveDeliveryContext: () => undefined,
+      setEntry: () => {},
+    });
+
+    await expect(
+      controller.admitUserTurn({ persistApproved } as unknown as UserTurnTranscriptRecorder),
+    ).resolves.toBe("aborted");
+    expect(persistApproved).not.toHaveBeenCalled();
+  });
+
   it("adopts an exact channel recovery claim before execution starts", async () => {
     const root = tempDirs.make("openclaw-reply-channel-claim-adoption-");
     const storePath = path.join(root, "sessions.json");

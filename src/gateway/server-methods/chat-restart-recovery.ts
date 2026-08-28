@@ -42,11 +42,57 @@ type RestartSafeChatRequest = {
   fingerprint: string;
 };
 
-type RestartSafeChatAdmission = {
+export type RestartSafeChatAdmission = {
   priorTerminalSourceRunId?: string;
-  requestFingerprint: string;
+  requestFingerprint?: string;
   retryExpectedState?: SessionTranscriptTurnExpectedState;
 };
+
+function buildRestartSafeExpectedState(entry: SessionEntry): SessionTranscriptTurnExpectedState {
+  const mainRestartRecovery = (entry as InternalSessionEntry).mainRestartRecovery;
+  return {
+    abortedLastRun: entry.abortedLastRun,
+    mainRestartRecoveryCycleId: mainRestartRecovery?.cycleId,
+    mainRestartRecoveryRevision: mainRestartRecovery?.revision,
+    restartRecoveryBeforeAgentReplyState: entry.restartRecoveryBeforeAgentReplyState,
+    restartRecoveryDeliveryReceiptState: entry.restartRecoveryDeliveryReceiptState,
+    restartRecoveryDeliveryToolCallId: entry.restartRecoveryDeliveryToolCallId,
+    restartRecoveryDeliveryRequestFingerprint: entry.restartRecoveryDeliveryRequestFingerprint,
+    restartRecoveryDeliveryRunId: entry.restartRecoveryDeliveryRunId,
+    restartRecoveryDeliverySourceRunId: entry.restartRecoveryDeliverySourceRunId,
+    restartRecoveryRequesterAccountId: entry.restartRecoveryRequesterAccountId,
+    restartRecoveryRequesterSenderId: entry.restartRecoveryRequesterSenderId,
+    restartRecoverySameChannelThreadRequired: entry.restartRecoverySameChannelThreadRequired,
+    restartRecoverySourceIngress: entry.restartRecoverySourceIngress,
+    restartRecoverySourceReplyDeliveryMode: entry.restartRecoverySourceReplyDeliveryMode,
+    restartRecoveryTerminalRunIds: entry.restartRecoveryTerminalRunIds,
+    status: entry.status,
+  };
+}
+
+export function resolvePermissionRestartChatAdmission(params: {
+  entry?: SessionEntry;
+  expectedInterruptRunId: string;
+}): RestartSafeChatAdmission | undefined {
+  const entry = params.entry;
+  if (!entry?.restartRecoveryDeliveryRunId) {
+    return undefined;
+  }
+  if (
+    entry.status !== "running" ||
+    entry.restartRecoveryDeliveryRunId !== params.expectedInterruptRunId ||
+    entry.restartRecoveryDeliverySourceRunId !== params.expectedInterruptRunId
+  ) {
+    throw new Error("restart recovery claim changed before permission continuation");
+  }
+  return {
+    priorTerminalSourceRunId: params.expectedInterruptRunId,
+    ...(entry.restartRecoveryDeliveryRequestFingerprint
+      ? { requestFingerprint: entry.restartRecoveryDeliveryRequestFingerprint }
+      : {}),
+    retryExpectedState: buildRestartSafeExpectedState(entry),
+  };
+}
 
 export type RestartSafeChatTerminalState = {
   error?: string;
@@ -346,31 +392,11 @@ export function resolveRestartSafeChatAdmission(params: {
   if (retryableClaim && entry.restartRecoveryDeliveryRequestFingerprint !== request.fingerprint) {
     throw new Error("chat retry does not match its durable admission");
   }
-  const mainRestartRecovery = (entry as InternalSessionEntry).mainRestartRecovery;
   return {
     requestFingerprint: request.fingerprint,
     ...(retryableClaim
       ? {
-          retryExpectedState: {
-            abortedLastRun: entry.abortedLastRun,
-            mainRestartRecoveryCycleId: mainRestartRecovery?.cycleId,
-            mainRestartRecoveryRevision: mainRestartRecovery?.revision,
-            restartRecoveryBeforeAgentReplyState: entry.restartRecoveryBeforeAgentReplyState,
-            restartRecoveryDeliveryReceiptState: entry.restartRecoveryDeliveryReceiptState,
-            restartRecoveryDeliveryToolCallId: entry.restartRecoveryDeliveryToolCallId,
-            restartRecoveryDeliveryRequestFingerprint:
-              entry.restartRecoveryDeliveryRequestFingerprint,
-            restartRecoveryDeliveryRunId: entry.restartRecoveryDeliveryRunId,
-            restartRecoveryDeliverySourceRunId: entry.restartRecoveryDeliverySourceRunId,
-            restartRecoveryRequesterAccountId: entry.restartRecoveryRequesterAccountId,
-            restartRecoveryRequesterSenderId: entry.restartRecoveryRequesterSenderId,
-            restartRecoverySameChannelThreadRequired:
-              entry.restartRecoverySameChannelThreadRequired,
-            restartRecoverySourceIngress: entry.restartRecoverySourceIngress,
-            restartRecoverySourceReplyDeliveryMode: entry.restartRecoverySourceReplyDeliveryMode,
-            restartRecoveryTerminalRunIds: entry.restartRecoveryTerminalRunIds,
-            status: entry.status,
-          },
+          retryExpectedState: buildRestartSafeExpectedState(entry),
         }
       : entry.restartRecoveryDeliverySourceRunId
         ? { priorTerminalSourceRunId: entry.restartRecoveryDeliverySourceRunId }

@@ -247,7 +247,7 @@ export async function executePreparedReplyAgentRun(
   replyOperation.setPhase("running");
   const runStartedAt = Date.now();
   const userTurnAdmission = await admitUserTurn(followupRun.userTurnTranscriptRecorder);
-  if (userTurnAdmission === "duplicate-source") {
+  if (userTurnAdmission === "aborted" || userTurnAdmission === "duplicate-source") {
     return returnWithQueuedFollowupDrain(undefined);
   }
   // Adoption marks run start and must never be spool-replayed (would re-run tools).

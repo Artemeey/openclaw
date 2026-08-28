@@ -23,7 +23,7 @@ import type { SourceReplyDeliveryMode } from "../get-reply-options.types.js";
 type ReplyRestartRecoveryClaimController = {
   admitUserTurn: (
     recorder?: UserTurnTranscriptRecorder,
-  ) => Promise<"admitted" | "duplicate-source">;
+  ) => Promise<"aborted" | "admitted" | "duplicate-source">;
   beginBeforeAgentReply: () => Promise<boolean>;
   checkpointBeforeAgentReply: (params: {
     state?: RestartRecoveryBeforeAgentReplyState;
@@ -199,6 +199,9 @@ export function createReplyRestartRecoveryClaimController(params: {
   };
 
   const admitUserTurn: ReplyRestartRecoveryClaimController["admitUserTurn"] = async (recorder) => {
+    if (params.isRestartAbort()) {
+      return "aborted";
+    }
     if (!params.sessionKey || !params.storePath) {
       await recorder?.persistApproved();
       return "admitted";
