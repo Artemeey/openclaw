@@ -165,6 +165,8 @@ struct GatewayConfigWriteRecoveryView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
             .background(.orange.opacity(0.08))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("gateway-config-write-error")
         }
     }
 }
