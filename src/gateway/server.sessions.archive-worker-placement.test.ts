@@ -307,8 +307,14 @@ test.each([
 
   expect(archived).toMatchObject({
     ok: false,
-    error: { code: "UNAVAILABLE", retryable: true },
+    error: {
+      code: "INVALID_REQUEST",
+      message:
+        `Session ${sessionKey} cannot archive while cloud worker placement is ${testCase.state}. ` +
+        "Archive requires a local or reclaimed placement, or a failed placement whose environment is proven gone.",
+    },
   });
+  expect(archived.error).not.toMatchObject({ retryable: true });
   expect(reclaim).not.toHaveBeenCalled();
   expect(embeddedRunMock.abortCalls).toEqual([]);
   expectNoSessionQueueCleanup();

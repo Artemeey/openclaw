@@ -15,13 +15,25 @@ export type SessionWorkerPlacementContext = {
     Partial<Pick<WorkerSessionPlacementStore, "retireSessionPlacement">>;
 };
 
-type PlacementMutationAction = "delete" | "fork" | "reset" | "restore" | "rewind" | "switch";
+type PlacementMutationAction =
+  | "archive"
+  | "delete"
+  | "fork"
+  | "reset"
+  | "restore"
+  | "rewind"
+  | "switch";
 type Placement = WorkerSessionPlacementRecord;
 type PlacementState = Placement["state"];
 
 export class SessionWorkerPlacementMutationError extends Error {
   constructor(state: PlacementState, action: PlacementMutationAction, key: string) {
-    super(`Session ${key} cannot ${action} while cloud worker placement is ${state}.`);
+    super(
+      `Session ${key} cannot ${action} while cloud worker placement is ${state}.` +
+        (action === "archive"
+          ? " Archive requires a local or reclaimed placement, or a failed placement whose environment is proven gone."
+          : ""),
+    );
   }
 }
 
@@ -174,7 +186,7 @@ export async function prepareSessionWorkerPlacementForArchive(params: {
     return;
   }
   if (placement.state !== "active") {
-    throw new Error(`Session ${sessionKey} cannot archive from placement ${placement.state}.`);
+    throw new SessionWorkerPlacementMutationError(placement.state, "archive", sessionKey);
   }
   if (!params.reclaimActive) {
     return;

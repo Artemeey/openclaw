@@ -19,6 +19,7 @@ import {
   resolveGatewaySessionStoreTargetWithStore,
 } from "../session-utils.js";
 import { projectSessionsPatchEntry } from "../sessions-patch.js";
+import { SessionWorkerPlacementMutationError } from "../worker-environments/session-placement-lifecycle.js";
 import {
   prepareSessionArchiveLifecycle,
   type SessionArchiveLifecycleDrain,
@@ -231,7 +232,11 @@ export async function prepareSessionPatchArchive(params: {
     sessionLog.warn(
       `sessions.patch: archive drain failed for ${target.canonicalKey}: ${formatErrorMessage(error)}`,
     );
-    return err(archiveUnavailableError(target.key, "stopping"));
+    return err(
+      error instanceof SessionWorkerPlacementMutationError
+        ? errorShape(ErrorCodes.INVALID_REQUEST, error.message)
+        : archiveUnavailableError(target.key, "stopping"),
+    );
   }
 }
 

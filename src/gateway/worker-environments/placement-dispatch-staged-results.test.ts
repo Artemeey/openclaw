@@ -348,6 +348,55 @@ describe("staged worker placement result recovery", () => {
     expect(restartedHarness.log).not.toContain("placement:failed");
   });
 
+  it("preserves an unaccepted staged result whose durable ref is missing", async () => {
+    const workspacePath = path.join(root, "missing-unaccepted-staged-result");
+    const originalHarness = createHarness(placementStore, { workspacePath });
+    const active = originalHarness.placements.seedActive(2);
+    if (active.state !== "active") {
+      throw new Error("active placement fixture was not active");
+    }
+    const claim = placementStore.claimTurn({
+      ...REQUEST,
+      claimId: "missing-unaccepted-staged-claim",
+      runId: "missing-unaccepted-staged-run",
+      owner: {
+        kind: "worker",
+        environmentId: active.environmentId,
+        ownerEpoch: active.activeOwnerEpoch,
+      },
+    });
+    const staged = await stagePendingResult({
+      store: placementStore,
+      claim,
+      workspacePath,
+      base: "base\n",
+      current: "worker\n",
+    });
+    const deleted = await runCommandWithTimeout(
+      ["git", "-C", workspacePath, "update-ref", "-d", staged.stagedResultRef],
+      { timeoutMs: 10_000 },
+    );
+    expect(deleted.code).toBe(0);
+    const restartedStore = createWorkerSessionPlacementStore({ database, now: () => 2_000 });
+    const restartedHarness = createHarness(restartedStore, { workspacePath });
+    restartedHarness.markEnvironmentDestroyed();
+
+    await restartedHarness.service.reconcile();
+
+    expect(restartedHarness.placements.current()).toMatchObject({
+      state: "draining",
+      turnClaim: { claimId: claim.claimId, runId: claim.runId },
+    });
+    expect(restartedStore.listPendingWorkspaceResults()).toMatchObject([
+      {
+        stagedResultRef: staged.stagedResultRef,
+        workspaceAcceptedAtMs: null,
+      },
+    ]);
+    expect(restartedHarness.environments.destroy).not.toHaveBeenCalled();
+    expect(restartedHarness.log).not.toContain("placement:failed");
+  });
+
   it.each(["active", "draining"] as const)(
     "recovers a staged remote-exec %s result after restart clears its local claim",
     async (placementState) => {

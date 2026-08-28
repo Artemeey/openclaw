@@ -134,9 +134,6 @@ export async function recoverPendingWorkspaceResults(
     }
     const sameGatewayInstance =
       pending.gatewayInstanceId === placements.workspaceResultInstanceId();
-    if (sameGatewayInstance && pending.recoveryRequestedAtMs === null) {
-      continue;
-    }
     const placement = placements.get(pending.sessionId);
     if (environmentId !== undefined && placement?.environmentId !== environmentId) {
       continue;
@@ -156,7 +153,22 @@ export async function recoverPendingWorkspaceResults(
               owner: placementTurnOwner(active),
             }
           : undefined;
-      if (!active || !turnClaim || !placements.validateWorkspaceResultClaim(turnClaim)) {
+      const hasCurrentClaim = Boolean(
+        turnClaim && placements.validateWorkspaceResultClaim(turnClaim),
+      );
+      const environment = active ? environments.get(active.environmentId) : undefined;
+      if (
+        sameGatewayInstance &&
+        pending.recoveryRequestedAtMs === null &&
+        active &&
+        hasCurrentClaim &&
+        isCurrentActiveWorkerEnvironment(active, environment)
+      ) {
+        // The exact same-lifecycle worker may still finish or reconnect its claim.
+        // Worker loss ends the defer so durable result recovery can settle ownership.
+        continue;
+      }
+      if (!active || !turnClaim || !hasCurrentClaim) {
         if (pending.stagedResultRef && pending.workspaceAcceptedAtMs === null) {
           // A staged unaccepted result outlives stale placement ownership. Only
           // explicit operator abandonment may delete its durable Git ref.
@@ -221,7 +233,6 @@ export async function recoverPendingWorkspaceResults(
           root: localPath,
           stagedResultRef: preparedWorkerWorkspaceResultRef(canonicalStagedResultRef),
         }));
-      const environment = environments.get(active.environmentId);
       if (
         environment?.state === "attached" &&
         (environment.attachedSessionIds.length !== 1 ||
