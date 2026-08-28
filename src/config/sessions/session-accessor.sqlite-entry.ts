@@ -33,7 +33,6 @@ import {
 import {
   readSessionEntryCache,
   type SessionEntryCacheSnapshot,
-  type SessionEntrySnapshotProjection,
 } from "./session-accessor.sqlite-entry-cache.js";
 import {
   assertLifecycleTargetSnapshotUnchanged,
@@ -332,18 +331,12 @@ function listSqliteSessionEntriesFromDatabase(
   scope: SessionEntryListScope,
 ): SessionEntrySummary[] {
   assertCanonicalSqliteSessionKeysCurrent(database);
-  const snapshot = readSessionEntrySnapshot(
-    database,
-    resolved,
-    scope.readConsistency,
-    scope.projection === "list" ? "list" : "full",
-  );
-  const entries = snapshot.entries;
+  const snapshot = readSessionEntrySnapshot(database, resolved, scope);
   return snapshot.keys.flatMap((sessionKey) => {
     if (isInternalSessionEffectsKey(sessionKey)) {
       return [];
     }
-    const entry = entries.get(sessionKey);
+    const entry = snapshot.entries.get(sessionKey);
     if (!entry) {
       return [];
     }
@@ -365,17 +358,15 @@ function listSqliteSessionEntriesFromDatabase(
 function readSessionEntrySnapshot(
   database: Pick<OpenClawAgentDatabase, "agentId" | "db" | "path">,
   resolved: ResolvedSqliteScope,
-  readConsistency: SessionAccessScope["readConsistency"],
-  projection: SessionEntrySnapshotProjection = "full",
+  scope: Pick<SessionEntryListScope, "projection" | "readConsistency">,
 ): SessionEntryCacheSnapshot {
-  const cache = !isIncognitoOpenClawAgentSqlitePath(database.path, {
-    agentId: database.agentId,
-    env: resolved.env,
-  });
   return readSessionEntryCache(database, {
-    cache,
-    latest: readConsistency === "latest",
-    projection,
+    cache: !isIncognitoOpenClawAgentSqlitePath(database.path, {
+      agentId: database.agentId,
+      env: resolved.env,
+    }),
+    latest: scope.readConsistency === "latest",
+    projection: scope.projection === "list" ? "list" : "full",
   });
 }
 
