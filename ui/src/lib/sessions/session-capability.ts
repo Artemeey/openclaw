@@ -5,6 +5,8 @@ import type {
   SessionsAssignOwnerParams,
   SessionsDeleteResult,
   SessionsRecoverResult,
+  SessionsRestartTurnParams,
+  SessionsRestartTurnResult,
 } from "../../../../packages/gateway-protocol/src/index.js";
 import type { SessionCatalogPullRequestSummary } from "../../../../packages/gateway-protocol/src/schema/sessions-catalog.js";
 import type { GatewayBrowserClient, GatewayEventFrame, GatewayHelloOk } from "../../api/gateway.ts";
@@ -177,6 +179,7 @@ export type SessionCapability = {
   ) => Promise<SessionCreateOutcome | null>;
   create: (params?: SessionCreateParams) => Promise<string | null>;
   recover: (params: { key: string; agentId?: string }) => Promise<SessionsRecoverResult | null>;
+  restartTurn: (params: SessionsRestartTurnParams) => Promise<SessionsRestartTurnResult | null>;
   patch: SessionPatchRoute;
   archiveVisibility: (key: string) => SessionArchiveVisibility | undefined;
   setArchivePending: (key: string, pending: boolean) => void;

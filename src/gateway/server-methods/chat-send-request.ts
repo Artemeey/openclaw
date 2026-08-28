@@ -81,6 +81,7 @@ export type NormalizedChatSendRequest = {
   normalizedAttachments: ChatAttachment[];
   rawMessage: string;
   reconnectResumeRequested: boolean;
+  expectedInterruptRunId?: string;
 };
 
 type NormalizeChatSendRequestResult =

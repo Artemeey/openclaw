@@ -547,6 +547,19 @@ describe("reply run registry", () => {
     }
   });
 
+  it("captures the backend run identity with an interrupt target", () => {
+    const operation = createTestReplyOperation({
+      sessionId: "session-interrupt-identity",
+      runId: "run-exact",
+    });
+    operation.setPhase("running");
+    operation.attachBackend({ kind: "embedded", runId: "backend-run", cancel: vi.fn() });
+
+    expect(replyRunRegistry.resolveCurrentInterruptTarget(operation.key)?.runId).toBe("run-exact");
+
+    operation.complete();
+  });
+
   it("installs stale recovery barrier before synchronous cancel completion", async () => {
     const warnSpy = vi.spyOn(diagnosticLogger, "warn").mockImplementation(() => undefined);
     const operation = createTestReplyOperation({ sessionId: "session-sync-cancel" });

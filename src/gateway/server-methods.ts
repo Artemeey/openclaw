@@ -171,6 +171,10 @@ const CORE_GATEWAY_HANDLER_MODULES = {
     import("./server-methods/sessions-create.js").then((module) => module.sessionCreateHandlers),
   "sessions-recover": () =>
     import("./server-methods/sessions-recover.js").then((module) => module.sessionRecoverHandlers),
+  "sessions-restart-turn": () =>
+    import("./server-methods/sessions-restart-turn.js").then(
+      (module) => module.sessionRestartTurnHandlers,
+    ),
   "sessions-delete": () =>
     import("./server-methods/sessions-delete.js").then((module) => module.sessionDeleteHandlers),
   "sessions-dispatch": () =>

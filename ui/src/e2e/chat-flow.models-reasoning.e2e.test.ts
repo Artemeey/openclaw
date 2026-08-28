@@ -1,3 +1,5 @@
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
 import { expect, it } from "vitest";
 import {
   chatSessionListResponse,
@@ -185,6 +187,99 @@ suite.define(() => {
         "sessions.list",
         chatSessionListResponse([{ ...session, permissionMode: undefined, updatedAt: 4 }]),
       );
+    } finally {
+      await suite.closeBrowserContext(context);
+    }
+  });
+
+  it("restarts an active turn after changing its permission mode", async () => {
+    const context = await suite.newBrowserContext({
+      locale: "en-US",
+      serviceWorkers: "block",
+      viewport: { height: 900, width: 1280 },
+    });
+    const page = await context.newPage();
+    const activeRunId = "run-before-permission-change";
+    const session = {
+      activeRunIds: [activeRunId],
+      hasActiveRun: true,
+      key: "agent:main:permission-restart",
+      kind: "direct",
+      label: "Permission restart",
+      permissionMode: "guarded",
+      status: "running",
+      updatedAt: 2,
+    };
+    const gateway = await installMockGateway(page, {
+      methodResponses: {
+        "chat.startup": {
+          inFlightRun: {
+            runId: activeRunId,
+            text: "Checking the current permission boundary.",
+          },
+          messages: [],
+          sessionId: "permission-restart-session",
+          sessionInfo: session,
+          thinkingLevel: null,
+        },
+        "sessions.list": chatSessionListResponse([session]),
+        "sessions.restartTurn": {
+          ok: true,
+          interruptedRunId: activeRunId,
+          runId: "run-after-permission-change",
+          status: "started",
+        },
+      },
+      sessionKey: session.key,
+    });
+    const proofDir = path.join(process.cwd(), ".artifacts", "control-ui-e2e", "permission-restart");
+    const captureProof = process.env.OPENCLAW_CAPTURE_UI_PROOF === "1";
+
+    try {
+      await page.goto(`${suite.server.baseUrl}chat`);
+      const pane = page.locator('openclaw-chat-pane[aria-hidden="false"]');
+      await pane.locator(".chat-working-indicator").waitFor({ timeout: 10_000 });
+      if (captureProof) {
+        await mkdir(proofDir, { recursive: true });
+        await page.screenshot({
+          path: path.join(proofDir, "01-active-before.png"),
+          fullPage: true,
+        });
+      }
+
+      await pane.locator('[data-chat-permission-select="true"]').click();
+      await pane.locator('[data-chat-permission-option="workspace"]').click();
+
+      const restartRequest = await gateway.waitForRequest("sessions.restartTurn");
+      expect(requireRecord(restartRequest.params)).toMatchObject({
+        key: session.key,
+        runId: activeRunId,
+        reason: "permission-change",
+        permissionMode: "workspace",
+        idempotencyKey: expect.any(String),
+      });
+      await gateway.emitGatewayEvent("sessions.changed", {
+        ...session,
+        activeRunIds: ["run-after-permission-change"],
+        permissionMode: "workspace",
+        sessionKey: session.key,
+        updatedAt: 3,
+      });
+      await expect
+        .poll(() =>
+          pane
+            .locator('[data-chat-permission-select="true"]')
+            .getAttribute("data-chat-select-value"),
+        )
+        .toBe("workspace");
+      expect(await gateway.getRequests("chat.send")).toHaveLength(0);
+      expect(await gateway.getRequests("chat.abort")).toHaveLength(0);
+      if (captureProof) {
+        await page.screenshot({
+          path: path.join(proofDir, "02-restarted-after.png"),
+          fullPage: true,
+        });
+      }
     } finally {
       await suite.closeBrowserContext(context);
     }

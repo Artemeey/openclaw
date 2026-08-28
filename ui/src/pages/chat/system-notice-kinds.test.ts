@@ -7,11 +7,18 @@ describe("resolveSystemNoticeKind", () => {
       "main_session_restart_recovery",
       "chat.systemNotice.restartRecovery.label",
       "chat.systemNotice.restartRecovery.summary",
+      "cpu",
     ],
-    ["restart-sentinel", "chat.systemNotice.gatewayRestarted.label", undefined],
-  ])("resolves the canonical %s source tool", (sourceTool, labelKey, summaryKey) => {
+    ["restart-sentinel", "chat.systemNotice.gatewayRestarted.label", undefined, "cpu"],
+    [
+      "permission_change_restart",
+      "chat.systemNotice.permissionRestart.label",
+      undefined,
+      "shieldCheck",
+    ],
+  ])("resolves the canonical %s source tool", (sourceTool, labelKey, summaryKey, icon) => {
     expect(resolveSystemNoticeKind(sourceTool)).toEqual(
-      summaryKey === undefined ? { icon: "cpu", labelKey } : { icon: "cpu", labelKey, summaryKey },
+      summaryKey === undefined ? { icon, labelKey } : { icon, labelKey, summaryKey },
     );
   });
 

@@ -25,6 +25,7 @@ import {
   validateSessionsPatchParams,
   validateSessionsSearchParams,
   validateSessionsSendParams,
+  validateSessionsRestartTurnParams,
   validateSessionsUsageParams,
   validateTasksCancelParams,
   validateTasksListParams,
@@ -981,6 +982,33 @@ describe("validateChatSendParams", () => {
         ...base,
         attachments: [{ type: "audio", content: new Uint8Array([1, 2, 3]) }],
       },
+    ]);
+  });
+});
+
+describe("validateSessionsRestartTurnParams", () => {
+  const params = {
+    key: "agent:main:main",
+    runId: "run-current",
+    reason: "permission-change",
+    permissionMode: "workspace",
+    idempotencyKey: "restart-1",
+  };
+
+  it("accepts the closed permission-change restart contract", () => {
+    expectAccepted(validateSessionsRestartTurnParams, [
+      params,
+      { ...params, permissionMode: null },
+      { ...params, permissionMode: "read-only", agentId: "main" },
+    ]);
+  });
+
+  it("rejects ambiguous lifecycle requests", () => {
+    expectRejected(validateSessionsRestartTurnParams, [
+      { ...params, runId: "" },
+      { ...params, reason: "retry" },
+      { ...params, permissionMode: "invalid" },
+      { ...params, unexpected: true },
     ]);
   });
 });

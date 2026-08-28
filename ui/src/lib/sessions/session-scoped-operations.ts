@@ -4,6 +4,10 @@ import {
   releaseGatewaySessionMessageSubscription,
   resetGatewaySessionMessageSubscriptionCoordinator,
 } from "@openclaw/gateway-client/browser";
+import type {
+  SessionsRestartTurnParams,
+  SessionsRestartTurnResult,
+} from "../../../../packages/gateway-protocol/src/index.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import type {
   SessionBranch,
@@ -67,6 +71,31 @@ export function createSessionScopedOperations(host: SessionScopedOperationsHost)
         return null;
       }
       host.notifyCreated(result.key);
+      await host.refreshReplacement(params.agentId);
+      return host.connection.isCurrent(scope) ? result : null;
+    } catch (error) {
+      if (host.connection.isCurrent(scope)) {
+        host.reportError(error);
+      }
+      return null;
+    }
+  };
+
+  const restartTurn = async (
+    params: SessionsRestartTurnParams,
+  ): Promise<SessionsRestartTurnResult | null> => {
+    const scope = host.connection.capture();
+    if (!scope) {
+      return null;
+    }
+    try {
+      const result = await scope.client.request<SessionsRestartTurnResult>(
+        "sessions.restartTurn",
+        params,
+      );
+      if (!host.connection.isCurrent(scope)) {
+        return null;
+      }
       await host.refreshReplacement(params.agentId);
       return host.connection.isCurrent(scope) ? result : null;
     } catch (error) {
@@ -305,6 +334,7 @@ export function createSessionScopedOperations(host: SessionScopedOperationsHost)
     listCheckpoints,
     listFiles,
     recover,
+    restartTurn,
     restoreCheckpoint,
     rewind,
     setFile,

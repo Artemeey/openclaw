@@ -47,6 +47,7 @@ import type { GatewayRequestHandlerOptions } from "./types.js";
 
 type ChatSendInternalOptions = {
   goalResume?: SessionGoalOperation & { action: "resume" };
+  expectedInterruptRunId?: string;
   trustedSystemInput?: boolean;
   toolsAllow?: string[];
   skillWorkshopProposalRevision?: SkillWorkshopProposalRevisionConstraint;
@@ -464,8 +465,10 @@ export async function handleChatSendWithSkillWorkshopProposalRevision(
 export async function handleTrustedInternalChatSend(
   options: GatewayRequestHandlerOptions,
   onAdmissionOwned?: () => Promise<boolean>,
+  internalOptions?: { expectedInterruptRunId?: string },
 ): Promise<void> {
   await handleChatSendWithOptions(options, onAdmissionOwned, undefined, {
     trustedSystemInput: true,
+    ...internalOptions,
   });
 }

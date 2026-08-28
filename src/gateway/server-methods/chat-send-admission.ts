@@ -61,7 +61,7 @@ export async function admitChatSend(params: {
   onAdmissionOwned?: () => Promise<boolean>;
 }) {
   const { request, session, respond, context, client } = params;
-  const { p, explicitOrigin, normalizedAttachments, turnKind } = request;
+  const { p, explicitOrigin, normalizedAttachments, turnKind, expectedInterruptRunId } = request;
   const {
     rawSessionKey,
     sessionLoadKey,
@@ -259,6 +259,12 @@ export async function admitChatSend(params: {
       p.queueMode === "interrupt"
         ? replyRunRegistry.resolveCurrentInterruptTarget(activeRunScopeKey)
         : undefined;
+    if (
+      expectedInterruptRunId &&
+      normalizeOptionalChatText(resolvedInterruptTarget?.runId) !== expectedInterruptRunId
+    ) {
+      throw new Error("active run changed before restart");
+    }
     if (commitOutcome && resolvedInterruptTarget) {
       runInterruptTarget = resolvedInterruptTarget;
     }

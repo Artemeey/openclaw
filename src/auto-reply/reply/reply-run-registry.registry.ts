@@ -124,7 +124,14 @@ export const replyRunRegistry: ReplyRunRegistry = {
   },
   resolveCurrentInterruptTarget(sessionKey) {
     const operation = this.get(sessionKey);
-    return operation ? { [replyRunInterruptTargetOperation]: operation } : undefined;
+    if (!operation) {
+      return undefined;
+    }
+    const runId = normalizeOptionalString(operation.runId);
+    return {
+      [replyRunInterruptTargetOperation]: operation,
+      ...(runId ? { runId } : {}),
+    };
   },
   abort(sessionKey) {
     const operation = this.get(sessionKey);

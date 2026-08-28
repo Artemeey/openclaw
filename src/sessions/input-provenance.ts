@@ -18,6 +18,7 @@ export type InputProvenance = {
 };
 
 export const MAIN_SESSION_RESTART_RECOVERY_SOURCE_TOOL = "main_session_restart_recovery" as const;
+export const PERMISSION_CHANGE_RESTART_SOURCE_TOOL = "permission_change_restart" as const;
 
 export const INTER_SESSION_PROMPT_PREFIX_BASE = "[Inter-session message]";
 const AGENT_MEDIATED_COMPLETION_SOURCE_TOOLS = [

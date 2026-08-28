@@ -26,6 +26,10 @@ const systemNoticeKinds: Readonly<Record<string, SystemNoticeKind>> = {
     icon: "cpu",
     labelKey: "chat.systemNotice.gatewayRestarted.label",
   },
+  permission_change_restart: {
+    icon: "shieldCheck",
+    labelKey: "chat.systemNotice.permissionRestart.label",
+  },
   cli_harness_context: {
     icon: "cpu",
     labelKey: "chat.systemNotice.cliHarnessContext.label",

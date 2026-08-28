@@ -55,6 +55,7 @@ type ReplyOperationAbortCode = Extract<ReplyOperationResult, { kind: "aborted" }
 export function createReplyOperation(params: {
   sessionKey: string;
   sessionId: string;
+  runId?: string;
   turnKind?: ReplyTurnKind;
   resetTriggered: boolean;
   routeThreadId?: string | number;
@@ -225,6 +226,7 @@ export function createReplyOperation(params: {
     get sessionId() {
       return currentSessionId;
     },
+    runId: normalizeOptionalString(params.runId),
     turnKind: params.turnKind ?? "visible",
     lifecycleGeneration,
     get routeThreadId() {

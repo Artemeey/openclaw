@@ -8,7 +8,7 @@ import { WebSocket } from "ws";
 import { createDeferred } from "../../test/helpers/promise.js";
 import type { InternalGetReplyOptions } from "../auto-reply/reply/get-reply.types.js";
 import { replyRunRegistry } from "../auto-reply/reply/reply-run-registry.js";
-import { loadSessionEntry } from "../config/sessions/session-accessor.js";
+import { loadSessionEntry, replaceSessionEntrySync } from "../config/sessions/session-accessor.js";
 import { replaceTranscriptEvents } from "../config/sessions/session-accessor.sqlite-transcript-write.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import {
@@ -497,6 +497,115 @@ describe("gateway server chat", () => {
         interruptedActiveRun: true,
       });
       await waitForAgentRunDrained("idem-chat-interrupt-active");
+    });
+  });
+
+  test("sessions.restartTurn patches permissions and restarts the exact active run", async () => {
+    await withMainSessionStore(async (dir) => {
+      const storePath = testState.sessionStorePath;
+      if (!storePath) {
+        throw new Error("session store path was not initialized");
+      }
+      replaceSessionEntrySync(
+        { agentId: "main", sessionKey: "main", storePath },
+        {
+          sessionId: "sess-main",
+          sessionFile: path.join(dir, "sess-main.jsonl"),
+          sessionRoot: dir,
+          updatedAt: Date.now(),
+        },
+      );
+      const activeRunStarted = createDeferred();
+      mockGetReplyFromConfigOnce(async (_ctx, opts) => {
+        activeRunStarted.resolve(undefined);
+        if (!opts?.abortSignal?.aborted) {
+          await new Promise<void>((resolve) => {
+            opts?.abortSignal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+        }
+        return undefined;
+      });
+      const active = await rpcReq(ws, "chat.send", {
+        sessionKey: "main",
+        message: "turn before permission change",
+        idempotencyKey: "idem-permission-restart-old",
+      });
+      expect(active.ok).toBe(true);
+      await activeRunStarted.promise;
+      expect(replyRunRegistry.resolveCurrentInterruptTarget("agent:main:main")?.runId).toBe(
+        "idem-permission-restart-old",
+      );
+
+      const restarted = await rpcReq(ws, "sessions.restartTurn", {
+        key: "main",
+        runId: "idem-permission-restart-old",
+        reason: "permission-change",
+        permissionMode: "workspace",
+        idempotencyKey: "idem-permission-restart-new",
+      });
+
+      expect(restarted).toMatchObject({
+        ok: true,
+        payload: {
+          ok: true,
+          interruptedRunId: "idem-permission-restart-old",
+          runId: "idem-permission-restart-new",
+          status: "started",
+        },
+      });
+      expect(
+        loadSessionEntry({ sessionKey: "main", storePath: testState.sessionStorePath })
+          ?.permissionMode,
+      ).toBe("workspace");
+      await waitForAgentRunDrained("idem-permission-restart-new");
+    });
+  });
+
+  test("sessions.restartTurn rejects a stale run identity without interrupting the active run", async () => {
+    await withMainSessionStore(async (dir) => {
+      const storePath = testState.sessionStorePath;
+      if (!storePath) {
+        throw new Error("session store path was not initialized");
+      }
+      replaceSessionEntrySync(
+        { agentId: "main", sessionKey: "main", storePath },
+        {
+          sessionId: "sess-main",
+          sessionFile: path.join(dir, "sess-main.jsonl"),
+          sessionRoot: dir,
+          updatedAt: Date.now(),
+        },
+      );
+      const activeRunStarted = createDeferred();
+      mockGetReplyFromConfigOnce(async (_ctx, opts) => {
+        activeRunStarted.resolve(undefined);
+        if (!opts?.abortSignal?.aborted) {
+          await new Promise<void>((resolve) => {
+            opts?.abortSignal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+        }
+        return undefined;
+      });
+      const active = await rpcReq(ws, "chat.send", {
+        sessionKey: "main",
+        message: "turn with current identity",
+        idempotencyKey: "idem-permission-current",
+      });
+      expect(active.ok).toBe(true);
+      await activeRunStarted.promise;
+
+      const stale = await rpcReq(ws, "sessions.restartTurn", {
+        key: "main",
+        runId: "idem-permission-stale",
+        reason: "permission-change",
+        permissionMode: "guarded",
+        idempotencyKey: "idem-permission-stale-restart",
+      });
+
+      expect(stale.ok).toBe(false);
+      expect(replyRunRegistry.get("agent:main:main")).toBeDefined();
+      await abortChatRun("idem-permission-current");
+      await waitForFast(() => expect(replyRunRegistry.get("agent:main:main")).toBeUndefined());
     });
   });
 

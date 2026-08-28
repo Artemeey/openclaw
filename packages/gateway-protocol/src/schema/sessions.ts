@@ -8,6 +8,10 @@ import { PluginJsonValueSchema } from "./plugins.js";
 import { NonEmptyString, SessionLabelString } from "./primitives.js";
 import { SessionsCreateParamsSchema } from "./sessions-create.js";
 import { SessionsRecoverParamsSchema, SessionsRecoverResultSchema } from "./sessions-recover.js";
+import {
+  SessionsRestartTurnParamsSchema,
+  SessionsRestartTurnResultSchema,
+} from "./sessions-restart-turn.js";
 import { SessionOwnerSchema } from "./sessions-row.js";
 
 export { SessionsCreateParamsSchema };
@@ -22,6 +26,10 @@ export {
   type SessionParticipant,
   type SessionPerson,
 } from "./session-participant.js";
+export {
+  SessionsRestartTurnParamsSchema,
+  SessionsRestartTurnResultSchema,
+} from "./sessions-restart-turn.js";
 export {
   PreservedSessionWorktreeSchema,
   SessionsDeleteParamsSchema,
@@ -831,6 +839,8 @@ export type SessionsCreateParams = Static<typeof SessionsCreateParamsSchema>;
 export type SessionsCreateResult = Static<typeof SessionsCreateResultSchema>;
 export type SessionsRecoverParams = Static<typeof SessionsRecoverParamsSchema>;
 export type SessionsRecoverResult = Static<typeof SessionsRecoverResultSchema>;
+export type SessionsRestartTurnParams = Static<typeof SessionsRestartTurnParamsSchema>;
+export type SessionsRestartTurnResult = Static<typeof SessionsRestartTurnResultSchema>;
 export type SessionsSendParams = Static<typeof SessionsSendParamsSchema>;
 export type SessionsMessagesSubscribeParams = Static<typeof SessionsMessagesSubscribeParamsSchema>;
 export type SessionsMessagesUnsubscribeParams = Static<

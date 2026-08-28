@@ -238,6 +238,7 @@ export const validateSessionSuggestionsResolveParams = compile(
 export const validateSessionTypingParams = compile(S.SessionTypingParamsSchema);
 export const validateSessionsCreateParams = compile(S.SessionsCreateParamsSchema);
 export const validateSessionsRecoverParams = compile(S.SessionsRecoverParamsSchema);
+export const validateSessionsRestartTurnParams = compile(S.SessionsRestartTurnParamsSchema);
 export const validateSessionsSendParams = compile(S.SessionsSendParamsSchema);
 export const validateSessionsReclaimParams = compile(S.SessionsReclaimParamsSchema);
 export const validateSessionsReclaimResult = compile(S.SessionsReclaimResultSchema);

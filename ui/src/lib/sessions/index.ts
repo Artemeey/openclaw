@@ -604,6 +604,7 @@ export function createSessionCapability(gateway: SessionGateway): SessionCapabil
     createResult: mutations.createResult,
     create: mutations.create,
     recover: operations.recover,
+    restartTurn: operations.restartTurn,
     patch: mutations.patch,
     archiveVisibility: mutations.archiveVisibility,
     setArchivePending: mutations.setArchivePending,

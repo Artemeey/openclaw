@@ -257,6 +257,8 @@ export {
   SessionsCreateResultSchema,
   SessionsRecoverParamsSchema,
   SessionsRecoverResultSchema,
+  SessionsRestartTurnParamsSchema,
+  SessionsRestartTurnResultSchema,
   SessionsDispatchParamsSchema,
   SessionsDispatchResultSchema,
   SessionsReclaimParamsSchema,

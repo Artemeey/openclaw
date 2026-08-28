@@ -246,6 +246,7 @@ export const defaultControlUiFeatureMethods = [
   "sessions.reclaim",
   "sessions.reset",
   "sessions.rewind",
+  "sessions.restartTurn",
   "sessions.search",
   "tools.github.status",
   "tools.github.configure",

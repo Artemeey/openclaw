@@ -5667,6 +5667,9 @@ export const en: TranslationMap = {
       gatewayRestarted: {
         label: "System · gateway restarted",
       },
+      permissionRestart: {
+        label: "System · permissions restarted",
+      },
       cliHarnessContext: {
         label: "System · injected context",
       },
@@ -5943,8 +5946,7 @@ export const en: TranslationMap = {
     },
     permissionControls: {
       label: "Permissions",
-      help: "Choose permissions for new runs.",
-      nextRun: "New permissions apply to the next run.",
+      help: "Choose how this session handles files, commands, and approvals. Changing permissions restarts an active turn.",
       default: "Default",
       defaultDescription: "Follow the agent's configured policy.",
       fullRequiresAdmin: "Full access requires operator.admin access.",

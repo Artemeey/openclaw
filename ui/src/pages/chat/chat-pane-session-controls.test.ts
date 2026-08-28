@@ -12,10 +12,6 @@ import { getPendingChatPickerPatch } from "./chat-settings-patches.ts";
 import type { ChatPageHost } from "./chat-state-host.ts";
 import { renderChatPermissionPicker } from "./components/chat-permission-picker.ts";
 
-const { showToastMock } = vi.hoisted(() => ({ showToastMock: vi.fn() }));
-
-vi.mock("../../lib/toast.ts", () => ({ showToast: showToastMock }));
-
 function iconMarkup(icon: unknown): string | undefined {
   const container = document.createElement("div");
   render(icon as never, container);
@@ -106,7 +102,6 @@ describe("chat pane composer controls", () => {
       chatStream: null,
     } as unknown as ChatPageHost;
     const onModelSetup = vi.fn();
-    const toastAnchor = document.createElement("div");
 
     const controls = renderChatPaneComposerControls({
       state,
@@ -116,7 +111,6 @@ describe("chat pane composer controls", () => {
       effortAccess: { allowed: true, requiredScope: "operator.write" },
       permissionAccess: { allowed: true, requiredScope: "operator.write" },
       canSelectFull: true,
-      toastAnchor,
       onModelSetup,
     });
     render(controls.composerControls, container);
@@ -204,7 +198,6 @@ describe("chat pane composer controls", () => {
       effortAccess: { allowed: true, requiredScope: "operator.write" },
       permissionAccess: { allowed: true, requiredScope: "operator.write" },
       canSelectFull: false,
-      toastAnchor: document.createElement("div"),
       onModelSetup: vi.fn(),
     });
     render(renderChatPermissionPicker(controls.permissionPicker), container);
@@ -257,26 +250,40 @@ describe("chat pane composer controls", () => {
   });
 
   it.each([
-    { label: "running", chatRunId: null, hasActiveRun: true, status: "running", toastCount: 1 },
+    {
+      label: "running",
+      chatRunId: null,
+      activeRunIds: ["run-active"],
+      hasActiveRun: true,
+      status: "running",
+      restarts: true,
+    },
     {
       label: "locally running with a stale idle session row",
       chatRunId: "run-active",
+      activeRunIds: [],
       hasActiveRun: false,
       status: "done",
-      toastCount: 1,
+      restarts: true,
     },
-    { label: "idle", chatRunId: null, hasActiveRun: false, status: "done", toastCount: 0 },
-  ] as const)("shows the next-run notice only for a $label session", async (sessionCase) => {
-    showToastMock.mockClear();
+    {
+      label: "idle",
+      chatRunId: null,
+      activeRunIds: [],
+      hasActiveRun: false,
+      status: "done",
+      restarts: false,
+    },
+  ] as const)("restarts only a $label session after changing permissions", async (sessionCase) => {
     const patch = vi.fn(async () => ({}));
-    const toastAnchor = document.createElement("div");
+    const restartTurn = vi.fn(async () => ({ ok: true, status: "started", runId: "run-next" }));
     const state = {
       chatRunId: sessionCase.chatRunId,
       connected: true,
       client: {},
       chatLoading: false,
       chatModelCatalog: [],
-      sessions: { state: { modelOverrides: {} }, think: () => undefined, patch },
+      sessions: { state: { modelOverrides: {} }, think: () => undefined, patch, restartTurn },
       chatModelSwitchPromises: {},
       sessionKey: "agent:main:permission-notice",
       chatModelsLoading: false,
@@ -290,6 +297,7 @@ describe("chat pane composer controls", () => {
         key: state.sessionKey,
         kind: "direct",
         permissionMode: "read-only",
+        activeRunIds: [...sessionCase.activeRunIds],
         hasActiveRun: sessionCase.hasActiveRun,
         status: sessionCase.status,
       },
@@ -298,22 +306,64 @@ describe("chat pane composer controls", () => {
       effortAccess: { allowed: true, requiredScope: "operator.write" },
       permissionAccess: { allowed: true, requiredScope: "operator.write" },
       canSelectFull: true,
-      toastAnchor,
       onModelSetup: vi.fn(),
     });
 
     await controls.permissionPicker.onSelect("guarded");
 
-    expect(showToastMock).toHaveBeenCalledTimes(sessionCase.toastCount);
-    if (sessionCase.toastCount === 1) {
-      expect(showToastMock).toHaveBeenCalledWith(
+    if (sessionCase.restarts) {
+      expect(restartTurn).toHaveBeenCalledWith(
         expect.objectContaining({
-          anchor: toastAnchor,
-          durationMs: 5_000,
-          message: "New permissions apply to the next run.",
+          key: state.sessionKey,
+          runId: "run-active",
+          reason: "permission-change",
+          permissionMode: "guarded",
+          idempotencyKey: expect.any(String),
         }),
       );
+      expect(patch).not.toHaveBeenCalled();
+    } else {
+      expect(restartTurn).not.toHaveBeenCalled();
+      expect(patch).toHaveBeenCalled();
     }
+  });
+
+  it("reports when an active turn restart is rejected", async () => {
+    const restartTurn = vi.fn(async () => null);
+    const state = {
+      chatRunId: "run-active",
+      connected: true,
+      client: {},
+      chatLoading: false,
+      chatModelCatalog: [],
+      sessions: {
+        state: { modelOverrides: {} },
+        think: () => undefined,
+        patch: vi.fn(async () => ({})),
+        restartTurn,
+      },
+      chatModelSwitchPromises: {},
+      sessionKey: "agent:main:permission-abort-failure",
+      chatModelsLoading: false,
+      chatSending: false,
+      sessionsResult: null,
+      chatStream: null,
+    } as unknown as ChatPageHost;
+    const controls = renderChatPaneComposerControls({
+      state,
+      selectedSession: { key: state.sessionKey, kind: "direct", hasActiveRun: true },
+      agentDefaultModel: undefined,
+      modelAccess: { allowed: true, requiredScope: "operator.write" },
+      effortAccess: { allowed: true, requiredScope: "operator.write" },
+      permissionAccess: { allowed: true, requiredScope: "operator.write" },
+      canSelectFull: true,
+      onModelSetup: vi.fn(),
+    });
+
+    await controls.permissionPicker.onSelect("full");
+
+    expect(restartTurn).toHaveBeenCalledOnce();
+    expect(state.chatError).toContain("Failed to update permissions");
   });
 
   it("holds the session send barrier until a Full Access selection settles", async () => {
@@ -329,6 +379,7 @@ describe("chat pane composer controls", () => {
         state: { modelOverrides: {} },
         think: () => undefined,
         patch: vi.fn(() => pending.promise),
+        restartTurn: vi.fn(() => pending.promise),
       },
       chatModelSwitchPromises: {},
       sessionKey: "agent:main:remote-worker",
@@ -345,7 +396,6 @@ describe("chat pane composer controls", () => {
       effortAccess: { allowed: true, requiredScope: "operator.write" },
       permissionAccess: { allowed: true, requiredScope: "operator.write" },
       canSelectFull: true,
-      toastAnchor: document.createElement("div"),
       onModelSetup: vi.fn(),
     });
 
@@ -403,7 +453,6 @@ describe("chat pane composer controls", () => {
     },
   ] as const)("suppresses alerts for a $label", async (lifecycleCase) => {
     const { invalidate, result } = lifecycleCase;
-    showToastMock.mockClear();
     const pending = createDeferred<Record<string, never> | null>();
     const state = {
       assistantAgentId: "main",
@@ -418,6 +467,7 @@ describe("chat pane composer controls", () => {
         state: { modelOverrides: {} },
         think: () => undefined,
         patch: vi.fn(() => pending.promise),
+        restartTurn: vi.fn(() => pending.promise),
       },
       chatModelSwitchPromises: {},
       sessionKey:
@@ -438,7 +488,6 @@ describe("chat pane composer controls", () => {
       effortAccess: { allowed: true, requiredScope: "operator.write" },
       permissionAccess: { allowed: true, requiredScope: "operator.write" },
       canSelectFull: true,
-      toastAnchor: document.createElement("div"),
       onModelSetup: vi.fn(),
     });
 
@@ -451,12 +500,10 @@ describe("chat pane composer controls", () => {
     }
     await selection;
 
-    expect(showToastMock).not.toHaveBeenCalled();
     expect(state.chatError).toBeNull();
   });
 
   it("reports an unavailable permission update on the current session", async () => {
-    showToastMock.mockClear();
     const state = {
       chatRunId: "remote-worker-run",
       chatError: null,
@@ -469,6 +516,7 @@ describe("chat pane composer controls", () => {
         state: { modelOverrides: {} },
         think: () => undefined,
         patch: vi.fn(async () => null),
+        restartTurn: vi.fn(async () => null),
       },
       chatModelSwitchPromises: {},
       sessionKey: "agent:main:remote-worker",
@@ -486,13 +534,11 @@ describe("chat pane composer controls", () => {
       effortAccess: { allowed: true, requiredScope: "operator.write" },
       permissionAccess: { allowed: true, requiredScope: "operator.write" },
       canSelectFull: true,
-      toastAnchor: document.createElement("div"),
       onModelSetup: vi.fn(),
     });
 
     await controls.permissionPicker.onSelect("full");
 
-    expect(showToastMock).not.toHaveBeenCalled();
     expect(state.chatError).toContain("Failed to update permissions");
     expect(state.requestUpdate).toHaveBeenCalledOnce();
   });
@@ -539,7 +585,6 @@ describe("chat pane composer controls", () => {
         effortAccess: { allowed: true, requiredScope: "operator.write" } as const,
         permissionAccess: { allowed: true, requiredScope: "operator.write" } as const,
         canSelectFull: true,
-        toastAnchor: document.createElement("div"),
         onModelSetup: vi.fn(),
       };
       render(renderChatPaneComposerControls(controlParams).composerControls, container);

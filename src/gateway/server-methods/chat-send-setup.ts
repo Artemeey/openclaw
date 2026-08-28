@@ -18,6 +18,7 @@ export async function prepareAndAdmitChatSend(
   options?: {
     trustedSystemInput?: boolean;
     goalResume?: SessionGoalOperation & { action: "resume" };
+    expectedInterruptRunId?: string;
   },
 ) {
   const normalizedRequest = normalizeChatSendRequest({
@@ -38,6 +39,7 @@ export async function prepareAndAdmitChatSend(
     );
     return undefined;
   }
+  normalizedRequest.value.expectedInterruptRunId = options?.expectedInterruptRunId;
   const preparedSession = prepareChatSendSession({
     request: normalizedRequest.value,
     context,

@@ -151,6 +151,7 @@ export type ReplyMessageInjectionTarget = {
 export const replyRunInterruptTargetOperation = Symbol("replyRunInterruptTargetOperation");
 export type ReplyRunInterruptTarget = {
   readonly [replyRunInterruptTargetOperation]: ReplyOperation;
+  readonly runId?: string;
 };
 
 type ReplyMessageInjectionRejectionReason =
@@ -214,6 +215,8 @@ type ReplyOperationResult =
 export type ReplyOperation = {
   readonly key: ReplyRunKey;
   readonly sessionId: string;
+  /** Public Gateway run identity captured when this reply operation was admitted. */
+  readonly runId?: string;
   readonly turnKind: ReplyTurnKind;
   /** Gateway lifecycle that admitted this process-local owner. */
   readonly lifecycleGeneration?: string;

@@ -146,6 +146,40 @@ export function patchChatSessionSettings(
   return operation;
 }
 
+export function restartChatSessionTurn(
+  host: ChatPickerPatchHost,
+  params: {
+    sessionKey: string;
+    runId: string;
+    permissionMode: "read-only" | "guarded" | "workspace" | "full" | null;
+    agentId?: string;
+    idempotencyKey: string;
+  },
+) {
+  const previous = getPendingChatPickerPatch(host, params.sessionKey, params.agentId);
+  const operation = (async () => {
+    await previous;
+    return await host.sessions.restartTurn({
+      key: params.sessionKey,
+      runId: params.runId,
+      reason: "permission-change",
+      permissionMode: params.permissionMode,
+      idempotencyKey: params.idempotencyKey,
+      ...(params.agentId ? { agentId: params.agentId } : {}),
+    });
+  })();
+  trackPendingChatSettingsPatch(
+    host,
+    params.sessionKey,
+    operation.then(
+      (result) => result !== null,
+      () => false,
+    ),
+    params.agentId,
+  );
+  return operation;
+}
+
 export function selectedGlobalScope(
   sessionKey: string,
   context: Pick<ChatCommandSettingsContext, "agentId">,
