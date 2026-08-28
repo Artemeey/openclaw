@@ -20,6 +20,19 @@ async function emptyStateText(panel: HTMLElement): Promise<string> {
 }
 
 describe("session discussion panel", () => {
+  it("does not render a skeleton without a loadable discussion", async () => {
+    const panel = document.createElement("openclaw-session-discussion") as HTMLElement & {
+      updateComplete: Promise<unknown>;
+    };
+    document.body.append(panel);
+    try {
+      await panel.updateComplete;
+      expect(panel.querySelector("openclaw-panel-loading-skeleton")).toBeNull();
+    } finally {
+      panel.remove();
+    }
+  });
+
   it("shows the opening affordance while auto-open is in flight", async () => {
     const openDiscussion = vi
       .fn<SessionDiscussionOpener>()

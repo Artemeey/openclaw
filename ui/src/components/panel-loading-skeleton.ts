@@ -301,6 +301,7 @@ class PanelLoadingSkeleton extends OpenClawLitElement {
           <div class="rows">${this.rows(4)}</div>
         `;
       case "files":
+      default:
         return html`
           <div class="toolbar">
             <div class="skeleton address"></div>

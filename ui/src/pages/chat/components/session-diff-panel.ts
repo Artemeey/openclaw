@@ -198,7 +198,7 @@ class SessionDiffPanel extends OpenClawLightDomElement {
   });
 
   private get loading(): boolean {
-    return this.diffTask.status === TaskStatus.PENDING;
+    return this.loader !== null && this.diffTask.status === TaskStatus.PENDING;
   }
 
   private refresh(): Promise<void> {
@@ -570,7 +570,7 @@ class SessionDiffPanel extends OpenClawLightDomElement {
       const error = this.diffTask.error;
       return html`<div class="callout danger">${formatUiError(error)}</div>`;
     }
-    if (this.diffTask.status === TaskStatus.PENDING) {
+    if (this.loading) {
       return renderPanelLoadingSkeleton("review", t("chat.sessionDiff.loading"));
     }
     const value = this.diffTask.value;

@@ -89,9 +89,11 @@ describe("session workspace state", () => {
     );
 
     expect(listFiles).toHaveBeenCalledOnce();
-    expect(
-      mount.querySelector('openclaw-panel-loading-skeleton[data-panel-skeleton="files"]'),
-    ).not.toBeNull();
+    const skeleton = mount.querySelector<HTMLElement & { variant: string }>(
+      "openclaw-panel-loading-skeleton",
+    );
+    expect(skeleton).not.toBeNull();
+    expect(skeleton?.variant).toBe("files");
     expect(mount.textContent).not.toContain("Loading session workspace");
 
     resolveList({

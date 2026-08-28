@@ -246,14 +246,13 @@ class SessionDiscussionPanel extends OpenClawLightDomElement {
       </div>`;
     }
     const value = this.discussionTask.value;
-    if (
-      this.discussionTask.status === TaskStatus.PENDING &&
-      this.openingDiscussion &&
-      this.isOpeningCurrent(this.openingDiscussion)
-    ) {
+    const loading =
+      Boolean(this.loadInfo && this.sessionKey.trim()) &&
+      this.discussionTask.status === TaskStatus.PENDING;
+    if (loading && this.openingDiscussion && this.isOpeningCurrent(this.openingDiscussion)) {
       return renderPanelLoadingSkeleton("discussion", t("chat.sessionDiscussion.opening"));
     }
-    if (this.discussionTask.status === TaskStatus.PENDING) {
+    if (loading) {
       return renderPanelLoadingSkeleton("discussion", t("chat.sessionDiscussion.loading"));
     }
     if (this.discussionTask.status !== TaskStatus.COMPLETE || !value) {
