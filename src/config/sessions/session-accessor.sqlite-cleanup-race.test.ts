@@ -868,7 +868,7 @@ describe("SQLite lifecycle cleanup races", () => {
     const sessionKeyById = new Map<string, string>();
     const sessionKeys = Array.from(
       { length: entryCount },
-      (_, index) => `agent:main:maintenance-batch-${String(index).padStart(2, "0")}`,
+      (_, index) => `agent:main:subagent:maintenance-batch-${String(index).padStart(2, "0")}`,
     );
     for (const [index, sessionKey] of sessionKeys.entries()) {
       const sessionId = `maintenance-batch-session-${String(index).padStart(2, "0")}`;

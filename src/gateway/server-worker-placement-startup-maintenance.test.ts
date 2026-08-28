@@ -200,7 +200,7 @@ describe("worker placement session maintenance ownership", () => {
           await sidecar.stop();
           expect(collectSessionMaintenancePreserveKeys()?.has(sessionKey)).not.toBe(true);
           await triggerMaintenance();
-          if (maintenance === "dashboard archive") {
+          if (maintenance === "dashboard archive" || maintenance === "entry capping") {
             expect(loadSessionEntry(sessionScope(sessionKey))?.archivedAt).toEqual(
               expect.any(Number),
             );
