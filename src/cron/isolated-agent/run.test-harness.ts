@@ -740,7 +740,7 @@ function resetRunOutcomeMocks(): void {
       outputText,
       synthesizedText,
       deliveryRequested,
-      skipHeartbeatDelivery,
+      skipDelivery,
       sourceDeliveryOutcome,
       resolvedDelivery,
     }) => ({
@@ -748,18 +748,17 @@ function resetRunOutcomeMocks(): void {
       delivered: Boolean(
         sourceDeliveryOutcome?.verifiedMessageToolDelivery ||
         (deliveryRequested &&
-          !skipHeartbeatDelivery &&
+          !skipDelivery &&
           !sourceDeliveryOutcome?.satisfiesSourceDelivery &&
           resolvedDelivery.ok),
       ),
       deliveryAttempted: Boolean(
         sourceDeliveryOutcome?.verifiedMessageToolDelivery ||
         (deliveryRequested &&
-          !skipHeartbeatDelivery &&
+          !skipDelivery &&
           !sourceDeliveryOutcome?.satisfiesSourceDelivery &&
           resolvedDelivery.ok),
       ),
-      cronRunSessionCleanupAttempted: false,
       summary,
       outputText,
       synthesizedText,

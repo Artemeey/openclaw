@@ -302,6 +302,7 @@ export async function createGatewaySession(params: {
   /** Registry identity recorded only when this request creates a logical session node. */
   projectId?: string;
   pendingProjectGitUrl?: string;
+  pendingWorktree?: InternalSessionEntry["pendingWorktree"];
   incognito?: boolean;
   visibility?: SessionVisibility;
   /** Trusted catalog-owned model/runtime pair, persisted and locked together. */
@@ -983,12 +984,12 @@ export async function createGatewaySession(params: {
             ),
           };
         }
-        if (pendingProjectGitUrl && existingEntry !== undefined) {
+        if ((pendingProjectGitUrl || params.pendingWorktree) && existingEntry !== undefined) {
           return {
             ok: false,
             error: errorShape(
               ErrorCodes.INVALID_REQUEST,
-              "remote project preparation requires a new session",
+              "workspace preparation requires a new session",
             ),
           };
         }
@@ -1165,6 +1166,9 @@ export async function createGatewaySession(params: {
           ...(params.visibility && createdNewEntry ? { visibility: params.visibility } : {}),
           ...(projectId && createdNewEntry ? { projectId } : {}),
           ...(pendingProjectGitUrl && createdNewEntry ? { pendingProjectGitUrl } : {}),
+          ...(params.pendingWorktree && createdNewEntry
+            ? { pendingWorktree: params.pendingWorktree }
+            : {}),
           ...(catalogResolvedModel && catalogAgentRuntime
             ? {
                 providerOverride: catalogResolvedModel.provider,

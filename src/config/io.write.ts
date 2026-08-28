@@ -1,11 +1,11 @@
 import type fs from "node:fs";
 import path from "node:path";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { resolveCronJobsStorePathFromConfig } from "../cron/store.js";
 import { isVerbose } from "../global-state.js";
 import { isVitestRuntimeEnv } from "../infra/env.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { replaceFileAtomic } from "../infra/replace-file.js";
-import { isRecord } from "../utils.js";
 import { maintainConfigBackups } from "./backup-rotation.js";
 import { collectChangedPaths } from "./config-change-paths.js";
 import {
@@ -75,6 +75,7 @@ import {
 import { prepareConfigWriteTopology } from "./io.write-topology.js";
 import { formatConfigIssueLines } from "./issue-format.js";
 import { warnIfJSON5CommentsWillBeStripped } from "./json5-comments.js";
+import { applyMergePatch, createMergePatch } from "./merge-patch.js";
 import { assertConfigWriteAllowedInCurrentMode } from "./nix-mode-write-guard.js";
 import { resolveIncludeRoots } from "./paths.js";
 import { preflightRuntimeSnapshotWrite } from "./runtime-snapshot.js";
@@ -209,24 +210,42 @@ export async function writeConfigFileFromContext(
 
   persistCandidate = applyUnsetPathsForWrite(persistCandidate as OpenClawConfig, unsetPaths);
   const envForRestore = options.envSnapshotForRestore ?? deps.env;
-  const validationSourceCandidate = containsConfigIncludeDirective(persistCandidate)
-    ? restoreEnvVarRefs(persistCandidate, snapshot.parsed, envForRestore)
-    : persistCandidate;
-  const validationCandidate = containsConfigIncludeDirective(validationSourceCandidate)
-    ? context.resolveRuntimePreflightSourceConfig(validationSourceCandidate as OpenClawConfig)
-    : validationSourceCandidate;
-  const validated = validateConfigObjectRawWithPlugins(validationCandidate, {
-    env: deps.env,
-    pluginValidation: options.skipPluginValidation ? "skip" : "full",
-    semanticValidation: "strict",
-    preservedLegacyRootKeys: options.preservedLegacyRootKeys,
-    loadPluginMetadataSnapshot: context.createValidationPluginMetadataSnapshotLoader({
+  const resolveValidationCandidate = (candidate: unknown) =>
+    containsConfigIncludeDirective(candidate)
+      ? context.resolveRuntimePreflightSourceConfig(
+          restoreEnvVarRefs(candidate, snapshot.parsed, envForRestore) as OpenClawConfig,
+        )
+      : candidate;
+  const validationCandidate = resolveValidationCandidate(persistCandidate);
+  const validateCandidate = (candidate: unknown) => {
+    const result = validateConfigObjectRawWithPlugins(candidate, {
       env: deps.env,
-    }).load,
-  });
-  if (!validated.ok) {
-    throw createConfigValidationFailedError(validated.issues);
-  }
+      pluginValidation: options.skipPluginValidation ? "skip" : "full",
+      semanticValidation: "strict",
+      preservedLegacyRootKeys: options.preservedLegacyRootKeys,
+      loadPluginMetadataSnapshot: context.createValidationPluginMetadataSnapshotLoader({
+        env: deps.env,
+      }).load,
+    });
+    if (!result.ok) {
+      throw createConfigValidationFailedError(result.issues);
+    }
+    return result;
+  };
+  // Validate authored structure before stamping can replace malformed parents.
+  validateCandidate(validationCandidate);
+  const materialized = stampConfigVersion(
+    // SAFETY: the original resolved input was just validated; retain raw values, not parser defaults.
+    validationCandidate as OpenClawConfig,
+    options.lastTouchedVersionOverride,
+    snapshot.exists ? (snapshot.sourceConfigBeforeMigrations ?? snapshot.sourceConfig) : null,
+  );
+  // Resolve policy from included facts, but persist only its delta beside authored directives.
+  persistCandidate = applyMergePatch(
+    persistCandidate,
+    createMergePatch(validationCandidate, materialized),
+  );
+  const validated = validateCandidate(resolveValidationCandidate(persistCandidate));
   const previousWarningFingerprint = loggedConfigWarningFingerprints.get(configPath);
   // Capture before commit so rollback cannot restore a watcher-updated slot.
   const priorSnapshotAuditRecord = readLatestConfigSnapshotAuditRecord({
@@ -275,11 +294,7 @@ export async function writeConfigFileFromContext(
     deps.homedir(),
   ) as OpenClawConfig;
   const outputConfig = applyUnsetPathsForWrite(tildeRestoredOutputConfig, unsetPaths);
-  const stampedOutputConfig = stampConfigVersion(
-    outputConfig,
-    options.lastTouchedVersionOverride,
-    snapshot.exists ? snapshot.parsed : null,
-  );
+  const stampedOutputConfig = stampConfigVersion(outputConfig, options.lastTouchedVersionOverride);
   rejectConfigNonFiniteNumbers(stampedOutputConfig);
   const json = JSON.stringify(stampedOutputConfig, null, 2).trimEnd().concat("\n");
   const nextHash = hashConfigRaw(json);
@@ -300,18 +315,10 @@ export async function writeConfigFileFromContext(
   const hasMetaAfter = hasConfigMeta(stampedOutputConfig);
   const gatewayModeBefore = resolveGatewayMode(snapshot.resolved);
   const authoredGateway = (snapshot.parsed as { gateway?: unknown }).gateway;
-  const authoredGatewayMode =
-    authoredGateway !== null &&
-    typeof authoredGateway === "object" &&
-    !Array.isArray(authoredGateway)
-      ? (authoredGateway as Record<string, unknown>).mode
-      : undefined;
   const gatewayModeAuthoredLocally =
-    authoredGateway !== null &&
-    typeof authoredGateway === "object" &&
-    !Array.isArray(authoredGateway) &&
+    isRecord(authoredGateway) &&
     Object.hasOwn(authoredGateway, "mode") &&
-    !hasOwnIncludeDirective(authoredGatewayMode);
+    !hasOwnIncludeDirective(authoredGateway.mode);
   const preservesIncludedGatewayMode =
     options.allowIncludeAncestorExplicitSetPaths === true &&
     gatewayModeBefore != null &&

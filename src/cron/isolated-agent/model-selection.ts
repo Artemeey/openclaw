@@ -204,8 +204,16 @@ export async function resolveCronModelSelection(
     config: owner.config,
     agentConfigOverride: ownerAgentConfigOverride,
   });
-  const catalog = owner.modelCatalog.entries;
+  // Selection precedes the run generation lease; every precedence branch must
+  // retain the published owner's workspace metadata, including flattened defaults.
+  const modelContext = {
+    cfg: owner.config,
+    catalog: owner.modelCatalog.entries,
+    workspaceDir: owner.workspaceDir,
+    pluginMetadataSnapshot: owner.metadataSnapshot,
+  };
   const resolvedDefault = resolveConfiguredModelRef({
+    ...modelContext,
     cfg: cfgWithAgentDefaults,
     defaultProvider: DEFAULT_PROVIDER,
     defaultModel: DEFAULT_MODEL,
@@ -226,8 +234,7 @@ export async function resolveCronModelSelection(
     // Subagent/agent model config is advisory here: invalid refs fall back to
     // defaults so an agent config typo does not prevent unrelated cron runs.
     const resolvedSubagent = resolveAllowedModelRefCore({
-      cfg: owner.config,
-      catalog,
+      ...modelContext,
       raw: subagentModelRaw,
       defaultProvider: resolvedDefault.provider,
       defaultModel: resolvedDefault.model,
@@ -243,7 +250,7 @@ export async function resolveCronModelSelection(
   let hooksGmailModelApplied = false;
   const hooksGmailModelRef = params.isGmailHook
     ? resolveHooksGmailModel({
-        cfg: owner.config,
+        ...modelContext,
         defaultProvider: DEFAULT_PROVIDER,
       })
     : null;
@@ -251,8 +258,7 @@ export async function resolveCronModelSelection(
     // Gmail hook models are specialized defaults: apply them only when the
     // configured ref is allowed, otherwise keep the broader cron default.
     const status = getModelRefStatus({
-      cfg: owner.config,
-      catalog,
+      ...modelContext,
       ref: hooksGmailModelRef,
       defaultProvider: resolvedDefault.provider,
       defaultModel: resolvedDefault.model,
@@ -272,8 +278,7 @@ export async function resolveCronModelSelection(
     // Payload model overrides are explicit cron config, so reject disallowed
     // refs instead of silently falling back to defaults.
     const resolvedOverride = resolveAllowedModelRefCore({
-      cfg: owner.config,
-      catalog,
+      ...modelContext,
       raw: modelOverride,
       defaultProvider: resolvedDefault.provider,
       defaultModel: resolvedDefault.model,
@@ -303,8 +308,7 @@ export async function resolveCronModelSelection(
       const sessionProviderOverride =
         params.sessionEntry.providerOverride?.trim() || resolvedDefault.provider;
       const resolvedSessionOverride = resolveAllowedModelRefCore({
-        cfg: owner.config,
-        catalog,
+        ...modelContext,
         raw: `${sessionProviderOverride}/${sessionModelOverride}`,
         defaultProvider: resolvedDefault.provider,
         defaultModel: resolvedDefault.model,

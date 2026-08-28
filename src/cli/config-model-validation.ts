@@ -18,7 +18,6 @@ import {
   resolveConfiguredModelRef,
   resolveModelRefFromString,
 } from "../agents/model-selection-shared.js";
-import type { loadPreparedModelCatalogOwnerSnapshot } from "../agents/prepared-model-catalog.js";
 import {
   containsEnvVarReference,
   type EnvSubstitutionWarning,
@@ -27,7 +26,7 @@ import {
 import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
+import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { formatCliCommand } from "./command-format.js";
 
@@ -400,22 +399,18 @@ function validateModelRefSyntax(
 
 async function createRuntimeModelRefResolver(): Promise<ConfigModelRefResolver> {
   const { isCliProvider } = await import("../agents/model-selection-cli.js");
-  const preparedByAgent = new Map<
-    string,
-    Awaited<ReturnType<typeof loadPreparedModelCatalogOwnerSnapshot>>
-  >();
   let modelModules:
     | Promise<
         [
           typeof import("../agents/embedded-agent-runner/model.js"),
-          typeof import("../agents/prepared-model-catalog.js"),
+          typeof import("../agents/prepared-model-runtime.js"),
         ]
       >
     | undefined;
   const loadModelModules = () =>
     (modelModules ??= Promise.all([
       import("../agents/embedded-agent-runner/model.js"),
-      import("../agents/prepared-model-catalog.js"),
+      import("../agents/prepared-model-runtime.js"),
     ]));
 
   return async ({ config, ref }) => {
@@ -431,61 +426,55 @@ async function createRuntimeModelRefResolver(): Promise<ConfigModelRefResolver> 
       ref.agentId ?? tryResolveLegacyCompatibilityAgentId(config) ?? resolveDefaultAgentId(config);
     const agentDir = resolveAgentDir(config, targetAgentId);
     const workspaceDir = resolveAgentWorkspaceDir(config, targetAgentId);
-    const [modelRuntime, preparedCatalog] = await loadModelModules();
+    const [modelRuntime, preparedRuntime] = await loadModelModules();
 
-    const prepared =
-      preparedByAgent.get(targetAgentId) ??
-      (await preparedCatalog.loadPreparedModelCatalogOwnerSnapshot({
-        agentId: targetAgentId,
-        agentDir,
-        config,
-        readOnly: true,
-        workspaceDir,
-      }));
-    preparedByAgent.set(targetAgentId, prepared);
-    // Read-only catalogs omit executable registries. Pin their metadata without disabling
-    // validation's lazy provider model-id normalization hooks with an empty registry.
-    return await withPluginMetadataSnapshotScope(
-      prepared.metadataSnapshot,
-      async () => {
+    // Exact pins and runtime aliases need the selected provider's executable generation.
+    const lease = await preparedRuntime.acquireReadOnlyPreparedModelRuntime({
+      agentId: targetAgentId,
+      agentDir,
+      config,
+      workspaceDir,
+      loadRuntimePlugins: true,
+      runtimePluginSelections: [
+        { provider: staticRef.provider, modelId: staticRef.model, agentId: targetAgentId },
+      ],
+    });
+    try {
+      return await withPluginRuntimeGenerationScope(lease.snapshot, async () => {
         const resolvedRef = resolveCanonicalModelRef(
           config,
           { ...ref, agentId: targetAgentId },
           {
             allowPluginNormalization: true,
             workspaceDir,
-            pluginMetadataSnapshot: prepared.metadataSnapshot,
+            pluginMetadataSnapshot: lease.snapshot.metadataSnapshot,
           },
         );
         if (!resolvedRef) {
           return `Unknown model: ${ref.value}`;
         }
-        const stores = prepared.createStores();
+        const stores = lease.snapshot.createStores();
         const resolution = await modelRuntime.resolveModelAsync(
           resolvedRef.provider,
           resolvedRef.model,
           agentDir,
           config,
           {
+            ...stores,
             agentId: targetAgentId,
             allowBundledStaticCatalogFallback: true,
-            authStorage: stores.authStorage,
             ...(ref.authProfileId ? { authProfileId: ref.authProfileId } : {}),
-            modelRegistry: stores.modelRegistry,
-            preparedModelRuntime: prepared,
+            preparedModelRuntime: lease.snapshot,
             workspaceDir,
           },
         );
         return resolution.model
           ? undefined
           : (resolution.error ?? `Unknown model: ${resolvedRef.provider}/${resolvedRef.model}`);
-      },
-      {
-        config,
-        workspaceDir,
-        preparedConfigFingerprint: prepared.metadataSnapshot.configFingerprint,
-      },
-    );
+      });
+    } finally {
+      lease.release();
+    }
   };
 }
 
