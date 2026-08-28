@@ -325,6 +325,12 @@ struct GeneralSettings: View {
                 subtitle: "Choose where the Gateway runs and how this Mac app reaches it.")
 
             self.connectionStatusPanel
+            if self.isNixMode {
+                Text("Connection settings are read-only in Nix mode. Edit the Nix source and rebuild.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            GatewayConfigWriteRecoveryView(state: self.state)
             self.gatewayModeGroup
 
             if self.state.connectionMode != .remote,
@@ -332,6 +338,7 @@ struct GeneralSettings: View {
             {
                 SettingsCardGroup("Remote Access") {
                     GatewayConfigConflictRecoveryView(state: self.state)
+                        .disabled(self.isNixMode)
                 }
             }
 
@@ -475,6 +482,7 @@ struct GeneralSettings: View {
                 .pickerStyle(.menu)
                 .labelsHidden()
                 .frame(width: 260, alignment: .trailing)
+                .disabled(self.isNixMode)
             }
 
             if self.state.connectionMode == .unconfigured {
@@ -505,7 +513,8 @@ struct GeneralSettings: View {
 
             TailscaleIntegrationSection(
                 connectionMode: self.state.connectionMode,
-                isPaused: self.state.isPaused)
+                isPaused: self.state.isPaused,
+                isConfigReadOnly: self.isNixMode)
         }
     }
 
@@ -521,6 +530,7 @@ struct GeneralSettings: View {
                 }
                 self.remoteTokenRow
                 GatewayConfigConflictRecoveryView(state: self.state)
+                    .disabled(self.isNixMode)
             }
 
             SettingsCardGroup("Discovery & Status") {
@@ -549,6 +559,7 @@ struct GeneralSettings: View {
             { gateway in
                 self.applyDiscoveredGateway(gateway)
             }
+            .disabled(self.isNixMode)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
@@ -618,6 +629,7 @@ struct GeneralSettings: View {
                         "Identity file",
                         placeholder: "/Users/you/.ssh/id_ed25519",
                         text: self.$state.remoteIdentity)
+                        .disabled(self.isNixMode)
                     self.advancedTextField(
                         "Project root",
                         placeholder: "/home/you/Projects/openclaw",
@@ -658,6 +670,7 @@ struct GeneralSettings: View {
             }
             .pickerStyle(.segmented)
             .frame(width: 320)
+            .disabled(self.isNixMode)
         }
     }
 
@@ -671,6 +684,7 @@ struct GeneralSettings: View {
                 TextField("user@host[:22]", text: self.$state.remoteTarget)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: Self.remoteFieldWidth)
+                    .disabled(self.isNixMode)
                 self.remoteTestButton(disabled: !canTest)
             }
             if let validationMessage {
@@ -690,6 +704,7 @@ struct GeneralSettings: View {
                     TextField("wss://gateway.example.ts.net", text: self.$state.remoteUrl)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: Self.remoteFieldWidth)
+                        .disabled(self.isNixMode)
                     self.remoteTestButton(
                         disabled: self.state.remoteUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
@@ -711,6 +726,7 @@ struct GeneralSettings: View {
                 SecureField("remote gateway auth token (gateway.remote.token)", text: self.$state.remoteToken)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: Self.remoteSecretFieldWidth)
+                    .disabled(self.isNixMode)
             }
             if self.state.remoteTokenUnsupported {
                 Text(
