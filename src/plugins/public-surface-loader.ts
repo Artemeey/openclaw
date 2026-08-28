@@ -161,6 +161,7 @@ export function loadBundledPluginPublicArtifactModuleSync<T extends object>(para
 export function loadPluginPublicArtifactModuleSync<T extends object>(params: {
   pluginRoot: string;
   artifactBasename: string;
+  origin?: "bundled" | "global";
 }): T {
   const root = getPluginCacheRoot(params.pluginRoot);
   const key = `public:${params.artifactBasename}`;
@@ -179,7 +180,7 @@ export function loadPluginPublicArtifactModuleSync<T extends object>(params: {
     ...location,
     boundaryLabel: "plugin root",
     surfaceLabel: `plugin public surface ${params.artifactBasename}`,
-    origin: "global",
+    origin: params.origin ?? "global",
   }) as T;
 }
 
