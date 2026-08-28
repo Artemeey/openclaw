@@ -142,6 +142,10 @@ export function parseSystemdEnvAssignments(raw: string): Array<{ key: string; va
   });
 }
 
+export function splitSystemdLogicalLines(content: string): string[] {
+  return content.replace(/\\\r?\n(?:\s*[#;][^\r\n]*\r?\n)*\s*/g, " ").split(/\r?\n/);
+}
+
 export function renderSystemdEnvAssignment(key: string, value: string): string {
   return systemdEscapeArg(`${key}=${value}`);
 }

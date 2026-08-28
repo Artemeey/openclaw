@@ -17,7 +17,11 @@ import type {
   GatewayServiceReadOptions,
 } from "./service-types.js";
 import { execBusctlUser } from "./systemd-exec.js";
-import { parseSystemdEnvAssignments, parseSystemdExecStart } from "./systemd-unit.js";
+import {
+  parseSystemdEnvAssignments,
+  parseSystemdExecStart,
+  splitSystemdLogicalLines,
+} from "./systemd-unit.js";
 
 const SYSTEMD_GATEWAY_DOTENV_FILENAME = "gateway.systemd.env";
 const SYSTEMD_NODE_DOTENV_FILENAME = "node.systemd.env";
@@ -368,37 +372,40 @@ export async function readSystemdServiceExecStart(
     let inlineEnvironment: Record<string, string> = {};
     const environmentFileSpecs: string[] = [];
     const unsetEnvironment: string[] = [];
-    for (const rawLine of content.split("\n")) {
+    for (const rawLine of splitSystemdLogicalLines(content)) {
       const line = rawLine.trim();
       if (!line || line.startsWith("#")) {
         continue;
       }
-      if (line.startsWith("ExecStart=")) {
-        execStart = line.slice("ExecStart=".length).trim();
-      } else if (line.startsWith("WorkingDirectory=")) {
-        const parsed = parseSystemdExecStart(line.slice("WorkingDirectory=".length))[0] ?? "";
+      const separator = line.indexOf("=");
+      if (separator < 0) {
+        continue;
+      }
+      const directive = line.slice(0, separator).trim();
+      const value = line.slice(separator + 1).trim();
+      if (directive === "ExecStart") {
+        execStart = value;
+      } else if (directive === "WorkingDirectory") {
+        const parsed = parseSystemdExecStart(value)[0] ?? "";
         workingDirectory = expandSystemdSpecifier(parsed.replace(/^-/, ""), env);
-      } else if (line.startsWith("Environment=")) {
-        const raw = line.slice("Environment=".length).trim();
-        if (!raw) {
+      } else if (directive === "Environment") {
+        if (!value) {
           inlineEnvironment = {};
         }
-        for (const parsed of parseSystemdEnvAssignments(raw)) {
+        for (const parsed of parseSystemdEnvAssignments(value)) {
           inlineEnvironment[parsed.key] = expandSystemdSpecifier(parsed.value, env);
         }
-      } else if (line.startsWith("EnvironmentFile=")) {
-        const raw = line.slice("EnvironmentFile=".length).trim();
-        if (raw) {
-          environmentFileSpecs.push(raw);
+      } else if (directive === "EnvironmentFile") {
+        if (value) {
+          environmentFileSpecs.push(value);
         } else {
           environmentFileSpecs.length = 0;
         }
-      } else if (line.startsWith("UnsetEnvironment=")) {
-        const raw = line.slice("UnsetEnvironment=".length).trim();
-        if (!raw) {
+      } else if (directive === "UnsetEnvironment") {
+        if (!value) {
           unsetEnvironment.length = 0;
         } else {
-          unsetEnvironment.push(...splitSystemdEnvironmentWords(raw));
+          unsetEnvironment.push(...splitSystemdEnvironmentWords(value));
         }
       }
     }

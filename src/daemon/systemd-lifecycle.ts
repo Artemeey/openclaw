@@ -135,9 +135,16 @@ async function findLegacySystemdUnits(env: GatewayServiceEnv): Promise<LegacySys
   for (const name of LEGACY_GATEWAY_SYSTEMD_SERVICE_NAMES) {
     const unitPath = resolveSystemdUnitPathForName(env, name);
     let exists = false;
+    let backupExists = false;
     try {
       await fs.access(unitPath);
       exists = true;
+    } catch {
+      // ignore
+    }
+    try {
+      await fs.access(`${unitPath}.bak`);
+      backupExists = true;
     } catch {
       // ignore
     }
@@ -146,7 +153,7 @@ async function findLegacySystemdUnits(env: GatewayServiceEnv): Promise<LegacySys
       const res = await execSystemctlUser(env, ["is-enabled", `${name}.service`]);
       enabled = res.code === 0;
     }
-    if (exists || enabled) {
+    if (exists || backupExists || enabled) {
       results.push({ name, unitPath, enabled, exists });
     }
   }
@@ -181,6 +188,7 @@ export async function uninstallLegacySystemdUnits({
       }
       stdout.write(`Legacy systemd unit not found at ${unit.unitPath}\n`);
     }
+    await fs.rm(`${unit.unitPath}.bak`, { force: true });
   }
   if (systemctlAvailable && removedAny) {
     await reloadSystemdUserManager(env);
@@ -233,6 +241,7 @@ export async function uninstallUserSystemdGatewayUnit({
     }
     stdout.write(`User-scope systemd unit not found at ${unitPath}\n`);
   }
+  await fs.rm(`${unitPath}.bak`, { force: true });
   // The manager keeps a deleted unit's definition loaded until it reloads, so
   // without this the unit stays startable while the detector reports it gone.
   if (removed && disabled) {

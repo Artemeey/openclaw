@@ -7,6 +7,7 @@ import {
   isUnresolvedShellReference,
   readStateDirDotEnvFromStateDir,
 } from "../config/state-dir-dotenv.js";
+import { hasErrnoCode } from "../infra/errors.js";
 import { resolveGatewayServiceDescription } from "./constants.js";
 import { formatLine, writeFormattedLines } from "./output.js";
 import {
@@ -49,6 +50,7 @@ import {
   buildSystemdUnit,
   parseSystemdEnvAssignments,
   renderSystemdEnvAssignment,
+  splitSystemdLogicalLines,
 } from "./systemd-unit.js";
 
 function collectSystemdInlineManagedKeys(params: {
@@ -115,19 +117,17 @@ function sanitizeSystemdUnitBackupContent(params: {
   content: string;
   fileManagedKeys: ReadonlySet<string>;
 }): string {
-  if (params.fileManagedKeys.size === 0) {
-    return params.content;
-  }
   // Backups should not retain file-managed secrets that OpenClaw moved into the
   // generated EnvironmentFile during this rewrite.
   const sanitizedLines: string[] = [];
-  for (const rawLine of params.content.split("\n")) {
+  for (const rawLine of splitSystemdLogicalLines(params.content)) {
     const line = rawLine.trim();
-    if (!line.startsWith("Environment=")) {
+    const separator = line.indexOf("=");
+    if (separator < 0 || line.slice(0, separator).trim() !== "Environment") {
       sanitizedLines.push(rawLine);
       continue;
     }
-    const assignments = parseSystemdEnvAssignments(line.slice("Environment=".length).trim());
+    const assignments = parseSystemdEnvAssignments(line.slice(separator + 1).trim());
     if (assignments.length === 0) {
       sanitizedLines.push(rawLine);
       continue;
@@ -170,26 +170,30 @@ async function writeSystemdUnit({
   );
   await fs.mkdir(path.dirname(unitPath), { recursive: true });
   await assertSystemdManagedPathIsNotSymlink(unitPath);
-  const fileManagedKeys = collectSystemdFileManagedKeys({
-    environmentValueSources,
-  });
+  const fileManagedKeys = collectSystemdFileManagedKeys({ environmentValueSources });
+  const backupSanitizedKeys = new Set([
+    ...fileManagedKeys,
+    "OPENCLAW_GATEWAY_TOKEN",
+    "OPENCLAW_GATEWAY_PASSWORD",
+  ]);
 
   // Preserve user customizations: back up existing unit file before overwriting.
   let backedUp = false;
+  const backupPath = `${unitPath}.bak`;
+  let backupSnapshot: SystemdFileSnapshot | undefined;
+  let existingUnit: string | undefined;
   try {
-    const backupPath = `${unitPath}.bak`;
-    const existingUnit = await fs.readFile(unitPath, "utf8");
-    const existingStat = await fs.stat(unitPath);
-    const backupMode = existingStat.mode & 0o777 || 0o600;
-    const backupUnit = sanitizeSystemdUnitBackupContent({
-      content: existingUnit,
-      fileManagedKeys,
-    });
-    await fs.writeFile(backupPath, backupUnit, { encoding: "utf8", mode: backupMode });
-    await fs.chmod(backupPath, backupMode);
-    backedUp = true;
-  } catch {
-    // File does not exist yet — nothing to back up.
+    existingUnit = await fs.readFile(unitPath, "utf8");
+  } catch (error) {
+    if (!hasErrnoCode(error, "ENOENT")) {
+      throw error;
+    }
+  }
+  if (existingUnit !== undefined) {
+    await assertSystemdManagedPathIsNotSymlink(backupPath);
+    backupSnapshot = await readSystemdFileSnapshot(backupPath);
+  } else {
+    await fs.rm(backupPath, { force: true });
   }
 
   const serviceDescription = resolveGatewayServiceDescription({ env, description });
@@ -213,10 +217,19 @@ async function writeSystemdUnit({
     stateDir,
     environment,
   });
-  const environmentFileSnapshot = isNodeSystemdEnvironment(env)
-    ? undefined
-    : await readSystemdFileSnapshot(environmentFilePath);
+  const environmentFileSnapshot = await readSystemdFileSnapshot(environmentFilePath);
   try {
+    if (existingUnit !== undefined) {
+      const backupUnit = sanitizeSystemdUnitBackupContent({
+        content: existingUnit,
+        fileManagedKeys: backupSanitizedKeys,
+      });
+      await restoreSystemdFileSnapshot(`${unitPath}.bak`, {
+        contents: Buffer.from(backupUnit),
+        mode: 0o600,
+      });
+      backedUp = true;
+    }
     const environmentFileResult = await writeSystemdGatewayEnvironmentFile({
       stateDir,
       stateDirDotEnvKeys: Object.keys(stateDirDotEnvVars),
@@ -263,16 +276,29 @@ async function writeSystemdUnit({
     });
     await publishSystemdUnit({ env, unitPath, contents: unit });
   } catch (error) {
+    let rollbackError: unknown;
+    if (backupSnapshot !== undefined) {
+      try {
+        await restoreSystemdFileSnapshot(backupPath, backupSnapshot);
+      } catch (cause) {
+        rollbackError = cause;
+      }
+    }
     if (environmentFileSnapshot !== undefined) {
       try {
         await restoreSystemdFileSnapshot(environmentFilePath, environmentFileSnapshot);
-      } catch (rollbackError) {
-        const failureDetail = error instanceof Error ? error.message : String(error);
-        throw new Error(
-          `${failureDetail}\nThe previous systemd environment file at ${environmentFilePath} could not be restored.`,
-          { cause: rollbackError },
-        );
+      } catch (cause) {
+        rollbackError ??= cause;
       }
+    }
+    if (rollbackError) {
+      const failureDetail = error instanceof Error ? error.message : String(error);
+      const rollbackDetail =
+        rollbackError instanceof Error ? rollbackError.message : "unknown rollback error";
+      throw new Error(
+        `${failureDetail}\nThe previous systemd files could not be restored: ${rollbackDetail}`,
+        { cause: error },
+      );
     }
     throw error;
   }
@@ -342,7 +368,7 @@ async function publishSystemdUnit(params: {
   await fs.writeFile(temporaryPath, params.contents, {
     encoding: "utf8",
     flag: "wx",
-    mode: previous?.mode ?? 0o644,
+    mode: 0o600,
   });
   try {
     // systemd ignores the temporary suffix, so this is the last ownership check
@@ -629,6 +655,7 @@ export async function uninstallSystemdService({
     }
     // Unit file was already absent; still clean generated node env state below.
   }
+  await fs.rm(`${unitPath}.bak`, { force: true });
   await removeNodeSystemdManagedEnvironmentKeys(env);
   if (removed) {
     stdout.write(`${formatLine("Removed systemd service", unitPath)}\n`);

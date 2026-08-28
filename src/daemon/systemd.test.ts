@@ -2245,9 +2245,11 @@ describe("stageSystemdService", () => {
     await withStageFixture(async ({ env, unitPath, envFilePath }) => {
       const previous = "[Unit]\nDescription=Previous gateway\n";
       const previousEnv = "OPENCLAW_GATEWAY_TOKEN=previous-token\n";
+      const previousBackup = "[Service]\nExecStart=/opt/operator/openclaw gateway run\n";
       await fs.mkdir(path.dirname(unitPath), { recursive: true });
       await fs.writeFile(unitPath, previous, "utf8");
       await fs.writeFile(envFilePath, previousEnv, "utf8");
+      await fs.writeFile(`${unitPath}.bak`, previousBackup, { mode: 0o600 });
       const originalLstat = fs.lstat.bind(fs);
       vi.spyOn(fs, "lstat").mockImplementation(async (...args) => {
         const stat = await originalLstat(...args);
@@ -2285,6 +2287,7 @@ describe("stageSystemdService", () => {
       await Promise.all([fs.chmod(unitPath, 0o600), fs.chmod(envFilePath, 0o600)]);
       await expect(fs.readFile(unitPath, "utf8")).resolves.toBe(previous);
       await expect(fs.readFile(envFilePath, "utf8")).resolves.toBe(previousEnv);
+      await expect(fs.readFile(`${unitPath}.bak`, "utf8")).resolves.toBe(previousBackup);
     });
   });
 
@@ -2635,6 +2638,9 @@ describe("stageSystemdService", () => {
           "Environment=FOO=bar OPENCLAW_GATEWAY_TOKEN=inline-token BAZ=qux",
           "Environment=OPENCLAW_GATEWAY_TOKEN=token-only-line",
           "Environment='OPENCLAW_GATEWAY_TOKEN=single-quoted-token' FROM_SINGLE=kept",
+          "Environment=CONTINUED=kept \\",
+          "  # legacy installer note",
+          "  OPENCLAW_GATEWAY_PASSWORD=continued-password",
           "Environment=OPENCLAW_GATEWAY_PORT=18789",
         ].join("\n"),
         { encoding: "utf8", mode: 0o600 },
@@ -2666,10 +2672,55 @@ describe("stageSystemdService", () => {
       expect(backupUnit).not.toContain("Environment=OPENCLAW_GATEWAY_TOKEN=inline-token");
       expect(backupUnit).not.toContain("Environment=OPENCLAW_GATEWAY_TOKEN=token-only-line");
       expect(backupUnit).not.toContain("single-quoted-token");
+      expect(backupUnit).not.toContain("continued-password");
       expect(backupUnit).toContain("Environment=FOO=bar BAZ=qux");
       expect(backupUnit).toContain("Environment=FROM_SINGLE=kept");
+      expect(backupUnit).toContain("Environment=CONTINUED=kept");
       expect(backupUnit).toContain("Environment=OPENCLAW_GATEWAY_PORT=18789");
       expect(backupStat.mode & 0o777).toBe(0o600);
+    });
+  });
+
+  it("protects profile upgrade units and backups from legacy gateway credentials", async () => {
+    await withStageFixture(async ({ env }) => {
+      const profileEnv = {
+        HOME: env.HOME,
+        OPENCLAW_STATE_DIR: env.OPENCLAW_STATE_DIR,
+        OPENCLAW_PROFILE: "work",
+      };
+      const unitPath = resolveSystemdUserUnitPath(profileEnv);
+      await fs.mkdir(path.dirname(unitPath), { recursive: true });
+      await fs.writeFile(
+        unitPath,
+        [
+          "[Service]",
+          "ExecStart=/opt/operator/openclaw gateway run --operator-flag",
+          'Environment="OPENCLAW_GATEWAY_TOKEN=legacy-token" "OPENCLAW_GATEWAY_PASSWORD=legacy password" CUSTOM_SETTING=kept',
+          "RestartSec=17",
+        ].join("\n"),
+        { encoding: "utf8", mode: 0o644 },
+      );
+      await fs.chmod(unitPath, 0o644);
+      mockSystemctlStatusOk();
+
+      await stageSystemdService(gatewayPortSystemdServiceFixture(profileEnv, "18789"));
+
+      const [unit, backup, unitStat, backupStat] = await Promise.all([
+        fs.readFile(unitPath, "utf8"),
+        fs.readFile(`${unitPath}.bak`, "utf8"),
+        fs.stat(unitPath),
+        fs.stat(`${unitPath}.bak`),
+      ]);
+      expect(unit).not.toContain("OPENCLAW_GATEWAY_TOKEN");
+      expect(unit).not.toContain("OPENCLAW_GATEWAY_PASSWORD");
+      expect(backup).not.toContain("OPENCLAW_GATEWAY_TOKEN");
+      expect(backup).not.toContain("OPENCLAW_GATEWAY_PASSWORD");
+      expect(backup).toContain("ExecStart=/opt/operator/openclaw gateway run --operator-flag");
+      expect(backup).toContain("CUSTOM_SETTING=kept");
+      expect(backup).toContain("RestartSec=17");
+      expect(unitStat.mode & 0o777).toBe(0o600);
+      expect(backupStat.mode & 0o777).toBe(0o600);
+      expect(unitPath).toMatch(/openclaw-gateway-work\.service$/);
     });
   });
 
@@ -3215,6 +3266,26 @@ describe("systemd service install and uninstall", () => {
     });
   });
 
+  it("removes an orphaned backup without touching operator drop-ins", async () => {
+    await withNodeSystemdFixture(async ({ env, unitPath }) => {
+      const backupPath = `${unitPath}.bak`;
+      const dropInPath = path.join(`${unitPath}.d`, "operator.conf");
+      await fs.mkdir(path.dirname(backupPath), { recursive: true });
+      await fs.mkdir(path.dirname(dropInPath), { recursive: true });
+      await fs.writeFile(backupPath, "Environment=OPENCLAW_GATEWAY_TOKEN=orphaned-token\n");
+      await fs.writeFile(dropInPath, "[Service]\nRestartSec=29\n");
+      execFileMock
+        .mockImplementationOnce(systemctlUserSuccess("status"))
+        .mockImplementationOnce(systemctlUserSuccess("disable", "--now", NODE_SERVICE));
+
+      const { stdout } = createWritableStreamMock();
+      await uninstallSystemdService({ env, stdout });
+
+      await expect(fs.access(backupPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.readFile(dropInPath, "utf8")).resolves.toContain("RestartSec=29");
+    });
+  });
+
   it("disables the OPENCLAW_SYSTEMD_UNIT override during uninstall", async () => {
     await withNodeSystemdFixture(async ({ env, unitPath, nodeEnvFilePath }) => {
       await fs.mkdir(path.dirname(unitPath), { recursive: true });
@@ -3381,6 +3452,29 @@ describe("uninstallLegacySystemdUnits", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     execFileMock.mockReset();
+  });
+
+  it("removes orphaned legacy backups", async () => {
+    const tempHomeRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-legacy-backup-"));
+    const env = { HOME: path.join(tempHomeRoot, "home") };
+    const backupPath = path.join(
+      env.HOME,
+      ".config",
+      "systemd",
+      "user",
+      "clawdbot-gateway.service.bak",
+    );
+    try {
+      await fs.mkdir(path.dirname(backupPath), { recursive: true });
+      await fs.writeFile(backupPath, "Environment=OPENCLAW_GATEWAY_TOKEN=legacy-token\n");
+      execFileMock.mockImplementation(execFileSuccess());
+
+      await uninstallLegacySystemdUnits({ env, stdout: createWritableStreamMock().stdout });
+
+      await expect(fs.access(backupPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await fs.rm(tempHomeRoot, { recursive: true, force: true });
+    }
   });
 
   it.each(["exit", "signal"] as const)(

@@ -5,6 +5,7 @@ import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/st
 import {
   GATEWAY_SERVICE_KIND,
   GATEWAY_SERVICE_MARKER,
+  LEGACY_GATEWAY_SYSTEMD_SERVICE_NAMES,
   resolveGatewayLaunchAgentLabel,
   resolveGatewaySystemdServiceName,
   resolveGatewayWindowsTaskName,
@@ -534,6 +535,19 @@ export async function findExtraGatewayServices(
         scope: "user",
       })) {
         push(svc);
+      }
+      for (const name of LEGACY_GATEWAY_SYSTEMD_SERVICE_NAMES) {
+        const backupPath = path.join(userDir, `${name}.service.bak`);
+        if ((await readUtf8File(backupPath)) !== null) {
+          push({
+            platform: "linux",
+            label: `${name}.service`,
+            detail: `unit backup: ${backupPath}`,
+            scope: "user",
+            marker: "clawdbot",
+            legacy: true,
+          });
+        }
       }
       if (opts.deep) {
         for (const dir of [

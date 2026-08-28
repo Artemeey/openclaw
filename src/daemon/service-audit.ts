@@ -30,6 +30,7 @@ import { isNonMinimalServicePathEntry, normalizeServicePathEntry } from "./servi
 import type { GatewayServiceEnvironmentValueSource } from "./service-types.js";
 import { execSystemctlUser } from "./systemd-exec.js";
 import { resolveSystemdServiceName } from "./systemd-service-files.js";
+import { parseSystemdEnvAssignments, splitSystemdLogicalLines } from "./systemd-unit.js";
 import { resolveSystemdUserUnitPath } from "./systemd.js";
 
 export type GatewayServiceCommand = {
@@ -58,6 +59,7 @@ export const SERVICE_AUDIT_CODES = {
   gatewayPathMissingDirs: "gateway-path-missing-dirs",
   gatewayPathNonMinimal: "gateway-path-nonminimal",
   gatewayTokenEmbedded: "gateway-token-embedded",
+  gatewayPasswordEmbedded: "gateway-password-embedded",
   gatewayManagedEnvEmbedded: "gateway-managed-env-embedded",
   gatewayPortMismatch: "gateway-port-mismatch",
   gatewayProxyEnvEmbedded: "gateway-proxy-env-embedded",
@@ -72,6 +74,7 @@ export const SERVICE_AUDIT_CODES = {
   systemdRestartSec: "systemd-restart-sec",
   systemdWantsNetworkOnline: "systemd-wants-network-online",
   systemdKillModeProcessOrNone: "systemd-kill-mode-process-or-none",
+  systemdUnitBackupUnsafe: "systemd-unit-backup-unsafe",
 } as const;
 
 /** Returns whether audit issues require migrating a daemon to a stable Node runtime. */
@@ -187,6 +190,7 @@ async function auditSystemdUnit(
   timeoutMs?: number,
 ) {
   const unitPath = resolveSystemdUserUnitPath(env);
+  await auditSystemdUnitBackup(unitPath, issues);
   let content;
   try {
     content = await fs.readFile(unitPath, "utf8");
@@ -250,6 +254,53 @@ async function auditSystemdUnit(
       level: "recommended",
     });
   }
+}
+
+async function auditSystemdUnitBackup(unitPath: string, issues: ServiceConfigIssue[]) {
+  const backupPath = `${unitPath}.bak`;
+  let content: string;
+  let mode: number;
+  try {
+    [content, mode] = await Promise.all([
+      fs.readFile(backupPath, "utf8"),
+      fs.stat(backupPath).then((stat) => stat.mode & 0o777),
+    ]);
+  } catch {
+    return;
+  }
+  const credentialKeys = new Set(["OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_PASSWORD"]);
+  const embeddedKeys = new Set<string>();
+  for (const rawLine of splitSystemdLogicalLines(content)) {
+    const line = rawLine.trim();
+    const separator = line.indexOf("=");
+    if (separator < 0 || line.slice(0, separator).trim() !== "Environment") {
+      continue;
+    }
+    for (const { key, value } of parseSystemdEnvAssignments(line.slice(separator + 1).trim())) {
+      if (value && credentialKeys.has(key.toUpperCase())) {
+        embeddedKeys.add(key.toUpperCase());
+      }
+    }
+  }
+  if (embeddedKeys.size === 0 && (mode & 0o077) === 0) {
+    return;
+  }
+  const detail = [
+    backupPath,
+    embeddedKeys.size > 0 ? `embedded keys: ${[...embeddedKeys].toSorted().join(", ")}` : undefined,
+    (mode & 0o077) !== 0 ? `mode: ${mode.toString(8).padStart(3, "0")}` : undefined,
+  ]
+    .filter(Boolean)
+    .join("; ");
+  issues.push({
+    code: SERVICE_AUDIT_CODES.systemdUnitBackupUnsafe,
+    message:
+      embeddedKeys.size > 0
+        ? "Systemd service backup exposes gateway credentials; reinstall the service and rotate the embedded credentials."
+        : "Systemd service backup has unsafe permissions; reinstall the service to restrict access.",
+    detail,
+    level: "recommended",
+  });
 }
 
 async function auditLaunchdPlist(
@@ -395,6 +446,21 @@ function auditGatewayToken(
   });
 }
 
+function auditGatewayPassword(command: GatewayServiceCommand, issues: ServiceConfigIssue[]) {
+  if (
+    !command?.environment?.OPENCLAW_GATEWAY_PASSWORD?.trim() ||
+    isEnvironmentFileOnlySource(command.environmentValueSources?.OPENCLAW_GATEWAY_PASSWORD)
+  ) {
+    return;
+  }
+  issues.push({
+    code: SERVICE_AUDIT_CODES.gatewayPasswordEmbedded,
+    message: "Gateway service embeds OPENCLAW_GATEWAY_PASSWORD and should be reinstalled.",
+    detail: "Rotate the password after reinstalling because the service definition exposed it.",
+    level: "recommended",
+  });
+}
+
 function auditManagedServiceEnvironment(
   command: GatewayServiceCommand,
   issues: ServiceConfigIssue[],
@@ -481,6 +547,9 @@ function auditGatewayServicePath(
   platform: NodeJS.Platform,
   expectedServicePath?: string,
 ) {
+  if (!command) {
+    return;
+  }
   if (platform === "win32") {
     return;
   }
@@ -642,6 +711,7 @@ export async function auditGatewayServiceConfig(params: {
   auditManagedServiceEnvironment(params.command, issues, params.expectedManagedServiceEnvKeys);
   auditProxyServiceEnvironment(params.command, issues);
   auditGatewayToken(params.command, issues, params.expectedGatewayToken);
+  auditGatewayPassword(params.command, issues);
   auditGatewayServicePath(params.command, issues, params.env, platform, params.expectedServicePath);
   await auditGatewayRuntime(params.env, params.command, issues, platform);
 
