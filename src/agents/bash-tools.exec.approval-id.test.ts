@@ -206,8 +206,8 @@ async function writeExecApprovalsConfig(config: Record<string, unknown>) {
   saveExecApprovals(config as ExecApprovalsFile);
 }
 
-function acceptedApprovalResponse(params: unknown) {
-  return { status: "accepted", id: (params as { id?: string })?.id };
+function acceptedApprovalResponse(params: unknown, deliveryRoute?: "approval-client") {
+  return { status: "accepted", id: (params as { id?: string })?.id, deliveryRoute };
 }
 
 function getResultText(result: { content: Array<{ type?: string; text?: string }> }) {
@@ -339,10 +339,11 @@ async function expectGatewayAskAlwaysPrompt(options: {
 function mockAcceptedApprovalFlow(options: {
   onAgent?: (params: Record<string, unknown>) => void;
   onNodeInvoke?: (params: unknown) => unknown;
+  deliveryRoute?: "approval-client";
 }) {
   vi.mocked(callGatewayTool).mockImplementation(async (method, _opts, params) => {
     if (method === "exec.approval.request") {
-      return acceptedApprovalResponse(params);
+      return acceptedApprovalResponse(params, options.deliveryRoute);
     }
     if (method === "exec.approval.waitDecision") {
       return { decision: "allow-once" };
@@ -843,7 +844,7 @@ describe("exec approvals", () => {
     vi.mocked(callGatewayTool).mockImplementation(async (method, _opts, params) => {
       calls.push(method);
       if (method === "exec.approval.request") {
-        return acceptedApprovalResponse(params);
+        return acceptedApprovalResponse(params, "approval-client");
       }
       if (method === "exec.approval.waitDecision") {
         return { decision: "allow-always" };
@@ -1144,7 +1145,7 @@ describe("exec approvals", () => {
 
     vi.mocked(callGatewayTool).mockImplementation(async (method, _opts, params) => {
       if (method === "exec.approval.request") {
-        return acceptedApprovalResponse(params);
+        return acceptedApprovalResponse(params, "approval-client");
       }
       if (method === "exec.approval.waitDecision") {
         return await decisionPromise;
@@ -1198,6 +1199,7 @@ describe("exec approvals", () => {
       onAgent: (params) => {
         agentCalls.push(params);
       },
+      deliveryRoute: "approval-client",
     });
 
     const tool = createExecTool({
