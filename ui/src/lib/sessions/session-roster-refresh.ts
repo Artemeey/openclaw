@@ -19,6 +19,12 @@ import {
   uiSessionRowMatchesSelectedChat,
 } from "./session-key.ts";
 import {
+  isPrimarySessionListQuery,
+  normalizeManagedSessionListQuery,
+  sessionListAgentMatches,
+  type ManagedSessionListQuery,
+} from "./session-list-scope.ts";
+import {
   buildSessionListParams,
   DEFAULT_SESSION_LIST_QUERY,
   requestSessionList,
@@ -64,8 +70,6 @@ type ManagedSessionListRefresh = {
   invalidated?: true;
 };
 
-type ManagedSessionListQuery = Readonly<Record<string, unknown>> & { readonly limit: number };
-
 type ManagedSessionList = {
   key: string;
   query: ManagedSessionListQuery;
@@ -78,40 +82,12 @@ type ManagedSessionList = {
   queued: ManagedSessionListRefresh | null;
 };
 
-function normalizeManagedSessionListQuery(options: SessionListOptions): ManagedSessionListQuery {
-  const { offset: _offset, append: _append, ...queryOptions } = options;
-  const limit =
-    typeof options.limit === "number" && options.limit > 0
-      ? Math.floor(options.limit)
-      : DEFAULT_SESSION_LIST_QUERY.limit;
-  return Object.freeze({ ...buildSessionListParams({ ...queryOptions, limit }), limit });
-}
-
 function managedSessionListAgentId(entry: ManagedSessionList): string | undefined {
   return typeof entry.query.agentId === "string" ? entry.query.agentId : undefined;
 }
 
 function managedSessionListScope(entry: ManagedSessionList): string {
   return `managed:${entry.key}`;
-}
-
-function isPrimarySessionListQuery(options: SessionListScope): boolean {
-  if (options.includeDerivedTitles === false || options.includeLastMessage === false) {
-    return false;
-  }
-  const query = normalizeManagedSessionListQuery(options);
-  return (
-    query.archived === undefined &&
-    !query.spawnedBy &&
-    !query.boardFace &&
-    !query.activeMinutes &&
-    !query.search &&
-    !query.ownerId &&
-    query.involvingMe !== true &&
-    query.includeGlobal === true &&
-    query.includeUnknown === true &&
-    query.configuredAgentsOnly === true
-  );
 }
 
 function preserveCurrentSessionRow(
@@ -179,12 +155,9 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
   const directListRequests = new Map<string, { agentId?: string; revision: number }>();
 
   const activeManagedLists = (): ManagedSessionList[] =>
-    [...managedLists.values()].filter((entry) => entry.listeners.size > 0 || entry.pending);
-
-  const matchesAgent = (queryAgentId: string | undefined, agentId: string | null | undefined) =>
-    !agentId?.trim() ||
-    !queryAgentId ||
-    normalizeAgentId(queryAgentId) === normalizeAgentId(agentId);
+    [...managedLists.values()].filter(
+      (entry) => entry.listeners.size > 0 || entry.pending !== null,
+    );
 
   const publishManagedList = (entry: ManagedSessionList, snapshot: SessionListSnapshot): void => {
     entry.snapshot = snapshot;
@@ -649,9 +622,9 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
     refreshReplacement,
     async refreshOwnerAssignmentScopes(agentId?: string | null): Promise<void> {
       const refreshes = activeManagedLists()
-        .filter((entry) => matchesAgent(managedSessionListAgentId(entry), agentId))
+        .filter((entry) => sessionListAgentMatches(managedSessionListAgentId(entry), agentId))
         .map((entry) => refreshManagedList(entry, { append: false, invalidated: true }));
-      if (matchesAgent(lastListOptions.agentId, agentId)) {
+      if (sessionListAgentMatches(lastListOptions.agentId, agentId)) {
         refreshes.push(refreshReplacement());
       }
       await Promise.all(refreshes);
@@ -660,14 +633,16 @@ export function createSessionRosterRefresh(host: SessionRosterRefreshHost) {
       return {
         revision: requestRevision,
         scopes: new Map([
-          ...(matchesAgent(lastListOptions.agentId, agentId)
+          ...(sessionListAgentMatches(lastListOptions.agentId, agentId)
             ? ([[PRIMARY_LIST_SCOPE, requestRevision]] as const)
             : []),
           ...[...directListRequests].flatMap(([scope, request]) =>
-            matchesAgent(request.agentId, agentId) ? [[scope, request.revision] as const] : [],
+            sessionListAgentMatches(request.agentId, agentId)
+              ? [[scope, request.revision] as const]
+              : [],
           ),
           ...activeManagedLists()
-            .filter((entry) => matchesAgent(managedSessionListAgentId(entry), agentId))
+            .filter((entry) => sessionListAgentMatches(managedSessionListAgentId(entry), agentId))
             .map((entry) => [managedSessionListScope(entry), requestRevision] as const),
         ]),
       };
