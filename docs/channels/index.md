@@ -57,6 +57,7 @@ install. Channels marked "official plugin" install with one command
 
 ### Related communication plugins
 
+- [DingTalk](/channels/dingtalk-connector) - The DingTalk team's external plugin; check its compatibility requirements before installing.
 - [Voice Call](/plugins/voice-call) - Telephony via Plivo, Telnyx, or Twilio (official plugin).
 
 ## Group join introductions

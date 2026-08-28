@@ -4,6 +4,10 @@
     "target": "OpenClaw"
   },
   {
+    "source": "DingTalk",
+    "target": "钉钉"
+  },
+  {
     "source": "macOS platform notes",
     "target": "macOS 平台说明"
   },
