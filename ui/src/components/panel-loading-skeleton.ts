@@ -20,7 +20,7 @@ class PanelLoadingSkeleton extends OpenClawLitElement {
 
   @property({ type: Boolean, reflect: true }) overlay = false;
 
-  static styles = css`
+  static override styles = css`
     :host {
       display: block;
       box-sizing: border-box;
