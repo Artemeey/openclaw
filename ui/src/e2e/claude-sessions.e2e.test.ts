@@ -365,7 +365,7 @@ suite.define(() => {
             },
           }),
         );
-      const connecting = page.getByRole("status").filter({ hasText: "Connecting to session" });
+      const connecting = page.getByRole("status", { name: "Connecting to session…" });
       await connecting.waitFor();
       expect(await page.locator(".tabstrip-tab.is-connecting").count()).toBe(1);
 
@@ -434,7 +434,7 @@ suite.define(() => {
         .toContainEqual(
           expect.objectContaining({ catalog: expect.objectContaining({ catalogId: "claude" }) }),
         );
-      await page.getByRole("status").filter({ hasText: "Connecting to session" }).waitFor();
+      await page.getByRole("status", { name: "Connecting to session…" }).waitFor();
       await page
         .locator("openclaw-terminal-panel .tabstrip-tab", {
           hasText: "claude --resume claude-termi…",

@@ -7652,24 +7652,6 @@ button.chat-pr__diff {
   }
 }
 
-/* Chat loading skeleton */
-.chat-loading-skeleton {
-  padding: 4px 0;
-  animation: fade-in 0.3s var(--ease-out);
-}
-
-.chat-loading-skeleton .chat-msg {
-  width: min(560px, 82%);
-}
-
-.chat-loading-skeleton .chat-line.user .chat-msg {
-  width: min(360px, 70%);
-}
-
-.chat-loading-skeleton .chat-bubble {
-  width: 100%;
-}
-
 /* Welcome state (new session) */
 .agent-chat__welcome {
   display: flex;

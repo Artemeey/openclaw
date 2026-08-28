@@ -2,6 +2,7 @@ import { render } from "lit";
 import { describe, expect, it, vi } from "vitest";
 import {
   createSessionWorkspaceProps,
+  isSessionWorkspaceItemLoading,
   openSessionWorkspaceFile,
   refreshSessionWorkspace,
   renderSessionWorkspaceRail,
@@ -434,6 +435,7 @@ describe("openSessionWorkspaceFile", () => {
 
     openSessionWorkspaceFile(state, { path: "readme.md" });
 
+    expect(isSessionWorkspaceItemLoading(state)).toBe(true);
     expect(await loadedSidebarContent(handleOpenSidebar)).toMatchObject({
       kind: "file",
       name: "README.md",
@@ -442,6 +444,7 @@ describe("openSessionWorkspaceFile", () => {
         "wss://gateway-a.example\u0000pane-left\u0000agent:main:current\u0000/workspace\u0000README.md",
       edit: { hash: "a".repeat(64) },
     });
+    expect(isSessionWorkspaceItemLoading(state)).toBe(false);
   });
 
   it.each([

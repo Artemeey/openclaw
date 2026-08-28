@@ -12,6 +12,7 @@ import {
   observeNativeGateway,
 } from "../../../app/native-editor-locality.runtime.ts";
 import { icons } from "../../../components/icons.ts";
+import { renderPanelLoadingSkeleton } from "../../../components/panel-loading-skeleton.ts";
 import { t } from "../../../i18n/index.ts";
 import "../../../components/tooltip.ts";
 import {
@@ -571,7 +572,7 @@ class SessionDiffPanel extends OpenClawLightDomElement {
     }
     const value = this.diffTask.value;
     if (!value) {
-      return html`<div class="session-diff__note">${t("chat.sessionDiff.loading")}</div>`;
+      return renderPanelLoadingSkeleton("review", t("chat.sessionDiff.loading"));
     }
     const { result, views } = value;
     if (result.unavailableReason === "not_git") {

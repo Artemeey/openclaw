@@ -7,6 +7,7 @@ import type {
 } from "../../../../../packages/gateway-protocol/src/index.js";
 import { icons } from "../../../components/icons.ts";
 import { renderPanelEmptyState } from "../../../components/panel-empty-state.ts";
+import { renderPanelLoadingSkeleton } from "../../../components/panel-loading-skeleton.ts";
 import { t } from "../../../i18n/index.ts";
 import { formatUiError } from "../../../lib/format-error.ts";
 import { buildWidgetThemeMessage, postWidgetTheme } from "../../../lib/widget-theme.ts";
@@ -250,14 +251,10 @@ class SessionDiscussionPanel extends OpenClawLightDomElement {
       this.openingDiscussion &&
       this.isOpeningCurrent(this.openingDiscussion)
     ) {
-      return html`<div class="session-discussion__empty">
-        ${t("chat.sessionDiscussion.opening")}
-      </div>`;
+      return renderPanelLoadingSkeleton("discussion", t("chat.sessionDiscussion.opening"));
     }
     if (this.discussionTask.status !== TaskStatus.COMPLETE || !value) {
-      return html`<div class="session-discussion__empty">
-        ${t("chat.sessionDiscussion.loading")}
-      </div>`;
+      return renderPanelLoadingSkeleton("discussion", t("chat.sessionDiscussion.loading"));
     }
     const { info } = value;
     if (info.state === "none") {
@@ -265,7 +262,7 @@ class SessionDiscussionPanel extends OpenClawLightDomElement {
     }
     if (info.state === "available") {
       return this.canOpen
-        ? html`<div class="session-discussion__empty">${t("chat.sessionDiscussion.opening")}</div>`
+        ? renderPanelLoadingSkeleton("discussion", t("chat.sessionDiscussion.opening"))
         : renderPanelEmptyState({
             icon: icons.messageSquare,
             heading: t("chat.sidePanel.discussion"),

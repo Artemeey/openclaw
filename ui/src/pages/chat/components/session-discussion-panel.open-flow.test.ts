@@ -31,7 +31,11 @@ describe("session discussion panel", () => {
 
     await vi.waitFor(() => {
       expect(openDiscussion).toHaveBeenCalledTimes(1);
-      expect(panel.textContent).toContain("Opening discussion");
+      expect(
+        panel
+          .querySelector('openclaw-panel-loading-skeleton[data-panel-skeleton="discussion"]')
+          ?.getAttribute("aria-label"),
+      ).toContain("Opening discussion");
     });
     expect(panel.querySelector("button")).toBeNull();
   });
@@ -142,7 +146,9 @@ describe("session discussion panel", () => {
 
     expect(openDiscussion).toHaveBeenCalledTimes(1);
     expect(panel.querySelector("iframe")).toBeNull();
-    expect(panel.textContent).not.toContain("Opening discussion");
+    expect(
+      panel.querySelector('openclaw-panel-loading-skeleton[data-panel-skeleton="discussion"]'),
+    ).toBeNull();
   });
 
   it("does not auto-open a superseded available resolution", async () => {
