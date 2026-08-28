@@ -784,6 +784,7 @@ enum class GatewayMethod(
   DiagnosticsLanes("diagnostics.lanes"),
   SessionMembersListEvidence("session.members.listEvidence"),
   PluginsInspect("plugins.inspect"),
+  SessionsRestartTurn("sessions.restartTurn"),
 }
 
 enum class GatewayEvent(

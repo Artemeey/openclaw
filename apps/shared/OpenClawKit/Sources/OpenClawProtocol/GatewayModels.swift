@@ -9540,6 +9540,66 @@ public struct SessionsRecoverResult: Codable, Sendable {
     }
 }
 
+public struct SessionsRestartTurnParams: Codable, Sendable {
+    public let key: String
+    public let agentid: String?
+    public let runid: String
+    public let reason: String
+    public let permissionmode: AnyCodable
+    public let idempotencykey: String
+
+    public init(
+        key: String,
+        agentid: String? = nil,
+        runid: String,
+        reason: String,
+        permissionmode: AnyCodable,
+        idempotencykey: String)
+    {
+        self.key = key
+        self.agentid = agentid
+        self.runid = runid
+        self.reason = reason
+        self.permissionmode = permissionmode
+        self.idempotencykey = idempotencykey
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case key
+        case agentid = "agentId"
+        case runid = "runId"
+        case reason
+        case permissionmode = "permissionMode"
+        case idempotencykey = "idempotencyKey"
+    }
+}
+
+public struct SessionsRestartTurnResult: Codable, Sendable {
+    public let ok: Bool
+    public let interruptedrunid: String
+    public let runid: String
+    public let status: String
+
+    public init(
+        ok: Bool,
+        interruptedrunid: String,
+        runid: String,
+        status: String)
+    {
+        self.ok = ok
+        self.interruptedrunid = interruptedrunid
+        self.runid = runid
+        self.status = status
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case ok
+        case interruptedrunid = "interruptedRunId"
+        case runid = "runId"
+        case status
+    }
+}
+
 public struct SessionsSendParams: Codable, Sendable {
     public let key: String
     public let agentid: String?
