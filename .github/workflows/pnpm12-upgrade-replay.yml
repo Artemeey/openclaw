@@ -14,9 +14,9 @@ permissions:
 jobs:
   replay:
     if: github.repository == 'openclaw/openclaw' && !github.event.deleted
-    uses: openclaw/openclaw/.github/workflows/package-acceptance.yml@b584cd578f27c62702ccf85260bcb36228a0cfbf
+    uses: openclaw/openclaw/.github/workflows/package-acceptance.yml@6fec2bca44e5701f460ca331c0b5dc6bd5b52397
     with:
-      workflow_ref: b584cd578f27c62702ccf85260bcb36228a0cfbf
+      workflow_ref: 6fec2bca44e5701f460ca331c0b5dc6bd5b52397
       source: artifact
       artifact_run_id: "33141189863"
       artifact_run_attempt: "1"
