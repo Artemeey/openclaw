@@ -1161,9 +1161,7 @@ export function createAnthropicMessagesTransportStreamFn(): StreamFn {
       // Classifier refusals can invalidate partial output, so no event is safe
       // to expose until the terminal stop reason is known.
       const refusalBuffer = usesClaudeStreamingRefusalContract(model)
-        ? createDeferredEventBuffer<AssistantMessageEvent>(stream, () =>
-            notifyLlmRequestActivity(options?.signal),
-          )
+        ? createDeferredEventBuffer<AssistantMessageEvent>(stream)
         : undefined;
       const eventSink = refusalBuffer ?? stream;
       // Fallback-served turns bill at the serving model's rates; a boundary
@@ -1348,6 +1346,7 @@ export function createAnthropicMessagesTransportStreamFn(): StreamFn {
           }
         };
         for await (const event of anthropicStream) {
+          notifyLlmRequestActivity(transportOptions.signal);
           if (event.type === "error") {
             const error = event.error as { message?: string } | undefined;
             throw new Error(error?.message || "Anthropic Messages stream failed");
