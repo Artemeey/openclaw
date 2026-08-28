@@ -1,7 +1,6 @@
 /** Session identity and context preparation for isolated cron runs. */
 import { isDeepStrictEqual } from "node:util";
 import { tryResolveAmbientOwnerAgentId } from "../../agents/agent-scope.js";
-import { hasAnyAuthProfileStoreSource } from "../../agents/auth-profiles/source-check.js";
 import { findModelInCatalog } from "../../agents/model-catalog-lookup.js";
 import { loadAgentRuntimePluginRegistryHandle } from "../../agents/runtime-plugins.js";
 import { resolveAgentModelPrimaryValue } from "../../config/model-input.js";
@@ -9,6 +8,7 @@ import type { SessionEntry } from "../../config/sessions.js";
 import { resolveSessionWorkStartError } from "../../config/sessions/lifecycle.js";
 import type { AgentDefaultsConfig } from "../../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { resolveCreatorSandbox } from "../../gateway/operator-role-policy.js";
 import type { SourceDeliveryPlan } from "../../infra/outbound/source-delivery-plan.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import type { PluginRegistry } from "../../plugins/registry-types.js";
@@ -46,8 +46,7 @@ import {
 import { resolveCronPreflightCandidates } from "./run-fallback-policy.js";
 import {
   appendCronUnattendedRunPreamble,
-  hasConfiguredAuthProfiles,
-  loadCronAuthProfileRuntime,
+  resolveCronAuthSelection,
   loadCronExternalContentRuntime,
   loadCronModelPreflightRuntime,
   loadSessionAccessorRuntime,
@@ -171,8 +170,7 @@ export async function prepareCronRunContext(params: {
         }
       : {}),
   });
-  const agentId = modelOwner.agentId;
-  const agentDir = modelOwner.agentDir;
+  const { agentId, agentDir } = modelOwner;
   const agentConfigOverride = requiredAgentId
     ? resolveAgentConfig(modelOwner.config, agentId)
     : undefined;
@@ -219,6 +217,7 @@ export async function prepareCronRunContext(params: {
 
   const isGmailHook = hookExternalContentSource === "gmail";
   const now = Date.now();
+  const sandbox = resolveCreatorSandbox(runtimeCfg, { actor: input.job.createdActor });
   const cronSession = resolveCronSession({
     cfg: runtimeCfg,
     sessionKey: agentSessionKey,
@@ -320,6 +319,7 @@ export async function prepareCronRunContext(params: {
       cronSession,
       agentSessionKey,
       createdActor: input.job.createdActor,
+      sandbox,
       persistSessionEntry: persistCronSessionRow,
     });
     const withRunSession: WithRunSession = (result) => ({
@@ -602,33 +602,26 @@ export async function prepareCronRunContext(params: {
         throw err;
       }
       logWarn(`[cron:${input.job.id}] Failed to persist pre-run session entry: ${String(err)}`);
+      if (sandbox === "required" || cronSession.sessionEntry.sandbox === "required") {
+        throw err;
+      }
     }
     await retireRolledCronSessionMcpRuntime({
       job: input.job,
       cronSession,
     });
-    const authSelection =
-      !cronSession.sessionEntry.authProfileOverride?.trim() &&
-      !hasConfiguredAuthProfiles(cfgWithAgentDefaults) &&
-      !hasAnyAuthProfileStoreSource(agentDir)
-        ? undefined
-        : await (
-            await loadCronAuthProfileRuntime()
-          ).resolveSessionAuthSelection({
-            // Auth resolution may mutate session state; use the store/key persistence will write.
-            cfg: cfgWithAgentDefaults,
-            provider,
-            modelId: model,
-            harnessRuntime: effectiveAgentRuntime,
-            agentDir,
-            workspaceDir,
-            pluginMetadataSnapshot: modelOwner.metadataSnapshot,
-            sessionEntry: cronSession.sessionEntry,
-            sessionStore: cronSession.store,
-            sessionKey: agentSessionKey,
-            storePath: cronSession.storePath,
-            isNewSession: cronSession.isNewSession && input.job.sessionTarget !== "isolated",
-          });
+    const authSelection = await resolveCronAuthSelection({
+      cfg: cfgWithAgentDefaults,
+      provider,
+      modelId: model,
+      harnessRuntime: effectiveAgentRuntime,
+      agentDir,
+      workspaceDir,
+      pluginMetadataSnapshot: modelOwner.metadataSnapshot,
+      cronSession,
+      sessionKey: agentSessionKey,
+      isNewSession: cronSession.isNewSession && input.job.sessionTarget !== "isolated",
+    });
     const liveSelection: CronLiveSelection = {
       provider,
       model,
@@ -666,6 +659,7 @@ export async function prepareCronRunContext(params: {
           cronSession,
           runSessionKey,
           createdActor: input.job.createdActor,
+          sandbox,
           thinkingLevel: requestedThinkLevel,
           toolsAllow: agentPayload?.toolsAllow,
           toolsAllowIsDefault: agentPayload?.toolsAllowIsDefault,
