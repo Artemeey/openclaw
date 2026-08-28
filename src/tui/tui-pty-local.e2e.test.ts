@@ -13,12 +13,13 @@ import {
 } from "../../test/helpers/openclaw-test-instance.js";
 import { isProcessAlive, waitForPidFile } from "../../test/helpers/process-wait.js";
 import { createDeferred } from "../../test/helpers/promise.js";
-import { loadPersistedAuthProfileStore } from "../agents/auth-profiles/persisted.js";
+import { loadAuthProfileStoreForRuntime } from "../agents/auth-profiles/store.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { ModelProviderConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { connectGatewayClient } from "../gateway/test-helpers.e2e.js";
 import { runExec } from "../process/exec.js";
+import { withEnv } from "../test-utils/env.js";
 import { killPidIfAlive } from "../test-utils/process-tree.js";
 import { sleep } from "../utils/sleep.js";
 import { GatewayChatClient } from "./gateway-chat.js";
@@ -59,6 +60,7 @@ type MockModelBehavior = {
 type MockModelRequest = {
   method: string;
   path: string;
+  authorization?: string;
   body: Record<string, unknown>;
 };
 
@@ -346,7 +348,12 @@ async function startRoutedMockModelServer(
         const body = await readJsonRequest(req);
         if (url.pathname === "/v1/responses" || url.pathname === "/responses") {
           const modelId = typeof body.model === "string" ? body.model : "";
-          const request = { method: req.method, path: url.pathname, body };
+          const request = {
+            method: req.method,
+            path: url.pathname,
+            authorization: req.headers.authorization,
+            body,
+          };
           const behavior = behaviors[modelId];
           if (!behavior) {
             rejectedRequests.push(request);
@@ -1469,7 +1476,7 @@ describe("TUI PTY real backends", () => {
     "authenticates a manifest-discovered provider and resumes the unchanged local model",
     async ({ onTestFinished }) => {
       const pluginId = "t05-local-auth-fixture";
-      const providerId = "t05-local-auth-provider";
+      const providerId = "tui-pty-mock";
       const profileId = `${providerId}:default`;
       const sentinel = `t05-${randomUUID()}`;
       const expectedDigest = createHash("sha256").update(sentinel).digest("hex");
@@ -1587,7 +1594,12 @@ export default {
         const agentDir = path.join(fixture.stateDir, "agents", "main", "agent");
         const sqlitePath = path.join(agentDir, "openclaw-agent.sqlite");
         expect(await stat(sqlitePath).then((entry) => entry.isFile())).toBe(true);
-        const store = loadPersistedAuthProfileStore(agentDir);
+        const store = withEnv({ OPENCLAW_STATE_DIR: fixture.stateDir }, () =>
+          loadAuthProfileStoreForRuntime(agentDir, {
+            readOnly: true,
+            syncExternalCli: false,
+          }),
+        );
         const profile = store?.profiles[profileId];
         expect(profile?.type === "api_key").toBe(true);
         expect(profile?.provider === providerId).toBe(true);
@@ -1608,6 +1620,7 @@ export default {
           onTimeout: () => new Error("post-auth prompt did not reach the mock provider"),
         });
         expect(fixture.mockModel.requests()[0]?.body.model).toBe("gpt-5.5");
+        expect(fixture.mockModel.requests()[0]?.authorization).toBe(`Bearer ${sentinel}`);
         await fixture.run.waitForOutput("LOCAL_AUTH_RESPONSE", LOCAL_OUTPUT_TIMEOUT_MS);
 
         await fixture.run.write("/exit\r", { delay: false });

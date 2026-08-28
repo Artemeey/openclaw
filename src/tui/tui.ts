@@ -14,13 +14,24 @@ import { classifyGatewayConnectFailure } from "../../packages/gateway-protocol/s
 import type { CommandEntry } from "../../packages/gateway-protocol/src/index.js";
 import {
   resolveAgentIdByWorkspacePath,
+  resolveAgentDir,
   resolveDefaultAgentId,
   resolveSessionAgentId,
   tryResolveDefaultAgentId,
 } from "../agents/agent-scope.js";
+import { externalCliDiscoveryForProviderAuth } from "../agents/auth-profiles/external-cli-discovery.js";
+import { reloadSharedAuthStoreOwnership } from "../agents/auth-profiles/path-resolve.js";
+import { clearRuntimeAuthProfileStoreSnapshots } from "../agents/auth-profiles/runtime-snapshots.js";
+import { ensureAuthProfileStore } from "../agents/auth-profiles/store.js";
+import { clearCodexCliCredentialCache } from "../agents/cli-credentials.js";
+import { refreshPreparedModelRuntimeSnapshots } from "../agents/prepared-model-runtime.js";
 import { normalizeThinkLevel } from "../auto-reply/thinking.shared.js";
 import { formatCliCommand } from "../cli/command-format.js";
-import { getRuntimeConfig, type OpenClawConfig } from "../config/config.js";
+import {
+  clearRuntimeConfigSnapshot,
+  getRuntimeConfig,
+  type OpenClawConfig,
+} from "../config/config.js";
 import { tryResolveLegacyCompatibilityAgentId } from "../config/legacy.default-agent-owner.js";
 import { resolveCanonicalMainSessionKey } from "../config/sessions/main-session-key.js";
 import { resolvePersistedSessionStoreOwnerForKey } from "../config/sessions/session-store-owner.js";
@@ -1401,6 +1412,36 @@ async function runTuiUnlocked(opts: RunTuiOptions): Promise<TuiResult> {
                 ...invocation.options,
               }),
             );
+            const authSourceMayHaveChanged =
+              Boolean(codexBin) || (result.exitCode === 0 && !result.signal);
+            if (authSourceMayHaveChanged) {
+              if (codexBin) {
+                clearCodexCliCredentialCache();
+              } else {
+                reloadSharedAuthStoreOwnership();
+              }
+              // The auth child persisted outside this process. Invalidate the
+              // published generation and do not resume until its replacement is ready.
+              clearRuntimeAuthProfileStoreSnapshots();
+              clearRuntimeConfigSnapshot();
+              const refreshedConfig = getRuntimeConfig();
+              if (codexBin) {
+                const agentDir = resolveAgentDir(refreshedConfig, state.currentAgentId);
+                ensureAuthProfileStore(agentDir, {
+                  config: refreshedConfig,
+                  externalCli: externalCliDiscoveryForProviderAuth({
+                    cfg: refreshedConfig,
+                    provider: OPENAI_CODEX_PROVIDER,
+                    allowKeychainPrompt: true,
+                  }),
+                  readOnly: true,
+                  syncExternalCli: false,
+                });
+              }
+              await refreshPreparedModelRuntimeSnapshots(refreshedConfig, {
+                catalogMode: "static",
+              });
+            }
             const outcome = `argv=${commandArgv} exitCode=${String(result.exitCode)} signal=${String(result.signal)}`;
             if (result.exitCode === 0 && !result.signal) {
               tuiAuthLog.info(`auth child finished: ${outcome}`);
