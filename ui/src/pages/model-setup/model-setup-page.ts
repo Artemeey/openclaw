@@ -36,7 +36,6 @@ import {
   activationTimeoutForKind,
   initialWizardValue,
   mapActivationResult,
-  mapVerifyResult,
   type ModelSetupActivationState,
   type ModelSetupPageState,
   type ModelSetupVerifyState,
@@ -129,10 +128,12 @@ export class ModelSetupPage extends OpenClawLightDomElement {
       return (result) => {
         if (result.status === "done" && result.modelActivation) {
           this.firstRun.recordActivation(activation, { ok: true, ...result.modelActivation });
+          return () => this.firstRun.ownsActivation(activation);
         } else if (result.status === "cancelled") {
           this.firstRun.recordActivation(activation, { ok: false });
           this.requestUpdate();
         }
+        return undefined;
       };
     },
     requestFailedMessage: () => t("modelSetup.errors.requestFailed"),
@@ -250,6 +251,7 @@ export class ModelSetupPage extends OpenClawLightDomElement {
         return;
       }
       if (!outcome.value.isCurrent()) {
+        this.activationState = { phase: "idle" };
         return;
       }
       const activationState = mapActivationResult({
@@ -274,31 +276,16 @@ export class ModelSetupPage extends OpenClawLightDomElement {
 
   private readonly verifyTask = new Task<
     readonly [GatewayBrowserClient | null, string | null],
-    ModelSetupTaskResult<Awaited<ReturnType<typeof verifyModelSetup>>> & { agentId: string | null }
+    ModelSetupTaskResult<Awaited<ReturnType<typeof verifyModelSetup>>>
   >(this, {
     autoRun: false,
     args: () => [null, null],
     task: async ([client, agentId], { signal }) =>
       client
-        ? {
-            ...(await captureModelSetupResult(client, () =>
-              verifyModelSetup(client, agentId ?? undefined, signal),
-            )),
-            agentId,
-          }
+        ? captureModelSetupResult(client, () =>
+            verifyModelSetup(client, agentId ?? undefined, signal),
+          )
         : initialState,
-    onComplete: (outcome) => {
-      if (
-        this.context.gateway.snapshot.client !== outcome.client ||
-        this.context.agentSelection.state.selectedId !== outcome.agentId
-      ) {
-        return;
-      }
-      this.verifyState =
-        "error" in outcome
-          ? { phase: "failed", status: "unknown", error: formatModelSetupError(outcome.error) }
-          : mapVerifyResult(outcome.value);
-    },
   });
 
   override disconnectedCallback() {
@@ -514,6 +501,7 @@ export class ModelSetupPage extends OpenClawLightDomElement {
     startMethod,
     preparedModelRef,
     modelActivation,
+    isCurrent,
   }: ModelSetupWizardCompletion): Promise<void> {
     const prepareOption =
       startMethod === "openclaw.setup.prepare.start" ? this.pendingPrepareOption : null;
@@ -528,7 +516,8 @@ export class ModelSetupPage extends OpenClawLightDomElement {
       return;
     }
     if (startMethod === "openclaw.setup.auth.start") {
-      if (!this.firstRun.ownsActivation()) {
+      if (isCurrent?.() === false) {
+        this.wizard.close();
         return;
       }
       if (!modelActivation) {
@@ -702,7 +691,7 @@ export class ModelSetupPage extends OpenClawLightDomElement {
           void this.detect();
         }
       },
-      onVerify: () => void this.verifyConnection(),
+      onVerify: () => void this.firstRun.verify(),
       onActivateCandidate: (candidate) => this.activateCandidate(candidate),
       onStartAuth: (option) => {
         this.pendingPrepareOption = null;

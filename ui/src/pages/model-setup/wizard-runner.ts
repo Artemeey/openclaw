@@ -18,6 +18,7 @@ export type ModelSetupWizardCompletion = {
   startMethod: ModelSetupWizardStartMethod;
   preparedModelRef?: string;
   modelActivation?: WizardNextResult["modelActivation"];
+  isCurrent?: () => boolean;
 };
 
 type WizardRunnerOptions = {
@@ -26,7 +27,7 @@ type WizardRunnerOptions = {
   onChange: (state: ModelSetupWizardState) => void;
   onStart?: (
     method: ModelSetupWizardStartMethod,
-  ) => ((result: WizardNextResult) => void) | undefined;
+  ) => ((result: WizardNextResult) => (() => boolean) | void) | undefined;
   requestFailedMessage: () => string;
   cancelledMessage: () => string;
   sessionExpiredMessage: () => string;
@@ -37,7 +38,7 @@ type WizardSession = {
   sessionId: string;
   abortController: AbortController;
   startMethod: ModelSetupWizardStartMethod;
-  onTerminalResult?: (result: WizardNextResult) => void;
+  onTerminalResult?: (result: WizardNextResult) => (() => boolean) | void;
 };
 
 export class ModelSetupWizardRunner {
@@ -202,7 +203,7 @@ export class ModelSetupWizardRunner {
     authChoice: string,
     result: WizardNextResult,
   ): ModelSetupWizardCompletion | null {
-    this.reportTerminalResult(session, result);
+    const isCurrent = this.reportTerminalResult(session, result);
     if (session !== this.session) {
       return null;
     }
@@ -220,6 +221,7 @@ export class ModelSetupWizardRunner {
     this.session = null;
     return {
       startMethod: session.startMethod,
+      ...(isCurrent ? { isCurrent } : {}),
       ...(next.preparedModelRef ? { preparedModelRef: next.preparedModelRef } : {}),
       ...(result.modelActivation ? { modelActivation: result.modelActivation } : {}),
     };
@@ -256,11 +258,14 @@ export class ModelSetupWizardRunner {
     }
   }
 
-  private reportTerminalResult(session: WizardSession, result: WizardNextResult): void {
+  private reportTerminalResult(
+    session: WizardSession,
+    result: WizardNextResult,
+  ): (() => boolean) | void {
     // Cancellation owns exact receipt cleanup after presentation retires.
     // Success and visible state still require this runner's live session.
     if (result.done && (session === this.session || result.status === "cancelled")) {
-      session.onTerminalResult?.(result);
+      return session.onTerminalResult?.(result);
     }
   }
 

@@ -5,6 +5,12 @@ import { i18n } from "../../i18n/index.ts";
 import { createStorageMock } from "../../test-helpers/storage.ts";
 import { waitForFast } from "../../test-helpers/wait-for.ts";
 import {
+  clearFirstRunActivationReceipt,
+  persistFirstRunActivationReceipt,
+  readFirstRunActivationReceipt,
+} from "./first-run-activation-receipt.ts";
+import { FirstRunSetup } from "./first-run-setup.ts";
+import {
   createFirstRunContext,
   detection,
   mountPage,
@@ -189,32 +195,133 @@ describe("ModelSetupPage first-run activation ownership", () => {
     },
   );
 
-  it.each(["auth", "Gateway", "agent", "route"])(
-    "fences a successful manual reply after its %s owner changes",
-    async (changed) => {
-      const { context, client, request } = createFirstRunContext();
-      let release: ((value: unknown) => void) | undefined;
+  it("retires an expired activation during synchronous receipt notification without reviving it", () => {
+    const { context } = createFirstRunContext();
+    const routeData = {
+      firstRun: true,
+      state: { phase: "ready" as const, result: detection },
+      connection: {
+        client: context.gateway.snapshot.client,
+        hello: context.gateway.snapshot.hello,
+        agentId: "main",
+      },
+    };
+    const setup = new FirstRunSetup({
+      context: () => context,
+      routeData: () => routeData,
+      pageState: () => routeData.state,
+      actionsDisabled: () => false,
+      canUseSetup: () => true,
+      canVerify: () => true,
+      verify: async () => undefined,
+      activate: async () => undefined,
+      setVerifyState: () => undefined,
+      setActivationState: () => undefined,
+      setRefreshWarning: () => undefined,
+    });
+    const notify = vi.fn();
+    const unsubscribe = setup.subscribe(notify);
+    try {
+      const activation = setup.beginActivation({ kind: "provider-auth" });
+      expect(activation).not.toBeNull();
+      vi.spyOn(Date, "now").mockReturnValue(activation!.deadlineMs + 1);
+      expect(() =>
+        setup.recordActivation(activation, { ok: true, modelRef: "synthetic/model" }),
+      ).not.toThrow();
+      expect(notify).toHaveBeenCalledOnce();
+      expect(setup.unresolved).toBe(false);
+      expect(setup.ownsActivation(activation)).toBe(false);
+      setup.finishActivation({ ok: true, modelRef: "synthetic/model" }, "provider-auth", null);
+      expect(context.navigate).not.toHaveBeenCalled();
+      expect(localStorage.getItem("openclaw.modelSetup.pendingActivation.v1")).toBeNull();
+    } finally {
+      unsubscribe();
+      setup.dispose();
+    }
+  });
+
+  const retirements = [
+    "auth",
+    "Gateway",
+    "agent",
+    "client",
+    "hello",
+    "route",
+    "expiry",
+    "removal",
+    "replacement",
+  ] as const;
+  it.each(
+    ["manual key", "provider sign-in"].flatMap((entry) =>
+      ["reply", "refresh"].flatMap((boundary) =>
+        retirements.map((changed) => ({ entry, boundary, changed })),
+      ),
+    ),
+  )(
+    "fences $entry success when $changed retires it during $boundary",
+    async ({ entry, boundary, changed }) => {
+      const reply = createDeferred<unknown>();
+      const refreshing = createDeferred();
+      const refresh = createDeferred();
+      const { context, client, request } = createFirstRunContext(undefined, async () => {
+        refreshing.resolve();
+        await refresh.promise;
+      });
+      const activatedMethod = entry === "manual key" ? "openclaw.setup.activate" : "wizard.next";
       request.mockImplementation(async (method) => {
-        if (method === "openclaw.setup.activate") {
-          return await new Promise((resolve) => {
-            release = resolve;
-          });
+        if (method === "openclaw.setup.auth.start") {
+          return { done: false, status: "running" };
+        }
+        if (method === activatedMethod) {
+          return await reply.promise;
+        }
+        if (method === "openclaw.setup.detect") {
+          return detection;
+        }
+        if (method === "wizard.cancel") {
+          return { status: "running" };
         }
         throw new Error(`Unexpected method ${method}`);
       });
       const { page } = await mountPage(context, {
         state: {
           phase: "ready",
-          result: { ...detection, manualProviders: [{ id: "provider", label: "Provider" }] },
+          result: {
+            ...detection,
+            manualProviders: [{ id: "provider", label: "Provider" }],
+            authOptions: [
+              { id: "provider-login", label: "Provider", kind: "oauth", featured: true },
+            ],
+          },
         },
         client,
         firstRun: true,
       });
-      const input = page.querySelector<HTMLInputElement>('input[type="password"]')!;
-      input.value = "test-only-key";
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      page.querySelector<HTMLButtonElement>(".model-setup__manual .btn.primary")!.click();
-      await waitForFast(() => expect(release).toBeTypeOf("function"));
+      if (entry === "manual key") {
+        const input = page.querySelector<HTMLInputElement>('input[type="password"]')!;
+        input.value = "test-only-key";
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        page.querySelector<HTMLButtonElement>(".model-setup__manual .btn.primary")!.click();
+      } else {
+        page
+          .querySelector<HTMLButtonElement>('[data-auth-choice="provider-login"] button')!
+          .click();
+      }
+      await waitForFast(() =>
+        expect(request.mock.calls.some(([method]) => method === activatedMethod)).toBe(true),
+      );
+      const success =
+        entry === "manual key"
+          ? { ok: true, modelRef: "provider/previous", latencyMs: 31 }
+          : {
+              done: true,
+              status: "done",
+              modelActivation: { modelRef: "provider/previous", latencyMs: 31 },
+            };
+      if (boundary === "refresh") {
+        reply.resolve(success);
+        await refreshing.promise;
+      }
       if (changed === "auth") {
         context.gateway.connection.token = "replacement-auth";
       }
@@ -224,15 +331,115 @@ describe("ModelSetupPage first-run activation ownership", () => {
       if (changed === "agent") {
         context.agentSelection.state.selectedId = "research";
       }
+      if (changed === "client") {
+        const replacementClient = createFirstRunContext();
+        replacementClient.request.mockResolvedValue(detection);
+        context.gateway.snapshot.client = replacementClient.client;
+      }
+      if (changed === "hello") {
+        context.gateway.snapshot.hello = { ...context.gateway.snapshot.hello! };
+      }
       if (changed === "route") {
         page.routeData = { ...page.routeData! };
       }
+      if (changed === "expiry") {
+        const receipt = readFirstRunActivationReceipt(context)!;
+        vi.spyOn(Date, "now").mockReturnValue(receipt.deadlineMs + 1);
+      }
+      if (changed === "removal") {
+        clearFirstRunActivationReceipt();
+      }
+      const replacement =
+        changed === "replacement"
+          ? persistFirstRunActivationReceipt(
+              {
+                ...context,
+                gateway: {
+                  ...context.gateway,
+                  connection: { ...context.gateway.connection, token: "replacement-auth" },
+                },
+              },
+              { kind: "provider-auth", modelRef: "provider/replacement" },
+            )
+          : null;
       await page.updateComplete;
-      release?.({ ok: true, modelRef: "provider/previous", latencyMs: 31 });
-      await waitForFast(() => expect(context.runtimeConfig.runExternalMutation).toHaveResolved());
+      reply.resolve(success);
+      refresh.resolve();
+      await waitForFast(() =>
+        expect(context.runtimeConfig.runExternalMutation).toHaveResolvedWith(
+          expect.objectContaining({ ok: true }),
+        ),
+      );
       await page.updateComplete;
       expect(page.textContent).not.toContain("Connection verified");
+      expect(page.textContent).not.toContain("Cannot read properties");
       expect(page.querySelector("openclaw-modal-dialog")).toBeNull();
+      expect(context.navigate).not.toHaveBeenCalled();
+      if (replacement) {
+        expect(localStorage.getItem("openclaw.modelSetup.pendingActivation.v1")).toBe(
+          JSON.stringify(replacement),
+        );
+      }
+    },
+  );
+
+  it.each(["active", "replacement"])(
+    "cleans up a definitive rejection without losing failure feedback or replacement ownership (%s)",
+    async (ownership) => {
+      const { context, client, request } = createFirstRunContext();
+      const rejected = createDeferred<unknown>();
+      request.mockReturnValue(rejected.promise);
+      const { page } = await mountPage(context, {
+        state: {
+          phase: "ready",
+          result: {
+            ...detection,
+            candidates: [
+              {
+                kind: "openai-api-key",
+                label: "Provider",
+                detail: "Available",
+                modelRef: "provider/model",
+                recommended: true,
+                credentials: true,
+              },
+            ],
+          },
+        },
+        client,
+        firstRun: true,
+      });
+      await waitForFast(() => expect(request).toHaveBeenCalledOnce());
+      const replacement =
+        ownership === "replacement"
+          ? persistFirstRunActivationReceipt(
+              {
+                ...context,
+                gateway: {
+                  ...context.gateway,
+                  connection: { ...context.gateway.connection, token: "replacement-auth" },
+                },
+              },
+              { kind: "provider-auth", modelRef: "provider/replacement" },
+            )
+          : null;
+      rejected.resolve({ ok: false, status: "auth", error: "Provider rejected this test key" });
+      await waitForFast(() =>
+        expect(context.runtimeConfig.runExternalMutation).toHaveResolvedWith(
+          expect.objectContaining({ ok: true }),
+        ),
+      );
+      await page.updateComplete;
+      if (ownership === "active") {
+        expect(page.textContent).toContain("Provider rejected this test key");
+      } else {
+        expect(page.textContent).not.toContain("Provider rejected this test key");
+      }
+      expect(page.textContent).not.toContain("Cannot read properties");
+      expect(page.textContent).not.toContain("Connection verified");
+      expect(localStorage.getItem("openclaw.modelSetup.pendingActivation.v1")).toBe(
+        replacement ? JSON.stringify(replacement) : null,
+      );
       expect(context.navigate).not.toHaveBeenCalled();
     },
   );

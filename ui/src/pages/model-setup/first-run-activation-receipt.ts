@@ -109,6 +109,7 @@ function clearReceipt(storage: Storage, expected?: FirstRunActivationReceipt | n
 
 export function readFirstRunActivationReceipt(
   context: ActivationContext,
+  expected?: FirstRunActivationReceipt,
 ): FirstRunActivationReceipt | null {
   const storage = getSafeLocalStorage();
   if (!storage || context.gateway.snapshot.phase !== "connected") {
@@ -116,7 +117,9 @@ export function readFirstRunActivationReceipt(
   }
   try {
     const raw = storage.getItem(FIRST_RUN_ACTIVATION_RECEIPT_KEY);
-    if (!raw) {
+    // An in-flight owner may validate only its own stored receipt. A replacement
+    // belongs to another context and must not be validated or removed here.
+    if (!raw || (expected && raw !== JSON.stringify(expected))) {
       return null;
     }
     const receipt: FirstRunActivationReceipt = JSON.parse(raw);

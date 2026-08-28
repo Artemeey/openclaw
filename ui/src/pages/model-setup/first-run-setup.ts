@@ -16,12 +16,14 @@ import {
   type FirstRunActivationReceipt,
   firstRunActivationDeadline,
 } from "./first-run-activation-receipt.ts";
-import type {
-  ModelSetupActivationTaskResult,
-  ModelSetupTaskResult,
+import {
+  formatModelSetupError,
+  type ModelSetupActivationTaskResult,
+  type ModelSetupTaskResult,
 } from "./model-setup-task-result.ts";
 import {
   activationTargetId,
+  mapVerifyResult,
   type ModelSetupActivationState,
   type ModelSetupPageState,
   type ModelSetupVerifyState,
@@ -49,7 +51,7 @@ type FirstRunActivation = {
   kind: string;
   deadlineMs: number;
   receipt: FirstRunActivationReceipt | null;
-  verified: boolean;
+  outcome: "pending" | "verified" | "rejected";
 };
 
 type FirstRunSetupHost = {
@@ -81,8 +83,12 @@ export class FirstRunSetup {
   subscribe(notify: () => void): () => void {
     return subscribeFirstRunActivationCleared((receipt) => {
       // A new page can restore this receipt before the old session confirms cancellation.
-      if (this.pending?.receipt && JSON.stringify(this.pending.receipt) === receipt) {
+      const activation = this.pending;
+      if (activation?.receipt && JSON.stringify(activation.receipt) === receipt) {
         this.pending = null;
+        if (activation.outcome === "verified") {
+          this.host.setActivationState({ phase: "idle" });
+        }
         this.host.setVerifyState({ phase: "idle" });
         notify();
       }
@@ -179,14 +185,16 @@ export class FirstRunSetup {
     if (this.pending?.receipt && receipt?.owner !== this.pending.receipt.owner) {
       this.pending = null;
     }
-    if (!this.pending && receipt) {
+    const restored = receipt ?? this.pending;
+    if (restored) {
+      // Reconnection creates a new owner without reviving old response handles.
       this.pending = {
         owner: this.owner(routeData),
-        modelRef: receipt.modelRef,
-        kind: receipt.kind,
-        deadlineMs: receipt.deadlineMs,
+        modelRef: restored.modelRef,
+        kind: restored.kind,
+        deadlineMs: restored.deadlineMs,
         receipt,
-        verified: false,
+        outcome: "pending",
       };
     }
     const configured = pageState.result.setupComplete && pageState.result.configuredModel;
@@ -223,7 +231,7 @@ export class FirstRunSetup {
       kind: intent.kind,
       modelRef: intent.modelRef ?? null,
       receipt,
-      verified: false,
+      outcome: "pending",
       deadlineMs: receipt?.deadlineMs ?? firstRunActivationDeadline(intent.kind),
     };
     this.started = true;
@@ -238,20 +246,24 @@ export class FirstRunSetup {
       return;
     }
     if (!result.ok) {
+      // Retiring the receipt must not discard an active, definitive failure.
+      if (this.ownsActivation(activation)) {
+        activation.outcome = "rejected";
+      }
       clearFirstRunActivationReceipt(activation.receipt);
       if (this.pending === activation) {
         this.pending = null;
       }
       return;
     }
-    if (!result.modelRef || this.pending !== activation || !this.owns(activation.owner)) {
+    if (!result.modelRef || this.pending !== activation || !this.ownsActivation(activation)) {
       return;
     }
     // Capture the verified target before config refresh can replace the hello
     // and retire the Lit task that otherwise owns this response.
-    this.pending.modelRef = result.modelRef;
-    this.pending.verified = true;
-    this.pending.receipt = persistFirstRunActivationReceipt(this.host.context(), this.pending);
+    activation.modelRef = result.modelRef;
+    activation.outcome = "verified";
+    activation.receipt = persistFirstRunActivationReceipt(this.host.context(), activation);
   }
 
   finishActivation(
@@ -259,7 +271,7 @@ export class FirstRunSetup {
     targetId: string,
     refreshError: string | null,
   ): void {
-    if (!this.pending || !this.owns(this.pending.owner) || !result.ok || !result.modelRef) {
+    if (!this.pending || !this.ownsActivation() || !result.ok || !result.modelRef) {
       return;
     }
     if (result.gatewayRestartRequired) {
@@ -289,7 +301,7 @@ export class FirstRunSetup {
     // or late verification into permission to adopt whichever model appears next.
     const modelRef = page.result.configuredModel;
     const owner = this.owner(pending.owner.routeData);
-    const outcome = await this.host.verify();
+    const outcome = await this.verify();
     if (!this.owns(owner) || this.pending !== pending || !outcome || "error" in outcome) {
       return;
     }
@@ -320,13 +332,52 @@ export class FirstRunSetup {
   }
 
   ownsActivation(activation: FirstRunActivation | null = this.pending): boolean {
-    return activation ? this.owns(activation.owner) : !this.host.routeData()?.firstRun;
+    if (!activation) {
+      return !this.host.routeData()?.firstRun;
+    }
+    if (!this.owns(activation.owner)) {
+      return false;
+    }
+    if (activation.outcome === "rejected") {
+      return this.pending === null;
+    }
+    // Validation may synchronously notify subscribers and retire pending. Check
+    // the captured operation, never reread a nullable or replacement receipt.
+    return (
+      this.pending === activation &&
+      (!activation.receipt ||
+        readFirstRunActivationReceipt(this.host.context(), activation.receipt) !== null) &&
+      Date.now() < activation.deadlineMs
+    );
+  }
+
+  async verify(): Promise<SetupOutcome<SystemAgentSetupVerifyResult>> {
+    const routeData = this.host.routeData();
+    if (!routeData) {
+      return undefined;
+    }
+    const owner = this.owner(routeData);
+    const pending = this.pending;
+    const outcome = await this.host.verify();
+    if (!this.owns(owner) || !outcome) {
+      return undefined;
+    }
+    if (this.pending !== pending || (pending && !this.ownsActivation(pending))) {
+      this.host.setVerifyState({ phase: "idle" });
+      return undefined;
+    }
+    this.host.setVerifyState(
+      "error" in outcome
+        ? { phase: "failed", status: "unknown", error: formatModelSetupError(outcome.error) }
+        : mapVerifyResult(outcome.value),
+    );
+    return outcome;
   }
 
   continueSetup(): void {
     if (!this.pending) {
       this.host.context().navigate("chat");
-    } else if (this.pending.verified && this.owns(this.pending.owner)) {
+    } else if (this.pending.outcome === "verified" && this.ownsActivation()) {
       this.completeNavigation();
     }
   }
@@ -359,13 +410,10 @@ export class FirstRunSetup {
       owner.generation === this.generation &&
       owner.connectionRevision === context.gateway.connectionRevision &&
       owner.routeData === this.host.routeData() &&
-      owner.routeData.firstRun &&
       snapshot.phase === "connected" &&
       snapshot.client === owner.connection.client &&
       snapshot.hello === owner.connection.hello &&
-      context.agentSelection.state.selectedId === owner.connection.agentId &&
-      (!this.pending?.receipt ||
-        readFirstRunActivationReceipt(context)?.owner === this.pending.receipt.owner)
+      context.agentSelection.state.selectedId === owner.connection.agentId
     );
   }
 
@@ -375,7 +423,7 @@ export class FirstRunSetup {
         this.showUnresolved();
         return;
       }
-      const outcome = await this.host.verify();
+      const outcome = await this.verify();
       if (!this.owns(owner) || !outcome || "error" in outcome) {
         return;
       }
@@ -411,7 +459,7 @@ export class FirstRunSetup {
         return;
       }
       // Only a definitive Gateway rejection permits trying another candidate.
-      if (outcome.value.result.ok) {
+      if (!outcome.value.isCurrent() || outcome.value.result.ok) {
         return;
       }
     }
