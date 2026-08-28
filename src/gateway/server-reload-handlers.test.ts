@@ -86,6 +86,10 @@ import { applyHookMappings } from "./hooks-mapping.js";
 import { commitHooksConfigReload } from "./hooks.js";
 import { createLazyGatewayCronState } from "./server-cron-lazy.js";
 import type { GatewayCronState } from "./server-cron.js";
+import {
+  GatewayConfigReloadSupersededError,
+  GatewayHotReloadCancelledError,
+} from "./server-reload-contracts.js";
 import type { GatewayPluginReloadResult } from "./server-reload-handlers.js";
 import {
   abortPendingChannelReloads,
@@ -6235,8 +6239,8 @@ describe("deferred channel reload abort generation", () => {
 
     try {
       const reloadPromise = applyHotReload(abortChannelReloadPlan, {});
-      const reloadRejected = expect(reloadPromise).rejects.toThrow(
-        "config hot reload cancelled by config supersession or in-process restart",
+      const reloadRejected = expect(reloadPromise).rejects.toBeInstanceOf(
+        GatewayHotReloadCancelledError,
       );
       await vi.advanceTimersByTimeAsync(10); // enter wait loop (before 500ms sleep)
 
@@ -6245,9 +6249,7 @@ describe("deferred channel reload abort generation", () => {
       await reloadRejected;
 
       expect(channels.start).not.toHaveBeenCalled();
-      expect(logChannels.info).toHaveBeenCalledWith(
-        "channel restart cancelled by config supersession or restart",
-      );
+      expect(channels.stop).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
       hoisted.activeTaskBlockers.length = 0;
@@ -6335,45 +6337,67 @@ describe("deferred channel reload abort generation", () => {
     );
   });
 
-  it("cancels active-work deferral when its config transaction is superseded", async () => {
-    const logChannels = { info: vi.fn(), error: vi.fn() };
-    const channels = {
-      start: vi.fn(async () => {}),
-      stop: vi.fn(async () => {}),
-    };
-    const { applyHotReload } = createTestHandlers(logChannels, channels);
-    hoisted.activeTaskBlockers.push(
-      makeActiveTaskBlocker({ taskId: "task-blocking-superseded-reload" }),
-    );
-    let transactionCurrent = true;
-    vi.useFakeTimers();
-
-    try {
-      const reloadPromise = applyHotReload(
-        abortChannelReloadPlan,
-        {},
-        {
-          sourceConfig: {},
-          isCurrent: () => transactionCurrent,
-          publish: async (commit) => await commit(),
-        },
+  it.each([false, true])(
+    "cancels superseded active-work deferral (runtime committed: %s)",
+    async (committed) => {
+      const logChannels = { info: vi.fn(), error: vi.fn() };
+      const channels = {
+        start: vi.fn(async () => {}),
+        stop: vi.fn(async () => {}),
+      };
+      const reloadPlugins: ReloadHandlerParams["reloadPlugins"] = async (params) => {
+        await params.commitRuntime();
+        return makePluginReloadResult({ restartChannels: new Set(["whatsapp"]) });
+      };
+      const { applyHotReload } = createTestHandlers(logChannels, channels, { reloadPlugins });
+      hoisted.activeTaskBlockers.push(
+        makeActiveTaskBlocker({ taskId: "task-blocking-superseded-reload" }),
       );
-      const reloadRejected = expect(reloadPromise).rejects.toThrow(
-        "config hot reload cancelled by config supersession or in-process restart",
-      );
-      await vi.advanceTimersByTimeAsync(10);
+      let transactionCurrent = true;
+      vi.useFakeTimers();
 
-      transactionCurrent = false;
-      await vi.advanceTimersByTimeAsync(500);
-      await reloadRejected;
+      try {
+        const reloadPromise = applyHotReload(
+          committed ? createPluginReloadPlan() : abortChannelReloadPlan,
+          {},
+          {
+            sourceConfig: {},
+            isCurrent: () => transactionCurrent,
+            publish: async (commit) => await commit(),
+          },
+        );
+        const cancellation = committed
+          ? GatewayHotReloadCancelledError
+          : GatewayConfigReloadSupersededError;
+        const reloadError = reloadPromise.then(
+          () => null,
+          (error: unknown) => error,
+        );
+        await vi.advanceTimersByTimeAsync(10);
 
-      expect(channels.stop).not.toHaveBeenCalled();
-      expect(channels.start).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-      hoisted.activeTaskBlockers.length = 0;
-    }
-  });
+        transactionCurrent = false;
+        await vi.advanceTimersByTimeAsync(500);
+        const error = await reloadError;
+        expect(error).toBeInstanceOf(cancellation);
+
+        expect(channels.stop).not.toHaveBeenCalled();
+        expect(channels.start).not.toHaveBeenCalled();
+        if (committed) {
+          const gate = hoisted.markPreparedModelRuntimeSnapshotsStale.mock.results[0]?.value;
+          expect(gate).toBeDefined();
+          expect(hoisted.rejectPendingPreparedModelRuntimeReplacement).toHaveBeenCalledWith(
+            gate,
+            error,
+          );
+        } else {
+          expect(hoisted.rejectPendingPreparedModelRuntimeReplacement).not.toHaveBeenCalled();
+        }
+      } finally {
+        vi.useRealTimers();
+        hoisted.activeTaskBlockers.length = 0;
+      }
+    },
+  );
 
   it("does not mark a managed reload applied when restart aborts its deferral", async () => {
     const initialConfig = {

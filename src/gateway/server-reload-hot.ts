@@ -28,7 +28,7 @@ import {
   startGatewayChannelFromActiveRegistry,
 } from "./server-reload-channel-restart.js";
 import {
-  GatewayHotReloadCancelledError,
+  createReloadCancellationError,
   GatewayHotReloadRecoveryError,
   isCurrentGatewayReloadGeneration,
   isGatewayReloadGenerationAborted,
@@ -593,8 +593,11 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
       );
     }
     if (pluginReloadAborted) {
-      params.logChannels.info("channel restart cancelled by config supersession or restart");
-      const error = new GatewayHotReloadCancelledError();
+      // Only an uncommitted reload can transfer its receipt to the watcher. After
+      // commit, same-content replay may be a no-op and cannot finish the interrupted tail.
+      const error = createReloadCancellationError(
+        !runtimeCommitted && publication?.isCurrent() === false,
+      );
       if (runtimeCommitted) {
         rejectPendingPreparedModelRuntimeReplacement(preparedModelRuntimeReplacementGateId, error);
       }
