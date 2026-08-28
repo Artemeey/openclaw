@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sanitizeEnvVars } from "../agents/sandbox/sanitize-env-vars.js";
+import * as officialCatalog from "../plugins/official-external-plugin-catalog.js";
 import { resolveLocalProviderAuthEvidence } from "./provider-auth-evidence.js";
 import {
   getProviderEnvVars,
@@ -157,6 +158,65 @@ describe("provider env vars dynamic manifest metadata", () => {
     pluginRegistryMocks.getCurrentPluginMetadataSnapshot.mockReset();
     pluginRegistryMocks.getCurrentPluginMetadataSnapshot.mockReturnValue(undefined);
     pluginRegistryMocks.loadPluginMetadataSnapshot.mockClear();
+  });
+
+  it("scrubs uninstalled official provider credentials without adding auth candidates", () => {
+    const names = ["ZAI_API_KEY", "Z_AI_API_KEY", "GROQ_API_KEY", "FIRECRAWL_API_KEY"];
+    expect(listKnownProviderAuthEnvVarNames()).toEqual(expect.arrayContaining(names));
+    expect(listKnownSecretEnvVarNames()).toEqual(expect.arrayContaining(names));
+    expect(listKnownProviderAuthEnvVarNames()).not.toContain("OPENCLAW_API_KEY");
+    const lookup = resolveProviderAuthLookupMaps();
+    for (const provider of ["zai", "groq", "firecrawl"]) {
+      expect(resolveProviderAuthEnvVarCandidates()[provider]).toBeUndefined();
+      expect(getProviderEnvVars(provider, { config: {} })).toEqual([]);
+      expect(lookup.envCandidateMap[provider]).toBeUndefined();
+      expect(lookup.authEvidenceMap[provider]).toBeUndefined();
+      expect(lookup.setupProviderFallbackRefs).not.toContain(provider);
+    }
+  });
+
+  it("does not classify a key-free web endpoint as a provider secret", () => {
+    expect(listKnownProviderAuthEnvVarNames()).not.toContain("SEARXNG_BASE_URL");
+    expect(listKnownSecretEnvVarNames()).not.toContain("SEARXNG_BASE_URL");
+    expect(sanitizeEnvVars({ SEARXNG_BASE_URL: "http://localhost:8888" })).toMatchObject({
+      allowed: { SEARXNG_BASE_URL: "http://localhost:8888" },
+      blocked: [],
+    });
+  });
+
+  it("preserves non-suffix auth names declared by an uninstalled official model provider", () => {
+    const entries = officialCatalog.listOfficialExternalPluginCatalogEntries();
+    const catalog = vi.spyOn(officialCatalog, "listOfficialExternalPluginCatalogEntries");
+    catalog.mockReturnValue([
+      ...entries,
+      {
+        openclaw: {
+          plugin: { id: "future-provider" },
+          providers: [{ id: "future-provider", envVars: ["FUTURE_ACCESS_HANDLE"] }],
+        },
+      },
+    ]);
+    try {
+      expect(listKnownProviderAuthEnvVarNames()).toContain("FUTURE_ACCESS_HANDLE");
+      expect(listKnownSecretEnvVarNames()).toContain("FUTURE_ACCESS_HANDLE");
+      expect(sanitizeEnvVars({ FUTURE_ACCESS_HANDLE: "synthetic-auth" })).toMatchObject({
+        allowed: {},
+        blocked: ["FUTURE_ACCESS_HANDLE"],
+      });
+      expect(resolveProviderAuthEnvVarCandidates()["future-provider"]).toBeUndefined();
+      expect(getProviderEnvVars("future-provider", { config: {} })).toEqual([]);
+    } finally {
+      catalog.mockRestore();
+    }
+  });
+
+  it("keeps auth aliases that the setup environment override does not expose", () => {
+    useInstalledSetupPlugin("minimax", "global", {
+      id: "minimax",
+      envVars: ["MINIMAX_API_KEY", "MINIMAX_CODE_PLAN_KEY"],
+    });
+    expect(listKnownProviderAuthEnvVarNames()).toContain("MINIMAX_CODE_PLAN_KEY");
+    expect(getProviderEnvVars("minimax", { config: {} })).toEqual(["MINIMAX_API_KEY"]);
   });
 
   it("includes later-installed plugin env vars without a bundled generated map", () => {

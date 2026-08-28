@@ -1,7 +1,8 @@
-// Public provider auth environment variable helpers for plugin runtimes.
+// Public provider environment variable helpers for plugin runtimes.
 
 export {
   getProviderEnvVars,
+  listKnownProviderActivationEnvVarNames,
   listKnownProviderAuthEnvVarNames,
   omitEnvKeysCaseInsensitive,
   resolveProviderAuthEnvVarCandidates,

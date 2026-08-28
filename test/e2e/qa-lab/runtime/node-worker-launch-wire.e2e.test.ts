@@ -147,6 +147,7 @@ describe("node worker launch wire", () => {
           key: SESSION_KEY,
           agentId: "qa",
           worktree: true,
+          permissionMode: "workspace",
           worktreeName: "node-worker-launch-wire",
           worktreeBaseRef: "main",
           cwd: published.source,

@@ -36,6 +36,7 @@ import {
   waitForQaGatewayRestartBoundary,
 } from "./gateway-child-readiness.js";
 import { startQaGatewayChild } from "./gateway-child.js";
+import { resolveQaForwardedLiveEnv } from "./providers/env.js";
 import { readQaLiveProviderConfigOverrides } from "./providers/live-config.js";
 import {
   assertQaLiveCodexAuthAvailable,
@@ -652,19 +653,34 @@ describe("buildQaRuntimeEnv", () => {
     expect(env.OPENCLAW_SKIP_PROVIDERS).toBe("patched-providers");
   });
 
-  it("maps live frontier key aliases into provider env vars", () => {
+  it("maps live frontier aliases without expanding remote credential forwarding", async () => {
+    const hostHome = await tempDirs.makeTempDir("qa-live-env-home-");
+    const baseEnv = {
+      OPENCLAW_LIVE_OPENAI_KEY: "openai-live",
+      OPENCLAW_LIVE_ANTHROPIC_KEY: "anthropic-live",
+      OPENCLAW_LIVE_GEMINI_KEY: "gemini-live",
+      ZAI_API_KEY: "zai-live",
+      Z_AI_API_KEY: "zai-alias-live",
+      GROQ_API_KEY: "groq-live",
+      SEARXNG_BASE_URL: "http://localhost:8888",
+    };
     const env = buildQaRuntimeEnv({
-      ...createParams({
-        OPENCLAW_LIVE_OPENAI_KEY: "openai-live",
-        OPENCLAW_LIVE_ANTHROPIC_KEY: "anthropic-live",
-        OPENCLAW_LIVE_GEMINI_KEY: "gemini-live",
-      }),
+      ...createParams(baseEnv),
       providerMode: "live-frontier",
     });
 
+    expect(env).toMatchObject(baseEnv);
     expect(env.OPENAI_API_KEY).toBe("openai-live");
     expect(env.ANTHROPIC_API_KEY).toBe("anthropic-live");
     expect(env.GEMINI_API_KEY).toBe("gemini-live");
+    expect(resolveQaForwardedLiveEnv({ ...baseEnv, HOME: hostHome })).toEqual({
+      OPENCLAW_LIVE_OPENAI_KEY: "openai-live",
+      OPENCLAW_LIVE_ANTHROPIC_KEY: "anthropic-live",
+      OPENCLAW_LIVE_GEMINI_KEY: "gemini-live",
+      OPENAI_API_KEY: "openai-live",
+      ANTHROPIC_API_KEY: "anthropic-live",
+      GEMINI_API_KEY: "gemini-live",
+    });
   });
 
   it("keeps explicit provider env vars over live aliases", () => {
@@ -970,6 +986,14 @@ describe("buildQaRuntimeEnv", () => {
           GEMINI_API_KEY: "gemini-live",
           GEMINI_API_KEYS: "gemini-a gemini-b",
           GOOGLE_API_KEY: "google-live",
+          ZAI_API_KEY: "zai-live",
+          Z_AI_API_KEY: "zai-alias-live",
+          GROQ_API_KEY: "groq-live",
+          gRoQ_aPi_KeY: "groq-mixed-case-live",
+          SEARXNG_BASE_URL: "http://localhost:8888",
+          sEaRxNg_BaSe_Url: "http://localhost:8889",
+          PATH: "/synthetic/bin",
+          OPENCLAW_API_KEY: "bridge-key",
           OPENAI_API_KEY: "openai-live",
           OPENAI_API_KEYS: "openai-a,openai-b",
           CODEX_HOME: "/host/.codex",
@@ -991,6 +1015,15 @@ describe("buildQaRuntimeEnv", () => {
       expect(env.GEMINI_API_KEY).toBeUndefined();
       expect(env.GEMINI_API_KEYS).toBeUndefined();
       expect(env.GOOGLE_API_KEY).toBeUndefined();
+      expect(env.ZAI_API_KEY).toBeUndefined();
+      expect(env.Z_AI_API_KEY).toBeUndefined();
+      expect(env.GROQ_API_KEY).toBeUndefined();
+      expect(env.gRoQ_aPi_KeY).toBeUndefined();
+      expect(env.SEARXNG_BASE_URL).toBeUndefined();
+      expect(env.sEaRxNg_BaSe_Url).toBeUndefined();
+      expect(env.PATH).toBe("/synthetic/bin");
+      expect(env.OPENCLAW_API_KEY).toBe("bridge-key");
+      expect(env.OPENCLAW_GATEWAY_TOKEN).toBe("qa-token");
       expect(env.OPENCLAW_LIVE_OPENAI_KEY).toBeUndefined();
       expect(env.OPENCLAW_LIVE_ANTHROPIC_KEY).toBeUndefined();
       expect(env.OPENCLAW_LIVE_ANTHROPIC_KEYS).toBeUndefined();

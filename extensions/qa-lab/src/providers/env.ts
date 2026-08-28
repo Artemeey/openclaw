@@ -2,6 +2,10 @@
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  listKnownProviderActivationEnvVarNames,
+  omitEnvKeysCaseInsensitive,
+} from "openclaw/plugin-sdk/provider-env-vars";
 import { uniqueStrings } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { QaProviderMode } from "./index.js";
 import { getQaProvider } from "./index.js";
@@ -132,15 +136,16 @@ function renderPreservedCliEnv(values: string[]) {
 export function normalizeQaProviderModeEnv(env: NodeJS.ProcessEnv, providerMode?: QaProviderMode) {
   const provider = providerMode ? getQaProvider(providerMode) : null;
   if (provider?.scrubsLiveProviderEnv) {
-    for (const key of QA_MOCK_BLOCKED_ENV_VARS) {
-      delete env[key];
-    }
-    for (const key of Object.keys(env)) {
+    const scrubbedEnv = omitEnvKeysCaseInsensitive(env, [
+      ...QA_MOCK_BLOCKED_ENV_VARS,
+      ...listKnownProviderActivationEnvVarNames({ env }),
+    ]);
+    for (const key of Object.keys(scrubbedEnv)) {
       if (QA_MOCK_BLOCKED_ENV_KEY_PATTERNS.some((pattern) => pattern.test(key))) {
-        delete env[key];
+        delete scrubbedEnv[key];
       }
     }
-    return env;
+    return scrubbedEnv;
   }
 
   if (provider?.appliesLiveEnvAliases) {

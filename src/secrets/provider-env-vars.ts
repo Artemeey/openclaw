@@ -8,6 +8,10 @@ import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-meta
 import { isInstalledPluginEnabled } from "../plugins/installed-plugin-index.js";
 import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
 import {
+  getOfficialExternalPluginCatalogManifest,
+  listOfficialExternalPluginCatalogEntries,
+} from "../plugins/official-external-plugin-catalog.js";
+import {
   isWorkspacePluginAllowedByConfig,
   normalizePluginConfigId,
 } from "../plugins/plugin-config-trust.js";
@@ -18,6 +22,7 @@ import {
 import { listSetupProviderIds } from "../plugins/setup-descriptors.js";
 import { hasKind } from "../plugins/slots.js";
 import { appendUniqueEnvVarCandidates } from "../shared/env-var-candidates.js";
+import { isSensitiveEnvName } from "./secret-env-name.js";
 
 const CORE_PROVIDER_AUTH_ENV_VAR_CANDIDATES = {
   anthropic: ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
@@ -392,23 +397,50 @@ export function getProviderEnvVars(
   return Array.isArray(envVars) ? [...envVars] : [];
 }
 
+function listKnownProviderEnvVarNames(
+  params: ProviderEnvVarLookupParams | undefined,
+  purpose: "secret" | "auth" | "activation",
+): string[] {
+  return uniqueStrings([
+    ...(purpose === "secret"
+      ? []
+      : Object.values(resolveProviderAuthEnvVarCandidates(params)).flat()),
+    ...Object.values(resolveProviderEnvVars(params)).flat(),
+    ...resolveManifestProviderUsageAuthEnvVarNames(params),
+    ...listOfficialExternalPluginCatalogEntries().flatMap((entry) => {
+      const manifest = getOfficialExternalPluginCatalogManifest(entry);
+      const modelEnvVars = (manifest?.providers ?? []).flatMap(
+        (provider) => provider.envVars ?? [],
+      );
+      // Web setup inputs can be plain endpoints; only activation isolation removes those.
+      return modelEnvVars.concat(
+        (manifest?.webSearchProviders ?? []).flatMap((provider) =>
+          (provider.envVars ?? []).filter(
+            (name) => purpose === "activation" || isSensitiveEnvName(name),
+          ),
+        ),
+      );
+    }),
+  ]);
+}
+
 // OPENCLAW_API_KEY authenticates the local OpenClaw bridge itself and must
 // remain available to child bridge/runtime processes.
 /** Lists known provider auth env vars without bridge-only env vars. */
 export function listKnownProviderAuthEnvVarNames(params?: ProviderEnvVarLookupParams): string[] {
-  return uniqueStrings([
-    ...Object.values(resolveProviderAuthEnvVarCandidates(params)).flat(),
-    ...Object.values(resolveProviderEnvVars(params)).flat(),
-    ...resolveManifestProviderUsageAuthEnvVarNames(params),
-  ]);
+  return listKnownProviderEnvVarNames(params, "auth");
 }
 
 /** Lists env vars that may contain provider secrets for broad scrubbing. */
 export function listKnownSecretEnvVarNames(params?: ProviderEnvVarLookupParams): string[] {
-  return uniqueStrings([
-    ...Object.values(resolveProviderEnvVars(params)).flat(),
-    ...resolveManifestProviderUsageAuthEnvVarNames(params),
-  ]);
+  return listKnownProviderEnvVarNames(params, "secret");
+}
+
+/** Lists provider credentials and activation inputs, including non-secret web endpoints. */
+export function listKnownProviderActivationEnvVarNames(
+  params?: ProviderEnvVarLookupParams,
+): string[] {
+  return listKnownProviderEnvVarNames(params, "activation");
 }
 
 /** Returns a copy of an env object with denied keys removed case-insensitively. */
