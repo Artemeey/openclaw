@@ -108,8 +108,8 @@ describe("Anthropic malformed SSE frames", () => {
   });
 
   it("keeps a response alive while Anthropic sends protocol pings", async () => {
-    const idleTimeoutMs = 300;
-    const finalResponseDelayMs = 450;
+    const idleTimeoutMs = 1_000;
+    const finalResponseDelayMs = 1_200;
     let pingCount = 0;
     const server = createServer((request, response) => {
       response.writeHead(200, {
