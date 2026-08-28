@@ -112,6 +112,58 @@ describe.sequential("TUI PTY harness", () => {
   });
 
   it(
+    "orders a delayed peer prompt before every retained final reply",
+    async () => {
+      const peerFixture = await startTuiFixture();
+      const markers = [
+        "PTY_PEER_DELAYED_PROMPT",
+        "PTY_PEER_NORMAL_REPLY",
+        "PTY_PEER_MIRROR_REPLY",
+      ] as const;
+      try {
+        await peerFixture.run.waitForOutput("local ready | idle", STARTUP_TIMEOUT_MS);
+        await peerFixture.run.write("/session agent:main:delayed-peer-finals\r", { delay: false });
+        await waitForSynchronizedFrameRows(
+          peerFixture.run,
+          (rows) =>
+            rows.some((row) => row.includes("session agent:main:delayed-peer-finals")) &&
+            rows.some((row) => row.includes("local ready | idle")),
+          STARTUP_TIMEOUT_MS,
+        );
+        await peerFixture.run.write("/gateway-status\r", { delay: false });
+        await peerFixture.waitForLogEntry((entry) => entry.method === "delayedPeerComplete");
+        const rows = await waitForSynchronizedFrameRows(
+          peerFixture.run,
+          (frame) =>
+            markers.every((marker) => frame.some((row) => row.includes(marker))) &&
+            frame.some((row) => row.includes("local ready | idle")),
+          TEST_TIMEOUT_MS,
+        );
+        const entries = await readFixtureLog(peerFixture.logPath);
+        const events = entries.filter((entry) => entry.method === "delayedPeerEvent");
+        const frame = rows.join("\n");
+        console.log(
+          `[behavior-evidence] tui-delayed-peer-finals ${JSON.stringify({
+            rows,
+            events,
+            terminalOutput: peerFixture.run.output(),
+          })}`,
+        );
+        expect(events).toHaveLength(5);
+        expect(entries.some((entry) => entry.method === "sendChat")).toBe(false);
+        for (const marker of markers) {
+          expect(frame.split(marker)).toHaveLength(2);
+        }
+        expect(frame.indexOf(markers[0])).toBeLessThan(frame.indexOf(markers[1]));
+        expect(frame.indexOf(markers[1])).toBeLessThan(frame.indexOf(markers[2]));
+      } finally {
+        await peerFixture.cleanup();
+      }
+    },
+    STARTUP_TEST_TIMEOUT_MS,
+  );
+
+  it(
     "renders a compact model and active thinking level in the footer",
     async () => {
       await compactFooterFixture.run.waitForOutput("gpt-5.6-sol high", STARTUP_TIMEOUT_MS);

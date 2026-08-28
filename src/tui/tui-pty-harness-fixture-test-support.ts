@@ -447,6 +447,10 @@ export async function writeTuiPtyFixtureScript(dir: string) {
         async loadHistory(opts: Parameters<TuiBackend["loadHistory"]>[0]) {
           const sessionKey = opts?.sessionKey ?? "main";
           record("loadHistory", { sessionKey });
+          if (sessionKey === "agent:main:delayed-peer-finals") {
+            delayedPeerSessionKey = sessionKey;
+            return { messages: [], sessionInfo: sessionEntry(sessionKey) };
+          }
           const gapHistory = loadGapHistory(sessionKey);
           if (gapHistory) { return gapHistory; }
           ${TUI_PTY_RECONNECT_FIXTURE.loadHistory}
@@ -579,6 +583,11 @@ export async function writeTuiPtyFixtureScript(dir: string) {
 
         async getGatewayStatus() {
           record("getGatewayStatus");
+          if (delayedPeerSessionKey) {
+            const sessionKey = delayedPeerSessionKey;
+            delayedPeerSessionKey = undefined;
+            emitDelayedPeerReplies(this, sessionKey);
+          }
           this.reconnectSessionSubscription();
           this.emitDisconnect();
           return gatewayStatus;
