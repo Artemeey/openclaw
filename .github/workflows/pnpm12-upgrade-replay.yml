@@ -1,0 +1,46 @@
+name: pnpm 12 frozen-candidate replay
+
+on:
+  push:
+    branches:
+      - ci/pnpm12-replay-6945f8
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  pull-requests: read
+
+jobs:
+  replay:
+    if: github.repository == 'openclaw/openclaw' && !github.event.deleted
+    uses: openclaw/openclaw/.github/workflows/package-acceptance.yml@b584cd578f27c62702ccf85260bcb36228a0cfbf
+    with:
+      workflow_ref: b584cd578f27c62702ccf85260bcb36228a0cfbf
+      source: artifact
+      artifact_run_id: "33141189863"
+      artifact_run_attempt: "1"
+      artifact_id: "9674172823"
+      artifact_name: package-under-test-33141189863-1
+      artifact_digest: 63dba7a58aa4d443ac7634de177b3178887ca71040b251547ed1712e67bed2f4
+      package_file_name: openclaw-current.tgz
+      package_source_sha: 570ee21030ad2523baeac1d99e9e59829e1f1c05
+      package_version: "2026.8.1"
+      package_sha256: cebada2e3a240cd4b7fa80ccf01783dcb4376fea3a1b5da55cf202e38a08a5f4
+      prepublish_plugin_registry_json: >-
+        {
+          "prepublishPluginRegistryArtifactName": "docker-e2e-prepublish-plugin-registry-33141189863-1",
+          "prepublishPluginRegistryArtifactId": "9674278593",
+          "prepublishPluginRegistryArtifactDigest": "aecb3d3300b6648956d1926c71a9dd64c8f429afdefa3c785952992f59e2eabb",
+          "prepublishPluginRegistryArtifactRunId": "33141189863",
+          "prepublishPluginRegistryArtifactRunAttempt": "1",
+          "prepublishPluginRegistryManifestSha256": "c2838aba9b77664c1d93c26d95ce2ca247e5cbbf97b6a19ac900e46dc1858886"
+        }
+      shared_image_policy: no-push-artifact
+      shared_image_artifact_namespace: pnpm12-replay
+      suite_profile: custom
+      docker_lanes: update-restart-auth
+      published_upgrade_survivor_baseline: openclaw@2026.7.1-2
+      published_upgrade_survivor_scenarios: base
+      telegram_mode: none
+      advisory: false
