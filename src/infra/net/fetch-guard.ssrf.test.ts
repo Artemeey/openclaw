@@ -3,6 +3,7 @@ import { toErrorObject as toLintErrorObject } from "@openclaw/normalization-core
 // trusted proxy modes, and safe header retention.
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferredCore } from "../../shared/deferred.js";
 import { readResponseWithLimit } from "../http-body.js";
 import {
   fetchConfiguredLocalOriginWithSsrFGuard,
@@ -2155,43 +2156,66 @@ describe("fetchWithSsrFGuard hardening", () => {
   });
 
   it("rejects timed-out fetches even when dispatcher close stalls", async () => {
-    agentCtor.mockImplementationOnce(function MockAgent(this: { close: () => Promise<void> }) {
-      this.close = () => new Promise(() => {});
-    });
+    const close = vi.fn(() => new Promise<void>(() => {}));
+    const destroy = vi.fn();
+    agentCtor.mockImplementationOnce(
+      function MockAgent(this: { close: typeof close; destroy: typeof destroy }) {
+        this.close = close;
+        this.destroy = destroy;
+      },
+    );
     (globalThis as Record<string, unknown>)[TEST_UNDICI_RUNTIME_DEPS_KEY] = {
       Agent: agentCtor,
       EnvHttpProxyAgent: envHttpProxyAgentCtor,
       ProxyAgent: proxyAgentCtor,
       fetch: vi.fn(async () => okResponse()),
     };
+    const started = createDeferredCore<AbortSignal>();
     const fetchImpl = vi.fn(
       (_input: RequestInfo | URL, init?: RequestInit) =>
         new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener("abort", () => {
-            reject(
-              toLintErrorObject(init.signal?.reason ?? new Error("aborted"), "Non-Error rejection"),
-            );
+          const signal = init?.signal;
+          if (!signal) {
+            throw new Error("Expected a request deadline signal");
+          }
+          signal.addEventListener("abort", () => {
+            reject(toLintErrorObject(signal.reason, "Non-Error rejection"));
           });
+          started.resolve(signal);
         }),
     );
+    vi.useFakeTimers();
+    try {
+      let outcome: string | undefined;
+      const completed = fetchWithSsrFGuard({
+        url: "https://public.example/resource",
+        fetchImpl,
+        lookupFn: createPublicLookup(),
+        timeoutMs: 1,
+      }).then(
+        () => {
+          outcome = "resolved";
+        },
+        (error: unknown) => {
+          outcome = error instanceof Error ? error.name : "rejected";
+        },
+      );
+      const signal = await started.promise;
 
-    const fetchPromise = fetchWithSsrFGuard({
-      url: "https://public.example/resource",
-      fetchImpl,
-      lookupFn: createPublicLookup(),
-      timeoutMs: 1,
-    });
+      // Keep the deadline/cleanup ordering independent of event-loop starvation.
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signal.aborted).toBe(true);
+      expect(close).toHaveBeenCalledOnce();
+      expect(destroy).not.toHaveBeenCalled();
+      expect(outcome).toBeUndefined();
 
-    const outcome = await raceWithTimeoutResult(
-      fetchPromise.then(
-        () => "resolved",
-        (error: unknown) => (error instanceof Error ? error.name : "rejected"),
-      ),
-      250,
-      "hung",
-    );
-
-    expect(outcome).toBe("TimeoutError");
+      await vi.advanceTimersByTimeAsync(249);
+      expect(destroy).toHaveBeenCalledOnce();
+      expect(outcome).toBe("TimeoutError");
+      await completed;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("aborts a stalled DNS preflight from the caller signal without dispatching", async () => {

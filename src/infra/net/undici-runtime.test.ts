@@ -116,6 +116,7 @@ function installUndiciRuntimeDeps(): void {
     EnvHttpProxyAgent: MockEnvHttpProxyAgent,
     Pool: MockPool,
     ProxyAgent: MockProxyAgent,
+    buildConnector: () => proxyConnect,
     fetch: vi.fn(),
   };
 }

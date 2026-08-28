@@ -15,6 +15,10 @@ type UndiciEnvHttpProxyAgentOptions = ConstructorParameters<
 type UndiciProxyAgentOptions = ConstructorParameters<typeof import("undici").ProxyAgent>[0];
 type UndiciProxyAgentOptionsRecord = Exclude<UndiciProxyAgentOptions, string | URL>;
 type UndiciProxyClientFactory = NonNullable<UndiciProxyAgentOptionsRecord["clientFactory"]>;
+type UndiciProxyClientOptions = Pick<
+  UndiciProxyAgentOptionsRecord,
+  "clientFactory" | "connectTimeout" | "proxyTls"
+>;
 type UnknownFunction = (...args: unknown[]) => unknown;
 
 // Guarded fetch dispatchers intentionally stay on HTTP/1.1. Undici 8 enables
@@ -57,13 +61,24 @@ function stripIpServernameFromConnect(connect: unknown): unknown {
     (connect as UnknownFunction)(stripIpServernameFromConnectOptions(options), callback);
 }
 
-function createIpSafeProxyClientFactory(): UndiciProxyClientFactory {
+function createHttp1ProxyClientFactory(
+  proxyOptions: UndiciProxyClientOptions,
+): UndiciProxyClientFactory {
+  const { buildConnector } = loadUndiciModule(["buildConnector"]);
+  // ProxyAgent's connector already captured ALPN defaults before this factory.
+  // This HTTP(S)-only seam enforces HTTP/1 without enabling TLS on SOCKS hops.
+  const connect = buildConnector({
+    timeout: proxyOptions.connectTimeout,
+    ...resolveUndiciAutoSelectFamilyConnectOptions(),
+    ...proxyOptions.proxyTls,
+    allowH2: false,
+  });
   return (origin, options) => {
     // HTTPS proxies addressed by IP must not pass the IP literal as TLS SNI.
-    const clientOptions = isObjectRecord(options)
-      ? { ...options, connect: stripIpServernameFromConnect(options.connect) }
-      : options;
-    return createUndiciPool(origin, clientOptions);
+    return createUndiciPool(origin, {
+      ...options,
+      connect: stripIpServernameFromConnect(connect),
+    });
   };
 }
 
@@ -104,14 +119,16 @@ function addUndiciAgentFactory<TOptions extends object>(options: TOptions): TOpt
   };
 }
 
-function addIpSafeProxyClientFactory<TOptions extends object>(options: TOptions): TOptions {
+function addHttp1ProxyClientFactory<TOptions extends UndiciProxyClientOptions>(
+  options: TOptions,
+): TOptions {
   if ("clientFactory" in options) {
     return options;
   }
   // Caller factories own their connection policy and must not be replaced.
   return {
     ...options,
-    clientFactory: createIpSafeProxyClientFactory(),
+    clientFactory: createHttp1ProxyClientFactory(options),
   };
 }
 
@@ -124,6 +141,10 @@ function applyMissingConnectOptions(
       connect[key] = value;
     }
   }
+}
+
+function includesSocksProxy(urls: Array<string | URL | undefined>): boolean {
+  return urls.some((url) => url && ["socks:", "socks5:"].includes(URL.parse(url)?.protocol ?? ""));
 }
 
 function withHttp1OnlyDispatcherOptions<T extends object | undefined>(
@@ -153,6 +174,9 @@ function withHttp1OnlyDispatcherOptions<T extends object | undefined>(
     const normalizedTimeoutMs = Math.floor(timeoutMs);
     baseRecord.bodyTimeout = normalizedTimeoutMs;
     baseRecord.headersTimeout = normalizedTimeoutMs;
+    if (targets.proxyTls === false) {
+      baseRecord.connectTimeout ??= normalizedTimeoutMs;
+    }
     if (targets.connect && typeof baseRecord.connect !== "function") {
       baseRecord.connect = {
         ...(isObjectRecord(baseRecord.connect) ? baseRecord.connect : {}),
@@ -183,12 +207,18 @@ export function buildHttp1EnvHttpProxyAgentOptions(
   // Undici 8.7 began forwarding plain HTTP by default. OpenClaw keeps CONNECT
   // tunneling so managed and explicit proxies retain one target-isolation contract.
   const proxyOptions = { proxyTunnel: true, ...options };
-  return withHttp1OnlyDispatcherOptions(
-    addIpSafeProxyClientFactory(
+  const includesSocks = includesSocksProxy([
+    options?.httpProxy ?? process.env.http_proxy ?? process.env.HTTP_PROXY,
+    options?.httpsProxy ?? process.env.https_proxy ?? process.env.HTTPS_PROXY,
+  ]);
+  return addHttp1ProxyClientFactory(
+    withHttp1OnlyDispatcherOptions(
       addUndiciAgentFactory(addActiveManagedProxyTlsOptions(proxyOptions) ?? proxyOptions),
+      timeoutMs,
+      // Undici shares this option bag across both proxy endpoints. Generated TLS
+      // hints would turn a plain SOCKS hop into SOCKS-over-TLS; explicit TLS stays.
+      { connect: true, proxyTls: !includesSocks },
     ),
-    timeoutMs,
-    { connect: true, proxyTls: true },
   );
 }
 
@@ -201,11 +231,11 @@ export function buildHttp1ProxyAgentOptions(
       ? { uri: options.toString() }
       : { ...options };
   const proxyOptions = { proxyTunnel: true, ...normalized };
-  return withHttp1OnlyDispatcherOptions(
-    addIpSafeProxyClientFactory(
+  return addHttp1ProxyClientFactory(
+    withHttp1OnlyDispatcherOptions(
       addUndiciAgentFactory(addActiveManagedProxyTlsOptions(proxyOptions)),
+      timeoutMs,
+      { proxyTls: !includesSocksProxy([normalized.uri]) },
     ),
-    timeoutMs,
-    { proxyTls: true },
   ) as Exclude<UndiciProxyAgentOptions, string>;
 }

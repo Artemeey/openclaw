@@ -44,15 +44,9 @@ import {
 } from "./undici-runtime.js";
 
 function resolveDispatcherTimeoutMs(fromParams: number | undefined): number | undefined {
-  if (fromParams !== undefined) {
-    return fromParams;
-  }
   // Fall back to module-level bridge set by ensureGlobalUndiciStreamTimeouts
   // (avoids reading Undici's non-public `.options` field)
-  if (globalUndiciStreamTimeoutMs !== undefined) {
-    return globalUndiciStreamTimeoutMs;
-  }
-  return undefined;
+  return fromParams !== undefined ? fromParams : globalUndiciStreamTimeoutMs;
 }
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -264,13 +258,11 @@ function createPolicyDispatcherWithoutPinnedDns(
   }
 
   const proxyUrl = dispatcherPolicy.proxyUrl.trim();
-  if (dispatcherPolicy.proxyTls) {
-    return createHttp1ProxyAgent(
-      { uri: proxyUrl, requestTls: { ...dispatcherPolicy.proxyTls } },
-      timeoutMs,
-    );
-  }
-  return createHttp1ProxyAgent({ uri: proxyUrl }, timeoutMs);
+  const requestTls = dispatcherPolicy.proxyTls;
+  return createHttp1ProxyAgent(
+    { uri: proxyUrl, ...(requestTls ? { requestTls: { ...requestTls } } : {}) },
+    timeoutMs,
+  );
 }
 
 async function assertExplicitProxyAllowed(
@@ -278,6 +270,7 @@ async function assertExplicitProxyAllowed(
   lookupFn: LookupFn | undefined,
   policy: SsrFPolicy | undefined,
   signal: AbortSignal | undefined,
+  trustedExplicitProxyDns: boolean,
 ): Promise<void> {
   // Explicit proxies are operator-configured, but the proxy host still needs
   // basic URL and private-network validation before target validation proceeds.
@@ -290,8 +283,10 @@ async function assertExplicitProxyAllowed(
   } catch {
     throw new Error("Invalid explicit proxy URL");
   }
-  if (!["http:", "https:"].includes(parsedProxyUrl.protocol)) {
-    throw new Error("Explicit proxy URL must use http or https");
+  const protocols = trustedExplicitProxyDns ? /^(https?|socks5?):$/ : /^https?:$/;
+  if (!protocols.test(parsedProxyUrl.protocol)) {
+    const supported = trustedExplicitProxyDns ? "http, https, socks, or socks5" : "http or https";
+    throw new Error(`Explicit proxy URL must use ${supported}`);
   }
   const proxyPolicy: SsrFPolicy | undefined =
     policy || dispatcherPolicy.allowPrivateProxy === true
@@ -590,7 +585,13 @@ async function fetchWithSsrFGuardInternal(
         dispatcherPolicy,
         usesTrustedExplicitProxyMode ? false : params.pinDns,
       );
-      await assertExplicitProxyAllowed(dispatcherPolicy, params.lookupFn, params.policy, signal);
+      await assertExplicitProxyAllowed(
+        dispatcherPolicy,
+        params.lookupFn,
+        params.policy,
+        signal,
+        usesTrustedExplicitProxyMode,
+      );
       const isStrictManagedProxyActive =
         mode === GUARDED_FETCH_MODE.STRICT && isManagedProxyActive();
       const shouldCheckManagedProxyBypass =
