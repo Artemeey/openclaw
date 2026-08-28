@@ -18,6 +18,10 @@ import {
   reloadSystemdUserManager,
 } from "./systemd-exec.js";
 import {
+  assertSystemdUnitArtifactsRemovable,
+  removeSystemdUnitArtifacts,
+} from "./systemd-install.js";
+import {
   assertNoSystemGatewayOwnership,
   findInstalledSystemdGatewayScope,
 } from "./systemd-scope.js";
@@ -141,6 +145,12 @@ async function findLegacySystemdUnits(env: GatewayServiceEnv): Promise<LegacySys
     } catch {
       // ignore
     }
+    try {
+      await fs.lstat(`${unitPath}.bak`);
+      exists = true;
+    } catch {
+      // ignore
+    }
     let enabled = false;
     if (systemctlAvailable) {
       const res = await execSystemctlUser(env, ["is-enabled", `${name}.service`]);
@@ -165,20 +175,18 @@ export async function uninstallLegacySystemdUnits({
   const systemctlAvailable = await isSystemctlAvailable(env);
   let removedAny = false;
   for (const unit of units) {
+    await assertSystemdUnitArtifactsRemovable(unit.unitPath);
     if (systemctlAvailable) {
       await disableSystemdUserUnitForRemoval(env, `${unit.name}.service`);
     } else {
       stdout.write(`systemctl unavailable; removed legacy unit file only: ${unit.name}.service\n`);
     }
 
-    try {
-      await fs.unlink(unit.unitPath);
-      removedAny = true;
+    const removed = await removeSystemdUnitArtifacts(unit.unitPath);
+    removedAny ||= removed;
+    if (removed) {
       stdout.write(`${formatLine("Removed legacy systemd service", unit.unitPath)}\n`);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw error;
-      }
+    } else {
       stdout.write(`Legacy systemd unit not found at ${unit.unitPath}\n`);
     }
   }
@@ -213,6 +221,7 @@ export async function uninstallUserSystemdGatewayUnit({
 }: GatewayServiceManageArgs): Promise<UninstallUserSystemdGatewayUnitResult> {
   const unitName = `${resolveSystemdServiceName(env)}.service`;
   const unitPath = resolveSystemdUnitPath(env);
+  await assertSystemdUnitArtifactsRemovable(unitPath);
   let disabled = false;
   if (await isSystemctlAvailable(env)) {
     await disableSystemdUserUnitForRemoval(env, unitName);
@@ -222,15 +231,10 @@ export async function uninstallUserSystemdGatewayUnit({
       `systemctl unavailable; removing unit file only: ${unitName}. A loaded unit keeps running until systemd reloads.\n`,
     );
   }
-  let removed = false;
-  try {
-    await fs.unlink(unitPath);
-    removed = true;
+  const removed = await removeSystemdUnitArtifacts(unitPath);
+  if (removed) {
     stdout.write(`${formatLine("Removed user-scope systemd service", unitPath)}\n`);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
+  } else {
     stdout.write(`User-scope systemd unit not found at ${unitPath}\n`);
   }
   // The manager keeps a deleted unit's definition loaded until it reloads, so

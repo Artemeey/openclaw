@@ -7,6 +7,7 @@ import {
   isUnresolvedShellReference,
   readStateDirDotEnvFromStateDir,
 } from "../config/state-dir-dotenv.js";
+import { hasErrnoCode } from "../infra/errors.js";
 import { resolveGatewayServiceDescription } from "./constants.js";
 import { formatLine, writeFormattedLines } from "./output.js";
 import {
@@ -121,7 +122,7 @@ function sanitizeSystemdUnitBackupContent(params: {
   // Backups should not retain file-managed secrets that OpenClaw moved into the
   // generated EnvironmentFile during this rewrite.
   const sanitizedLines: string[] = [];
-  for (const rawLine of params.content.split("\n")) {
+  for (const rawLine of params.content.replace(/\\\r?\n\s*/gu, " ").split("\n")) {
     const line = rawLine.trim();
     if (!line.startsWith("Environment=")) {
       sanitizedLines.push(rawLine);
@@ -153,6 +154,11 @@ function sanitizeSystemdUnitBackupContent(params: {
   return sanitizedLines.join("\n");
 }
 
+const SYSTEMD_MANAGED_CREDENTIAL_KEYS = normalizeServiceEnvKeys([
+  "OPENCLAW_GATEWAY_TOKEN",
+  "OPENCLAW_GATEWAY_PASSWORD",
+]);
+
 async function writeSystemdUnit({
   env,
   programArguments,
@@ -169,7 +175,7 @@ async function writeSystemdUnit({
     resolveManagedGatewayServiceCommand(await readSystemdServiceExecStart(env))?.environment,
   );
   await fs.mkdir(path.dirname(unitPath), { recursive: true });
-  await assertSystemdManagedPathIsNotSymlink(unitPath);
+  await assertSystemdManagedPathIsRegularOrMissing(unitPath);
   const fileManagedKeys = collectSystemdFileManagedKeys({
     environmentValueSources,
   });
@@ -179,17 +185,22 @@ async function writeSystemdUnit({
   try {
     const backupPath = `${unitPath}.bak`;
     const existingUnit = await fs.readFile(unitPath, "utf8");
-    const existingStat = await fs.stat(unitPath);
-    const backupMode = existingStat.mode & 0o777 || 0o600;
+    await assertSystemdManagedPathIsRegularOrMissing(backupPath);
     const backupUnit = sanitizeSystemdUnitBackupContent({
       content: existingUnit,
-      fileManagedKeys,
+      fileManagedKeys: normalizeServiceEnvKeys([
+        ...fileManagedKeys,
+        ...priorManagedKeys,
+        ...readManagedServiceEnvKeysFromEnvironment(environment),
+        ...SYSTEMD_MANAGED_CREDENTIAL_KEYS,
+      ]),
     });
-    await fs.writeFile(backupPath, backupUnit, { encoding: "utf8", mode: backupMode });
-    await fs.chmod(backupPath, backupMode);
+    await publishSystemdPrivateFile(backupPath, backupUnit);
     backedUp = true;
-  } catch {
-    // File does not exist yet — nothing to back up.
+  } catch (error) {
+    if (!hasErrnoCode(error, "ENOENT")) {
+      throw error;
+    }
   }
 
   const serviceDescription = resolveGatewayServiceDescription({ env, description });
@@ -281,18 +292,58 @@ async function writeSystemdUnit({
 
 type SystemdFileSnapshot = { contents: Buffer; mode: number } | null;
 
-async function assertSystemdManagedPathIsNotSymlink(filePath: string): Promise<void> {
+async function assertSystemdManagedPathIsRegularOrMissing(filePath: string): Promise<boolean> {
   try {
     const stat = await fs.lstat(filePath);
     if (stat.isSymbolicLink()) {
       throw new Error(`Refusing to rewrite symlinked managed systemd file: ${filePath}`);
     }
+    if (
+      stat.isDirectory() ||
+      stat.isBlockDevice() ||
+      stat.isCharacterDevice() ||
+      stat.isFIFO() ||
+      stat.isSocket()
+    ) {
+      throw new Error(`Refusing to rewrite non-regular managed systemd file: ${filePath}`);
+    }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return;
+    if (hasErrnoCode(error, "ENOENT")) {
+      return false;
     }
     throw error;
   }
+  return true;
+}
+
+async function publishSystemdPrivateFile(filePath: string, contents: string): Promise<void> {
+  const temporaryPath = `${filePath}.openclaw-${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(temporaryPath, contents, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    await fs.chmod(temporaryPath, 0o600);
+    await fs.rename(temporaryPath, filePath);
+  } finally {
+    await fs.unlink(temporaryPath).catch(() => undefined);
+  }
+}
+
+export async function removeSystemdUnitArtifacts(unitPath: string): Promise<boolean> {
+  // The generated unit and its recovery copy share one lifecycle. Validate both
+  // before unlinking either so an unexpected artifact cannot cause partial cleanup.
+  const backupPath = `${unitPath}.bak`;
+  const unitExists = await assertSystemdManagedPathIsRegularOrMissing(unitPath);
+  if (await assertSystemdManagedPathIsRegularOrMissing(backupPath)) {
+    await fs.unlink(backupPath);
+  }
+  if (unitExists) {
+    await fs.unlink(unitPath);
+  }
+  return unitExists;
+}
+
+export async function assertSystemdUnitArtifactsRemovable(unitPath: string): Promise<void> {
+  await assertSystemdManagedPathIsRegularOrMissing(unitPath);
+  await assertSystemdManagedPathIsRegularOrMissing(`${unitPath}.bak`);
 }
 
 async function readSystemdFileSnapshot(filePath: string): Promise<SystemdFileSnapshot> {
@@ -481,11 +532,10 @@ async function removeNodeSystemdManagedEnvironmentKeys(env: GatewayServiceEnv): 
   } catch {
     return;
   }
-  const managedKeys = new Set(["OPENCLAW_GATEWAY_TOKEN", "OPENCLAW_GATEWAY_PASSWORD"]);
   const remaining = Object.fromEntries(
     Object.entries(existingFile.environment).filter(([key, value]) => {
       const normalized = normalizeServiceEnvKey(key);
-      if (normalized && managedKeys.has(normalized)) {
+      if (normalized && SYSTEMD_MANAGED_CREDENTIAL_KEYS.has(normalized)) {
         return false;
       }
       return existingFile.literalShellReferenceKeys.has(key) || !isUnresolvedShellReference(value);
@@ -616,19 +666,10 @@ export async function uninstallSystemdService({
   await assertSystemdAvailable(env);
   const serviceName = resolveSystemdServiceName(env);
   const unitName = `${serviceName}.service`;
-  await disableSystemdUserUnitForRemoval(env, unitName);
-
   const unitPath = resolveSystemdUnitPath(env);
-  let removed = false;
-  try {
-    await fs.unlink(unitPath);
-    removed = true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
-    // Unit file was already absent; still clean generated node env state below.
-  }
+  await assertSystemdUnitArtifactsRemovable(unitPath);
+  await disableSystemdUserUnitForRemoval(env, unitName);
+  const removed = await removeSystemdUnitArtifacts(unitPath);
   await removeNodeSystemdManagedEnvironmentKeys(env);
   if (removed) {
     stdout.write(`${formatLine("Removed systemd service", unitPath)}\n`);
