@@ -6,6 +6,7 @@ import {
   readSessionMethodAccess,
   type SessionMethodAccess,
 } from "../../lib/session-method-access.ts";
+import { isSessionRunActive } from "../../lib/session-run-state.ts";
 import { scopedAgentParamsForSession } from "../../lib/sessions/index.ts";
 import { generateUUID } from "../../lib/uuid.ts";
 import { readChatSessionActionAccess } from "./chat-session-action-access.ts";
@@ -167,6 +168,8 @@ export function renderChatPaneComposerControls(params: {
         }
         const listedRunIds = selectedSession?.activeRunIds ?? [];
         const activeRunId = state.chatRunId ?? (listedRunIds.length === 1 ? listedRunIds[0] : null);
+        const activeRunIdentityUnavailable =
+          selectedSession && isSessionRunActive(selectedSession) && !activeRunId;
         const sessionKey = state.sessionKey;
         const client = state.client;
         const connectionEpoch = state.connectionEpoch;
@@ -179,6 +182,9 @@ export function renderChatPaneComposerControls(params: {
           scopedAgentParamsForSession(state, sessionKey).agentId === agentScope.agentId;
         try {
           state.chatError = state.lastError = null;
+          if (activeRunIdentityUnavailable) {
+            throw new Error(t("chat.permissionControls.activeRunUnavailable"));
+          }
           const patched = activeRunId
             ? await restartChatSessionTurn(state, {
                 sessionKey,

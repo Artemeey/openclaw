@@ -256,7 +256,7 @@ describe("chat pane composer controls", () => {
       activeRunIds: ["run-active"],
       hasActiveRun: true,
       status: "running",
-      restarts: true,
+      outcome: "restart",
     },
     {
       label: "locally running with a stale idle session row",
@@ -264,7 +264,7 @@ describe("chat pane composer controls", () => {
       activeRunIds: [],
       hasActiveRun: false,
       status: "done",
-      restarts: true,
+      outcome: "restart",
     },
     {
       label: "idle",
@@ -272,7 +272,15 @@ describe("chat pane composer controls", () => {
       activeRunIds: [],
       hasActiveRun: false,
       status: "done",
-      restarts: false,
+      outcome: "patch",
+    },
+    {
+      label: "running session without active run IDs",
+      chatRunId: null,
+      activeRunIds: [],
+      hasActiveRun: true,
+      status: "running",
+      outcome: "blocked",
     },
     {
       label: "running session with ambiguous active runs",
@@ -280,7 +288,7 @@ describe("chat pane composer controls", () => {
       activeRunIds: ["run-one", "run-two"],
       hasActiveRun: true,
       status: "running",
-      restarts: false,
+      outcome: "blocked",
     },
   ] as const)("restarts only a $label session after changing permissions", async (sessionCase) => {
     const patch = vi.fn(async () => ({}));
@@ -319,7 +327,7 @@ describe("chat pane composer controls", () => {
 
     await controls.permissionPicker.onSelect("guarded");
 
-    if (sessionCase.restarts) {
+    if (sessionCase.outcome === "restart") {
       expect(restartTurn).toHaveBeenCalledWith(
         expect.objectContaining({
           key: state.sessionKey,
@@ -330,9 +338,13 @@ describe("chat pane composer controls", () => {
         }),
       );
       expect(patch).not.toHaveBeenCalled();
-    } else {
+    } else if (sessionCase.outcome === "patch") {
       expect(restartTurn).not.toHaveBeenCalled();
       expect(patch).toHaveBeenCalled();
+    } else {
+      expect(restartTurn).not.toHaveBeenCalled();
+      expect(patch).not.toHaveBeenCalled();
+      expect(state.chatError).toContain("Wait for it to finish");
     }
   });
 

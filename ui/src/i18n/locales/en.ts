@@ -5950,6 +5950,8 @@ export const en: TranslationMap = {
       default: "Default",
       defaultDescription: "Follow the agent's configured policy.",
       fullRequiresAdmin: "Full access requires operator.admin access.",
+      activeRunUnavailable:
+        "The active turn cannot be restarted because its run identity is unavailable. Wait for it to finish, then change permissions.",
       updateFailed: "Failed to update permissions: {error}",
       modes: {
         "read-only": {

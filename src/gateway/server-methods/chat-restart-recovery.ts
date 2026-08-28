@@ -28,6 +28,7 @@ import { isAgentHarnessSessionKey } from "../../sessions/agent-harness-session-k
 import { isAcpSessionKey, resolveSessionDispatchKind } from "../../sessions/session-key-utils.js";
 import { sessionDeliveryChannel } from "../../utils/delivery-context.shared.js";
 import { parseInlineDirectives } from "../../utils/directive-tags.js";
+import type { ChatAbortControllerEntry } from "../chat-abort.js";
 import { resolveChatRunOwnerAgentId } from "../chat-run-owner.js";
 import type { GatewayRecoveryRuntime } from "../server-instance-runtime.types.js";
 import { deriveGatewaySessionLifecycleSnapshot } from "../session-lifecycle-state.js";
@@ -92,6 +93,24 @@ export function resolvePermissionRestartChatAdmission(params: {
       : {}),
     retryExpectedState: buildRestartSafeExpectedState(entry),
   };
+}
+
+export function resolvePermissionRestartAbortEntry(params: {
+  entries: ReadonlyMap<string, ChatAbortControllerEntry>;
+  lifecycleGeneration: string;
+  runId: string;
+  sessionId?: string;
+  sessionKey: string;
+}): ChatAbortControllerEntry | undefined {
+  const entry = params.entries.get(params.runId);
+  return entry &&
+    entry.kind !== "agent" &&
+    entry.turnKind !== "btw" &&
+    entry.lifecycleGeneration === params.lifecycleGeneration &&
+    entry.sessionKey === params.sessionKey &&
+    entry.sessionId === params.sessionId
+    ? entry
+    : undefined;
 }
 
 export type RestartSafeChatTerminalState = {

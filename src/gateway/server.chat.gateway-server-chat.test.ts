@@ -605,9 +605,9 @@ describe("gateway server chat", () => {
           ?.abortSignal;
         dispatchStarted.resolve();
         if (!signal?.aborted) {
-          await new Promise<void>((resolve) =>
-            signal?.addEventListener("abort", () => resolve(), { once: true }),
-          );
+          await new Promise<void>((resolve) => {
+            signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
         }
         return undefined;
       });

@@ -42,6 +42,7 @@ import { resolveChatSendOriginatingRoute } from "./chat-origin-routing.js";
 import {
   hasRestartRecoveryTerminalRun,
   isRetryableUnadoptedChatClaim,
+  resolvePermissionRestartAbortEntry,
   resolvePermissionRestartChatAdmission,
   resolveRestartSafeChatAdmission,
 } from "./chat-restart-recovery.js";
@@ -267,24 +268,19 @@ export async function admitChatSend(params: {
         ? replyRunRegistry.resolveCurrentInterruptTarget(activeRunScopeKey)
         : undefined;
     const resolvedRunAbortEntry = expectedInterruptRunId
-      ? context.chatAbortControllers.get(expectedInterruptRunId)
+      ? resolvePermissionRestartAbortEntry({
+          entries: context.chatAbortControllers,
+          lifecycleGeneration,
+          runId: expectedInterruptRunId,
+          sessionId: latestEntry?.sessionId,
+          sessionKey,
+        })
       : undefined;
-    const matchesExpectedRunAbort = Boolean(
-      expectedInterruptRunId &&
-      resolvedRunAbortEntry &&
-      resolvedRunAbortEntry.kind !== "agent" &&
-      resolvedRunAbortEntry.turnKind !== "btw" &&
-      resolvedRunAbortEntry.lifecycleGeneration === lifecycleGeneration &&
-      resolvedRunAbortEntry.sessionKey === sessionKey &&
-      resolvedRunAbortEntry.sessionId === latestEntry?.sessionId,
-    );
-    if (!commitOutcome && expectedInterruptRunId && matchesExpectedRunAbort) {
+    if (!commitOutcome && resolvedRunAbortEntry) {
       runAbortInterruptTarget = resolvedRunAbortEntry;
     }
     const capturedRunAbortStillMatches = Boolean(
-      runAbortInterruptTarget &&
-      context.chatAbortControllers.get(expectedInterruptRunId!) === runAbortInterruptTarget &&
-      matchesExpectedRunAbort,
+      runAbortInterruptTarget && resolvedRunAbortEntry === runAbortInterruptTarget,
     );
     if (
       expectedInterruptRunId &&
