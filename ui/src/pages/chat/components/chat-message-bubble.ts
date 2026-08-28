@@ -538,6 +538,7 @@ export function renderGroupedMessage(
                         imageRenderOptions,
                         onOpenSidebar,
                         opts.onAssistantAttachmentLoaded,
+                        normalizedRole === "assistant",
                       )}
                       ${assistantViewContent}
                       ${reasoningMarkdown
@@ -614,6 +615,7 @@ export function renderGroupedMessage(
               imageRenderOptions,
               onOpenSidebar,
               opts.onAssistantAttachmentLoaded,
+              normalizedRole === "assistant",
             )}
             ${reasoningMarkdown
               ? html`<div class="chat-thinking">
