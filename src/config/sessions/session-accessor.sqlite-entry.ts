@@ -33,6 +33,7 @@ import {
 import {
   readSessionEntryCache,
   type SessionEntryCacheSnapshot,
+  type SessionEntrySnapshotProjection,
 } from "./session-accessor.sqlite-entry-cache.js";
 import {
   assertLifecycleTargetSnapshotUnchanged,
@@ -331,8 +332,13 @@ function listSqliteSessionEntriesFromDatabase(
   scope: SessionEntryListScope,
 ): SessionEntrySummary[] {
   assertCanonicalSqliteSessionKeysCurrent(database);
-  const snapshot = readSessionEntrySnapshot(database, resolved, scope.readConsistency);
-  const entries = scope.projection === "list" ? snapshot.listEntries : snapshot.entries;
+  const snapshot = readSessionEntrySnapshot(
+    database,
+    resolved,
+    scope.readConsistency,
+    scope.projection === "list" ? "list" : "full",
+  );
+  const entries = snapshot.entries;
   return snapshot.keys.flatMap((sessionKey) => {
     if (isInternalSessionEffectsKey(sessionKey)) {
       return [];
@@ -360,6 +366,7 @@ function readSessionEntrySnapshot(
   database: Pick<OpenClawAgentDatabase, "agentId" | "db" | "path">,
   resolved: ResolvedSqliteScope,
   readConsistency: SessionAccessScope["readConsistency"],
+  projection: SessionEntrySnapshotProjection = "full",
 ): SessionEntryCacheSnapshot {
   const cache = !isIncognitoOpenClawAgentSqlitePath(database.path, {
     agentId: database.agentId,
@@ -368,6 +375,7 @@ function readSessionEntrySnapshot(
   return readSessionEntryCache(database, {
     cache,
     latest: readConsistency === "latest",
+    projection,
   });
 }
 
