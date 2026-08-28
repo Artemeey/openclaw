@@ -50,7 +50,10 @@ export function resolveConfigWidePluginMetadataSnapshot(
     if (current && isScopedPluginMetadataSnapshotRuntimeGeneration(current)) {
       return projectPluginMetadataSnapshot(
         current,
-        params.pluginIds ?? params.pluginIdScope?.resolve({ index: current.index }),
+        params.pluginIds ??
+          (params.pluginIdScope
+            ? params.pluginIdScope.resolve({ index: current.index })
+            : current.pluginIds),
       );
     }
   }

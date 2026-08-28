@@ -212,6 +212,29 @@ describe("ensurePluginRegistryLoaded", () => {
     expect(mocks.resolveEffectivePluginIds).not.toHaveBeenCalled();
   });
 
+  it("loads installed persisted sandbox owners after configuration switches to Docker", () => {
+    const config = {
+      agents: { defaults: { sandbox: { backend: "docker" } } },
+      plugins: {
+        entries: {
+          openshell: { enabled: true },
+          "broken-plugin": { enabled: true },
+        },
+      },
+    };
+    installedPlugins = ["openshell", "broken-plugin"].map((pluginId) =>
+      createInstalledPlugin(pluginId),
+    );
+
+    ensurePluginRegistryLoaded({
+      scope: "sandbox-backends",
+      config,
+      persistedSandboxBackendIds: ["openshell", "docker", "missing-owner"],
+    });
+
+    expect(requireLoadOptions().onlyPluginIds).toEqual(["openshell"]);
+  });
+
   it.each([undefined, "docker", "podman", "ssh"])(
     "does not activate plugins for the built-in sandbox backend %s",
     (backend) => {

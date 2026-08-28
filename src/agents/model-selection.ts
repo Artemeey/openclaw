@@ -23,6 +23,7 @@ import {
 } from "./model-ref-shared.js";
 import {
   resolveDefaultModelForAgent,
+  resolveDefaultModelProviderForAgent,
   resolveSubagentConfiguredModelSelection,
 } from "./model-selection-config.js";
 import { findNormalizedProviderValue, parseModelRef } from "./model-selection-normalize.js";
@@ -82,26 +83,17 @@ export {
 // Cron imports this narrow owner directly; the public facade must not fork its policy.
 export { getModelRefStatus } from "./model-selection-resolve.js";
 
-function normalizePersistedDefaultProvider(value: unknown): string {
-  return normalizeOptionalString(value) ?? DEFAULT_PROVIDER;
-}
-
 /**
  * Runtime-first resolver for persisted model metadata.
  * Use this when callers intentionally want the last executed model identity.
  */
 export function resolvePersistedModelRef(
-  params: {
-    defaultProvider?: unknown;
+  params: Parameters<typeof resolvePersistedOverrideModelRef>[0] & {
     runtimeProvider?: unknown;
     runtimeModel?: unknown;
-    overrideProvider?: unknown;
-    overrideModel?: unknown;
-    allowManifestNormalization?: boolean;
-    allowPluginNormalization?: boolean;
-  } & ModelManifestNormalizationContext,
+  },
 ): ModelRef | null {
-  const defaultProvider = normalizePersistedDefaultProvider(params.defaultProvider);
+  const defaultProvider = normalizeOptionalString(params.defaultProvider) ?? DEFAULT_PROVIDER;
   const runtimeProvider = normalizeOptionalString(params.runtimeProvider);
   const runtimeModel = normalizeOptionalString(params.runtimeModel);
   if (runtimeModel) {
@@ -127,15 +119,10 @@ export function resolvePersistedModelRef(
  * overrides before falling back to runtime identity.
  */
 export function resolvePersistedSelectedModelRef(
-  params: {
-    defaultProvider?: unknown;
+  params: Parameters<typeof resolvePersistedOverrideModelRef>[0] & {
     runtimeProvider?: unknown;
     runtimeModel?: unknown;
-    overrideProvider?: unknown;
-    overrideModel?: unknown;
-    allowManifestNormalization?: boolean;
-    allowPluginNormalization?: boolean;
-  } & ModelManifestNormalizationContext,
+  },
 ): ModelRef | null {
   const override = resolvePersistedOverrideModelRef(params);
   if (override) {
@@ -209,17 +196,23 @@ function appendAuthProfileSuffix(modelRef: string, profile: string | undefined):
 }
 
 /**
- * Resolve a normalized model string through a pre-built alias index, returning
- * a fully qualified `provider/model` string.  If the value is already qualified
- * or not a known alias, returns it unchanged.
+ * Resolve a subagent alias without preparing defaults or aliases for qualified refs.
+ * Unknown bare strings stay unchanged; execution owns their final normalization.
  */
-function resolveModelThroughAliases(value: string, aliasIndex: ModelAliasIndex): string {
-  // Already a provider/model ref — no alias resolution needed.
+function resolveModelThroughAliases(
+  value: string,
+  params: { cfg: OpenClawConfig; agentId: string; defaultProvider?: string },
+): string {
   if (value.includes("/")) {
     return value;
   }
-  // Check if the value is a known alias; if so, resolve to provider/model.
-  // Unknown bare strings are returned as-is (don't guess the provider).
+  const defaultProvider =
+    normalizeOptionalString(params.defaultProvider) ??
+    resolveDefaultModelProviderForAgent({
+      cfg: params.cfg,
+      agentId: params.agentId,
+    });
+  const aliasIndex = buildModelAliasIndex({ ...params, defaultProvider });
   const aliasKey = normalizeLowercaseStringOrEmpty(value);
   const aliasMatch = aliasIndex.byAlias.get(aliasKey);
   if (aliasMatch) {
@@ -233,28 +226,19 @@ export function resolveSubagentSpawnModelSelection(params: {
   agentId: string;
   modelOverride?: unknown;
 }): string {
+  const configured = resolveConfiguredSubagentSpawnModelSelection(params);
+  if (configured) {
+    return configured;
+  }
+  const raw = resolveAgentModelPrimaryValue(params.cfg.agents?.defaults?.model);
+  if (raw) {
+    return resolveModelThroughAliases(raw, params);
+  }
   const runtimeDefault = resolveDefaultModelForAgent({
     cfg: params.cfg,
     agentId: params.agentId,
   });
-  const configured = resolveConfiguredSubagentSpawnModelSelection({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    modelOverride: params.modelOverride,
-    defaultProvider: runtimeDefault.provider,
-  });
-  if (configured) {
-    return configured;
-  }
-  const raw =
-    resolveAgentModelPrimaryValue(params.cfg.agents?.defaults?.model) ??
-    `${runtimeDefault.provider}/${runtimeDefault.model}`;
-  const aliasIndex = buildModelAliasIndex({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    defaultProvider: runtimeDefault.provider,
-  });
-  return resolveModelThroughAliases(raw, aliasIndex);
+  return `${runtimeDefault.provider}/${runtimeDefault.model}`;
 }
 
 export function resolveConfiguredSubagentSpawnModelSelection(params: {
@@ -271,21 +255,7 @@ export function resolveConfiguredSubagentSpawnModelSelection(params: {
       agentId: params.agentId,
       includeAgentPrimary: params.includeAgentPrimary,
     });
-  if (!raw) {
-    return undefined;
-  }
-  const defaultProvider =
-    normalizeOptionalString(params.defaultProvider) ??
-    resolveDefaultModelForAgent({
-      cfg: params.cfg,
-      agentId: params.agentId,
-    }).provider;
-  const aliasIndex = buildModelAliasIndex({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    defaultProvider,
-  });
-  return resolveModelThroughAliases(raw, aliasIndex);
+  return raw ? resolveModelThroughAliases(raw, params) : undefined;
 }
 
 /** Default reasoning level when session/directive do not set it: "on" if model supports reasoning, else "off". */

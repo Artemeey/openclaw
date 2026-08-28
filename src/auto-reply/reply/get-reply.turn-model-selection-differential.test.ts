@@ -2,9 +2,15 @@ import path from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { ModelRef } from "../../agents/model-ref-shared.js";
+import {
+  createPluginMetadataSnapshot,
+  makeRegistry,
+} from "../../config/plugin-auto-enable.test-helpers.js";
 import { replaceSessionEntrySync } from "../../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
+import { createSessionConversationTestRegistry } from "../../test-utils/session-conversation-registry.js";
 import {
   TURN_MODEL_CHANNEL_REF,
   TURN_MODEL_DEFAULT_REF,
@@ -46,7 +52,6 @@ const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 let getReplyFromConfig: typeof import("./get-reply.js").getReplyFromConfig;
 let resolveDefaultModelMock: typeof import("./directive-handling.defaults.js").resolveDefaultModel;
 let resolveChannelModelOverrideMock: typeof import("../../channels/model-overrides.js").resolveChannelModelOverride;
-let resolveModelRefFromStringMock: typeof import("../../agents/model-selection.js").resolveModelRefFromString;
 let runPreparedReplyMock: typeof import("./get-reply-run.js").runPreparedReply;
 
 function createConfig(params: {
@@ -104,15 +109,29 @@ async function observeReplySelection(params: {
     }),
   );
   vi.mocked(runPreparedReplyMock).mockClear();
-  await getReplyFromConfig(
-    buildGetReplyCtx({ SessionKey: sessionKey, ...fixture.ctx }),
-    fixture.heartbeat
-      ? {
-          isHeartbeat: true,
-          heartbeatModelOverride: turnModelRefLabel(TURN_MODEL_OVERRIDE_REF),
-        }
-      : undefined,
-    cfg,
+  // Routing fixtures own their prepared generation just like admitted turns;
+  // provider execution is stubbed, so missing hooks must not cold-activate plugins.
+  await withPluginRuntimeGenerationScope(
+    {
+      config: cfg,
+      metadataSnapshot: createPluginMetadataSnapshot({
+        config: cfg,
+        workspaceDir: "/tmp/workspace",
+        manifestRegistry: makeRegistry([]),
+      }),
+      pluginRegistry: createSessionConversationTestRegistry(),
+    },
+    () =>
+      getReplyFromConfig(
+        buildGetReplyCtx({ SessionKey: sessionKey, ...fixture.ctx }),
+        fixture.heartbeat
+          ? {
+              isHeartbeat: true,
+              heartbeatModelOverride: turnModelRefLabel(TURN_MODEL_OVERRIDE_REF),
+            }
+          : undefined,
+        cfg,
+      ),
   );
   const selected = vi.mocked(runPreparedReplyMock).mock.calls[0]?.[0];
   if (!selected) {
@@ -130,8 +149,6 @@ beforeAll(async () => {
     await import("./directive-handling.defaults.js"));
   ({ resolveChannelModelOverride: resolveChannelModelOverrideMock } =
     await import("../../channels/model-overrides.js"));
-  ({ resolveModelRefFromString: resolveModelRefFromStringMock } =
-    await import("../../agents/model-selection.js"));
   ({ runPreparedReply: runPreparedReplyMock } = await import("./get-reply-run.js"));
 });
 
@@ -145,9 +162,6 @@ beforeEach(async () => {
   >("../../agents/model-selection.js");
   vi.mocked(resolveChannelModelOverrideMock).mockImplementation(
     actualChannelModel.resolveChannelModelOverride,
-  );
-  vi.mocked(resolveModelRefFromStringMock).mockImplementation(
-    actualModelSelection.resolveModelRefFromString,
   );
   vi.mocked(resolveDefaultModelMock).mockReturnValue({
     defaultProvider: TURN_MODEL_DEFAULT_REF.provider,

@@ -18,8 +18,13 @@ import {
 } from "./plugin-cache-primitives.js";
 import { resolvePluginControlPlaneFingerprint } from "./plugin-control-plane-context.js";
 import type { PluginMetadataRegistryView } from "./plugin-metadata-snapshot.types.js";
-import { resolveProviderConfigApiOwnerHint } from "./provider-config-owner.js";
-import { matchesProviderPluginRef } from "./provider-registry-shared.js";
+import { resolveProviderRuntimeOwnerRefs } from "./provider-config-owner.js";
+import {
+  findProviderRuntimePluginInRegistry,
+  listProviderRuntimePluginsInRegistry,
+  matchesProviderLiteralId,
+  matchesProviderPluginRef,
+} from "./provider-registry-shared.js";
 import { isPluginProvidersLoadInFlight, resolvePluginProvidersCore } from "./providers.runtime.js";
 import type { PluginRegistry } from "./registry-types.js";
 import {
@@ -27,7 +32,7 @@ import {
   getPluginRegistryState,
 } from "./runtime-state.js";
 import { getPluginRuntimeGatewayRequestScope } from "./runtime/gateway-request-scope.js";
-import { getPluginRuntimeGenerationRegistry } from "./runtime/generation-scope.js";
+import { getPluginRuntimeGenerationRegistry } from "./runtime/generation-state.js";
 import type {
   ProviderPlugin,
   ProviderExtraParamsForTransportContext,
@@ -119,11 +124,6 @@ function resolveProviderRuntimePluginCacheKey(
   });
 }
 
-function matchesProviderLiteralId(provider: ProviderPlugin, providerId: string): boolean {
-  const normalized = normalizeLowercaseStringOrEmpty(providerId);
-  return Boolean(normalized) && normalizeLowercaseStringOrEmpty(provider.id) === normalized;
-}
-
 function resolveProviderRuntimeLookupModelId(
   params: ProviderRuntimePluginLookupParams & { context?: { modelId?: unknown } },
 ): string | undefined {
@@ -165,7 +165,7 @@ function findProviderRuntimePluginInLoadedRegistries(params: {
 }): ProviderPlugin | undefined {
   const generationRegistry = getPluginRuntimeGenerationRegistry();
   if (generationRegistry) {
-    return findProviderRuntimePluginInRegistry({
+    return findProviderRuntimePluginWithMetadata({
       registry: generationRegistry,
       provider: params.lookup.provider,
       ownerRefs: params.ownerRefs,
@@ -173,7 +173,7 @@ function findProviderRuntimePluginInLoadedRegistries(params: {
   }
   const scopedRegistry = getPluginRuntimeGatewayRequestScope()?.pluginRegistry;
   const scopedPlugin = scopedRegistry
-    ? findProviderRuntimePluginInRegistry({
+    ? findProviderRuntimePluginWithMetadata({
         registry: scopedRegistry,
         provider: params.lookup.provider,
         ownerRefs: params.ownerRefs,
@@ -188,7 +188,7 @@ function findProviderRuntimePluginInLoadedRegistries(params: {
     workspaceDir: params.lookup.workspaceDir,
   });
   const activePlugin = activeRegistry
-    ? findProviderRuntimePluginInRegistry({
+    ? findProviderRuntimePluginWithMetadata({
         registry: activeRegistry,
         provider: params.lookup.provider,
         ownerRefs: params.ownerRefs,
@@ -201,36 +201,19 @@ function findProviderRuntimePluginInLoadedRegistries(params: {
   return undefined;
 }
 
-function findProviderRuntimePluginInRegistry(params: {
+function findProviderRuntimePluginWithMetadata(params: {
   registry: PluginRegistry;
   provider: string;
   ownerRefs: readonly string[];
   metadataSnapshot?: PluginMetadataRegistryView;
 }): ProviderPlugin | undefined {
-  return listProviderRuntimePluginsInRegistry(params.registry).find((plugin) => {
-    const matchesProvider =
-      params.ownerRefs.length > 0
-        ? matchesProviderLiteralId(plugin, params.provider) ||
-          params.ownerRefs.some((ownerRef) => matchesProviderPluginRef(plugin, ownerRef))
-        : matchesProviderPluginRef(plugin, params.provider);
-    return (
-      matchesProvider &&
-      (!params.metadataSnapshot ||
-        registryMatchesManifestPluginIds(
-          params.registry,
-          params.metadataSnapshot.manifestRegistry.plugins,
-          [plugin.pluginId],
-        ))
-    );
+  const manifestPlugins = params.metadataSnapshot?.manifestRegistry.plugins;
+  return findProviderRuntimePluginInRegistry({
+    ...params,
+    isPluginOwnerCompatible: params.metadataSnapshot
+      ? (pluginId) => registryMatchesManifestPluginIds(params.registry, manifestPlugins, [pluginId])
+      : undefined,
   });
-}
-
-function listProviderRuntimePluginsInRegistry(
-  registry: PluginRegistry,
-): Array<ProviderPlugin & { pluginId: string }> {
-  return registry.providers.map((entry) =>
-    Object.assign({}, entry.provider, { pluginId: entry.pluginId }),
-  );
 }
 
 function hasConfiguredModelProvider(params: {
@@ -312,11 +295,7 @@ export function resolveProviderRuntimePlugin(
   const workspaceDir = resolveProviderRuntimeWorkspaceDir(params);
   const env = params.env ?? process.env;
   const lookup = { ...params, workspaceDir, env };
-  const apiOwnerHint = resolveProviderConfigApiOwnerHint({
-    provider: params.provider,
-    config: params.config,
-  });
-  const ownerRefs = [...new Set([params.providerOwner, apiOwnerHint].filter(Boolean))] as string[];
+  const ownerRefs = resolveProviderRuntimeOwnerRefs(params);
   const providerRefs = [params.provider, ...ownerRefs];
   const loadedPlugin = findProviderRuntimePluginInLoadedRegistries({
     lookup,
@@ -394,11 +373,7 @@ export function resolveProviderRuntimePlugin(
 export function resolveLoadedProviderRuntimePlugin(
   params: ProviderRuntimePluginLookupParams,
 ): ProviderPlugin | undefined {
-  const apiOwnerHint = resolveProviderConfigApiOwnerHint({
-    provider: params.provider,
-    config: params.config,
-  });
-  const ownerRefs = [...new Set([params.providerOwner, apiOwnerHint].filter(Boolean))] as string[];
+  const ownerRefs = resolveProviderRuntimeOwnerRefs(params);
   return findProviderRuntimePluginInLoadedRegistries({
     lookup: { ...params, workspaceDir: resolveProviderRuntimeWorkspaceDir(params) },
     ownerRefs,

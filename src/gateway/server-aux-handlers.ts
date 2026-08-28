@@ -25,7 +25,7 @@ import {
 import { createLazyPromise } from "../shared/lazy-runtime.js";
 import type { AgentRuntimeDelegatedAuthority } from "./agent-runtime-identity-token.js";
 import { resolveApprovalSessionAudienceWithFallback } from "./approval-session-audience.js";
-import type { ChatAbortControllerEntry } from "./chat-abort.js";
+import type { ChatAbortControllerEntry } from "./chat-abort.types.js";
 import {
   createExecApprovalIosPushDelivery,
   createPluginApprovalIosPushDelivery,

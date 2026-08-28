@@ -1,10 +1,8 @@
 // Resolves persisted per-session model choices across child and parent sessions.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { ModelFallbackRouteResolution } from "../agents/model-fallback.types.js";
-import {
-  normalizeStoredOverrideModel,
-  resolvePersistedOverrideModelRef,
-} from "../agents/model-selection-persisted.js";
+import { resolveDefaultModelProviderForAgent } from "../agents/model-selection-config.js";
+import { resolvePersistedOverrideModelRef } from "../agents/model-selection-persisted.js";
 import {
   createModelManifestPluginContext,
   type ModelSelectionNormalizationContext,
@@ -15,6 +13,7 @@ import {
   resolveSessionModelOverrideRouteResolution,
 } from "../config/sessions/model-override-provenance.js";
 import type { SessionEntry } from "../config/sessions/types.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 
 /** Model override loaded from the current session or its parent session. */
 export type StoredModelOverride = {
@@ -28,41 +27,47 @@ type StoredModelOverrideContext = ModelSelectionNormalizationContext & {
   agentId?: string;
   allowManifestNormalization?: boolean;
   allowPluginNormalization?: boolean;
-};
+} & ({ defaultProvider: string } | { config: OpenClawConfig; defaultProvider?: undefined });
 
 function resolveStoredOverrideFromEntry(
   params: {
     entry?: SessionEntry;
-    defaultProvider: string;
     source: StoredModelOverride["source"];
   } & StoredModelOverrideContext,
 ): StoredModelOverride | null {
-  const normalized = normalizeStoredOverrideModel({
-    providerOverride: params.entry?.providerOverride,
-    modelOverride: params.entry?.modelOverride,
-  });
-  if (!normalized.modelOverride) {
+  const overrideModel = normalizeOptionalString(params.entry?.modelOverride);
+  if (!overrideModel) {
     return null;
   }
-  // Only a selected stored model needs metadata. SDK callers without context
-  // retain their existing parser defaults; prepared callers keep their exact owner.
+  // Only a selected stored model needs defaults or metadata. Prepared callers keep
+  // their exact owner; explicit SDK defaults retain precedence.
   const manifestPluginContext =
     params.manifestPluginContext ??
     (params.config
       ? createModelManifestPluginContext({ ...params, cfg: params.config })
       : undefined);
+  const defaultProvider =
+    params.defaultProvider !== undefined
+      ? params.defaultProvider
+      : resolveDefaultModelProviderForAgent({
+          ...params,
+          cfg: params.config,
+          manifestPluginContext,
+        });
+  const routeResolution = resolveSessionModelOverrideRouteResolution(params.entry);
   const ref = resolvePersistedOverrideModelRef({
     ...params,
     ...manifestPluginContext?.getContext(),
-    defaultProvider: params.defaultProvider,
-    overrideProvider: normalized.providerOverride,
-    overrideModel: normalized.modelOverride,
+    defaultProvider,
+    overrideProvider: params.entry?.providerOverride,
+    overrideModel,
+    overrideRouteResolution: routeResolution,
   });
   return ref
     ? {
         ...ref,
         source: params.source,
-        routeResolution: resolveSessionModelOverrideRouteResolution(params.entry),
+        routeResolution,
       }
     : null;
 }
@@ -71,7 +76,6 @@ function resolveStoredOverrideFromEntry(
 export function resolveDirectStoredModelOverride(
   params: {
     sessionEntry?: SessionEntry;
-    defaultProvider: string;
   } & StoredModelOverrideContext,
 ): StoredModelOverride | null {
   return resolveStoredOverrideFromEntry({
@@ -104,7 +108,6 @@ export function resolveStoredModelOverride(
     sessionStore?: Record<string, SessionEntry>;
     sessionKey?: string;
     parentSessionKey?: string;
-    defaultProvider: string;
   } & StoredModelOverrideContext,
 ): StoredModelOverride | null {
   const direct = resolveDirectStoredModelOverride(params);

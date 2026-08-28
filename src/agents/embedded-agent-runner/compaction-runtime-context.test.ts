@@ -7,6 +7,7 @@ import type { OpenClawConfig } from "../../config/config.js";
 import { formatSqliteSessionFileMarker } from "../../config/sessions/legacy-sqlite-marker.js";
 import { installPluginMetadataOwner } from "../../plugins/current-plugin-metadata.test-support.js";
 import * as manifestModelIdNormalization from "../../plugins/manifest-model-id-normalization.js";
+import { createPluginCache } from "../../plugins/plugin-cache.js";
 import { createPluginMetadataOwner } from "../../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadata-lifecycle.js";
 import {
@@ -813,8 +814,9 @@ describe("buildEmbeddedCompactionRuntimeContext", () => {
           ),
         },
       };
-      const owner = createPluginMetadataOwner();
-      const dispose = installPluginMetadataOwner(owner);
+      const pluginCache = createPluginCache();
+      const owner = createPluginMetadataOwner(pluginCache);
+      const dispose = installPluginMetadataOwner(owner, pluginCache);
       const normalizeProviderModelId = vi
         .spyOn(providerModelNormalizationRuntime, "normalizeProviderModelIdWithRuntime")
         .mockReturnValue(undefined);

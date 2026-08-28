@@ -1,5 +1,5 @@
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { createPluginMetadataSnapshot } from "../../config/plugin-auto-enable.test-helpers.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
@@ -14,6 +14,7 @@ import {
 } from "../../test-utils/turn-model-selection-differential.js";
 import { ensureSelectedAgentHarnessPlugin } from "../harness/runtime-plugin.js";
 import { normalizeModelRef } from "../model-ref-shared.js";
+import * as providerModelNormalizationRuntime from "../provider-model-normalization.runtime.js";
 import type { AgentCommandOpts, AgentRunContext } from "./types.js";
 
 vi.mock("../agent-scope.js", async (importOriginal) => {
@@ -214,6 +215,122 @@ describe("turn model selection command-path differential", () => {
   it.each(TURN_MODEL_DIFFERENTIAL_FIXTURES)("pins observed $name behavior", async (fixture) => {
     await expect(observeCommandSelection(fixture)).resolves.toEqual(fixture.expected.command);
   });
+
+  it.each([
+    ...(["raw", "resolved", "legacy"] as const).map((provenance) => ({
+      name: `${provenance} provenance`,
+      provenance,
+      storedModel: provenance === "raw" ? "legacy-pin" : "captured-pin",
+      configuredModel: undefined,
+      expectedModel: "captured-pin",
+      rawHookCalls: provenance === "raw" ? 1 : 0,
+    })),
+    {
+      name: "an exact configured pin",
+      provenance: "raw",
+      storedModel: "captured-pin",
+      configuredModel: "captured-pin",
+      expectedModel: "captured-pin",
+      rawHookCalls: 0,
+    },
+    {
+      name: "a literal nested configured pin",
+      provenance: "raw",
+      storedModel: "fixture/captured-pin",
+      configuredModel: "fixture/captured-pin",
+      expectedModel: "fixture/captured-pin",
+      rawHookCalls: 0,
+    },
+    {
+      name: "a legacy provider-wrapped raw pin",
+      provenance: "raw",
+      storedModel: "fixture/legacy-pin",
+      configuredModel: undefined,
+      expectedModel: "captured-pin",
+      rawHookCalls: 1,
+    },
+  ])(
+    "preserves the prepared stored model through command selection for $name",
+    async ({ provenance, storedModel, configuredModel, expectedModel, rawHookCalls }) => {
+      const cfg: OpenClawConfig = {
+        agents: { defaults: { model: "fixture/default" } },
+      };
+      if (configuredModel) {
+        cfg.models = {
+          providers: {
+            fixture: {
+              baseUrl: "https://fixture.test/v1",
+              models: [
+                {
+                  id: configuredModel,
+                  name: "Configured command model",
+                  reasoning: false,
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 4096,
+                  maxTokens: 1024,
+                },
+              ],
+            },
+          },
+        };
+      }
+      const normalize = vi
+        .spyOn(providerModelNormalizationRuntime, "normalizeProviderModelIdWithRuntime")
+        .mockImplementation(({ provider, context }) => {
+          if (provider !== "fixture") {
+            return undefined;
+          }
+          return context.modelId === "legacy-pin"
+            ? "captured-pin"
+            : context.modelId === "captured-pin"
+              ? "replayed-pin"
+              : undefined;
+        });
+      onTestFinished(() => normalize.mockRestore());
+      const sessionKey = "agent:main:command:stored-selection";
+      const sessionEntry: SessionEntry = {
+        sessionId: "stored-selection",
+        updatedAt: 1,
+        providerOverride: "fixture",
+        modelOverride: storedModel,
+        ...(provenance === "resolved"
+          ? { modelOverrideRouteResolution: "resolved" }
+          : provenance === "legacy"
+            ? {
+                modelOverrideSource: "auto",
+                modelOverrideFallbackOriginProvider: "fixture",
+                modelOverrideFallbackOriginModel: "default",
+              }
+            : {}),
+      };
+      const selection = await resolveEmbeddedModelSelection({
+        cfg,
+        opts: { message: "keep the stored model" },
+        sessionEntry,
+        sessionStore: { [sessionKey]: sessionEntry },
+        sessionKey,
+        sessionId: sessionEntry.sessionId,
+        storePath: path.join(suiteTempRoot, "stored-selection.sqlite"),
+        sessionAgentId: "main",
+        workspaceDir: suiteTempRoot,
+        pluginsEnabled: true,
+        modelManifestContext: { config: cfg, manifestPlugins: [] },
+        configuredThinkingCatalog: [],
+        requestedThinkLevel: "off",
+        isSubagentLane: false,
+        suppressVisibleSessionEffects: false,
+        runContext: {},
+      });
+
+      expect(selection).toMatchObject({ provider: "fixture", model: expectedModel });
+      const normalizedInputs = normalize.mock.calls.map(([{ context }]) => context.modelId);
+      expect(normalizedInputs).not.toContain("captured-pin");
+      expect(normalizedInputs.filter((modelId) => modelId === "legacy-pin")).toHaveLength(
+        rawHookCalls,
+      );
+    },
+  );
 
   it.each([
     { name: "changed workspace alias", authored: "legacy", selected: "other", rejected: true },

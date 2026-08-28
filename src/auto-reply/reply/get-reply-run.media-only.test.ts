@@ -145,27 +145,19 @@ vi.mock("../../agents/harness/selection.js", () => ({
   selectAgentHarness: selectAgentHarnessMock,
 }));
 
-vi.mock("../../agents/model-selection.js", () => ({
-  buildModelAliasIndex: vi.fn(
-    (params: { cfg: { agents?: { defaults?: { models?: unknown } } } }) => {
-      if (params.cfg.agents?.defaults?.models) {
-        preparedReplyMockState.unexpectedCalls.push("buildModelAliasIndex");
-      }
-      return { byAlias: new Map(), byKey: new Map() };
-    },
-  ),
+// This orchestration fixture supplies one default; authored model and alias
+// selection must use the real owners in their focused suites.
+vi.mock("../../agents/model-selection-config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../agents/model-selection-config.js")>()),
   resolveDefaultModelForAgent: vi.fn(
-    (params: { cfg: { agents?: { defaults?: { model?: unknown } } } }) => {
-      if (params.cfg.agents?.defaults?.model) {
+    (params: { cfg: { agents?: { defaults?: { model?: unknown; models?: unknown } } } }) => {
+      const defaults = params.cfg.agents?.defaults;
+      if (defaults?.model || defaults?.models) {
         preparedReplyMockState.unexpectedCalls.push("resolveDefaultModelForAgent");
       }
       return { provider: "anthropic", model: "claude-opus-4-1" };
     },
   ),
-  resolveModelRefFromString: vi.fn(() => {
-    preparedReplyMockState.unexpectedCalls.push("resolveModelRefFromString");
-    return undefined;
-  }),
 }));
 
 const resolveSessionRuntimeOverrideForProviderMock = vi.hoisted(() =>

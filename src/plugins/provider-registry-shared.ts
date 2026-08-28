@@ -1,7 +1,12 @@
 // Shares provider registry normalization helpers across plugin paths.
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
-import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
+import {
+  normalizeLowercaseStringOrEmpty,
+  normalizeOptionalLowercaseString,
+} from "@openclaw/normalization-core/string-coerce";
 import { isBlockedObjectKey } from "../infra/prototype-keys.js";
+import type { PluginRegistry } from "./registry-types.js";
+import type { ProviderPlugin } from "./types.js";
 
 /** Normalizes provider ids used by capability-provider registries. */
 export function normalizeCapabilityProviderId(providerId: string | undefined): string | undefined {
@@ -52,4 +57,35 @@ export function buildCapabilityProviderMaps<T extends { id: string; aliases?: re
   }
 
   return { canonical, aliases };
+}
+
+export function matchesProviderLiteralId(provider: ProviderPlugin, providerId: string): boolean {
+  const normalized = normalizeLowercaseStringOrEmpty(providerId);
+  return Boolean(normalized) && normalizeLowercaseStringOrEmpty(provider.id) === normalized;
+}
+
+export function listProviderRuntimePluginsInRegistry(
+  registry: PluginRegistry,
+): Array<ProviderPlugin & { pluginId: string }> {
+  return registry.providers.map((entry) =>
+    Object.assign({}, entry.provider, { pluginId: entry.pluginId }),
+  );
+}
+
+/** Selects a provider hook while leaving registry provenance with the calling owner. */
+export function findProviderRuntimePluginInRegistry(params: {
+  registry: PluginRegistry;
+  provider: string;
+  ownerRefs: readonly string[];
+  isPluginOwnerCompatible?: (pluginId: string) => boolean;
+}): ProviderPlugin | undefined {
+  const entry = params.registry.providers.find(({ provider: plugin, pluginId }) => {
+    const matchesProvider =
+      params.ownerRefs.length > 0
+        ? matchesProviderLiteralId(plugin, params.provider) ||
+          params.ownerRefs.some((ownerRef) => matchesProviderPluginRef(plugin, ownerRef))
+        : matchesProviderPluginRef(plugin, params.provider);
+    return matchesProvider && (params.isPluginOwnerCompatible?.(pluginId) ?? true);
+  });
+  return entry ? Object.assign({}, entry.provider, { pluginId: entry.pluginId }) : undefined;
 }

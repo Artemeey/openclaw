@@ -13,7 +13,7 @@ import {
   resetPluginRuntimeStateForTest,
   setActivePluginRegistry,
 } from "../plugins/runtime.js";
-import { getPluginRuntimeGenerationRegistry } from "../plugins/runtime/generation-scope.js";
+import { getPluginRuntimeGenerationRegistry } from "../plugins/runtime/generation-state.js";
 import { createPluginRecord } from "../plugins/status.test-helpers.js";
 import type { resolveModelAsync } from "./embedded-agent-runner/model.js";
 import { AuthStorage, ModelRegistry } from "./sessions/index.js";

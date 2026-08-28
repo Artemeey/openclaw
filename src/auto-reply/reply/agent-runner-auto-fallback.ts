@@ -39,6 +39,7 @@ export function resolveRunAfterAutoFallbackPrimaryProbeRecheck(params: {
     return params.run;
   }
   const resolveEntrySelectionRun = (): FollowupRun["run"] => {
+    const overrideRouteResolution = resolveSessionModelOverrideRouteResolution(params.entry);
     const overrideModel = normalizeOptionalString(params.entry?.modelOverride);
     const entryRef = overrideModel
       ? resolvePersistedOverrideModelRef({
@@ -50,6 +51,7 @@ export function resolveRunAfterAutoFallbackPrimaryProbeRecheck(params: {
           defaultProvider: params.run.provider,
           overrideProvider: params.entry?.providerOverride,
           overrideModel,
+          overrideRouteResolution,
         })
       : null;
     const hasEntryModelOverride = Boolean(entryRef);
@@ -59,7 +61,7 @@ export function resolveRunAfterAutoFallbackPrimaryProbeRecheck(params: {
       provider: entryRef?.provider ?? params.run.provider,
       model: entryRef?.model ?? params.run.model,
       requestedRouteResolution: entryRef
-        ? resolveSessionModelOverrideRouteResolution(params.entry)
+        ? overrideRouteResolution
         : params.run.requestedRouteResolution,
       autoFallbackPrimaryProbe: undefined,
     };

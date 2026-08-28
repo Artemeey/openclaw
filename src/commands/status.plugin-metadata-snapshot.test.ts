@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { resolvePluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
@@ -10,7 +11,7 @@ import {
 import { createDeferredCore } from "../shared/deferred.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 
-const registryLoads = vi.hoisted(() => ({ count: 0 }));
+const registryLoads = vi.hoisted(() => new Map<string | undefined, number>());
 
 vi.mock("../plugins/plugin-registry-snapshot.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../plugins/plugin-registry-snapshot.js")>();
@@ -19,7 +20,8 @@ vi.mock("../plugins/plugin-registry-snapshot.js", async (importOriginal) => {
     loadPluginRegistrySnapshotWithMetadata: (
       ...args: Parameters<typeof actual.loadPluginRegistrySnapshotWithMetadata>
     ) => {
-      registryLoads.count += 1;
+      const workspaceDir = args[0]?.workspaceDir;
+      registryLoads.set(workspaceDir, (registryLoads.get(workspaceDir) ?? 0) + 1);
       return actual.loadPluginRegistrySnapshotWithMetadata(...args);
     },
   };
@@ -50,6 +52,17 @@ vi.mock("../gateway/call.js", () => ({
 
 const { withStatusScanOverview } = await import("./status.scan-overview.js");
 
+function statusConfig(pluginDir: string, pluginId: string, workspaceDir: string): OpenClawConfig {
+  return {
+    ...createColdPluginConfig(pluginDir, pluginId),
+    agents: {
+      ownership: "explicit",
+      defaults: { systemAgent: { agentId: "main" } },
+      entries: { main: { workspace: workspaceDir } },
+    },
+  };
+}
+
 afterEach(() => {
   clearPluginMetadataLifecycleCaches();
 });
@@ -66,18 +79,15 @@ it("shares plugin metadata through the full status continuation without publishi
       fs.mkdirSync(pluginDir, { recursive: true });
       createColdPluginFixture({ rootDir: pluginDir, pluginId: "cold-plugin" });
       await state.writeConfig({
+        ...statusConfig(pluginDir, "cold-plugin", state.workspaceDir),
         memory: {
           search: {
             remote: { apiKey: "${OPENCLAW_STATUS_PLUGIN_METADATA_KEY}" },
           },
         },
-        plugins: {
-          load: { paths: [pluginDir] },
-          entries: { "cold-plugin": { enabled: true } },
-        },
       });
       clearPluginMetadataLifecycleCaches();
-      registryLoads.count = 0;
+      registryLoads.clear();
 
       const overview = await withStatusScanOverview(
         {
@@ -97,7 +107,12 @@ it("shares plugin metadata through the full status continuation without publishi
       );
 
       expect(overview.cfg.plugins?.entries?.["cold-plugin"]?.enabled).toBe(true);
-      expect(registryLoads.count).toBe(1);
+      expect(registryLoads).toEqual(
+        new Map([
+          [undefined, 1],
+          [state.workspaceDir, 1],
+        ]),
+      );
       expect(
         getCurrentPluginMetadataSnapshot({
           config: overview.cfg,
@@ -125,9 +140,9 @@ it("keeps overlapping status commands on their own config metadata", async () =>
         fs.mkdirSync(rootDir, { recursive: true });
         createColdPluginFixture({ rootDir, pluginId });
       }
-      await state.writeConfig(createColdPluginConfig(firstPluginDir, "first-plugin"));
+      await state.writeConfig(statusConfig(firstPluginDir, "first-plugin", state.workspaceDir));
       clearPluginMetadataLifecycleCaches();
-      registryLoads.count = 0;
+      registryLoads.clear();
       const options = {
         commandName: "status --json",
         opts: {},
@@ -148,7 +163,7 @@ it("keeps overlapping status commands on their own config metadata", async () =>
       });
       try {
         await Promise.race([firstReady.promise, first]);
-        await state.writeConfig(createColdPluginConfig(secondPluginDir, "second-plugin"));
+        await state.writeConfig(statusConfig(secondPluginDir, "second-plugin", state.workspaceDir));
         await withStatusScanOverview(options, async (overview) => {
           await Promise.resolve();
           const prepared = resolvePluginMetadataSnapshot({ config: overview.cfg });
@@ -158,7 +173,12 @@ it("keeps overlapping status commands on their own config metadata", async () =>
         finishFirst.resolve();
         await first;
       }
-      expect(registryLoads.count).toBe(2);
+      expect(registryLoads).toEqual(
+        new Map([
+          [undefined, 2],
+          [state.workspaceDir, 2],
+        ]),
+      );
     },
   );
 });

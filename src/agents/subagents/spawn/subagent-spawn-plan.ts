@@ -6,8 +6,8 @@
 import { formatThinkingLevels } from "../../../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../../../config/types.openclaw.js";
 import type { FastMode } from "../../../shared/fast-mode.js";
+import { resolveDefaultModelProviderForAgent } from "../../model-selection-config.js";
 import {
-  resolveDefaultModelForAgent,
   resolveSubagentConfiguredModelSelection,
   resolveSubagentSpawnModelSelection,
 } from "../../model-selection.js";
@@ -100,10 +100,10 @@ export function resolveSubagentModelAndThinkingPlan(params: {
     ? {
         provider:
           configuredModelRef.provider ??
-          resolveDefaultModelForAgent({
+          resolveDefaultModelProviderForAgent({
             cfg: params.cfg,
             agentId: params.targetAgentId,
-          }).provider,
+          }),
         model: configuredModelRef.model,
       }
     : undefined;

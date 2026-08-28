@@ -487,14 +487,6 @@ describe("current plugin metadata snapshot", () => {
     });
   });
 
-  it("rejects a workspace-scoped snapshot when the caller does not provide workspace scope", () => {
-    const config = { plugins: { allow: ["demo"] } };
-    const snapshot = createSnapshot({ config, workspaceDir: "/workspace/a" });
-    setCurrentPluginMetadataSnapshot(snapshot, { config });
-
-    expect(getCurrentPluginMetadataSnapshot({ config })).toBeUndefined();
-  });
-
   it("can opt into reusing the stored workspace scope for unscoped control-plane readers", () => {
     const config = { plugins: { allow: ["demo"] } };
     const snapshot = createSnapshot({ config, workspaceDir: "/workspace/a" });
@@ -796,6 +788,7 @@ describe("current plugin metadata snapshot", () => {
     expect(getCurrentPluginMetadataSnapshot({ config: firstConfig })).toBe(first);
     expect(getCurrentPluginMetadataSnapshot({ requireDefaultDiscoveryContext: true })).toBe(first);
     expect(getCurrentPluginMetadataSnapshot({ config: secondConfig })).toBeUndefined();
+    expect(lease.release()).toBe(false);
   });
 
   it("restores exact config identity and environment across a temporary metadata snapshot", () => {
@@ -828,22 +821,6 @@ describe("current plugin metadata snapshot", () => {
     config.plugins.allow = ["changed"];
 
     expect(getCurrentPluginMetadataSnapshot({ config })).toBe(snapshot);
-  });
-
-  it("restores a temporary lease while its publication is current", () => {
-    const firstConfig = { plugins: { allow: ["first"] } };
-    const temporaryConfig = { plugins: { allow: ["temporary"] } };
-    const first = createSnapshot({ config: firstConfig });
-    const temporary = createSnapshot({ config: temporaryConfig });
-    setCurrentPluginMetadataSnapshot(first, { config: firstConfig });
-
-    const lease = installTemporaryCurrentPluginMetadataSnapshot(temporary, {
-      config: temporaryConfig,
-    });
-
-    expect(lease.release()).toBe(true);
-    expect(getCurrentPluginMetadataSnapshot({ config: firstConfig })).toBe(first);
-    expect(lease.release()).toBe(false);
   });
 
   it("does not release a temporary lease over a newer publication or lifecycle clear", () => {

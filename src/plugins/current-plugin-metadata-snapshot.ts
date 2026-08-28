@@ -18,10 +18,7 @@ import {
   getScopedPluginCache,
   withPluginCache,
 } from "./plugin-cache.js";
-import {
-  resolvePluginControlPlaneFingerprint,
-  type ResolvePluginControlPlaneContextParams,
-} from "./plugin-control-plane-context.js";
+import { resolvePluginControlPlaneFingerprint } from "./plugin-control-plane-context.js";
 import { resolvePluginMetadataEnvFingerprint } from "./plugin-metadata-env.js";
 import { registerPluginMetadataSnapshotReaders } from "./plugin-metadata-snapshot.runtime.js";
 import type {
@@ -100,18 +97,8 @@ const scopedPluginMetadataSnapshot = resolveGlobalSingleton<
   AsyncLocalStorage<ScopedPluginMetadataSnapshot>
 >(SCOPED_PLUGIN_METADATA_SNAPSHOT_KEY, () => new AsyncLocalStorage());
 
-function resolvePluginMetadataControlPlaneFingerprint(
-  config?: OpenClawConfig,
-  options: Omit<ResolvePluginControlPlaneContextParams, "config"> = {},
-): string {
-  return resolvePluginControlPlaneFingerprint({
-    config,
-    ...options,
-  });
-}
-
 function publishCurrentPluginMetadataSnapshot(
-  snapshot: PluginMetadataSnapshot | undefined,
+  snapshot: PluginMetadataSnapshot,
   options: CurrentPluginMetadataSnapshotOptions,
   owner: "gateway" | "operation" = "operation",
 ): CurrentPluginMetadataSnapshotRevision {
@@ -119,57 +106,36 @@ function publishCurrentPluginMetadataSnapshot(
     throw new Error("Gateway plugin metadata can only be replaced after shutdown");
   }
   currentPluginMetadataConfigIdentityCache.clear();
-  const compatiblePolicyHashes = snapshot
-    ? options.compatibleConfigs?.map((config) => resolveInstalledPluginIndexPolicyHash(config))
-    : undefined;
-  const compatibleConfigFingerprints = snapshot
-    ? options.compatibleConfigs?.map((config, index) =>
-        resolvePluginMetadataControlPlaneFingerprint(config, {
-          env: options.env,
-          index: snapshot.index,
-          policyHash: compatiblePolicyHashes?.[index],
-          workspaceDir: options.workspaceDir ?? snapshot.workspaceDir,
-        }),
-      )
-    : undefined;
-  const configFingerprint = snapshot
-    ? resolvePluginMetadataControlPlaneFingerprint(options.config, {
-        env: options.env,
-        index: snapshot.index,
-        policyHash: snapshot.policyHash,
-        workspaceDir: options.workspaceDir ?? snapshot.workspaceDir,
-      })
-    : undefined;
-  const defaultDiscoveryConfigFingerprint = snapshot
-    ? resolvePluginMetadataControlPlaneFingerprint(
-        {},
-        {
-          env: options.env,
-          index: snapshot.index,
-          policyHash: snapshot.policyHash,
-          workspaceDir: options.workspaceDir ?? snapshot.workspaceDir,
-        },
-      )
-    : undefined;
+  const fingerprint = (config: OpenClawConfig | undefined, policyHash: string | undefined) =>
+    resolvePluginControlPlaneFingerprint({
+      config,
+      env: options.env,
+      index: snapshot.index,
+      policyHash,
+      workspaceDir: options.workspaceDir ?? snapshot.workspaceDir,
+    });
+  const compatiblePolicyHashes = options.compatibleConfigs?.map((config) =>
+    resolveInstalledPluginIndexPolicyHash(config),
+  );
+  const compatibleConfigFingerprints = options.compatibleConfigs?.map((config, index) =>
+    fingerprint(config, compatiblePolicyHashes?.[index]),
+  );
+  const configFingerprint = fingerprint(options.config, snapshot.policyHash);
+  const defaultDiscoveryConfigFingerprint = fingerprint({}, snapshot.policyHash);
   const defaultDiscoveryCompatible =
-    snapshot &&
-    defaultDiscoveryConfigFingerprint &&
-    (configFingerprint === defaultDiscoveryConfigFingerprint ||
-      snapshot.configFingerprint === defaultDiscoveryConfigFingerprint ||
-      Boolean(compatibleConfigFingerprints?.includes(defaultDiscoveryConfigFingerprint)));
+    configFingerprint === defaultDiscoveryConfigFingerprint ||
+    snapshot.configFingerprint === defaultDiscoveryConfigFingerprint ||
+    Boolean(compatibleConfigFingerprints?.includes(defaultDiscoveryConfigFingerprint));
   const revision = setCurrentPluginMetadataSnapshotState(
     snapshot,
     configFingerprint,
     compatiblePolicyHashes,
     compatibleConfigFingerprints,
-    owner === "gateway" || defaultDiscoveryCompatible ? snapshot?.plugins : undefined,
+    owner === "gateway" || defaultDiscoveryCompatible ? snapshot.plugins : undefined,
     owner,
-    snapshot ? resolvePluginMetadataEnvFingerprint(options.env) : undefined,
-    Boolean(defaultDiscoveryCompatible),
+    resolvePluginMetadataEnvFingerprint(options.env),
+    defaultDiscoveryCompatible,
   );
-  if (!snapshot) {
-    return revision;
-  }
   if (options.config) {
     const policyHash = resolveInstalledPluginIndexPolicyHash(options.config);
     if (
@@ -326,7 +292,8 @@ export function withPluginMetadataSnapshotScope<T>(
     options.preparedConfigFingerprint !== undefined || options.trustConfigIdentity === true
       ? undefined
       : options.compatibleConfigs?.map((config, index) =>
-          resolvePluginMetadataControlPlaneFingerprint(config, {
+          resolvePluginControlPlaneFingerprint({
+            config,
             env: options.env,
             index: snapshot.index,
             policyHash: compatiblePolicyHashes?.[index],
@@ -338,7 +305,8 @@ export function withPluginMetadataSnapshotScope<T>(
     // Retained runtime generations already captured discovery; entering their scope must not
     // resolve filesystem roots again, even when the snapshot has no config fingerprint.
     (options.config && options.trustConfigIdentity !== true
-      ? resolvePluginMetadataControlPlaneFingerprint(options.config, {
+      ? resolvePluginControlPlaneFingerprint({
+          config: options.config,
           env: options.env,
           index: snapshot.index,
           policyHash: snapshot.policyHash,
@@ -442,7 +410,8 @@ function resolveCompatiblePluginMetadataSnapshot(
     }
   }
   if (params.config && !canReuseCachedConfig) {
-    const requestedConfigFingerprint = resolvePluginMetadataControlPlaneFingerprint(params.config, {
+    const requestedConfigFingerprint = resolvePluginControlPlaneFingerprint({
+      config: params.config,
       env,
       index: snapshot.index,
       policyHash: requestedPolicyHash,
@@ -532,32 +501,20 @@ export function getCurrentPluginMetadataSnapshot(
     return undefined;
   }
 
-  const {
-    snapshot,
-    owner,
-    configFingerprint,
-    envFingerprint,
-    defaultDiscoveryCompatible,
-    compatiblePolicyHashes,
-    compatibleConfigFingerprints,
-  } = getCurrentPluginMetadataSnapshotState();
-  const collectionOwner = owner === "gateway" ? getCurrentPluginMetadataOwner() : undefined;
+  const state = getCurrentPluginMetadataSnapshotState();
+  const collectionOwner = state.owner === "gateway" ? getCurrentPluginMetadataOwner() : undefined;
   const selectedSnapshot = collectionOwner
     ? collectionOwner.readSnapshot({
         ...params,
         allowWorkspaceScopedCurrent: params.allowWorkspaceScopedSnapshot,
       })
-    : (snapshot as PluginMetadataSnapshot | undefined);
+    : (state.snapshot as PluginMetadataSnapshot | undefined);
   return resolveCompatiblePluginMetadataSnapshot(
     {
+      ...state,
       snapshot: selectedSnapshot,
-      configFingerprint,
-      envFingerprint,
-      defaultDiscoveryCompatible,
-      compatiblePolicyHashes,
-      compatibleConfigFingerprints,
       hasConfigIdentity: (config) => currentPluginMetadataConfigIdentityCache.has(config),
-      immutableRuntimeGeneration: owner === "gateway",
+      immutableRuntimeGeneration: state.owner === "gateway",
     },
     params,
   );

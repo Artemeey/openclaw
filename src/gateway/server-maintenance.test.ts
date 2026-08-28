@@ -2,7 +2,7 @@
 // stale chat buffers, expired runs, health summaries, and timer disposal.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { managedWorktrees } from "../agents/worktrees/service.js";
-import type { ChatAbortControllerEntry } from "./chat-abort.js";
+import type { ChatAbortControllerEntry } from "./chat-abort.types.js";
 import type { HealthSummary } from "./health/types.js";
 import { createChatAbortMarker } from "./server-chat-state.js";
 import { DEDUPE_MAX, DEDUPE_TTL_MS } from "./server-constants.js";

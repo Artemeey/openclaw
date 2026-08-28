@@ -22,8 +22,7 @@ import { tryReadJsonSync } from "../infra/json-files.js";
 import { pruneMapToMaxSize } from "../infra/map-size.js";
 import {
   modelCatalogPricingFingerprint,
-  resolveCatalogModelPricing,
-  resolveHostedModelPricing,
+  resolveModelPricing,
   resolveModelPricingContext,
   type ModelPricingLookupContext,
 } from "../model-catalog/pricing.js";
@@ -446,21 +445,8 @@ export function resolveModelCostConfig(
     return configuredCost;
   }
 
-  const catalogPricing = resolveCatalogModelPricing({
-    pricingContext,
-    provider,
-    model,
-  });
-  if (catalogPricing) {
-    return normalizeResolvedPricing(catalogPricing);
-  }
-
-  const hostedPricing = resolveHostedModelPricing({
-    pricingContext,
-    provider,
-    model,
-  });
-  return hostedPricing ? normalizeResolvedPricing(hostedPricing) : undefined;
+  const pricing = resolveModelPricing(pricingContext, key);
+  return pricing ? normalizeResolvedPricing(pricing) : undefined;
 }
 
 const toNumber = (value: number | undefined): number =>

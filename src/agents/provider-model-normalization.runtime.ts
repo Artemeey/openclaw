@@ -1,9 +1,13 @@
 /** Keeps executable provider hooks off the static model-reference import graph. */
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
-import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
-import type { PluginMetadataRegistryView } from "../plugins/plugin-metadata-snapshot.types.js";
+import { resolveProviderRuntimeOwnerRefs } from "../plugins/provider-config-owner.js";
+import {
+  normalizeProviderModelIdWithResolvedPlugin,
+  type ProviderModelIdNormalizationParams,
+} from "../plugins/provider-model-normalization.js";
+import { findProviderRuntimePluginInRegistry } from "../plugins/provider-registry-shared.js";
+import { getPluginRuntimeGenerationRegistry } from "../plugins/runtime/generation-state.js";
 
 type ProviderRuntimeModule = typeof import("../plugins/provider-model-normalization.runtime.js");
 
@@ -29,16 +33,19 @@ function loadProviderRuntime(): ProviderRuntimeModule {
 }
 
 /** Normalizes provider model ids through plugin runtime hooks when available. */
-export function normalizeProviderModelIdWithRuntime(params: {
-  provider: string;
-  config?: OpenClawConfig;
-  workspaceDir?: string;
-  pluginMetadataSnapshot?: PluginMetadataRegistryView;
-  plugins?: readonly Pick<PluginManifestRecord, "modelIdNormalization">[];
-  context: {
-    provider: string;
-    modelId: string;
-  };
-}): string | undefined {
+export function normalizeProviderModelIdWithRuntime(
+  params: ProviderModelIdNormalizationParams,
+): string | undefined {
+  const registry = getPluginRuntimeGenerationRegistry();
+  if (registry) {
+    // The retained registry already owns provenance and missing hooks. Do not compare it
+    // against a newer metadata packet or reopen cold activation when its selection is empty.
+    const plugin = findProviderRuntimePluginInRegistry({
+      registry,
+      provider: params.provider,
+      ownerRefs: resolveProviderRuntimeOwnerRefs(params),
+    });
+    return normalizeProviderModelIdWithResolvedPlugin(params, plugin);
+  }
   return loadProviderRuntime().normalizeProviderModelIdWithPlugin(params);
 }

@@ -393,6 +393,22 @@ export async function readConfigFileSnapshotFromContext(
   ).snapshot;
 }
 
+function resolveReadPluginMetadata(
+  context: ConfigIoContext,
+  result: ReadConfigFileSnapshotInternalResult,
+  allowCurrentPluginMetadata?: boolean,
+) {
+  if (result.pluginMetadata || !result.snapshot.valid) {
+    return result.pluginMetadata;
+  }
+  const loader = context.createValidationPluginMetadataSnapshotLoader({
+    env: context.deps.env,
+    allowCurrentPluginMetadata,
+  });
+  loader.load(result.snapshot.sourceConfig);
+  return loader.getMetadata();
+}
+
 export async function readConfigFileSnapshotWithPluginMetadataFromContext(
   context: ConfigIoContext,
   options: ConfigSnapshotReadOptions = {},
@@ -402,15 +418,11 @@ export async function readConfigFileSnapshotWithPluginMetadataFromContext(
     recoverSuspicious: options.recoverSuspicious === true,
     allowSuspiciousRecovery: options.allowSuspiciousRecovery,
   });
-  let pluginMetadata = result.pluginMetadata;
-  if (!pluginMetadata && result.snapshot.valid) {
-    const loader = context.createValidationPluginMetadataSnapshotLoader({
-      env: context.deps.env,
-      allowCurrentPluginMetadata: options.allowCurrentPluginMetadata,
-    });
-    loader.load(result.snapshot.sourceConfig);
-    pluginMetadata = loader.getMetadata();
-  }
+  const pluginMetadata = resolveReadPluginMetadata(
+    context,
+    result,
+    options.allowCurrentPluginMetadata,
+  );
   return {
     snapshot: result.snapshot,
     ...(pluginMetadata ? { pluginMetadata } : {}),
@@ -429,12 +441,13 @@ export async function readConfigFileSnapshotForWriteFromContext(
   };
   assertConfigPathForWrite();
   const result = await readConfigFileSnapshotInternal(context);
+  const pluginMetadata = resolveReadPluginMetadata(context, result);
   assertConfigPathForWrite();
   return {
     snapshot: result.snapshot,
     writeOptions: {
       assertConfigPathForWrite,
-      basePluginMetadata: result.pluginMetadata,
+      basePluginMetadata: pluginMetadata,
       envSnapshotForRestore: result.envSnapshotForRestore,
       expectedConfigPath: context.configPath,
       ownedConfigPathForWrite: context.configPath,

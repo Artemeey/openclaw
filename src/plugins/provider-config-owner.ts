@@ -39,3 +39,16 @@ export function resolveProviderConfigApiOwnerHint(params: {
   }
   return api;
 }
+
+/** Keeps explicit and config-derived provider ownership in the same lookup order. */
+export function resolveProviderRuntimeOwnerRefs(params: {
+  provider: string;
+  providerOwner?: string;
+  config?: OpenClawConfig;
+}): string[] {
+  const apiOwnerHint = resolveProviderConfigApiOwnerHint(params);
+  const ownerRefs = [params.providerOwner, apiOwnerHint].filter((ref): ref is string =>
+    Boolean(ref),
+  );
+  return [...new Set(ownerRefs)];
+}

@@ -8,6 +8,7 @@ import { createPluginMetadataSnapshot } from "../../config/plugin-auto-enable.te
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { installPluginMetadataOwner } from "../../plugins/current-plugin-metadata.test-support.js";
+import { createPluginCache } from "../../plugins/plugin-cache.js";
 import {
   createPluginMetadataOwner,
   getPluginMetadataWorkspaceSnapshot,
@@ -215,8 +216,9 @@ describe("resolveCronModelSelection prepared metadata", () => {
         };
         const captured = await buildConfig("captured");
         const ambient = await buildConfig("ambient");
-        const metadataOwner = createPluginMetadataOwner();
-        const dispose = installPluginMetadataOwner(metadataOwner);
+        const pluginCache = createPluginCache();
+        const metadataOwner = createPluginMetadataOwner(pluginCache);
+        const dispose = installPluginMetadataOwner(metadataOwner, pluginCache);
         const loadSnapshot = vi.spyOn(pluginMetadataSnapshotRuntime, "loadPluginMetadataSnapshot");
         try {
           const metadata = metadataOwner.prepare({ config: captured.config });

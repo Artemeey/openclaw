@@ -25,6 +25,7 @@ vi.mock("../plugins/manifest-registry.js", async (importOriginal) => ({
 }));
 
 let sessionUtils: typeof import("./session-utils.js");
+let buildSessionListRowContext: typeof import("./session-utils-projection.js").buildSessionListRowContext;
 
 function withPreparedPluginMetadata<T>(config: OpenClawConfig, run: () => T): T {
   // Retained empty facts must win over an ambient collection owner without rediscovery.
@@ -42,6 +43,7 @@ describe("gateway session list plugin runtime normalization", () => {
   beforeAll(async () => {
     vi.resetModules();
     sessionUtils = await import("./session-utils.js");
+    ({ buildSessionListRowContext } = await import("./session-utils-projection.js"));
   });
 
   beforeEach(() => {
@@ -111,6 +113,108 @@ describe("gateway session list plugin runtime normalization", () => {
       expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
     },
   );
+
+  it.each(["listSessionsFromStore", "listSessionsFromStoreAsync"] as const)(
+    "keeps literal configured ids separate in the %s row cache",
+    async (listMethod) => {
+      const models = ["custom-provider/shared", "shared"];
+      const cfg: OpenClawConfig = {
+        agents: { defaults: { model: "custom-provider/shared" } },
+        models: {
+          providers: {
+            "custom-provider": {
+              baseUrl: "https://custom-provider.test/v1",
+              models: models.map((id) => ({
+                id,
+                name: id,
+                reasoning: false,
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                contextWindow: 4096,
+                maxTokens: 1024,
+              })),
+            },
+          },
+        },
+      };
+      const store = Object.fromEntries(
+        models.map((modelOverride, index) => [
+          `agent:main:literal-${index}`,
+          {
+            sessionId: `literal-${index}`,
+            updatedAt: 2 - index,
+            providerOverride: "custom-provider",
+            modelOverride,
+          } satisfies SessionEntry,
+        ]),
+      );
+
+      const listed = await withPreparedPluginMetadata(cfg, () =>
+        sessionUtils[listMethod]({ cfg, storePath: "", store, opts: {} }),
+      );
+
+      expect(listed.sessions.map((session) => session.model)).toEqual(models);
+      expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps raw, resolved, and lightweight selections separate in a shared row cache", () => {
+    normalizeProviderModelIdWithPluginMock.mockImplementation(
+      ({ provider, context }: { provider?: string; context?: { modelId?: string } }) =>
+        provider === "custom-provider" && context?.modelId === "legacy"
+          ? "runtime-model"
+          : undefined,
+    );
+    const cfg: OpenClawConfig = {
+      agents: { defaults: { model: "custom-provider/default-model" } },
+    };
+    const raw: SessionEntry = {
+      sessionId: "raw",
+      updatedAt: 3,
+      providerOverride: "custom-provider",
+      modelOverride: "legacy",
+    };
+    const resolved: SessionEntry = {
+      ...raw,
+      sessionId: "resolved",
+      modelOverrideRouteResolution: "resolved",
+    };
+    const legacyResolved: SessionEntry = {
+      ...raw,
+      sessionId: "legacy-resolved",
+      modelOverrideFallbackOriginProvider: "origin-provider",
+      modelOverrideFallbackOriginModel: "origin-model",
+    };
+    const store = { raw, resolved, legacyResolved };
+    const rowContext = buildSessionListRowContext({ store, now: 10 });
+    for (const entry of Object.values(store)) {
+      rowContext.acpSessionMetaByEntry.set(entry, undefined);
+    }
+
+    const models = withPreparedPluginMetadata(cfg, () =>
+      [
+        { entry: raw, lightweightListRow: false },
+        { entry: resolved, lightweightListRow: false },
+        { entry: legacyResolved, lightweightListRow: false },
+        { entry: raw, lightweightListRow: true },
+        { entry: raw, lightweightListRow: false },
+      ].map(
+        ({ entry, lightweightListRow }) =>
+          sessionUtils.buildGatewaySessionRow({
+            cfg,
+            storePath: "",
+            store,
+            key: `agent:main:${entry.sessionId}`,
+            entry,
+            rowContext,
+            lightweightListRow,
+            skipTranscriptUsageFallback: true,
+          }).model,
+      ),
+    );
+
+    expect(models).toEqual(["runtime-model", "legacy", "legacy", "legacy", "runtime-model"]);
+  });
 
   it("keeps provider runtime normalization for detail rows", async () => {
     normalizeProviderModelIdWithPluginMock.mockImplementation(

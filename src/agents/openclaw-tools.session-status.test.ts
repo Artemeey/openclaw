@@ -2133,6 +2133,7 @@ describe("session_status tool", () => {
     const actualMetadataSnapshots = await vi.importActual<
       typeof import("../plugins/plugin-metadata-snapshot.js")
     >("../plugins/plugin-metadata-snapshot.js");
+    const { createPluginCache } = await import("../plugins/plugin-cache.js");
     const { createPluginMetadataOwner, getPluginMetadataWorkspaceSnapshot } =
       await import("../plugins/plugin-metadata-collection.js");
     const { installPluginMetadataOwner } =
@@ -2209,8 +2210,9 @@ describe("session_status tool", () => {
           },
           tools: { agentToAgent: { enabled: false } },
         };
-        const owner = createPluginMetadataOwner();
-        const dispose = installPluginMetadataOwner(owner);
+        const pluginCache = createPluginCache();
+        const owner = createPluginMetadataOwner(pluginCache);
+        const dispose = installPluginMetadataOwner(owner, pluginCache);
         try {
           const metadata = owner.prepare({
             config: cfg,

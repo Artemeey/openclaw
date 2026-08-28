@@ -2383,6 +2383,67 @@ describe("router model filtering", () => {
 });
 
 describe("applyModelAllowlist", () => {
+  it.each([undefined, {}])("keeps empty selections unchanged without a policy (%j)", (defaults) => {
+    const config: OpenClawConfig = { agents: { defaults } };
+    expect(applyModelAllowlist(config, [])).toBe(config);
+  });
+
+  it.each<{
+    name: string;
+    models: string[];
+    allow?: string[];
+    scopeKeys?: string[];
+    expectedPolicy?: { allow: string[] };
+  }>([
+    {
+      name: "an unscoped explicit policy",
+      models: ["custom/model"],
+      allow: ["custom/model"],
+    },
+    {
+      name: "the last scoped explicit restriction",
+      models: ["custom/model"],
+      allow: ["custom/model"],
+      scopeKeys: ["custom/model"],
+    },
+    {
+      name: "only the scoped explicit restriction",
+      models: ["custom/model", "other/model"],
+      allow: ["custom/model", "other/model"],
+      scopeKeys: ["custom/model"],
+      expectedPolicy: { allow: ["other/model"] },
+    },
+    {
+      name: "the last scoped legacy restriction",
+      models: ["custom/model"],
+      scopeKeys: ["custom/model"],
+      expectedPolicy: { allow: [] },
+    },
+    {
+      name: "only the scoped legacy restriction",
+      models: ["custom/model", "other/model"],
+      scopeKeys: ["custom/model"],
+      expectedPolicy: { allow: ["other/model"] },
+    },
+  ])(
+    "clears $name without changing model metadata",
+    ({ models, allow, scopeKeys, expectedPolicy }) => {
+      const defaults = {
+        models: Object.fromEntries(models.map((key) => [key, { alias: key }])),
+        ...(allow ? { modelPolicy: { allow } } : {}),
+      };
+      const config: OpenClawConfig = { agents: { defaults } };
+      const before = structuredClone(config);
+      const next = applyModelAllowlist(config, [], { scopeKeys });
+
+      expect(next.agents?.defaults).toEqual({
+        models: defaults.models,
+        ...(expectedPolicy ? { modelPolicy: expectedPolicy } : {}),
+      });
+      expect(config).toEqual(before);
+    },
+  );
+
   it("preserves existing entries for selected models", () => {
     const config = {
       agents: {

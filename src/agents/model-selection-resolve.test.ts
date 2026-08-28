@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/types.js";
 import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
+import { createPluginCache } from "../plugins/plugin-cache.js";
 import { createPluginMetadataOwner } from "../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { projectPluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
@@ -50,8 +51,9 @@ describe("model-selection-resolve OpenRouter compat aliases", () => {
             },
           },
         };
-        const owner = createPluginMetadataOwner();
-        const dispose = installPluginMetadataOwner(owner);
+        const pluginCache = createPluginCache();
+        const owner = createPluginMetadataOwner(pluginCache);
+        const dispose = installPluginMetadataOwner(owner, pluginCache);
         try {
           const metadata = owner.prepare({ config: cfg });
           owner.publish(metadata, { config: cfg });

@@ -16,6 +16,7 @@ import {
 } from "../plugins/hook-runner-global.js";
 import { createPluginRecord } from "../plugins/loader-records.js";
 import type { PluginDiagnostic } from "../plugins/manifest-types.js";
+import { createPluginCache } from "../plugins/plugin-cache.js";
 import type { PluginLookUpTable } from "../plugins/plugin-lookup-table.js";
 import {
   createPluginMetadataOwner,
@@ -477,8 +478,9 @@ async function withPreparedFallbackSubagentRuntime(
         },
       },
     };
-    const owner = createPluginMetadataOwner();
-    const dispose = installPluginMetadataOwner(owner);
+    const pluginCache = createPluginCache();
+    const owner = createPluginMetadataOwner(pluginCache);
+    const dispose = installPluginMetadataOwner(owner, pluginCache);
     try {
       const metadata = owner.prepare({ config });
       owner.publish(metadata, { config });

@@ -320,46 +320,29 @@ function normalizeModelKeys(values: string[]): string[] {
   return next;
 }
 
-function resolveFallbackModelKey(params: {
-  modelContext: PickerModelContext;
-  raw: string;
-  defaultProvider: string;
-  aliasIndex: ModelAliasIndex;
-}): string | undefined {
-  const raw = normalizeOptionalString(params.raw);
-  if (!raw) {
-    return undefined;
-  }
-  const resolved = resolveModelRefFromString({
-    ...params.modelContext,
-    raw,
-    defaultProvider: params.defaultProvider,
-    aliasIndex: params.aliasIndex,
-  });
-  if (!resolved) {
-    return undefined;
-  }
-  return formatModelRefForConfig(resolved.ref, params.modelContext);
-}
-
 function resolveFallbackModelKeys(params: {
   modelContext: PickerModelContext;
   rawFallbacks: string[];
   defaultProvider: string;
   aliasIndex: ModelAliasIndex;
 }): string[] {
-  return normalizeModelKeys(
-    params.rawFallbacks
-      .map((raw) =>
-        resolveFallbackModelKey({
-          modelContext: params.modelContext,
-          raw,
-          defaultProvider: params.defaultProvider,
-          aliasIndex: params.aliasIndex,
-        }),
-      )
-      .filter((key): key is string => Boolean(key)),
-  );
+  const keys: string[] = [];
+  for (const value of params.rawFallbacks) {
+    const raw = normalizeOptionalString(value);
+    if (!raw) {
+      continue;
+    }
+    const resolved = resolveModelRefFromString({
+      ...params.modelContext,
+      raw,
+      defaultProvider: params.defaultProvider,
+      aliasIndex: params.aliasIndex,
+    });
+    if (resolved) {
+      keys.push(formatModelRefForConfig(resolved.ref, params.modelContext));
+    }
+  }
+  return normalizeModelKeys(keys);
 }
 
 function createModelRouteRuntimeResolver(params: {
@@ -1617,87 +1600,31 @@ export function applyModelAllowlist(
       resolved && scopeKeySet?.has(buildModelCatalogRef(resolved.ref.provider, resolved.ref.model)),
     );
   };
-  if (normalized.length === 0) {
-    // No agent defaults means no policy/legacy map to edit; nothing to clear.
-    if (!defaults || (!defaults.modelPolicy && !legacyAllow)) {
-      return cfg;
-    }
-    if (scopeKeySet) {
-      const nextAllow = existingAllow.filter((key) => !isPolicyRefInScope(key));
-      const { modelPolicy: _modelPolicy, ...restDefaults } = defaults;
-      return {
-        ...cfg,
-        agents: {
-          ...cfg.agents,
-          defaults: {
-            ...restDefaults,
-            ...(nextAllow.length > 0 || legacyAllow
-              ? { modelPolicy: { ...defaults?.modelPolicy, allow: nextAllow } }
-              : {}),
-          },
-        },
-      };
-    }
-    if (legacyAllow) {
-      return {
-        ...cfg,
-        agents: {
-          ...cfg.agents,
-          defaults: {
-            ...defaults,
-            modelPolicy: { ...defaults?.modelPolicy, allow: [] },
-          },
-        },
-      };
-    }
-    const { modelPolicy: _modelPolicy, ...restDefaults } = defaults;
-    return {
-      ...cfg,
-      agents: {
-        ...cfg.agents,
-        defaults: restDefaults,
-      },
-    };
+  // No policy or legacy map means an empty selection has nothing to clear.
+  if (normalized.length === 0 && (!defaults || (!defaults.modelPolicy && !legacyAllow))) {
+    return cfg;
   }
-
-  if (scopeKeySet) {
+  const nextAllow = scopeKeySet
+    ? [...new Set([...existingAllow.filter((key) => !isPolicyRefInScope(key)), ...normalized])]
+    : normalized;
+  const nextDefaults = { ...defaults };
+  if (normalized.length > 0) {
     const nextModels = { ...existingModels };
     for (const key of normalized) {
       nextModels[key] = existingModels[key] ?? {};
     }
-    const nextAllow = existingAllow.filter((key) => !isPolicyRefInScope(key));
-    for (const key of normalized) {
-      if (!nextAllow.includes(key)) {
-        nextAllow.push(key);
-      }
-    }
-    return {
-      ...cfg,
-      agents: {
-        ...cfg.agents,
-        defaults: {
-          ...defaults,
-          models: nextModels,
-          modelPolicy: { ...defaults?.modelPolicy, allow: nextAllow },
-        },
-      },
-    };
+    nextDefaults.models = nextModels;
   }
-
-  const nextModels: Record<string, { alias?: string }> = { ...existingModels };
-  for (const key of normalized) {
-    nextModels[key] = existingModels[key] ?? {};
+  if (normalized.length > 0 || nextAllow.length > 0 || legacyAllow) {
+    nextDefaults.modelPolicy = { ...defaults?.modelPolicy, allow: nextAllow };
+  } else {
+    delete nextDefaults.modelPolicy;
   }
-
   return {
     ...cfg,
     agents: {
       ...cfg.agents,
-      defaults: {
-        ...defaults,
-        models: nextModels,
-        modelPolicy: { ...defaults?.modelPolicy, allow: normalized },
-      },
+      defaults: nextDefaults,
     },
   };
 }

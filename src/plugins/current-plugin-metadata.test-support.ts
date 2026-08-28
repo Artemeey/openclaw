@@ -6,6 +6,7 @@ import {
   adoptProcessPluginCache,
   getProcessPluginCache,
   resetPluginCache,
+  type PluginCache,
 } from "./plugin-cache.js";
 import type { PluginMetadataOwner } from "./plugin-metadata-collection.types.js";
 import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
@@ -23,8 +24,11 @@ export function setCurrentPluginMetadataSnapshot(
 }
 
 /** Publishes a test owner; stale cleanup must never retire its replacement. */
-export function installPluginMetadataOwner(owner: PluginMetadataOwner): () => void {
-  adoptProcessPluginCache(owner.cache);
+export function installPluginMetadataOwner(
+  owner: PluginMetadataOwner,
+  cache: PluginCache,
+): () => void {
+  adoptProcessPluginCache(cache);
   return () => {
     if (getProcessPluginCache().metadata.collectionOwner === owner) {
       clearCurrentPluginMetadataSnapshot();

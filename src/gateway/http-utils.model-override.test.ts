@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { isCliProvider } from "../agents/model-selection-cli.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
+import { createPluginCache } from "../plugins/plugin-cache.js";
 import { createPluginMetadataOwner } from "../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import {
@@ -84,8 +85,9 @@ module.exports = {
           },
         },
       };
-      const owner = createPluginMetadataOwner();
-      const dispose = installPluginMetadataOwner(owner);
+      const pluginCache = createPluginCache();
+      const owner = createPluginMetadataOwner(pluginCache);
+      const dispose = installPluginMetadataOwner(owner, pluginCache);
       try {
         owner.publish(owner.prepare({ config: cfg }), { config: cfg });
         loadConfigMock.mockReturnValue(cfg);
@@ -166,8 +168,9 @@ module.exports = {
           ),
         },
       };
-      const owner = createPluginMetadataOwner();
-      const dispose = installPluginMetadataOwner(owner);
+      const pluginCache = createPluginCache();
+      const owner = createPluginMetadataOwner(pluginCache);
+      const dispose = installPluginMetadataOwner(owner, pluginCache);
       try {
         owner.publish(owner.prepare({ config: cfg }), { config: cfg });
         loadConfigMock.mockReturnValue(cfg);

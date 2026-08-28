@@ -153,7 +153,7 @@ export async function buildModelsProviderData(
   agentId?: string,
   options: { view?: "default" | "all"; workspaceDir?: string } = {},
 ): Promise<ModelsProviderData> {
-  const runtimeNormalization = resolveRuntimeNormalization(cfg);
+  const runtimeNormalization = resolveRuntimeNormalization(cfg, agentId, options);
   const resolvedDefault = resolveDefaultModelForAgent({
     cfg,
     agentId,

@@ -243,6 +243,7 @@ describe("secrets runtime fast path", () => {
     const { prepareSecretsRuntimeSnapshot } = await import("./runtime.js");
     const { collectConfigAssignments } = await import("./runtime-config-collectors.js");
     const { resolveRuntimeWebTools } = await import("./runtime-web-tools.js");
+    const { getPluginMetadataSnapshotCache } = await import("../plugins/plugin-cache.js");
     const { createPluginMetadataOwner } = await import("../plugins/plugin-metadata-collection.js");
     const { installPluginMetadataOwner } =
       await import("../plugins/current-plugin-metadata.test-support.js");
@@ -266,7 +267,10 @@ describe("secrets runtime fast path", () => {
       env: process.env,
     });
     expect(metadata.plugins.length).toBeGreaterThan(0);
-    const disposeOwner = installPluginMetadataOwner(owner);
+    const disposeOwner = installPluginMetadataOwner(
+      owner,
+      getPluginMetadataSnapshotCache(metadata),
+    );
     const openSyncSpy = vi.spyOn(fs, "openSync");
     try {
       owner.publish(metadata, { config, env: process.env });

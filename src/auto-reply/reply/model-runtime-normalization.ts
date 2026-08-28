@@ -1,13 +1,20 @@
 /** Prepared plugin metadata handoff for runtime model normalization. */
 import { buildModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
+import type { ModelRef, normalizeModelRef } from "../../agents/model-ref-shared.js";
 import {
   createModelManifestPluginContext,
   type ModelManifestPluginContext,
 } from "../../agents/model-selection-shared.js";
-import { normalizeModelRef } from "../../agents/model-selection.js";
 import { RUNTIME_MODEL_VISIBILITY_NORMALIZATION } from "../../agents/model-visibility-policy.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+
+/** A producing branch owns either the selected ref or its deferred preparation. */
+export type PreparedReplyModelRef = ModelRef | (() => ModelRef);
+
+export function resolvePreparedReplyModelRef(ref: PreparedReplyModelRef): ModelRef {
+  return typeof ref === "function" ? ref() : ref;
+}
 
 export type RuntimeModelNormalization = NonNullable<Parameters<typeof normalizeModelRef>[2]> & {
   manifestPluginContext?: ModelManifestPluginContext;
@@ -27,14 +34,6 @@ export function resolveRuntimeNormalization(
     ...manifestPluginContext.getContext(),
     manifestPluginContext,
   };
-}
-
-export function normalizeRuntimeRef(
-  provider: string,
-  model: string,
-  normalization: RuntimeModelNormalization = RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
-) {
-  return normalizeModelRef(provider, model, normalization);
 }
 
 export function findSelectedCatalogEntry(params: {

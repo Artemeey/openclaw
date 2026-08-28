@@ -11,7 +11,7 @@ import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import { createPreparedPluginMetadataFixture } from "../plugins/plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
-import { getPluginRuntimeGenerationRegistry } from "../plugins/runtime/generation-scope.js";
+import { getPluginRuntimeGenerationRegistry } from "../plugins/runtime/generation-state.js";
 import { getPluginRuntimeLoadContext } from "../plugins/runtime/load-context.js";
 import {
   acquireAgentRunPreparedModelRuntime,
@@ -323,45 +323,64 @@ describe("prepared reply dispatch runtime", () => {
     );
   });
 
-  it("aborts run admission without retaining an owner after auth publication", async () => {
-    mocks.configuredAgentIds = ["default"];
-    const config = {};
-    const input = {
-      agentId: "default",
-      agentDir: "/tmp/unused-agent",
-      config,
-      workspaceDir: "/tmp/dynamic-workspace",
-    };
-    await refreshPreparedModelRuntimeSnapshots(config, { gatewayLifecycle: true });
-    const testApi = getPreparedModelRuntimeTestApi();
-    expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(1);
-    let finishAuthRefresh: (() => void) | undefined;
-    mocks.ensureOpenClawModelsJson.mockImplementationOnce(
-      async () =>
-        await new Promise<{ agentDir: string; wrote: false }>((resolve) => {
-          finishAuthRefresh = () => resolve({ agentDir: input.agentDir, wrote: false });
-        }),
-    );
+  it.each([false, true])(
+    "preserves cancelled admission reasons without retaining owners (already aborted: %s)",
+    async (alreadyAborted) => {
+      mocks.configuredAgentIds = ["default"];
+      const config = {};
+      const input = {
+        agentId: "default",
+        agentDir: "/tmp/unused-agent",
+        config,
+        workspaceDir: "/tmp/dynamic-workspace",
+      };
+      await refreshPreparedModelRuntimeSnapshots(config, { gatewayLifecycle: true });
+      const testApi = getPreparedModelRuntimeTestApi();
+      expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(1);
+      let finishAuthRefresh: (() => void) | undefined;
+      mocks.ensureOpenClawModelsJson.mockImplementationOnce(
+        async () =>
+          await new Promise<{ agentDir: string; wrote: false }>((resolve) => {
+            finishAuthRefresh = () => resolve({ agentDir: input.agentDir, wrote: false });
+          }),
+      );
 
-    mocks.mutationListener?.({ agentDir: input.agentDir, affectsInheritedStores: false });
-    await vi.waitFor(() => expect(finishAuthRefresh).toBeDefined());
-    const abort = new AbortController();
-    const admission = acquireAgentRunPreparedModelRuntime(input, { abortSignal: abort.signal });
-    const observed = admission.then(
-      () => "resolved",
-      () => "rejected",
-    );
-    await expect(Promise.race([observed, Promise.resolve("pending")])).resolves.toBe("pending");
-    abort.abort(new Error("request cancelled"));
-    await expect(admission).rejects.toMatchObject({ name: "AbortError" });
-    expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(1);
+      mocks.mutationListener?.({ agentDir: input.agentDir, affectsInheritedStores: false });
+      await vi.waitFor(() => expect(finishAuthRefresh).toBeDefined());
+      const abort = new AbortController();
+      const reason = new DOMException("caller deadline expired", "TimeoutError");
+      if (alreadyAborted) {
+        abort.abort(reason);
+      }
+      const admission = acquireAgentRunPreparedModelRuntime(input, { abortSignal: abort.signal });
+      const dispatch = loadPublishedGatewayReplyDispatchRuntime({
+        agentId: input.agentId,
+        abortSignal: abort.signal,
+      });
+      const settled = Promise.allSettled([admission, dispatch]);
+      try {
+        if (!alreadyAborted) {
+          for (const pending of [admission, dispatch]) {
+            await expect(Promise.race([pending, Promise.resolve("pending")])).resolves.toBe(
+              "pending",
+            );
+          }
+          abort.abort(reason);
+        }
+        await expect(admission).rejects.toBe(reason);
+        await expect(dispatch).rejects.toBe(reason);
+        expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(1);
+      } finally {
+        finishAuthRefresh?.();
+        await settled;
+      }
 
-    finishAuthRefresh?.();
-    await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" });
-    expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(1);
-    const lease = await acquireAgentRunPreparedModelRuntime(input);
-    expect(lease.snapshot).toMatchObject({ agentId: "default", agentDir: input.agentDir });
-    expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(2);
-    lease.release();
-  });
+      await loadPublishedGatewayReplyDispatchRuntime({ agentId: "default" });
+      expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(1);
+      const lease = await acquireAgentRunPreparedModelRuntime(input);
+      expect(lease.snapshot).toMatchObject({ agentId: "default", agentDir: input.agentDir });
+      expect(testApi.getPreparedModelRuntimeOwnerCountForTest()).toBe(2);
+      lease.release();
+    },
+  );
 });

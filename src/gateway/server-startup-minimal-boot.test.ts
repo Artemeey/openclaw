@@ -9,6 +9,7 @@ import { readLoggingConfig } from "../logging/config.js";
 import { resetLogger } from "../logging/logger.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
+import { createPluginCache } from "../plugins/plugin-cache.js";
 import {
   createPluginMetadataOwner,
   getCurrentPluginMetadataOwner,
@@ -74,8 +75,9 @@ describe("gateway minimal boot smoke", () => {
       plugins: {},
     });
     state.applyEnv();
-    const pluginMetadataOwner = createPluginMetadataOwner();
-    const disposePluginMetadataOwner = installPluginMetadataOwner(pluginMetadataOwner);
+    const pluginCache = createPluginCache();
+    const pluginMetadataOwner = createPluginMetadataOwner(pluginCache);
+    const disposePluginMetadataOwner = installPluginMetadataOwner(pluginMetadataOwner, pluginCache);
 
     try {
       const { prepareGatewayServerBootstrap } = await import("./server-startup-bootstrap.js");
@@ -149,8 +151,12 @@ describe("gateway minimal boot smoke", () => {
         plugins: { enabled: true },
       });
       state.applyEnv();
-      const pluginMetadataOwner = createPluginMetadataOwner();
-      const disposePluginMetadataOwner = installPluginMetadataOwner(pluginMetadataOwner);
+      const pluginCache = createPluginCache();
+      const pluginMetadataOwner = createPluginMetadataOwner(pluginCache);
+      const disposePluginMetadataOwner = installPluginMetadataOwner(
+        pluginMetadataOwner,
+        pluginCache,
+      );
       const log = createSubsystemLogger("gateway/startup-metadata-test");
       try {
         const { prepareGatewayServerBootstrap } = await import("./server-startup-bootstrap.js");

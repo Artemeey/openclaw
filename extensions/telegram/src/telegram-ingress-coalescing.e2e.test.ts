@@ -64,8 +64,6 @@ vi.mock("./telegram-media.runtime.js", async (importOriginal) => {
 
 vi.mock("./bot-handlers.agent.runtime.js", () => ({
   resolveAgentDir: vi.fn(() => "/tmp/agent"),
-  resolveAgentWorkspaceDir: vi.fn(() => "/tmp/workspace"),
-  resolveDefaultModelForAgent: vi.fn(() => ({ provider: "openai", model: "gpt-test" })),
 }));
 
 vi.mock("./bot-message-dispatch.agent.runtime.js", () => ({

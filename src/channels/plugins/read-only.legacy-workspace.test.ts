@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { retainLegacyDefaultAgentId } from "../../config/legacy.default-agent-owner.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { installPluginMetadataOwner } from "../../plugins/current-plugin-metadata.test-support.js";
+import { createPluginCache } from "../../plugins/plugin-cache.js";
 import { createPluginMetadataOwner } from "../../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadata-lifecycle.js";
 import { resetPluginRuntimeStateForTest } from "../../plugins/runtime.js";
@@ -73,8 +74,9 @@ describe("read-only channel plugin legacy workspace discovery", () => {
       },
     };
     retainLegacyDefaultAgentId(cfg, retainedOwner);
-    const owner = createPluginMetadataOwner();
-    const releaseOwner = installPluginMetadataOwner(owner);
+    const pluginCache = createPluginCache();
+    const owner = createPluginMetadataOwner(pluginCache);
+    const releaseOwner = installPluginMetadataOwner(owner, pluginCache);
     try {
       const metadata = owner.prepare({ config: cfg, env });
       owner.publish(metadata, { config: cfg, env });

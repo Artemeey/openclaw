@@ -330,15 +330,10 @@ function resolveFallbackCandidatesUncached(
   if (requestedRouteResolution === "raw" && !exactRequestedRouteConfigured) {
     requestedCandidate =
       resolveModelAliasFromPair({
-        cfg: params.cfg,
-        agentId: params.agentId,
         provider: providerRaw,
         model: modelRaw,
         defaultProvider,
         aliasIndex,
-        allowPluginNormalization:
-          allowPluginNormalization && allowsPluginModelNormalization(requestedParams),
-        ...normalization,
       }) ?? normalizedPrimary;
   }
   addCandidate(requestedCandidate, "requested", requestedRouteResolution);

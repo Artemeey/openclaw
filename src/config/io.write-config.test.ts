@@ -56,9 +56,15 @@ const mockMaintainConfigBackups = vi.hoisted(() =>
   vi.fn<typeof import("./backup-rotation.js").maintainConfigBackups>(async () => {}),
 );
 
-vi.mock("../plugins/manifest-registry.js", () => ({
-  loadPluginManifestRegistryCore: mockLoadPluginManifestRegistry,
-}));
+vi.mock("../plugins/manifest-registry.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../plugins/manifest-registry.js")>();
+  return {
+    ...actual,
+    loadPluginManifestRegistryCore: mockLoadPluginManifestRegistry,
+    // Every synthetic schema in this suite belongs to its bundled fixture inventory.
+    loadBundledPluginManifestRegistry: mockLoadPluginManifestRegistry,
+  };
+});
 
 vi.mock("../plugins/plugin-registry.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../plugins/plugin-registry.js")>();

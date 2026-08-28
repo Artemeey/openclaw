@@ -39,11 +39,11 @@ export {
 /** Describes a video through an OpenAI-compatible chat-completions endpoint. */
 export const describeOpenAiCompatibleVideo = createLazyRuntimeMethod(
   createLazyRuntimeModule(() => import("../media-understanding/openai-compatible-video.js")),
-  (runtime) => runtime.describeOpenAiCompatibleVideo,
+  (runtime) => runtime.describeOpenAiCompatibleVideoCore,
 );
 
 /** Transcribes audio through an OpenAI-compatible endpoint. */
 export const transcribeOpenAiCompatibleAudio = createLazyRuntimeMethod(
   createLazyRuntimeModule(() => import("../media-understanding/openai-compatible-audio.js")),
-  (runtime) => runtime.transcribeOpenAiCompatibleAudio,
+  (runtime) => runtime.transcribeOpenAiCompatibleAudioCore,
 );

@@ -11,6 +11,7 @@ import type { InternalSessionEntry as SessionEntry } from "../../config/sessions
 import type { InternalHookEvent } from "../../hooks/internal-hooks.js";
 import { resetSystemEventsForTest } from "../../infra/system-events.js";
 import { createLazyRuntimeModule } from "../../shared/lazy-runtime.js";
+import { cleanupSessionStateForTest } from "../../test-utils/session-state-cleanup.js";
 import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
 import type { GatewayRequestContext } from "../server-methods/types.js";
 import type { GatewayServerHarness } from "../server.e2e-ws-harness.js";
@@ -102,12 +103,7 @@ export async function loadSeededTranscriptEvents(params: {
   storePath: string;
 }): Promise<unknown[]> {
   const { loadTranscriptEvents } = await getSessionAccessorModule();
-  return await loadTranscriptEvents({
-    agentId: params.agentId,
-    sessionId: params.sessionId,
-    sessionKey: params.sessionKey,
-    storePath: params.storePath,
-  });
+  return await loadTranscriptEvents(params);
 }
 
 const sessionCleanupMocks = vi.hoisted(() => ({
@@ -332,6 +328,7 @@ function createGatewaySessionsTestHarness(startServer: boolean) {
   afterAll(async () => {
     await harness?.close();
     if (sharedSessionStoreDir) {
+      await cleanupSessionStateForTest({ stateDir: sharedSessionStoreDir });
       await fs.rm(sharedSessionStoreDir, { recursive: true, force: true });
     }
   });

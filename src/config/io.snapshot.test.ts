@@ -6,6 +6,7 @@ import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-l
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { createConfigIoContext } from "./io.context.js";
 import {
+  readConfigFileSnapshotForWriteFromContext,
   readConfigFileSnapshotFromContext,
   readConfigFileSnapshotWithPluginMetadataFromContext,
 } from "./io.snapshot.js";
@@ -39,6 +40,17 @@ function createContext(root: string) {
     observe: false,
   });
 }
+
+const metadataReaders = [
+  { name: "metadata", read: readConfigFileSnapshotWithPluginMetadataFromContext },
+  {
+    name: "write",
+    read: async (context: ReturnType<typeof createContext>) => {
+      const result = await readConfigFileSnapshotForWriteFromContext(context);
+      return { snapshot: result.snapshot, pluginMetadata: result.writeOptions.basePluginMetadata };
+    },
+  },
+] as const;
 
 describe("config snapshot plugin metadata", () => {
   it("records only genuinely missing substitutions as private facts", async () => {
@@ -86,38 +98,44 @@ describe("config snapshot plugin metadata", () => {
     expect(JSON.stringify(snapshot)).not.toContain("resolutionFacts");
   });
 
-  it("loads metadata for an explicit valid missing-config read without changing plain reads", async () => {
-    const root = tempDirs.make("openclaw-config-snapshot-metadata-");
-    const context = createContext(root);
-    const loader = vi.spyOn(context, "createValidationPluginMetadataSnapshotLoader");
+  it.each(metadataReaders)(
+    "loads metadata for an explicit valid missing-config $name read without changing plain reads",
+    async ({ read }) => {
+      const root = tempDirs.make("openclaw-config-snapshot-metadata-");
+      const context = createContext(root);
+      const loader = vi.spyOn(context, "createValidationPluginMetadataSnapshotLoader");
 
-    const plainSnapshot = await readConfigFileSnapshotFromContext(context);
+      const plainSnapshot = await readConfigFileSnapshotFromContext(context);
 
-    expect(plainSnapshot).toMatchObject({ exists: false, valid: true });
-    expect(loader).not.toHaveBeenCalled();
+      expect(plainSnapshot).toMatchObject({ exists: false, valid: true });
+      expect(loader).not.toHaveBeenCalled();
 
-    const result = await readConfigFileSnapshotWithPluginMetadataFromContext(context);
+      const result = await read(context);
 
-    expect(result.snapshot).toMatchObject({ exists: false, valid: true });
-    expect(loader).toHaveBeenCalledOnce();
-    expect(result.pluginMetadata?.selectedSnapshot.configFingerprint).toMatch(/^[a-f0-9]{64}$/u);
-    expect(result.pluginMetadata?.selectedSnapshot.index).toMatchObject({
-      version: 1,
-      hostContractVersion: expect.any(String),
-      plugins: expect.any(Array),
-    });
-  });
+      expect(result.snapshot).toMatchObject({ exists: false, valid: true });
+      expect(loader).toHaveBeenCalledOnce();
+      expect(result.pluginMetadata?.selectedSnapshot.configFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+      expect(result.pluginMetadata?.selectedSnapshot.index).toMatchObject({
+        version: 1,
+        hostContractVersion: expect.any(String),
+        plugins: expect.any(Array),
+      });
+    },
+  );
 
-  it("does not invent plugin metadata for invalid snapshots", async () => {
-    const root = tempDirs.make("openclaw-config-snapshot-invalid-");
-    const context = createContext(root);
-    fs.writeFileSync(context.configPath, "{ invalid", "utf8");
-    const loader = vi.spyOn(context, "createValidationPluginMetadataSnapshotLoader");
+  it.each(metadataReaders)(
+    "does not invent plugin metadata for invalid $name snapshots",
+    async ({ read }) => {
+      const root = tempDirs.make("openclaw-config-snapshot-invalid-");
+      const context = createContext(root);
+      fs.writeFileSync(context.configPath, "{ invalid", "utf8");
+      const loader = vi.spyOn(context, "createValidationPluginMetadataSnapshotLoader");
 
-    const result = await readConfigFileSnapshotWithPluginMetadataFromContext(context);
+      const result = await read(context);
 
-    expect(result.snapshot.valid).toBe(false);
-    expect(result.pluginMetadata).toBeUndefined();
-    expect(loader).not.toHaveBeenCalled();
-  });
+      expect(result.snapshot.valid).toBe(false);
+      expect(result.pluginMetadata).toBeUndefined();
+      expect(loader).not.toHaveBeenCalled();
+    },
+  );
 });

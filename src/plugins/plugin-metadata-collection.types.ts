@@ -1,6 +1,5 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { PreparedPluginChannelCatalog } from "./channel-catalog-registry.types.js";
-import type { PluginCache } from "./plugin-cache.js";
 import type {
   PluginMetadataSnapshot,
   PluginMetadataSnapshotPluginIdScope,
@@ -42,7 +41,6 @@ export type PluginMetadataScope = {
 };
 
 export type PluginMetadataOwner = {
-  readonly cache: PluginCache;
   prepare: (params: PreparePluginMetadataParams) => PreparedPluginMetadata;
   publish: (
     metadata: PreparedPluginMetadata,
@@ -51,17 +49,7 @@ export type PluginMetadataOwner = {
   getActive: () => PreparedPluginMetadata | undefined;
   isPreparedCurrent: (metadata: PreparedPluginMetadata) => boolean;
   readSnapshot: (params: ResolvePluginMetadataSnapshotParams) => PluginMetadataSnapshot | undefined;
-  readConfigWide: {
-    (
-      params: PreparePluginMetadataParams & {
-        pluginIds?: undefined;
-        pluginIdScope?: undefined;
-      },
-    ): PreparedPluginMetadata | undefined;
-    (
-      params: PreparePluginMetadataParams & PluginMetadataScope,
-    ): ConfigWidePluginMetadataView | undefined;
-  };
+  readConfigWide: (params: PreparePluginMetadataParams) => PreparedPluginMetadata | undefined;
   invalidatePreparation: () => void;
   dispose: () => void;
 };

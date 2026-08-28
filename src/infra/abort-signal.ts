@@ -23,13 +23,12 @@ export function racePromiseWithAbortSignal<T>(
   if (!signal) {
     return promise;
   }
-  const abortError = () => createAbortError("Operation aborted", { cause: signal.reason });
   if (signal.aborted) {
-    return Promise.reject(abortError());
+    return Promise.reject(signal.reason);
   }
   let onAbort!: () => void;
   const aborted = new Promise<never>((_, reject) => {
-    onAbort = () => reject(abortError());
+    onAbort = () => reject(signal.reason);
     signal.addEventListener("abort", onAbort, { once: true });
     if (signal.aborted) {
       onAbort();

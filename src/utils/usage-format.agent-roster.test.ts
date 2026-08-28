@@ -10,10 +10,10 @@ import type { OpenClawConfig } from "../config/config.js";
 import { resolveEstimatedSessionCostUsd } from "../gateway/session-utils-core.js";
 import { buildSessionListRowMetadataContext } from "../gateway/session-utils-projection.js";
 import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
+import { createPluginCache } from "../plugins/plugin-cache.js";
 import {
   createPluginMetadataOwner,
   getPluginMetadataWorkspaceSnapshot,
-  type PluginMetadataOwner,
   type PreparedPluginMetadata,
 } from "../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
@@ -37,7 +37,6 @@ async function withPreparedPricingMetadata(
   run: (params: {
     config: OpenClawConfig;
     metadata: PreparedPluginMetadata;
-    owner: PluginMetadataOwner;
     agentDir: (agentId?: string) => string;
   }) => void,
   provider = "anthropic",
@@ -124,12 +123,13 @@ async function withPreparedPricingMetadata(
             });
           }
         }
-        const owner = createPluginMetadataOwner();
-        const dispose = installPluginMetadataOwner(owner);
+        const pluginCache = createPluginCache();
+        const owner = createPluginMetadataOwner(pluginCache);
+        const dispose = installPluginMetadataOwner(owner, pluginCache);
         try {
           const metadata = owner.prepare({ config });
           owner.publish(metadata, { config });
-          run({ config, metadata, owner, agentDir: state.agentDir });
+          run({ config, metadata, agentDir: state.agentDir });
           expect(fixtures.some(isColdPluginRuntimeLoaded)).toBe(false);
         } finally {
           dispose();
@@ -273,8 +273,8 @@ describe("usage-format agent roster", () => {
     });
   });
 
-  it("keeps cost estimates current after a metadata reload with the same config", async () => {
-    await withPreparedPricingMetadata("configured", ({ config, metadata, owner, agentDir }) => {
+  it("keeps cost estimates current after a metadata restart with the same config", async () => {
+    await withPreparedPricingMetadata("configured", ({ config, metadata, agentDir }) => {
       const read = () =>
         resolveEstimatedSessionCostUsd({
           cfg: config,
@@ -297,12 +297,18 @@ describe("usage-format agent roster", () => {
         "pricing-second";
       nodeFs.writeFileSync(plugin.manifestPath, JSON.stringify(manifest));
       clearPluginMetadataLifecycleCaches();
-      owner.publish(owner.prepare({ config, allowCurrent: false }), { config });
-
-      expect(read()).toBe(7);
-      expect(
-        resolveModelCostConfigFingerprint(config, agentDir("main"), { agentId: "main" }),
-      ).not.toBe(fingerprint);
+      const replacementCache = createPluginCache();
+      const replacementOwner = createPluginMetadataOwner(replacementCache);
+      const releaseReplacement = installPluginMetadataOwner(replacementOwner, replacementCache);
+      try {
+        replacementOwner.publish(replacementOwner.prepare({ config }), { config });
+        expect(read()).toBe(7);
+        expect(
+          resolveModelCostConfigFingerprint(config, agentDir("main"), { agentId: "main" }),
+        ).not.toBe(fingerprint);
+      } finally {
+        releaseReplacement();
+      }
     });
   });
 });

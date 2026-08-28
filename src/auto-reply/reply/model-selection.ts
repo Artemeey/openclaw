@@ -10,6 +10,7 @@ import { resolveAgentHarnessPolicy } from "../../agents/harness/policy.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import type { ModelFallbackRouteResolution } from "../../agents/model-fallback.types.js";
+import { normalizeModelRef } from "../../agents/model-ref-shared.js";
 import type { ModelManifestPluginContext } from "../../agents/model-selection-shared.js";
 import {
   type ModelAliasIndex,
@@ -46,13 +47,14 @@ import { normalizeThinkLevel, type ThinkLevel } from "../thinking.shared.js";
 import {
   findSelectedCatalogEntry,
   mergePreparedConfiguredCatalog,
-  normalizeRuntimeRef,
+  resolvePreparedReplyModelRef,
   resolveRuntimeNormalization,
+  type PreparedReplyModelRef,
   type RuntimeModelNormalization,
 } from "./model-runtime-normalization.js";
 import {
   isStaleHeartbeatAutoFallbackOverride,
-  normalizeStoredRuntimeModelRef,
+  resolveStoredRuntimeModelRef,
 } from "./stored-model-override.js";
 export {
   resolveModelDirectiveSelection,
@@ -151,6 +153,10 @@ export async function createModelSelectionState(params: {
   defaultModel: string;
   primaryProvider?: string;
   primaryModel?: string;
+  /** Producer-owned refs; deferred defaults retain the original configured operand. */
+  preparedDefaultModel: PreparedReplyModelRef;
+  preparedInitialModel: PreparedReplyModelRef;
+  preparedPrimaryModel: PreparedReplyModelRef;
   provider: string;
   model: string;
   hasModelDirective: boolean;
@@ -194,6 +200,7 @@ export async function createModelSelectionState(params: {
     }));
   const runtimeModelNormalization = resolveRuntimeNormalization(cfg, params.agentId, params);
 
+  const preparedDefaultModel = resolvePreparedReplyModelRef(params.preparedDefaultModel);
   let { provider, model } = params;
   let requestedRouteResolution: ModelFallbackRouteResolution = "resolved";
   const primaryProvider = params.primaryProvider ?? defaultProvider;
@@ -207,6 +214,7 @@ export async function createModelSelectionState(params: {
     catalog: [],
     defaultProvider,
     defaultModel,
+    preparedDefaultModel,
     agentId: params.agentId,
     ...runtimeModelNormalization,
   });
@@ -246,9 +254,7 @@ export async function createModelSelectionState(params: {
     sessionEntry,
     storedOverride: directStoredModelOverride,
     defaultProvider,
-    defaultModel,
-    primaryProvider: params.primaryProvider,
-    primaryModel: params.primaryModel,
+    preparedPrimaryModel: params.preparedPrimaryModel,
     normalization: runtimeModelNormalization,
   });
   const primaryHarnessPolicy = resolveAgentHarnessPolicy({
@@ -264,32 +270,28 @@ export async function createModelSelectionState(params: {
     normalizeProviderId(directStoredModelOverride.provider ?? "") === OPENAI_CODEX_PROVIDER_ID &&
     normalizeProviderId(primaryProvider) === OPENAI_PROVIDER_ID &&
     primaryHarnessPolicy.runtime === "codex" &&
-    normalizeRuntimeRef(
+    normalizeModelRef(
       OPENAI_PROVIDER_ID,
       directStoredModelOverride.model,
       runtimeModelNormalization,
     ).model ===
-      normalizeRuntimeRef(OPENAI_PROVIDER_ID, primaryModel, runtimeModelNormalization).model;
-  const normalizedCurrentSelection = normalizeRuntimeRef(
-    provider,
-    model,
-    runtimeModelNormalization,
-  );
-  const normalizedDirectOverride = directStoredModelOverride
-    ? normalizeRuntimeRef(
-        directStoredModelOverride.provider ?? defaultProvider,
-        directStoredModelOverride.model,
-        runtimeModelNormalization,
-      )
+      normalizeModelRef(OPENAI_PROVIDER_ID, primaryModel, runtimeModelNormalization).model;
+  const normalizedCurrentSelection = resolvePreparedReplyModelRef(params.preparedInitialModel);
+  let preparedSelection: PreparedReplyModelRef = normalizedCurrentSelection;
+  const directOverrideRef = directStoredModelOverride
+    ? {
+        provider: directStoredModelOverride.provider ?? defaultProvider,
+        model: directStoredModelOverride.model,
+      }
     : null;
   // A current selection equal to the stored legacy pin deliberately reapplies it; clearing then
   // would fight an explicit override, so only treat differing selections as stale.
   const staleLegacyAutoFallbackWithoutOrigin =
     directStoredModelOverride?.source === "session" &&
     hasLegacyAutoFallbackWithoutOrigin(sessionEntry) &&
-    normalizedDirectOverride !== null &&
+    directOverrideRef !== null &&
     buildModelCatalogRef(normalizedCurrentSelection.provider, normalizedCurrentSelection.model) !==
-      buildModelCatalogRef(normalizedDirectOverride.provider, normalizedDirectOverride.model);
+      buildModelCatalogRef(directOverrideRef.provider, directOverrideRef.model);
   const staleDirectStoredOverride =
     staleHeartbeatAutoFallbackOverride ||
     staleLegacyOpenAICodexAutoOverride ||
@@ -309,6 +311,7 @@ export async function createModelSelectionState(params: {
       catalog: modelCatalog,
       defaultProvider,
       defaultModel,
+      preparedDefaultModel,
       agentId: params.agentId,
       ...runtimeModelNormalization,
     });
@@ -324,6 +327,7 @@ export async function createModelSelectionState(params: {
       catalog: configuredModelCatalog,
       defaultProvider,
       defaultModel,
+      preparedDefaultModel,
       agentId: params.agentId,
       ...runtimeModelNormalization,
     });
@@ -344,12 +348,11 @@ export async function createModelSelectionState(params: {
     directStoredModelOverride &&
     !hasOneTurnModelOverride
   ) {
-    const normalizedOverride = normalizeStoredRuntimeModelRef(
+    const normalizedOverride = resolveStoredRuntimeModelRef(
       directStoredModelOverride.provider ?? defaultProvider,
       directStoredModelOverride.model,
       cfg,
       sessionEntry,
-      runtimeModelNormalization,
     );
     const key = modelKey(normalizedOverride.provider, normalizedOverride.model);
     const overrideAllowed = visibilityPolicy.allows(normalizedOverride);
@@ -405,13 +408,13 @@ export async function createModelSelectionState(params: {
       normalizedCurrentSelection.provider,
       normalizedCurrentSelection.model,
     );
-    const directStoredOverrideKey = normalizedDirectOverride
-      ? buildModelCatalogRef(normalizedDirectOverride.provider, normalizedDirectOverride.model)
+    const directStoredOverrideKey = directOverrideRef
+      ? buildModelCatalogRef(directOverrideRef.provider, directOverrideRef.model)
       : undefined;
     if (currentSelectionKey === directStoredOverrideKey) {
       provider = primaryProvider;
       model = primaryModel;
-      requestedRouteResolution = "resolved";
+      preparedSelection = params.preparedPrimaryModel;
     }
   }
 
@@ -445,24 +448,22 @@ export async function createModelSelectionState(params: {
     const storedAlias =
       storedOverride.routeResolution === "raw" && !storedRouteCataloged
         ? resolveModelAliasFromPair({
-            cfg,
             provider: storedProvider,
             model: storedOverride.model,
             defaultProvider,
             aliasIndex: visibilityPolicy.selectionAliasIndex,
-            ...runtimeModelNormalization,
           })
         : null;
-    const normalizedStoredOverride = normalizeStoredRuntimeModelRef(
+    const normalizedStoredOverride = resolveStoredRuntimeModelRef(
       storedAlias?.provider ?? storedProvider,
       storedAlias?.model ?? storedOverride.model,
       cfg,
       sessionEntry,
-      runtimeModelNormalization,
     );
     if (modelSelectionLocked || visibilityPolicy.allows(normalizedStoredOverride)) {
       provider = normalizedStoredOverride.provider;
       model = normalizedStoredOverride.model;
+      preparedSelection = normalizedStoredOverride;
       requestedRouteResolution =
         storedAlias || storedRouteCataloged ? "resolved" : storedOverride.routeResolution;
     }
@@ -472,10 +473,9 @@ export async function createModelSelectionState(params: {
     params.hasModelDirective || hasOneTurnModelOverride || modelSelectionLocked;
   if (!skipResolveSelection) {
     const unresolvedSelectionKey = buildModelCatalogRef(provider, model);
-    const allowedInitialSelection = visibilityPolicy.resolveSelection({
-      provider,
-      model,
-    });
+    const allowedInitialSelection = visibilityPolicy.resolveSelection(
+      resolvePreparedReplyModelRef(preparedSelection),
+    );
     if (!allowedInitialSelection) {
       const policyPath = visibilityPolicy.allowConfigPath ?? "modelPolicy.allow";
       throw new Error(
@@ -554,6 +554,7 @@ export async function createModelSelectionState(params: {
       catalog,
       defaultProvider,
       defaultModel,
+      preparedDefaultModel,
       agentId: params.agentId,
       ...runtimeModelNormalization,
     }).allowedCatalog;

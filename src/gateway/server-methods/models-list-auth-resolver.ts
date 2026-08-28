@@ -63,35 +63,6 @@ export function createModelsListAuthResolver(params: {
   });
 }
 
-function resolveLegacyEntryAvailability(params: {
-  authResolver: ModelAuthAvailabilityResolver;
-  entry: ModelCatalogEntry;
-  evaluation: ModelAuthAvailabilityEvaluation;
-  cfg: OpenClawConfig;
-  agentId: string;
-  metadataSnapshot: PluginMetadataSnapshot;
-}): ModelAuthAvailabilityEvaluation {
-  if (params.evaluation.availability === true) {
-    return params.evaluation;
-  }
-  const runtimeProvider = resolveCliRuntimeExecutionProvider({
-    provider: params.entry.provider,
-    cfg: params.cfg,
-    agentId: params.agentId,
-    modelId: params.entry.id,
-    metadataSnapshot: params.metadataSnapshot,
-  });
-  if (
-    runtimeProvider &&
-    normalizeProviderId(runtimeProvider) !== normalizeProviderId(params.entry.provider)
-  ) {
-    // The native runtime owns the remaining auth decision, including whether
-    // credentials are absent or simply have not been read yet.
-    return params.authResolver.evaluateModelAuth(runtimeProvider, { modelId: params.entry.id });
-  }
-  return params.evaluation;
-}
-
 export function createModelsListEntryEvaluator(params: {
   cfg: OpenClawConfig;
   agentId: string;
@@ -113,7 +84,8 @@ export function createModelsListEntryEvaluator(params: {
       return cached;
     }
     const next = Promise.resolve().then((): ModelAuthAvailabilityEvaluation => {
-      const evaluation = params.authResolver.evaluateModelAuth(entry.provider, {
+      const provider = normalizeProviderId(entry.provider);
+      let evaluation = params.authResolver.evaluateModelAuth(entry.provider, {
         modelId: identity?.id ?? entry.id,
         ...(params.preferredProfileId ? { preferredProfileId: params.preferredProfileId } : {}),
         ...(params.lockedProfileId ? { lockedProfileId: params.lockedProfileId } : {}),
@@ -122,33 +94,41 @@ export function createModelsListEntryEvaluator(params: {
           baseUrl: variant.baseUrl,
         })),
       });
-      const resolved =
-        evaluation.routeResolution === null && normalizeProviderId(entry.provider) !== "openai"
-          ? resolveLegacyEntryAvailability({
-              authResolver: params.authResolver,
-              entry,
-              evaluation,
-              cfg: params.cfg,
-              agentId: params.agentId,
-              metadataSnapshot: params.metadataSnapshot,
-            })
-          : evaluation;
-      const provider = normalizeProviderId(entry.provider);
+      if (
+        evaluation.availability !== true &&
+        evaluation.routeResolution === null &&
+        provider !== "openai"
+      ) {
+        const runtimeProvider = resolveCliRuntimeExecutionProvider({
+          provider: entry.provider,
+          cfg: params.cfg,
+          agentId: params.agentId,
+          modelId: entry.id,
+          metadataSnapshot: params.metadataSnapshot,
+        });
+        if (runtimeProvider && normalizeProviderId(runtimeProvider) !== provider) {
+          // The native runtime owns the remaining auth decision, including whether
+          // credentials are absent or simply have not been read yet.
+          evaluation = params.authResolver.evaluateModelAuth(runtimeProvider, {
+            modelId: entry.id,
+          });
+        }
+      }
       // Stored credentials prove presence, not acceptance. Apply the live rejection only to the
       // profile discovery tested; widening it would hide routes backed by another valid profile.
       return params.providerOutcomes?.some(
         (outcome) =>
           outcome.status === "auth-rejected" &&
           normalizeProviderId(outcome.provider) === provider &&
-          (outcome.profileId === undefined || outcome.profileId === resolved.selectedProfileId),
+          (outcome.profileId === undefined || outcome.profileId === evaluation.selectedProfileId),
       )
         ? {
-            ...resolved,
+            ...evaluation,
             availability: false,
             unavailableReason: "auth-failed",
             unavailableUntil: undefined,
           }
-        : resolved;
+        : evaluation;
     });
     pending.set(cacheKey, next);
     return next;

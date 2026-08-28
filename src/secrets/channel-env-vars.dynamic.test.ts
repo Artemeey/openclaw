@@ -82,12 +82,13 @@ describe("channel env vars dynamic package metadata", () => {
     pluginRegistryMocks.resolveConfigWidePluginManifestRegistry.mockImplementation(
       actualConfigMetadata.resolveConfigWidePluginManifestRegistry,
     );
+    const { getPluginMetadataSnapshotCache } = await import("../plugins/plugin-cache.js");
     const { createPluginMetadataOwner } = await import("../plugins/plugin-metadata-collection.js");
     const { installPluginMetadataOwner } =
       await import("../plugins/current-plugin-metadata.test-support.js");
     const owner = createPluginMetadataOwner();
     const prepared = owner.prepare({ config, env });
-    cleanup.push(installPluginMetadataOwner(owner));
+    cleanup.push(installPluginMetadataOwner(owner, getPluginMetadataSnapshotCache(prepared)));
     owner.publish(prepared, { config, env });
     pluginRegistryMocks.loadPluginMetadataSnapshot.mockClear();
     const mod = await import("./channel-env-vars.js");

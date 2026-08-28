@@ -239,27 +239,11 @@ function normalizeLowercaseStringOrEmptyForTest(value: string | undefined): stri
   return value?.trim().toLowerCase() ?? "";
 }
 
-function resolveDefaultModelForAgentForTest(params: { cfg: OpenClawConfig }): {
-  provider: string;
-  model: string;
-} {
-  const modelConfig = params.cfg.agents?.defaults?.model;
-  const rawModel =
-    typeof modelConfig === "string" ? modelConfig : (modelConfig?.primary ?? "openai/gpt-5.4");
-  const parsed = parseModelRef(rawModel);
-  const provider = normalizeLowercaseStringOrEmptyForTest(parsed.provider) || "openai";
-  return {
-    provider: provider === "bedrock" ? "amazon-bedrock" : provider,
-    model: parsed.model || "gpt-5.4",
-  };
-}
-
-function createModelsProviderDataFromConfig(cfg: OpenClawConfig): {
-  byProvider: Map<string, Set<string>>;
-  providers: string[];
-  resolvedDefault: { provider: string; model: string };
-  modelNames: Map<string, string>;
-} {
+async function createModelsProviderDataFromConfig(
+  cfg: OpenClawConfig,
+  agentId?: string,
+): ReturnType<TelegramBotDeps["buildModelsProviderData"]> {
+  const { resolveDefaultModelForAgent } = await import("openclaw/plugin-sdk/agent-runtime");
   const byProvider = new Map<string, Set<string>>();
   const add = (providerRaw: string | undefined, modelRaw: string | undefined) => {
     const provider = normalizeLowercaseStringOrEmptyForTest(providerRaw);
@@ -272,7 +256,13 @@ function createModelsProviderDataFromConfig(cfg: OpenClawConfig): {
     byProvider.set(provider, existing);
   };
 
-  const resolvedDefault = resolveDefaultModelForAgentForTest({ cfg });
+  // This mock catalog resolves config only; metadata normalization has producer coverage.
+  const resolvedDefault = resolveDefaultModelForAgent({
+    cfg,
+    agentId,
+    allowManifestNormalization: false,
+    allowPluginNormalization: false,
+  });
   add(resolvedDefault.provider, resolvedDefault.model);
 
   for (const raw of Object.keys(cfg.agents?.defaults?.models ?? {})) {
@@ -710,9 +700,7 @@ beforeEach(() => {
   listSkillCommandsForAgents.mockReset();
   listSkillCommandsForAgents.mockReturnValue([]);
   buildModelsProviderData.mockReset();
-  buildModelsProviderData.mockImplementation(async (cfg: OpenClawConfig) => {
-    return createModelsProviderDataFromConfig(cfg);
-  });
+  buildModelsProviderData.mockImplementation(createModelsProviderDataFromConfig);
   middlewareUseSpy.mockReset();
   runnerHoisted.sequentializeMiddleware.mockReset();
   runnerHoisted.sequentializeMiddleware.mockImplementation(async (_ctx, next) => {

@@ -389,6 +389,7 @@ describe("config IO plugin metadata snapshots", () => {
       try {
         const gatewayOwner = createPluginMetadataOwner();
         const gatewayMetadata = gatewayOwner.prepare({ config: gatewayConfig, env });
+        const gatewayCache = getPluginMetadataSnapshotCache(gatewayMetadata);
         gatewayOwner.publish(gatewayMetadata, { config: gatewayConfig, env });
         expect(gatewayMetadata.plugins.map((plugin) => plugin.id)).toEqual([
           gatewayPlugin.pluginId,
@@ -397,7 +398,7 @@ describe("config IO plugin metadata snapshots", () => {
         const operationCache = createPluginCache();
         withPluginCache(operationCache, () => readContexts(operationCache));
 
-        expect(getPluginCache()).toBe(gatewayOwner.cache);
+        expect(getPluginCache()).toBe(gatewayCache);
         expect(gatewayOwner.getActive()).toBe(gatewayMetadata);
         expect(getCurrentPluginMetadataSnapshotState().snapshot).toBe(
           gatewayMetadata.unionSnapshot,

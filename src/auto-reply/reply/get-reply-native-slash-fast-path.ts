@@ -1,9 +1,12 @@
 // Handles native slash commands before full get-reply pipeline execution.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { QueueMode } from "../../../packages/gateway-protocol/src/schema/logs-chat.js";
-import type { ModelManifestPluginContext } from "../../agents/model-selection-shared.js";
 import {
-  resolveModelRefFromString,
+  resolveModelRefWithConfiguredAliases,
+  type ModelManifestPluginContext,
+} from "../../agents/model-selection-shared.js";
+import {
+  resolveModelAliasFromPair,
   resolveThinkingDefaultWithRuntimeCatalog,
   type ModelAliasIndex,
 } from "../../agents/model-selection.js";
@@ -141,6 +144,9 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
   manifestPluginContext?: ModelManifestPluginContext;
   provider: string;
   model: string;
+  preparedDefaultModel: Parameters<typeof resolveReplyDirectives>[0]["preparedDefaultModel"];
+  preparedInitialModel: Parameters<typeof resolveReplyDirectives>[0]["preparedInitialModel"];
+  preparedPrimaryModel: Parameters<typeof resolveReplyDirectives>[0]["preparedPrimaryModel"];
   workspaceDir: string;
   typing: ReturnType<typeof createTypingController>;
   opts?: GetReplyOptions;
@@ -262,29 +268,33 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
         })
       : null;
     const resolvedChannelModel = channelModelOverride
-      ? resolveModelRefFromString({
+      ? resolveModelRefWithConfiguredAliases({
+          cfg: params.cfg,
+          agentId: params.agentId,
           raw: channelModelOverride.model,
           defaultProvider: params.defaultProvider,
-          aliasIndex: params.aliasIndex,
+          workspaceDir: params.workspaceDir,
+          manifestPluginContext: params.manifestPluginContext,
         })
       : null;
+    // Stored refs already own normalization; only raw provenance may still name an alias.
     const resolvedInheritedModel =
       storedModelOverride?.source === "parent"
-        ? (resolveModelRefFromString({
-            raw: `${storedModelOverride.provider ?? params.defaultProvider}/${storedModelOverride.model}`,
-            defaultProvider: params.defaultProvider,
-            aliasIndex: params.aliasIndex,
-          })?.ref ?? {
-            provider: storedModelOverride.provider ?? params.defaultProvider,
-            model: storedModelOverride.model,
-          })
+        ? ((storedModelOverride.routeResolution === "raw"
+            ? resolveModelAliasFromPair({
+                provider: storedModelOverride.provider ?? params.defaultProvider,
+                model: storedModelOverride.model,
+                defaultProvider: params.defaultProvider,
+                aliasIndex: params.aliasIndex,
+              })
+            : null) ?? storedModelOverride)
         : null;
     // Native status returns before normal channel routing; select once before
     // preparing model-bound thinking, runtime, auth, context, or fast-mode facts.
     const statusProvider =
-      resolvedInheritedModel?.provider ?? resolvedChannelModel?.ref.provider ?? params.provider;
+      resolvedInheritedModel?.provider ?? resolvedChannelModel?.provider ?? params.provider;
     const statusModel =
-      resolvedInheritedModel?.model ?? resolvedChannelModel?.ref.model ?? params.model;
+      resolvedInheritedModel?.model ?? resolvedChannelModel?.model ?? params.model;
     let resolvedDefaultThinkingLevel: ThinkLevel | undefined;
     const resolveDefaultThinkingLevel = async () => {
       resolvedDefaultThinkingLevel ??= await resolveNativeSlashDefaultThinkingLevel({
@@ -435,6 +445,10 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
     aliasIndex: params.aliasIndex,
     provider: params.provider,
     model: params.model,
+    preparedDefaultModel: params.preparedDefaultModel,
+    preparedInitialModel: params.preparedInitialModel,
+    preparedPrimaryModel: params.preparedPrimaryModel,
+    manifestPluginContext: params.manifestPluginContext,
     hasResolvedHeartbeatModelOverride: false,
     typing: params.typing,
     opts: params.opts,

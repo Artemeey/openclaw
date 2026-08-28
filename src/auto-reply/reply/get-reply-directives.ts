@@ -170,6 +170,9 @@ export async function resolveReplyDirectives(params: {
   defaultModel: string;
   primaryProvider?: string;
   primaryModel?: string;
+  preparedDefaultModel: Parameters<typeof createModelSelectionState>[0]["preparedDefaultModel"];
+  preparedInitialModel: Parameters<typeof createModelSelectionState>[0]["preparedInitialModel"];
+  preparedPrimaryModel: Parameters<typeof createModelSelectionState>[0]["preparedPrimaryModel"];
   aliasIndex: ModelAliasIndex;
   provider: string;
   model: string;
@@ -486,6 +489,9 @@ export async function resolveReplyDirectives(params: {
           defaultModel,
           primaryProvider,
           primaryModel,
+          preparedDefaultModel: params.preparedDefaultModel,
+          preparedInitialModel: params.preparedInitialModel,
+          preparedPrimaryModel: params.preparedPrimaryModel,
           provider,
           model,
           hasModelDirective: directives.hasModelDirective,

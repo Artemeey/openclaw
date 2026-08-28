@@ -7,7 +7,7 @@ import {
   resolveModelCostConfig,
   resolveModelCostConfigFingerprint,
 } from "../utils/usage-format.js";
-import { resolveCatalogModelPricing, resolveHostedModelPricing } from "./pricing.js";
+import { resolveModelPricing, resolveModelPricingContext } from "./pricing.js";
 import {
   resetRemoteModelCatalogOverlayForTest,
   setRemoteModelCatalogOverlaySourcesForTest,
@@ -45,6 +45,8 @@ beforeEach(() => {
         },
       },
       pricing: {
+        "openai/pricing-model": { input: 91, output: 92 },
+        "openai/openai/pricing-model": { input: 93, output: 94 },
         "openai/pricing-hosted": { input: 4, output: 8 },
         "openai/openai/pricing-hosted": { input: 5, output: 10 },
         "openai/gpt-external": { input: 2.5, output: 10, cacheRead: 1.25 },
@@ -166,14 +168,12 @@ describe("hosted model pricing", () => {
   it.each([
     { source: "catalog", model: "pricing-model", expected: [1, 3] },
     { source: "hosted", model: "pricing-hosted", expected: [4, 5] },
-  ])("keeps exact pricing namespaces distinct in $source", ({ source, model, expected }) => {
-    const resolvePricing =
-      source === "catalog" ? resolveCatalogModelPricing : resolveHostedModelPricing;
-    const config = configFor("https://api.openai.com/v1");
+  ])("keeps exact pricing namespaces distinct in $source", ({ model, expected }) => {
+    const context = resolveModelPricingContext({ config: configFor("https://api.openai.com/v1") });
 
     expect(
       [model, `openai/${model}`].map(
-        (modelId) => resolvePricing({ config, provider: "openai", model: modelId })?.input,
+        (modelId) => resolveModelPricing(context, context.normalizeKey("openai", modelId))?.input,
       ),
     ).toEqual(expected);
   });
@@ -198,11 +198,12 @@ describe("hosted model pricing", () => {
       },
     };
 
+    const context = resolveModelPricingContext({ config });
     expect(
-      resolveHostedModelPricing({ config, provider: "openai", model: "pricing-hosted" })?.input,
+      resolveModelPricing(context, context.normalizeKey("openai", "pricing-hosted"))?.input,
     ).toBe(4);
     expect(
-      resolveHostedModelPricing({ config, provider: "openai", model: "openai/pricing-hosted" }),
+      resolveModelPricing(context, context.normalizeKey("openai", "openai/pricing-hosted")),
     ).toBeUndefined();
   });
 

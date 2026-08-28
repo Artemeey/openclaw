@@ -9,6 +9,7 @@ import {
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
 import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
+import { createPluginCache } from "../plugins/plugin-cache.js";
 import {
   createPluginMetadataOwner,
   getPluginMetadataWorkspaceSnapshot,
@@ -228,8 +229,9 @@ describe("getSecretTargetRegistry metadata reuse", () => {
       resolveConfigSecretTargetByPath,
       resolvePlanTargetAgainstRegistry,
     } = await import("./target-registry-query.js");
-    const owner = createPluginMetadataOwner();
-    const releaseOwner = installPluginMetadataOwner(owner);
+    const pluginCache = createPluginCache();
+    const owner = createPluginMetadataOwner(pluginCache);
+    const releaseOwner = installPluginMetadataOwner(owner, pluginCache);
     try {
       const metadata = owner.prepare({ config, env: process.env, allowCurrent: false });
       owner.publish(metadata, { config, env: process.env });

@@ -8,7 +8,6 @@ import {
   normalizeProviderId,
 } from "../agents/model-ref-shared.js";
 import { createModelManifestPluginContext } from "../agents/model-selection-shared.js";
-import type { ModelDefinitionConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getCurrentPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-snapshot.js";
 import { isInstalledPluginEnabled } from "../plugins/installed-plugin-index.js";
@@ -228,71 +227,27 @@ function isPrivateOrLoopbackUrl(value: string | undefined): boolean {
   }
 }
 
-function findConfiguredModel(
-  config: OpenClawConfig,
-  provider: string,
-  model: string,
-  normalizeKey: PricingContext["normalizeKey"],
-): ModelDefinitionConfig | undefined {
-  const key = buildModelCatalogRef(provider, model);
-  return config.models?.providers?.[provider]?.models?.find(
-    (entry) => normalizeKey(provider, entry.id) === key,
+/** Resolves catalog-first pricing for a key prepared by this metadata context. */
+export function resolveModelPricing(
+  context: PricingContext,
+  key: string,
+): PricingValue | undefined {
+  const provider = key.slice(0, key.indexOf("/"));
+  const providerConfig = context.config.models?.providers?.[provider];
+  const configuredModel = providerConfig?.models?.find(
+    (entry) => context.normalizeKey(provider, entry.id) === key,
   );
-}
-
-function allowsHostedPricing(
-  config: OpenClawConfig,
-  provider: string,
-  model: string,
-  normalizeKey: PricingContext["normalizeKey"],
-): boolean {
-  const providerConfig = config.models?.providers?.[provider];
-  const configuredModel = findConfiguredModel(config, provider, model, normalizeKey);
-  return !(
+  if (
     isPrivateOrLoopbackUrl(configuredModel?.baseUrl) ||
     isPrivateOrLoopbackUrl(providerConfig?.baseUrl)
-  );
-}
-
-export function resolveCatalogModelPricing(
-  params: ModelPricingLookupContext & {
-    provider: string;
-    model: string;
-    pricingContext?: PricingContext;
-  },
-): PricingValue | undefined {
-  const context = params.pricingContext ?? resolveModelPricingContext(params);
-  const key = context.normalizeKey(params.provider, params.model);
-  const slash = key.indexOf("/");
-  if (
-    !allowsHostedPricing(
-      context.config,
-      key.slice(0, slash),
-      key.slice(slash + 1),
-      context.normalizeKey,
-    )
   ) {
     return undefined;
   }
-  const pricing = context.catalog.get(key);
-  return pricing && hasKnownPricing(pricing) ? pricing : undefined;
-}
-
-export function resolveHostedModelPricing(
-  params: ModelPricingLookupContext & {
-    provider: string;
-    model: string;
-    pricingContext?: PricingContext;
-  },
-): PricingValue | undefined {
-  const context = params.pricingContext ?? resolveModelPricingContext(params);
-  const key = context.normalizeKey(params.provider, params.model);
-  const slash = key.indexOf("/");
-  const provider = key.slice(0, slash);
-  if (
-    context.policies.get(provider)?.external === false ||
-    !allowsHostedPricing(context.config, provider, key.slice(slash + 1), context.normalizeKey)
-  ) {
+  const catalogPricing = context.catalog.get(key);
+  if (catalogPricing && hasKnownPricing(catalogPricing)) {
+    return catalogPricing;
+  }
+  if (context.policies.get(provider)?.external === false) {
     return undefined;
   }
   const pricing =

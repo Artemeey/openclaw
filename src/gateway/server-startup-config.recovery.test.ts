@@ -2,7 +2,6 @@
 // auto-enable behavior, model defaults, and recovery diagnostics.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConfigFileSnapshot, ModelDefinitionConfig, OpenClawConfig } from "../config/types.js";
-import { createPluginCache } from "../plugins/plugin-cache.js";
 import type { PluginMetadataOwner } from "../plugins/plugin-metadata-collection.js";
 import {
   createPluginMetadataSnapshotFixture,
@@ -25,7 +24,6 @@ const pluginMetadata = createPreparedPluginMetadataFixture({
   unionSnapshot: createPluginMetadataSnapshotFixture(pluginManifestRegistry),
 });
 const pluginMetadataOwner: PluginMetadataOwner = {
-  cache: createPluginCache(),
   prepare: () => pluginMetadata,
   publish: () => {},
   getActive: () => undefined,

@@ -139,22 +139,6 @@ function resolveProjectionIds(snapshot: PluginMetadataSnapshot, scope: PluginMet
   return scope.pluginIds ?? scope.pluginIdScope?.resolve({ index: snapshot.index });
 }
 
-/** Config-wide validation projects the union; it never chooses an execution workspace. */
-function projectConfigWidePluginMetadata(
-  metadata: PreparedPluginMetadata,
-  scope: PluginMetadataScope = {},
-): ConfigWidePluginMetadataView {
-  if (scope.pluginIds === undefined && scope.pluginIdScope === undefined) {
-    return metadata;
-  }
-  return createManifestView([
-    projectPluginMetadataSnapshot(
-      metadata.unionSnapshot,
-      resolveProjectionIds(metadata.unionSnapshot, scope),
-    ).manifestRegistry,
-  ]);
-}
-
 /** Selects a prepared execution workspace; undefined is an explicit shared-root view. */
 export function getPluginMetadataWorkspaceSnapshot(
   metadata: PreparedPluginMetadata,
@@ -383,31 +367,7 @@ export function createPluginMetadataOwner(
     });
   };
 
-  function readConfigWide(
-    params: PreparePluginMetadataParams & { pluginIds?: undefined; pluginIdScope?: undefined },
-  ): PreparedPluginMetadata | undefined;
-  function readConfigWide(
-    params: PreparePluginMetadataParams & PluginMetadataScope,
-  ): ConfigWidePluginMetadataView | undefined;
-  function readConfigWide(
-    params: PreparePluginMetadataParams & PluginMetadataScope,
-  ): ConfigWidePluginMetadataView | undefined {
-    if (
-      params.allowCurrent === false ||
-      params.stateDir !== undefined ||
-      (boot && boot.envFingerprint !== resolvePluginMetadataEnvFingerprint(params.env))
-    ) {
-      return undefined;
-    }
-    // First reads prepare through the same owner; after publication preparation only
-    // projects the fixed inventory into the requested config and workspace mapping.
-    return projectConfigWidePluginMetadata(owner.prepare(params), params);
-  }
-
   const owner: PluginMetadataOwner = {
-    get cache() {
-      return cache;
-    },
     prepare(params) {
       if (disposed) {
         throw new Error("Plugin metadata owner has been disposed");
@@ -652,7 +612,18 @@ export function createPluginMetadataOwner(
       }
       return undefined;
     },
-    readConfigWide,
+    readConfigWide(params) {
+      if (
+        params.allowCurrent === false ||
+        params.stateDir !== undefined ||
+        (boot && boot.envFingerprint !== resolvePluginMetadataEnvFingerprint(params.env))
+      ) {
+        return undefined;
+      }
+      // Before publication this prepares through the owner; afterward it only
+      // projects the fixed inventory into the requested config/workspace mapping.
+      return owner.prepare(params);
+    },
     invalidatePreparation() {
       epoch += 1;
       observed = undefined;

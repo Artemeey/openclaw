@@ -18,7 +18,7 @@ import {
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
 import { clearLoadInstalledPluginIndexInstallRecordsCache } from "./installed-plugin-index-record-cache.js";
 import type { InstalledPluginIndex } from "./installed-plugin-index.js";
-import { getPluginMetadataSnapshotCache } from "./plugin-cache.js";
+import { createPluginCache, getPluginMetadataSnapshotCache } from "./plugin-cache.js";
 import {
   createPluginMetadataOwner,
   getOrCreatePluginMetadataOwner,
@@ -88,7 +88,12 @@ describe("plugin metadata collection", () => {
   beforeEach(() => {
     loadPluginRegistrySnapshotWithMetadata.mockReset();
     loadPluginManifestRegistryForInstalledIndex.mockReset();
-    loadPluginManifestRegistryForInstalledIndex.mockReturnValue(makeManifestRegistry());
+    loadPluginManifestRegistryForInstalledIndex.mockImplementation(
+      ({ index }: { index: InstalledPluginIndex }) => ({
+        plugins: index.plugins.flatMap((record) => makeManifestRegistry(record.pluginId).plugins),
+        diagnostics: [],
+      }),
+    );
   });
 
   afterEach(() => {
@@ -124,10 +129,6 @@ describe("plugin metadata collection", () => {
         index.policyHash = resolveInstalledPluginIndexPolicyHash(config);
         return { source: "provided", snapshot: index, diagnostics: [] };
       });
-      loadPluginManifestRegistryForInstalledIndex.mockImplementation(
-        ({ index }: { index: InstalledPluginIndex }) =>
-          makeManifestRegistry(index.plugins[0]?.pluginId),
-      );
       const owner = getOrCreatePluginMetadataOwner();
       ownerDisposers.push(() => owner.dispose());
       let prepared: ReturnType<typeof owner.prepare> | undefined;
@@ -190,22 +191,17 @@ describe("plugin metadata collection", () => {
           return { source: "provided", snapshot: index, diagnostics: [] };
         },
       );
-      loadPluginManifestRegistryForInstalledIndex.mockImplementation(
-        ({ index }: { index: InstalledPluginIndex }) => ({
-          plugins: index.plugins.flatMap((record) => makeManifestRegistry(record.pluginId).plugins),
-          diagnostics: [],
-        }),
-      );
       const releaseGateway = retainGatewayPluginMetadata();
       ownerDisposers.push(releaseGateway);
-      const owner = createPluginMetadataOwner();
-      ownerDisposers.push(installPluginMetadataOwner(owner));
+      const pluginCache = createPluginCache();
+      const owner = createPluginMetadataOwner(pluginCache);
+      ownerDisposers.push(installPluginMetadataOwner(owner, pluginCache));
       const active = owner.prepare({ config, env });
       owner.publish(active, { config, env });
       const startupInventory = active.unionSnapshot;
-      expect(getPluginMetadataSnapshotCache(startupInventory)).toBe(owner.cache);
+      expect(getPluginMetadataSnapshotCache(startupInventory)).toBe(pluginCache);
       for (const snapshot of active.workspaces.values()) {
-        expect(getPluginMetadataSnapshotCache(snapshot)).toBe(owner.cache);
+        expect(getPluginMetadataSnapshotCache(snapshot)).toBe(pluginCache);
       }
       expect(getCurrentPluginMetadataSnapshotState().snapshot).toBe(startupInventory);
       packageVersion = "replacement";
@@ -263,8 +259,9 @@ describe("plugin metadata collection", () => {
 
       releaseGateway();
       expect(owner.isPreparedCurrent(candidate)).toBe(false);
-      const restartedOwner = createPluginMetadataOwner();
-      ownerDisposers.push(installPluginMetadataOwner(restartedOwner));
+      const restartedCache = createPluginCache();
+      const restartedOwner = createPluginMetadataOwner(restartedCache);
+      ownerDisposers.push(installPluginMetadataOwner(restartedOwner, restartedCache));
       const restarted = restartedOwner.prepare({ config: candidateConfig, env });
       restartedOwner.publish(restarted, { config: candidateConfig, env });
       expect(restarted.plugins.map((plugin) => plugin.id)).toEqual([
@@ -300,9 +297,6 @@ describe("plugin metadata collection", () => {
         snapshot: replacementIndex,
         diagnostics: [],
       });
-      loadPluginManifestRegistryForInstalledIndex.mockReturnValue(
-        makeManifestRegistry("replacement"),
-      );
       const nextOwner = reuse === "foreign seed" ? createPluginMetadataOwner() : owner;
       if (nextOwner !== owner) {
         ownerDisposers.push(() => nextOwner.dispose());
@@ -358,12 +352,9 @@ describe("plugin metadata collection", () => {
           diagnostics: [],
         }),
       );
-      loadPluginManifestRegistryForInstalledIndex.mockImplementation(
-        ({ index }: { index: InstalledPluginIndex }) =>
-          makeManifestRegistry(index.plugins[0]?.pluginId),
-      );
-      const owner = createPluginMetadataOwner();
-      ownerDisposers.push(installPluginMetadataOwner(owner));
+      const pluginCache = createPluginCache();
+      const owner = createPluginMetadataOwner(pluginCache);
+      ownerDisposers.push(installPluginMetadataOwner(owner, pluginCache));
       const active = owner.prepare({ config, env });
       owner.publish(active, { config, env });
       const readAlternate = () =>
@@ -391,14 +382,16 @@ describe("plugin metadata collection", () => {
       snapshot: index,
       diagnostics: [],
     });
-    const firstOwner = createPluginMetadataOwner();
-    const disposeFirst = installPluginMetadataOwner(firstOwner);
+    const firstCache = createPluginCache();
+    const firstOwner = createPluginMetadataOwner(firstCache);
+    const disposeFirst = installPluginMetadataOwner(firstOwner, firstCache);
     ownerDisposers.push(disposeFirst);
     const first = firstOwner.prepare({ config, env: {} });
     firstOwner.publish(first, { config, env: {} });
     disposeFirst();
-    const secondOwner = createPluginMetadataOwner();
-    const disposeSecond = installPluginMetadataOwner(secondOwner);
+    const secondCache = createPluginCache();
+    const secondOwner = createPluginMetadataOwner(secondCache);
+    const disposeSecond = installPluginMetadataOwner(secondOwner, secondCache);
     ownerDisposers.push(disposeSecond);
     const second = secondOwner.prepare({ config, env: {}, seed: first });
     secondOwner.publish(second, { config, env: {} });

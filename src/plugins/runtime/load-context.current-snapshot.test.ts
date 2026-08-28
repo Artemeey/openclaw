@@ -81,8 +81,9 @@ describe("plugin runtime load context current snapshot ownership", () => {
       const operationConfig: OpenClawConfig = {
         plugins: { load: { paths: [operation.rootDir] }, allow: [operation.pluginId] },
       };
-      const owner = createPluginMetadataOwner();
-      releaseOwner = installPluginMetadataOwner(owner);
+      const pluginCache = createPluginCache();
+      const owner = createPluginMetadataOwner(pluginCache);
+      releaseOwner = installPluginMetadataOwner(owner, pluginCache);
       releaseGateway = retainGatewayPluginMetadata();
       const boot = owner.prepare({ config: lifecycleConfig, env });
       owner.publish(boot, { config: lifecycleConfig, env });

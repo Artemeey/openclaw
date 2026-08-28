@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { describe, expect, test } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
+import { createPluginCache } from "../plugins/plugin-cache.js";
 import {
   createPluginMetadataOwner,
   getPluginMetadataWorkspaceSnapshot,
@@ -138,8 +139,9 @@ async function withPreparedSessionMetadata(
           }
         : {}),
     };
-    const owner = createPluginMetadataOwner();
-    const dispose = installPluginMetadataOwner(owner);
+    const pluginCache = createPluginCache();
+    const owner = createPluginMetadataOwner(pluginCache);
+    const dispose = installPluginMetadataOwner(owner, pluginCache);
     try {
       const metadata = owner.prepare({ config });
       owner.publish(metadata, { config });
@@ -212,14 +214,17 @@ describe("resolveSessionModelRef", () => {
         workspaceDir: metadata.agentWorkspaceDirs.get("work"),
       });
       const metadataSnapshot = projectPluginMetadataSnapshot(workspaceSnapshot, pluginIds);
-      const resolve = (currentConfig: OpenClawConfig) =>
+      const resolve = (
+        currentConfig: OpenClawConfig,
+        workspace = { workspaceDir: metadata.selectedSnapshot.workspaceDir },
+      ) =>
         resolveSessionModelRef(
           currentConfig,
           { providerOverride: "custom", modelOverride: "legacy" },
           "work",
           {
             config,
-            workspaceDir: metadata.selectedSnapshot.workspaceDir,
+            workspaceDir: workspace.workspaceDir,
             allowPluginNormalization: false,
             manifestPlugins: metadata.plugins,
           },
@@ -229,17 +234,19 @@ describe("resolveSessionModelRef", () => {
         resolve(runtimeConfig),
         withPluginMetadataCollectionScope(metadata, () => resolve(config), { config }),
         resolve(runtimeConfig),
+        resolve(runtimeConfig, { workspaceDir: undefined }),
       ]);
       expect(resolved).toEqual([
         { provider: "custom", model },
         { provider: "custom", model: "current" },
+        { provider: "custom", model },
         { provider: "custom", model },
       ]);
     });
   });
 
   test("uses each prepared agent workspace and the control plane for retired owners", async () => {
-    await withPreparedSessionMetadata((config) => {
+    await withPreparedSessionMetadata((config, metadata) => {
       const models = ["main", "work", "removed"].map(
         (agentId) =>
           resolveSessionModelRef(
@@ -250,6 +257,25 @@ describe("resolveSessionModelRef", () => {
           ).model,
       );
       expect(models).toEqual(["main-current", "work-current", "main-current"]);
+      expect(
+        resolveSessionModelRef(
+          config,
+          { providerOverride: "workspace-custom", modelOverride: "legacy" },
+          "work",
+          { workspaceDir: undefined, allowPluginNormalization: false },
+        ),
+      ).toEqual({ provider: "workspace-custom", model: "work-current" });
+      const sharedSnapshot = getPluginMetadataWorkspaceSnapshot(metadata, {
+        workspaceDir: undefined,
+      });
+      expect(
+        resolveSessionModelRef(
+          config,
+          { providerOverride: "workspace-custom", modelOverride: "legacy" },
+          "work",
+          { pluginMetadataSnapshot: sharedSnapshot, allowPluginNormalization: false },
+        ),
+      ).toEqual({ provider: "workspace-custom", model: "legacy" });
     }, true);
   });
 
@@ -270,7 +296,11 @@ describe("resolveSessionModelRef", () => {
             "gateway-bindable",
             main.workspaceDir,
           );
-          const entry = { providerOverride: "workspace-custom", modelOverride: "legacy" };
+          // A legacy wrapper still exercises hooks; an exact configured id must not be rewritten.
+          const entry = {
+            providerOverride: "workspace-custom",
+            modelOverride: "workspace-custom/legacy",
+          };
           expect(resolveSessionModelRef(config, entry)).toEqual({
             provider: "workspace-custom",
             model: "main-runtime-main-current",
