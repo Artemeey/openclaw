@@ -360,7 +360,7 @@ describe("plugin management service", () => {
     });
 
     expect(catalog.plugins[0]).toMatchObject({ id: "workboard", hasIcon: true });
-    expect(resolved).toEqual({ kind: "file", path: iconPath });
+    expect(resolved).toEqual({ kind: "file", path: iconPath, rootPath: "/tmp/workboard" });
   });
 
   it("allows only manifest and bundled setup catalog icon URLs", async () => {
