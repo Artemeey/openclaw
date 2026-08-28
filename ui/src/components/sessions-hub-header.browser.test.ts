@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../i18n/index.ts";
 import "../styles.css";
 import { renderSessionsHubHeader } from "./sessions-hub-header.ts";
+import { renderSettingsPage } from "./settings-ui.ts";
+import { renderSettingsWorkspace } from "./settings-workspace.ts";
 
 const hasBrowserLayout = !navigator.userAgent.toLowerCase().includes("jsdom");
 
@@ -21,12 +23,19 @@ async function mount(
   container.style.maxWidth = "1120px";
   document.body.append(container);
   render(
-    renderSessionsHubHeader({
-      active,
-      title: "Sessions",
-      actions: withActions ? html`<div style="width: 240px">Agent selector</div>` : undefined,
-      onSelect,
-    }),
+    html`
+      ${renderSessionsHubHeader({
+        active,
+        title: "Sessions",
+        actions: withActions ? html`<div style="width: 240px">Agent selector</div>` : undefined,
+        onSelect,
+      })}
+      ${renderSettingsWorkspace(
+        renderSettingsPage(html`<div data-testid="sessions-body">Sessions body</div>`, {
+          wide: true,
+        }),
+      )}
+    `,
     container,
   );
   const group = container.querySelector<HTMLElement & { updateComplete: Promise<boolean> }>(
@@ -62,6 +71,7 @@ describe.skipIf(!hasBrowserLayout)("Sessions hub header browser layout", () => {
       const sessionsTitle = sessions.querySelector<HTMLElement>(".hub-page-header__title");
       const sessionsTabs = sessions.querySelector<HTMLElement>(".sessions-hub-tabs");
       const sessionsActions = sessions.querySelector<HTMLElement>(".hub-page-header__actions");
+      const sessionsBody = sessions.querySelector<HTMLElement>('[data-testid="sessions-body"]');
       const sessionsLeft = sessionsTabs?.getBoundingClientRect().left;
       expect(sessionsLeft).toBeTypeOf("number");
       expect(sessionsTabs?.getBoundingClientRect().width).toBeGreaterThan(0);
@@ -72,6 +82,15 @@ describe.skipIf(!hasBrowserLayout)("Sessions hub header browser layout", () => {
       expect(
         overlaps(sessionsActions!.getBoundingClientRect(), sessionsTabs!.getBoundingClientRect()),
       ).toBe(false);
+      expect(
+        sessionsTabs!.getBoundingClientRect().top - sessionsTitle!.getBoundingClientRect().bottom,
+      ).toBeGreaterThan(0);
+      expect(
+        Math.abs((sessionsLeft ?? 0) - sessionsTitle!.getBoundingClientRect().left),
+      ).toBeLessThanOrEqual(1);
+      expect(
+        Math.abs((sessionsLeft ?? 0) - sessionsBody!.getBoundingClientRect().left),
+      ).toBeLessThanOrEqual(1);
       sessions.remove();
 
       const worktrees = await mount("worktrees", false);
@@ -87,14 +106,19 @@ describe.skipIf(!hasBrowserLayout)("Sessions hub header browser layout", () => {
     await useViewport(414, 800);
     const onSelect = vi.fn();
     const sessions = await mount("sessions", true, onSelect);
-    const header = sessions.querySelector<HTMLElement>(".hub-page-header");
     const title = sessions.querySelector<HTMLElement>(".page-title");
     const tabs = sessions.querySelector<HTMLElement>(".sessions-hub-tabs");
     const actions = sessions.querySelector<HTMLElement>(".hub-page-header__actions");
-    expect(getComputedStyle(header!).display).toBe("grid");
+    const body = sessions.querySelector<HTMLElement>('[data-testid="sessions-body"]');
     expect(title?.getBoundingClientRect().width).toBeGreaterThan(0);
     expect(tabs?.getBoundingClientRect().width).toBeGreaterThan(0);
     expect(actions?.getBoundingClientRect().width).toBeGreaterThan(0);
+    expect(tabs!.getBoundingClientRect().top).toBeGreaterThan(
+      title!.getBoundingClientRect().bottom,
+    );
+    expect(
+      Math.abs(tabs!.getBoundingClientRect().left - body!.getBoundingClientRect().left),
+    ).toBeLessThanOrEqual(1);
 
     const worktreesTab = sessions.querySelector<HTMLElement>("#sessions-tab-worktrees");
     expect(worktreesTab?.getBoundingClientRect().width).toBeGreaterThan(0);
