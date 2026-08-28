@@ -373,6 +373,19 @@ struct CommandCenterTab: View {
             VStack(spacing: 10) {
                 self.cardHeader(title: "Recent sessions")
 
+                if let sessionMutationErrorText = self.dashboardModel.sessionMutationErrorText {
+                    CommandEmptyStateRow(
+                        icon: "exclamationmark.triangle.fill",
+                        title: "Session update failed",
+                        detail: .verbatim(sessionMutationErrorText))
+                }
+                if let sessionErrorText = self.dashboardModel.sessionErrorText {
+                    CommandEmptyStateRow(
+                        icon: "exclamationmark.triangle.fill",
+                        title: "Sessions unavailable",
+                        detail: .verbatim(sessionErrorText))
+                }
+
                 if self.recentSessionPreviewSessions.isEmpty {
                     CommandEmptyStateRow(
                         icon: self.gatewayConnected ? "bubble.left.and.text.bubble.right.fill" : "wifi.slash",
@@ -561,7 +574,7 @@ struct CommandCenterTab: View {
         archived: Bool? = nil,
         unread: Bool? = nil)
     {
-        self.performSessionMutation { transport in
+        self.performSessionMutation(mutationKey: session.key) { transport in
             try await transport.patchSession(
                 key: session.key,
                 expectedSessionID: archived == nil ? nil : session.sessionId,
@@ -574,13 +587,13 @@ struct CommandCenterTab: View {
     }
 
     private func deleteSession(_ session: OpenClawChatSessionEntry) {
-        self.performSessionMutation(resetActiveSessionKey: session.key) { transport in
+        self.performSessionMutation(mutationKey: session.key, resetActiveSessionKey: session.key) { transport in
             try await transport.deleteSession(key: session.key)
         }
     }
 
     private func archiveSession(_ session: OpenClawChatSessionEntry) {
-        self.performSessionMutation(resetActiveSessionKey: session.key) { transport in
+        self.performSessionMutation(mutationKey: session.key, resetActiveSessionKey: session.key) { transport in
             try await transport.patchSession(
                 key: session.key,
                 expectedSessionID: session.sessionId,
@@ -594,28 +607,29 @@ struct CommandCenterTab: View {
 
     private func forkSession(_ session: OpenClawChatSessionEntry) {
         Task {
-            do {
-                let key = try await self.appModel.makeChatTransport().forkSession(
-                    parentKey: session.key,
-                    fromLastCompleted: session.hasActiveRun == true)
-                await self.dashboardModel.refreshSessions(appModel: self.appModel)
-                self.open(.chat(key))
-            } catch {}
+            await self.dashboardModel.performSessionMutation(
+                appModel: self.appModel,
+                mutationKey: session.key,
+                operation: { transport in
+                    try await transport.forkSession(
+                        parentKey: session.key,
+                        fromLastCompleted: session.hasActiveRun == true)
+                },
+                onSuccess: { key in self.open(.chat(key)) })
         }
     }
 
     private func performSessionMutation(
+        mutationKey: String,
         resetActiveSessionKey: String? = nil,
         _ operation: @escaping (any OpenClawChatTransport) async throws -> Void)
     {
         Task {
-            do {
-                try await operation(self.appModel.makeChatTransport())
-                if resetActiveSessionKey == self.appModel.chatSessionKey {
-                    self.appModel.focusChatSession(nil)
-                }
-                await self.dashboardModel.refreshSessions(appModel: self.appModel)
-            } catch {}
+            _ = await self.dashboardModel.performSessionMutation(
+                appModel: self.appModel,
+                mutationKey: mutationKey,
+                resetActiveSessionKey: resetActiveSessionKey,
+                operation: operation)
         }
     }
 

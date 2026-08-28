@@ -371,7 +371,7 @@ struct RootSidebar: View {
         let sections = self.visibleSessionSections
         let selectedSessionKey = self.resolvedSelectedSessionKey
         VStack(alignment: .leading, spacing: 6) {
-            if let sessionErrorText = self.model.sessionErrorText {
+            if let sessionErrorText = self.model.sessionMutationErrorText ?? self.model.sessionErrorText {
                 Text(verbatim: sessionErrorText)
                     .font(OpenClawType.captionMedium)
                     .foregroundStyle(OpenClawBrand.warn)
@@ -812,52 +812,55 @@ struct RootSidebar: View {
         archived: Bool? = nil,
         unread: Bool? = nil)
     {
-        Task {
-            do {
-                try await self.appModel.makeChatTransport().patchSession(
-                    key: session.key,
-                    expectedSessionID: archived == nil ? nil : session.sessionId,
-                    label: label,
-                    category: category,
-                    pinned: pinned,
-                    archived: archived,
-                    unread: unread)
-                if archived == true, session.key == self.appModel.chatSessionKey {
-                    self.appModel.focusChatSession(nil)
-                }
-                await self.model.refreshSessions(appModel: self.appModel)
-            } catch {
-                self.model.reportSessionError(error)
-            }
+        self.performSessionMutation(
+            mutationKey: session.key,
+            resetActiveSessionKey: archived == true ? session.key : nil)
+        { transport in
+            try await transport.patchSession(
+                key: session.key,
+                expectedSessionID: archived == nil ? nil : session.sessionId,
+                label: label,
+                category: category,
+                pinned: pinned,
+                archived: archived,
+                unread: unread)
         }
     }
 
     private func deleteSession(_ session: OpenClawChatSessionEntry) {
-        Task {
-            do {
-                try await self.appModel.makeChatTransport().deleteSession(key: session.key)
-                if session.key == self.appModel.chatSessionKey {
-                    self.appModel.focusChatSession(nil)
-                }
-                await self.model.refreshSessions(appModel: self.appModel)
-            } catch {
-                self.model.reportSessionError(error)
-            }
+        self.performSessionMutation(mutationKey: session.key, resetActiveSessionKey: session.key) { transport in
+            try await transport.deleteSession(key: session.key)
         }
     }
 
     private func forkSession(_ session: OpenClawChatSessionEntry) {
         Task {
-            do {
-                let key = try await self.appModel.makeChatTransport().forkSession(
-                    parentKey: session.key,
-                    fromLastCompleted: session.hasActiveRun == true)
-                self.appModel.openChat(sessionKey: key)
-                self.selectSidebarDestination(.chat)
-                await self.model.refreshSessions(appModel: self.appModel)
-            } catch {
-                self.model.reportSessionError(error)
-            }
+            await self.model.performSessionMutation(
+                appModel: self.appModel,
+                mutationKey: session.key,
+                operation: { transport in
+                    try await transport.forkSession(
+                        parentKey: session.key,
+                        fromLastCompleted: session.hasActiveRun == true)
+                },
+                onSuccess: { key in
+                    self.appModel.openChat(sessionKey: key)
+                    self.selectSidebarDestination(.chat)
+                })
+        }
+    }
+
+    private func performSessionMutation(
+        mutationKey: String,
+        resetActiveSessionKey: String? = nil,
+        _ operation: @escaping (any OpenClawChatTransport) async throws -> Void)
+    {
+        Task {
+            _ = await self.model.performSessionMutation(
+                appModel: self.appModel,
+                mutationKey: mutationKey,
+                resetActiveSessionKey: resetActiveSessionKey,
+                operation: operation)
         }
     }
 

@@ -4,6 +4,12 @@ import Testing
 @testable import OpenClaw
 
 struct RootTabsSourceGuardTests {
+    private struct SessionMutationFailure: LocalizedError {
+        let message: String
+
+        var errorDescription: String? { self.message }
+    }
+
     @Test func `inactive scenes clear voice wake toast and camera flash`() throws {
         let source = try String(contentsOf: Self.rootTabsSourceURL(), encoding: .utf8)
         let rootAppearLifecycle = try Self.extract(
@@ -57,11 +63,15 @@ struct RootTabsSourceGuardTests {
         let refreshSessions = try Self.extract(
             source,
             from: "func refreshSessions(appModel: NodeAppModel) async {",
-            to: "func reportSessionError(_ error: any Error) {")
+            to: "@discardableResult")
         let rosterOwner = try Self.extract(
             source,
             from: "private func applyRoster(_ roster: ChatSessionRosterSnapshot) {",
             to: "private func loadRoster(")
+        let errorOwner = try Self.extract(
+            source,
+            from: "func performSessionMutation<Result>(",
+            to: "static func tokenUsageSummary(")
         let rosterCommit = try #require(refresh.range(of: "self.applyRoster(loadedRoster)"))
         let dashboardWait = try #require(refresh.range(of: "let loadedDashboard = await dashboard"))
 
@@ -81,6 +91,18 @@ struct RootTabsSourceGuardTests {
         #expect(source.contains("case .cancelled:\n            return"))
         #expect(rosterCommit.lowerBound < dashboardWait.lowerBound)
         #expect(source.contains("allowCachedFallback: false"))
+        #expect(errorOwner.contains("self.sessionMutationGenerations[mutationKey, default: 0] &+= 1"))
+        #expect(errorOwner.contains("mutationGeneration == self.sessionMutationGenerations[mutationKey]"))
+        #expect(errorOwner.contains("let ownerID = appModel.chatViewModelIdentityID"))
+        #expect(errorOwner.contains("self.updateSessionMutationOwner(ownerID)"))
+        #expect(errorOwner.contains("guard ownerID == appModel.chatViewModelIdentityID"))
+        #expect(errorOwner.contains("if ownerID == appModel.chatViewModelIdentityID,"))
+        let success = try #require(errorOwner.range(of: "onSuccess(result)"))
+        let successTail = errorOwner[success.upperBound...]
+        #expect(successTail.contains("await self.refreshSessions(appModel: appModel)"))
+        #expect(!errorOwner.contains("self.rosterGeneration &+= 1"))
+        #expect(refresh.contains("self.updateSessionMutationOwner(appModel.chatViewModelIdentityID)"))
+        #expect(refreshSessions.contains("self.updateSessionMutationOwner(appModel.chatViewModelIdentityID)"))
     }
 
     @Test func `sidebar refresh owner tracks sessions and periodically refreshes attention`() throws {
@@ -113,7 +135,7 @@ struct RootTabsSourceGuardTests {
         let observerApply = try Self.extract(
             sidebarSource,
             from: "private func handleSessionEvent(",
-            to: "func reportSessionError(")
+            to: "@discardableResult")
         let refreshIdentity = try Self.extract(
             appModelSource,
             from: "var chatViewModelIdentityID: String",
@@ -179,6 +201,173 @@ struct RootTabsSourceGuardTests {
         #expect(source.contains("self.isSearchFocused = false"))
         #expect(defaultSession.contains("ChatSessionSidebarModel.selectedSessionKey("))
         #expect(defaultSession.contains("sessions.first { $0.key == mainKey }"))
+    }
+
+    @Test func `overview session mutations use the shared error owner and render its failure`() throws {
+        let source = try String(contentsOf: Self.commandCenterSourceURL(), encoding: .utf8)
+        let actions = try Self.extract(
+            source,
+            from: "actions: CommandSessionActions(",
+            to: "private func cardHeader(title: String)")
+        let recentSessions = try Self.extract(
+            source,
+            from: "private var recentSessions: some View",
+            to: "private func cardHeader(title: String)")
+        let fork = try Self.extract(
+            source,
+            from: "private func forkSession(_ session: OpenClawChatSessionEntry)",
+            to: "private func performSessionMutation(")
+        let mutations = try Self.extract(
+            source,
+            from: "private func performSessionMutation(",
+            to: "private static func sessionChoices(")
+
+        #expect(recentSessions.contains("self.dashboardModel.sessionMutationErrorText"))
+        #expect(recentSessions.contains("detail: .verbatim(sessionMutationErrorText)"))
+        #expect(recentSessions.contains("self.dashboardModel.sessionErrorText"))
+        #expect(recentSessions.contains("if self.recentSessionPreviewSessions.isEmpty"))
+        #expect(!recentSessions.contains("else if self.recentSessionPreviewSessions.isEmpty"))
+        #expect(actions.contains("rename: { self.patchSession("))
+        #expect(actions.contains("toggleArchived: { self.archiveSession("))
+        #expect(actions.contains("delete: { self.deleteSession("))
+        #expect(actions.contains("fork: { self.forkSession("))
+        #expect(fork.contains("self.dashboardModel.performSessionMutation("))
+        #expect(mutations.contains("self.dashboardModel.performSessionMutation("))
+        #expect(!fork.contains("catch {}"))
+        #expect(!mutations.contains("catch {}"))
+    }
+
+    @Test @MainActor func `shared session mutation owner reports rejected overview actions without changing roster`() async {
+        let appModel = NodeAppModel()
+        appModel.enterAppleReviewDemoMode()
+        let model = RootSidebarModel()
+        await model.refreshSessions(appModel: appModel)
+        let originalKeys = model.sessions.map(\.key)
+
+        for action in ["rename", "archive", "delete"] {
+            let message = "\(action) rejected"
+            let result = await model.performSessionMutation(
+                appModel: appModel,
+                mutationKey: "session",
+                operation: { _ in throw SessionMutationFailure(message: message) })
+
+            #expect(!result)
+            #expect(model.sessions.map(\.key) == originalKeys)
+            #expect(model.sessionMutationErrorText == message)
+        }
+    }
+
+    @Test @MainActor func `successful session mutation clears an earlier failure`() async {
+        let appModel = NodeAppModel()
+        appModel.enterAppleReviewDemoMode()
+        let model = RootSidebarModel()
+        let rejected = await model.performSessionMutation(
+            appModel: appModel,
+            mutationKey: "session",
+            operation: { _ in throw SessionMutationFailure(message: "rename rejected") })
+
+        let result = await model.performSessionMutation(
+            appModel: appModel,
+            mutationKey: "session",
+            operation: { _ in })
+
+        #expect(!rejected)
+        #expect(result)
+        #expect(model.sessionMutationErrorText == nil)
+    }
+
+    @Test @MainActor func `older mutation completion cannot clear a newer rejection`() async {
+        let appModel = NodeAppModel()
+        appModel.enterAppleReviewDemoMode()
+        let model = RootSidebarModel()
+        let started = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let release = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+
+        let olderSuccess = Task {
+            await model.performSessionMutation(
+                appModel: appModel,
+                mutationKey: "session",
+                operation: { _ in
+                    started.continuation.yield()
+                    var iterator = release.stream.makeAsyncIterator()
+                    _ = await iterator.next()
+                })
+        }
+        var startedIterator = started.stream.makeAsyncIterator()
+        _ = await startedIterator.next()
+        let newerFailure = await model.performSessionMutation(
+            appModel: appModel,
+            mutationKey: "session",
+            operation: { _ in throw SessionMutationFailure(message: "delete rejected") })
+        release.continuation.yield()
+        let olderResult = await olderSuccess.value
+
+        #expect(!newerFailure)
+        #expect(olderResult)
+        #expect(model.sessionMutationErrorText == "delete rejected")
+    }
+
+    @Test @MainActor func `fork success cannot navigate after the session owner changes`() async {
+        let appModel = NodeAppModel()
+        let model = RootSidebarModel()
+        var openedKey: String?
+
+        let result = await model.performSessionMutation(
+            appModel: appModel,
+            mutationKey: "session",
+            operation: { _ in
+                appModel.enterAppleReviewDemoMode()
+                return "old-gateway-fork"
+            },
+            onSuccess: { openedKey = $0 })
+
+        #expect(!result)
+        #expect(openedKey == nil)
+    }
+
+    @Test @MainActor func `old owner mutation failure stays out of the new owner`() async {
+        let appModel = NodeAppModel()
+        let model = RootSidebarModel()
+
+        let result = await model.performSessionMutation(
+            appModel: appModel,
+            mutationKey: "session",
+            operation: { _ in
+                appModel.enterAppleReviewDemoMode()
+                throw SessionMutationFailure(message: "old gateway rejected")
+            })
+
+        #expect(!result)
+        #expect(model.sessionMutationErrorText == nil)
+    }
+
+    @Test @MainActor func `session refresh clears a failure owned by the previous gateway`() async {
+        let appModel = NodeAppModel()
+        let model = RootSidebarModel()
+        _ = await model.performSessionMutation(
+            appModel: appModel,
+            mutationKey: "session",
+            operation: { _ in throw SessionMutationFailure(message: "old gateway rejected") })
+        #expect(model.sessionMutationErrorText == "old gateway rejected")
+
+        appModel.enterAppleReviewDemoMode()
+        await model.refreshSessions(appModel: appModel)
+
+        #expect(model.sessionMutationErrorText == nil)
+    }
+
+    @Test @MainActor func `refresh failure after an applied mutation does not report the mutation as rejected`() async {
+        let appModel = NodeAppModel()
+        let model = RootSidebarModel()
+
+        let result = await model.performSessionMutation(
+            appModel: appModel,
+            mutationKey: "session",
+            operation: { _ in })
+
+        #expect(result)
+        #expect(model.sessionMutationErrorText == nil)
+        #expect(model.sessionErrorText != nil)
     }
 
     @Test func `settings about page shows concise public device details`() throws {

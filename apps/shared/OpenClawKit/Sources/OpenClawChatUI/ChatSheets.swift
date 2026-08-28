@@ -65,6 +65,13 @@ public struct ChatSessionsSheet: View {
     public var body: some View {
         NavigationStack {
             List(selection: self.$selectedSessionKeys) {
+                if let errorText = self.viewModel.errorText {
+                    Section {
+                        Text(verbatim: errorText)
+                            .font(OpenClawChatTypography.caption)
+                            .foregroundStyle(OpenClawChatTheme.danger)
+                    }
+                }
                 Section {
                     ForEach(self.displayedSessions) { session in
                         self.sessionRow(session)
@@ -129,6 +136,7 @@ public struct ChatSessionsSheet: View {
                 await self.refreshScopedSessionsIfNeeded(debounce: !self.trimmedSearchText.isEmpty)
             }
             .onAppear {
+                self.viewModel.errorText = nil
                 self.viewModel.refreshSessions(limit: OpenClawChatViewModel.sessionListFetchLimit)
             }
             .onChange(of: self.scope) {

@@ -189,8 +189,12 @@ final class RootSidebarModel {
     private(set) var cronJobs: [CronJob] = []
     private(set) var isRefreshing = false
     private(set) var sessionErrorText: String?
+    private(set) var sessionMutationErrorText: String?
     private(set) var isSessionRosterComplete = true
     private var rosterGeneration = 0
+    private var sessionMutationGenerations: [String: UInt64] = [:]
+    private var sessionMutationErrorKey: String?
+    private var sessionMutationOwnerID: String?
     private var dashboardGeneration = 0
     private var sessionObserverVisibility = false
     private var sessionObserverGeneration: UInt64 = 0
@@ -226,6 +230,7 @@ final class RootSidebarModel {
     }
 
     func refresh(appModel: NodeAppModel) async {
+        self.updateSessionMutationOwner(appModel.chatViewModelIdentityID)
         self.rosterGeneration &+= 1
         let rosterGeneration = self.rosterGeneration
         self.dashboardGeneration &+= 1
@@ -264,6 +269,7 @@ final class RootSidebarModel {
     }
 
     func refreshSessions(appModel: NodeAppModel) async {
+        self.updateSessionMutationOwner(appModel.chatViewModelIdentityID)
         self.rosterGeneration &+= 1
         let rosterGeneration = self.rosterGeneration
         self.isRefreshing = true
@@ -483,8 +489,53 @@ final class RootSidebarModel {
         return false
     }
 
-    func reportSessionError(_ error: any Error) {
-        self.sessionErrorText = error.localizedDescription
+    @discardableResult
+    func performSessionMutation<Result>(
+        appModel: NodeAppModel,
+        mutationKey: String,
+        resetActiveSessionKey: String? = nil,
+        operation: (any OpenClawChatTransport) async throws -> Result,
+        onSuccess: (Result) -> Void = { _ in }) async -> Bool
+    {
+        let ownerID = appModel.chatViewModelIdentityID
+        self.updateSessionMutationOwner(ownerID)
+        self.sessionMutationGenerations[mutationKey, default: 0] &+= 1
+        let mutationGeneration = self.sessionMutationGenerations[mutationKey]
+        do {
+            let result = try await operation(appModel.makeChatTransport())
+            guard ownerID == appModel.chatViewModelIdentityID else {
+                await self.refreshSessions(appModel: appModel)
+                return false
+            }
+            if mutationGeneration == self.sessionMutationGenerations[mutationKey],
+               self.sessionMutationErrorKey == mutationKey
+            {
+                self.sessionMutationErrorKey = nil
+                self.sessionMutationErrorText = nil
+            }
+            if resetActiveSessionKey == appModel.chatSessionKey {
+                appModel.focusChatSession(nil)
+            }
+            onSuccess(result)
+            await self.refreshSessions(appModel: appModel)
+            return true
+        } catch {
+            if ownerID == appModel.chatViewModelIdentityID,
+               mutationGeneration == self.sessionMutationGenerations[mutationKey]
+            {
+                self.sessionMutationErrorKey = mutationKey
+                self.sessionMutationErrorText = error.localizedDescription
+            }
+            return false
+        }
+    }
+
+    private func updateSessionMutationOwner(_ ownerID: String) {
+        guard self.sessionMutationOwnerID != ownerID else { return }
+        self.sessionMutationOwnerID = ownerID
+        self.sessionMutationGenerations.removeAll()
+        self.sessionMutationErrorKey = nil
+        self.sessionMutationErrorText = nil
     }
 
     static func tokenUsageSummary(

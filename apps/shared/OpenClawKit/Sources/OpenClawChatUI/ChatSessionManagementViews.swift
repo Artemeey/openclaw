@@ -236,9 +236,9 @@ struct ChatSessionInspectorSheet: View {
                     self.timestampRow("Run ended", self.details.endedAt)
                 }
 
-                if let errorText {
+                if let errorText = self.errorText ?? self.viewModel.errorText {
                     Section {
-                        Text(errorText)
+                        Text(verbatim: errorText)
                             .font(OpenClawChatTypography.caption)
                             .foregroundStyle(OpenClawChatTheme.danger)
                     }
@@ -260,6 +260,7 @@ struct ChatSessionInspectorSheet: View {
                     self.errorText = error.localizedDescription
                 }
             }
+            .onAppear { self.viewModel.errorText = nil }
             .onChange(of: self.viewModel.sessions) {
                 if let refreshed = self.viewModel.sessions.first(where: { $0.key == self.displayedSession.key }) {
                     self.displayedSession = refreshed
