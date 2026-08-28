@@ -35,6 +35,7 @@ vi.mock("./tools/nodes-utils.js", () => ({
     {
       nodeId: "node-1",
       commands: ["system.run", "system.run.prepare"],
+      connected: true,
       platform: "darwin",
     },
   ]),

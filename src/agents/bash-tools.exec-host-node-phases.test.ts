@@ -3,7 +3,10 @@ import {
   formatNodeInvokeFailureFollowup,
   invokeNodeSystemRun,
 } from "./bash-tools.exec-host-node-failure.js";
-import { invokeNodeSystemRunDirect } from "./bash-tools.exec-host-node-phases.js";
+import {
+  invokeNodeSystemRunDirect,
+  resolveNodeExecutionTarget,
+} from "./bash-tools.exec-host-node-phases.js";
 
 const callGatewayToolMock = vi.hoisted(() => vi.fn());
 
@@ -115,6 +118,79 @@ describe("invokeNodeSystemRun failure classification", () => {
   });
 });
 
+describe("node execution target resolution", () => {
+  beforeEach(() => {
+    callGatewayToolMock.mockReset();
+  });
+
+  it("requires an explicit target when multiple connected nodes support system.run", async () => {
+    callGatewayToolMock.mockResolvedValueOnce({
+      nodes: [
+        {
+          nodeId: "mac-a",
+          displayName: "Desk Mac",
+          platform: "macos",
+          caps: ["canvas"],
+          commands: ["system.run"],
+          connected: true,
+          connectedAtMs: 1_000,
+          active: true,
+        },
+        {
+          nodeId: "mac-b",
+          displayName: "Travel Mac",
+          platform: "macos",
+          caps: ["canvas"],
+          commands: ["system.run"],
+          connected: true,
+          connectedAtMs: 2_000,
+        },
+      ],
+    });
+
+    await expect(resolveNodeExecutionTarget(createDirectNodeRun().request)).rejects.toThrow(
+      /multiple.*mac-a.*mac-b/i,
+    );
+    expect(callGatewayToolMock).toHaveBeenCalledTimes(1);
+    expect(callGatewayToolMock).toHaveBeenCalledWith("node.list", {}, {}, { signal: undefined });
+  });
+
+  it("selects the only connected node supporting system.run", async () => {
+    callGatewayToolMock.mockResolvedValueOnce({
+      nodes: [
+        {
+          nodeId: "canvas-only",
+          caps: ["canvas"],
+          commands: ["canvas.present"],
+          connected: true,
+        },
+        {
+          nodeId: "exec-node",
+          commands: ["system.run"],
+          connected: true,
+        },
+      ],
+    });
+
+    await expect(resolveNodeExecutionTarget(createDirectNodeRun().request)).resolves.toMatchObject({
+      nodeId: "exec-node",
+    });
+  });
+
+  it("honors an explicit executable node among multiple candidates", async () => {
+    callGatewayToolMock.mockResolvedValueOnce({
+      nodes: [
+        { nodeId: "node-a", commands: ["system.run"], connected: true },
+        { nodeId: "node-b", commands: ["system.run"], connected: true },
+      ],
+    });
+
+    await expect(
+      resolveNodeExecutionTarget({ ...createDirectNodeRun().request, requestedNode: "node-a" }),
+    ).resolves.toMatchObject({ nodeId: "node-a" });
+  });
+});
+
 type DirectNodeRun = Parameters<typeof invokeNodeSystemRunDirect>[0];
 
 function createDirectNodeRun(signal?: AbortSignal): DirectNodeRun {
@@ -181,6 +257,7 @@ describe("direct node run", () => {
 
     expect(visibleText).toBe(`${stdout}\n${stderr}\n${errorText}\n(Command exited with code 1)`);
     expect(result.details).toMatchObject({ aggregated: visibleText });
+    expect(result.details).toMatchObject({ nodeId: "node-1" });
   });
 
   it("renders a nonzero exit code in the model-visible text", async () => {

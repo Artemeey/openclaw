@@ -687,6 +687,7 @@ export async function executeNodeHostCommand(
     raw: invocation.raw,
     startedAt,
     cwd: params.workdir,
+    nodeId: target.nodeId,
     warnings: [...params.warnings, ...(params.foregroundWarnings ?? [])],
   });
 }

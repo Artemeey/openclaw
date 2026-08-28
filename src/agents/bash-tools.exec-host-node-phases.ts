@@ -37,6 +37,7 @@ import {
   extractShellCommandFromArgv,
   resolveSystemRunCommandRequest,
 } from "../infra/system-run-command.js";
+import { resolveEligibleNodeFromList } from "../shared/node-resolve.js";
 import { addSafeTimeoutDelayGraceMs } from "../utils/timer-delay.js";
 import {
   formatNodeInvokeFailureToolResult,
@@ -241,6 +242,7 @@ export function formatNodeRunToolResult(params: {
   raw: unknown;
   startedAt: number;
   cwd: string | undefined;
+  nodeId: string;
   warnings?: string[];
 }): AgentToolResult<ExecToolDetails> {
   const payload =
@@ -278,6 +280,7 @@ export function formatNodeRunToolResult(params: {
       exitCode,
       durationMs: Date.now() - params.startedAt,
       aggregated: output,
+      nodeId: params.nodeId,
       ...(timedOut ? { timedOut: true } : {}),
       cwd: params.cwd,
     } satisfies ExecToolDetails,
@@ -326,31 +329,25 @@ export async function resolveNodeExecutionTarget(
   // values still reach resolveNodeIdFromList (which produces a clear
   // "unknown node" error) instead of silently picking a default node.
   const nodeQuery = resolvedBoundNodeId || resolvedRequestedNodeId || params.boundNode;
-  let nodeId: string;
-  try {
-    nodeId = resolveNodeIdFromList(nodes, nodeQuery, !nodeQuery);
-  } catch (err) {
-    if (!nodeQuery && String(err).includes("node required")) {
-      throw new Error(
-        "exec host=node requires a node id when multiple nodes are available (set tools.exec.node or exec.node).",
-        { cause: err },
-      );
-    }
-    throw err;
-  }
-  const nodeInfo = nodes.find((entry) => entry.nodeId === nodeId);
-  if (nodeInfo?.connected === false) {
-    throw new Error(
-      `exec host=node requires a connected node (${nodeId} is currently disconnected). Start or reconnect the companion app or node host, or select a connected node.`,
-    );
-  }
+  const nodeInfo = resolveEligibleNodeFromList(
+    nodes,
+    nodeQuery,
+    (node) => node.connected === true && node.commands?.includes("system.run") === true,
+    {
+      ineligibleExact: (query, eligibleIds) =>
+        `exec host=node requires a connected node that supports system.run (${query} is not eligible; eligible node ids: ${eligibleIds}).`,
+      nameResolveFailed: (reason, eligibleIds) =>
+        `${reason} (eligible connected system.run node ids: ${eligibleIds})`,
+      noneEligible: () =>
+        "exec host=node requires a connected node that supports system.run (none available). Start or reconnect the companion app or node host.",
+      multipleEligible: (eligible) =>
+        `exec host=node requires a node when multiple executable nodes are connected: ${eligible
+          .map((node) => (node.displayName ? `${node.nodeId} (${node.displayName})` : node.nodeId))
+          .join(", ")}. Set exec.node, tools.exec.node, or /exec node=...`,
+    },
+  );
+  const nodeId = nodeInfo.nodeId;
   const declaredCommands = Array.isArray(nodeInfo?.commands) ? nodeInfo.commands : [];
-  const supportsSystemRun = declaredCommands.includes("system.run");
-  if (!supportsSystemRun) {
-    throw new Error(
-      "exec host=node requires a node that supports system.run (companion app or node host).",
-    );
-  }
 
   const runTimeoutSec = resolveNodeRunTimeoutSec(params.timeoutSec, params.defaultTimeoutSec);
   const invokeDeadlineMs = resolveNodeInvokeDeadlineMs(runTimeoutSec, params.defaultTimeoutSec);
@@ -458,6 +455,7 @@ export async function invokeNodeSystemRunDirect(params: {
     raw: result.raw,
     startedAt,
     cwd: params.request.workdir,
+    nodeId: params.target.nodeId,
     warnings: [...params.request.warnings, ...(params.request.foregroundWarnings ?? [])],
   });
 }
