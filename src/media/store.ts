@@ -22,6 +22,8 @@ import { isPathInside } from "../infra/fs-safe.js";
 import type { resolvePinnedHostname } from "../infra/net/ssrf.js";
 import { retryAsync } from "../infra/retry.js";
 import { writeSiblingTempFile } from "../infra/sibling-temp-file.js";
+import { retainedGeneratedMediaPaths } from "../tasks/generated-media-task-artifacts.js";
+import { listTaskRecordsUnsorted } from "../tasks/runtime-internal.js";
 import { resolveConfigDir } from "../utils.js";
 import { isFsSafeError, readLocalFileSafely, type FsSafeLikeError } from "./store.runtime.js";
 import { formatMediaLimitMb, MEDIA_FILE_MODE } from "./store.shared.js";
@@ -246,6 +248,15 @@ async function pruneNonPlaybackMedia(ttlMs: number, options: CleanOldMediaOption
     return;
   }
   const mediaDir = resolveMediaDir();
+  const retainedPaths = new Set(
+    retainedGeneratedMediaPaths(listTaskRecordsUnsorted()).map((filePath) =>
+      path.resolve(filePath),
+    ),
+  );
+  const now = new Date();
+  await Promise.all(
+    [...retainedPaths].map((filePath) => fs.utimes(filePath, now, now).catch(() => {})),
+  );
   await openMediaStore().pruneExpired({ ttlMs, recursive: false, maxDepth: 0 });
   const entries = await fs.readdir(mediaDir, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {

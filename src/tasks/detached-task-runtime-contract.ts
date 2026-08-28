@@ -61,6 +61,7 @@ type DetachedTaskProgressParams = {
   lastEventAt?: number;
   progressSummary?: string | null;
   eventSummary?: string | null;
+  detail?: JsonValue;
 };
 
 type DetachedTaskFinalizeCommonParams = {
@@ -75,6 +76,7 @@ type DetachedTaskFinalizeCommonParams = {
   preserveTerminalSummary?: boolean;
   detail?: JsonValue;
   suppressDelivery?: boolean;
+  deliveryStatus?: TaskDeliveryStatus;
 };
 
 export type DetachedTaskCompleteParams = DetachedTaskFinalizeCommonParams & {

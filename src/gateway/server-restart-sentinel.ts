@@ -1,8 +1,5 @@
-// Gateway restart sentinel recovery resumes pending continuations and outbound delivery.
-import {
-  resolveCorrelatedSubagentDelivery,
-  settleCorrelatedSubagentDelivery,
-} from "../agents/subagents/completion/subagent-completion-delivery.js";
+import { resolveCorrelatedSubagentDelivery } from "../agents/subagents/completion/subagent-completion-delivery.js";
+import { resolveCorrelatedGeneratedMediaDelivery } from "../agents/tools/generated-media-completion-delivery.js";
 import { REPLY_RUN_STILL_SHUTTING_DOWN_TEXT } from "../auto-reply/reply/get-reply-run-queue.js";
 import { finalizeInboundContext } from "../auto-reply/reply/inbound-context.js";
 import { dispatchReplyWithBufferedBlockDispatcherCore } from "../auto-reply/reply/provider-dispatcher.js";
@@ -30,7 +27,6 @@ import {
   drainPendingSessionDelivery,
   recoverPendingSessionDeliveries,
   type SessionDeliveryRecoveryLogger,
-  type SettleSessionDeliveryFn,
 } from "../infra/session-delivery-queue-recovery.js";
 import {
   enqueueSessionDelivery,
@@ -49,7 +45,6 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import { stringifyRouteThreadId } from "../plugin-sdk/channel-route.js";
 import type { OutboundReplyPayload } from "../plugin-sdk/reply-payload.js";
 import { runWithGatewayIndependentRootWorkAdmission } from "../process/gateway-work-admission.js";
-import { removeCronRunContinuationSessionIfIdle } from "../tasks/cron-run-continuation-cleanup.js";
 import {
   deliveryContextFromSession,
   mergeDeliveryContext,
@@ -61,8 +56,10 @@ import {
   deliverRestartSentinelNotice,
   enqueueRestartSentinelNotice,
 } from "./server-restart-sentinel-notice.js";
+import { settleQueuedSessionDelivery } from "./session-delivery-settlement.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { runStartupTasks, type StartupTask } from "./startup-tasks.js";
+export { settleQueuedSessionDelivery };
 
 const log = createSubsystemLogger("gateway/restart-sentinel");
 const RESTART_CONTINUATION_BUSY_RETRY_DELAY_MS = process.env.VITEST ? 1 : 6_000;
@@ -72,13 +69,6 @@ const CONTROL_PLANE_UPDATE_PENDING_MAX_ATTEMPTS = 900;
 const RESTART_CONTINUATION_BUSY_RETRY_ERROR =
   "restart continuation deferred because previous run is still shutting down";
 let latestUpdateRestartSentinel: RestartSentinelPayload | null = null;
-
-/** Settles every queue entry through its durable producer before cron cleanup. */
-export const settleQueuedSessionDelivery: SettleSessionDeliveryFn = async (entry, outcome) => {
-  await settleCorrelatedSubagentDelivery(entry, outcome);
-  await removeCronRunContinuationSessionIfIdle(entry.sessionKey, entry.id);
-};
-
 type QueuedAgentTurnSessionDelivery = Extract<QueuedSessionDelivery, { kind: "agentTurn" }>;
 
 function sessionDeliveryStateDirArgs(stateDir?: string): [] | [string] {
@@ -199,7 +189,9 @@ export async function deliverQueuedSessionDelivery(params: {
   stateDir?: string;
   resolveGatewayContext?: import("./server-methods/types.js").GatewayContextResolver;
 }) {
-  const queuedEntry = resolveCorrelatedSubagentDelivery(params.entry);
+  const queuedEntry = resolveCorrelatedGeneratedMediaDelivery(
+    resolveCorrelatedSubagentDelivery(params.entry),
+  );
   const { cfg, agentId, entry, storePath, canonicalKey } = loadSessionEntry(queuedEntry.sessionKey);
   const deliveryContext = resolveQueuedSessionDeliveryContext(queuedEntry);
 

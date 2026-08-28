@@ -24,6 +24,7 @@ import {
   formatAgentInternalEventsForPrompt,
   type AgentInternalEvent,
 } from "../../internal-events.js";
+import { admitCorrelatedGeneratedMediaSessionDelivery } from "../../tools/generated-media-completion-delivery.js";
 import { admitCorrelatedSubagentSessionDelivery } from "../completion/subagent-completion-delivery.js";
 import { getSubagentDepthFromSessionStore } from "../spawn/subagent-depth.js";
 import { maybeSteerSubagentAnnounce } from "./subagent-announce-active-wake.js";
@@ -158,6 +159,7 @@ export async function deliverSubagentAnnouncement(params: {
   requireVisibleReply?: boolean;
   bestEffortDeliver?: boolean;
   directIdempotencyKey: string;
+  generatedMediaDeliveryGeneration?: number;
   onDeliveryResult?: (delivery: SubagentAnnounceDeliveryResult) => void;
   signal?: AbortSignal;
   resolveGatewayContext?: import("../../../gateway/server-methods/types.js").GatewayContextResolver;
@@ -230,10 +232,21 @@ export async function deliverSubagentAnnouncement(params: {
         idempotencyKey: `${params.directIdempotencyKey}:agent-loop`,
       } as const;
       const queued = params.sourceRunId
-        ? admitCorrelatedSubagentSessionDelivery({
-            runId: params.sourceRunId,
-            payload: queuePayload,
-          })
+        ? durableGeneratedMediaHandoff
+          ? admitCorrelatedGeneratedMediaSessionDelivery({
+              runId: params.sourceRunId,
+              payload: queuePayload,
+              generation: params.generatedMediaDeliveryGeneration,
+            })
+          : params.requesterIsSubagent
+            ? admitCorrelatedSubagentSessionDelivery({
+                runId: params.sourceRunId,
+                payload: queuePayload,
+              })
+            : await enqueueClaimedSessionDelivery(
+                queuePayload,
+                resolveSubagentAnnounceTimeoutMs(cfg),
+              )
         : await enqueueClaimedSessionDelivery(queuePayload, resolveSubagentAnnounceTimeoutMs(cfg));
       if (queued.status === "failed") {
         return {

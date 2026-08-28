@@ -53,13 +53,13 @@ function armPendingScan(generation: number): void {
 function resolveRetryDelayMs(entry: QueuedSessionDelivery): number {
   const claimDelayMs = Math.max(0, (entry.availableAt ?? 0) - Date.now());
   const deadlineDelayMs =
-    entry.kind === "agentTurn" && entry.owner?.kind === "subagent_completion"
+    entry.kind === "agentTurn" && entry.owner
       ? Math.max(0, entry.owner.deadlineAt - Date.now())
       : Number.POSITIVE_INFINITY;
   if (entry.retryCount <= 0) {
     return Math.min(claimDelayMs, deadlineDelayMs);
   }
-  if (entry.kind === "agentTurn" && entry.owner?.kind === "subagent_completion") {
+  if (entry.kind === "agentTurn" && entry.owner) {
     return Math.min(deadlineDelayMs, claimDelayMs);
   }
   const attemptedAt = entry.lastAttemptAt ?? entry.enqueuedAt;

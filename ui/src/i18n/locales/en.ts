@@ -3742,6 +3742,8 @@ export const en: TranslationMap = {
     retryDelivery: "Retry delivery",
     dismissDelivery: "Dismiss delivery",
     copyResult: "Copy result",
+    openArtifacts: "Open media",
+    artifactsFailed: "Could not open generated media.",
     deliveryBlocked: "Completed, but result delivery is blocked.",
     deliveryDismissed: "Completed; result delivery was dismissed.",
     duplicateRisk: "Retrying may duplicate a result after an ambiguous acknowledgement.",

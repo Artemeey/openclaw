@@ -268,7 +268,7 @@ function signAssistantMediaTicketPayload(encodedPayload: string): string {
     .digest("base64url");
 }
 
-function createAssistantMediaTicket(source: string, nowMs = Date.now()) {
+export function createAssistantMediaTicket(source: string, nowMs = Date.now()) {
   const now = asDateTimestampMs(nowMs);
   if (now === undefined) {
     return {};

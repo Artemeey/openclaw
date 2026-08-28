@@ -106,7 +106,7 @@ function canReconcileStartedAgentAttemptAtRetryLimit(entry: QueuedSessionDeliver
 }
 
 function resolveSessionRetryEligibility(entry: QueuedSessionDelivery, now: number) {
-  if (entry.kind === "agentTurn" && entry.owner?.kind === "subagent_completion") {
+  if (entry.kind === "agentTurn" && entry.owner) {
     if (now >= entry.owner.deadlineAt) {
       return { eligible: true } as const;
     }

@@ -41,6 +41,10 @@ export {
   resolveTaskForLookupToken,
 } from "./task-registry-query.js";
 export { publishTaskRecordAfterAtomicStore } from "./task-registry-mutation.js";
+export {
+  getTaskDeliveryState,
+  updateTask as updateTaskRecordById,
+} from "./task-registry-mutation.js";
 export { ensureTaskRegistryReady, reloadTaskRegistryFromStore } from "./task-registry-state.js";
 
 if (process.env.VITEST || process.env.NODE_ENV === "test") {

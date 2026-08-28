@@ -22,7 +22,7 @@ import { generateSecureUuid } from "./secure-random.js";
 export const SESSION_DELIVERY_QUEUE_NAME = "session";
 
 type SessionDeliveryOwnerReference = {
-  kind: "subagent_completion";
+  kind: "subagent_completion" | "generated_media_completion";
   runId: string;
   taskId: string;
   generation: number;
@@ -374,7 +374,7 @@ export async function failSessionDelivery(
         : {}),
       ...(options?.releaseAttemptOwnership === true ? { deliveryStartedAt: undefined } : {}),
       lastAttemptAt: now,
-      ...(queued.kind === "agentTurn" && queued.owner?.kind === "subagent_completion"
+      ...(queued.kind === "agentTurn" && queued.owner
         ? {
             availableAt:
               now +

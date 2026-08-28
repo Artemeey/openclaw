@@ -400,17 +400,38 @@ describe("scheduleMediaGenerationTaskCompletion", () => {
         model: "gpt-image-1",
         count: 1,
         wakeResult: "generated",
-        mediaUrls: ["/tmp/proof.png"],
+        attachments: [
+          {
+            type: "image",
+            path: "/tmp/proof.png",
+            mimeType: "image/png",
+            name: "proof.png",
+            sizeBytes: 42,
+          },
+        ],
       }),
     });
 
     await scheduled[0]?.();
 
     expect(taskRegistryDeliveryRuntimeMocks.sendMessage).not.toHaveBeenCalled();
-    expect(detachedTaskRuntimeMocks.completeTaskRunByRunId).toHaveBeenCalledWith(
+    expect(detachedTaskRuntimeMocks.recordTaskRunProgressByRunId).toHaveBeenCalledWith(
       expect.objectContaining({
-        terminalOutcome: "blocked",
+        detail: expect.objectContaining({
+          kind: "generated_media_completion",
+          artifacts: [
+            expect.objectContaining({
+              path: "/tmp/proof.png",
+              mimeType: "image/png",
+              name: "proof.png",
+              sizeBytes: 42,
+            }),
+          ],
+        }),
       }),
+    );
+    expect(detachedTaskRuntimeMocks.completeTaskRunByRunId).toHaveBeenCalledWith(
+      expect.objectContaining({ deliveryStatus: "failed", terminalOutcome: "blocked" }),
     );
     expect(
       cronContinuationCleanupMocks.removeCronRunContinuationSessionIfIdle,
@@ -576,7 +597,7 @@ describe("scheduleMediaGenerationTaskCompletion", () => {
         }),
       );
       expect(onWakeFailure).toHaveBeenCalledWith(
-        "Image generation completion wake failed after successful generation",
+        "Image generation completion delivery was not confirmed after successful generation",
         expect.objectContaining({ taskId: "task-image-orphaned" }),
       );
     } finally {

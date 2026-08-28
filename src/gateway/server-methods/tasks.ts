@@ -15,6 +15,10 @@ import {
   dismissSubagentCompletionDelivery,
   retrySubagentCompletionDelivery,
 } from "../../agents/subagents/completion/subagent-completion-delivery.js";
+import {
+  dismissGeneratedMediaCompletionDelivery,
+  retryGeneratedMediaCompletionDelivery,
+} from "../../agents/tools/generated-media-completion-delivery.js";
 import { canonicalizeMainSessionAlias } from "../../config/sessions.js";
 import { getTaskById, listTaskRecordPage } from "../../tasks/runtime-internal.js";
 import type { TaskStatus } from "../../tasks/task-registry.types.js";
@@ -176,7 +180,10 @@ export const tasksHandlers: GatewayRequestHandlers = {
         results.push({ taskId, ok: false, reason: "task not found" });
         continue;
       }
-      const result = await retrySubagentCompletionDelivery(taskId);
+      const result =
+        task?.runtime === "cli"
+          ? await retryGeneratedMediaCompletionDelivery(taskId)
+          : await retrySubagentCompletionDelivery(taskId);
       results.push({
         taskId,
         ok: result.ok,
@@ -201,9 +208,12 @@ export const tasksHandlers: GatewayRequestHandlers = {
         results.push({ taskId, ok: false, reason: "task not found" });
         continue;
       }
-      const result = await dismissSubagentCompletionDelivery(taskId, {
-        discardTerminalDelivery: discardSubagentTerminalDelivery,
-      });
+      const result =
+        task?.runtime === "cli"
+          ? dismissGeneratedMediaCompletionDelivery(taskId)
+          : await dismissSubagentCompletionDelivery(taskId, {
+              discardTerminalDelivery: discardSubagentTerminalDelivery,
+            });
       results.push({
         taskId,
         ok: result.ok,

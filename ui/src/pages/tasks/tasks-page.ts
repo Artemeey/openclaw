@@ -3,6 +3,7 @@ import { initialState, Task, TaskStatus } from "@lit/task";
 import { html } from "lit";
 import { state } from "lit/decorators.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
+import type { ArtifactDownloadResult } from "../../api/types.ts";
 import { titleForRoute } from "../../app-navigation.ts";
 import { applicationContext, type ApplicationContext } from "../../app/context.ts";
 import { hasOperatorReadAccess, hasOperatorWriteAccess } from "../../app/operator-access.ts";
@@ -393,6 +394,46 @@ class TasksPage extends OpenClawLightDomElement {
     }
   }
 
+  private async openTaskArtifacts(taskId: string) {
+    const scope = this.gateway.capture();
+    if (!scope) {
+      return;
+    }
+    const popup = window.open("about:blank", "_blank");
+    if (!popup) {
+      this.error = t("tasksPage.artifactsFailed");
+      return;
+    }
+    try {
+      const listed = await scope.client.request<{
+        artifacts?: Array<{ id?: string }>;
+      }>("artifacts.list", { taskId });
+      const artifact = listed?.artifacts?.[0];
+      if (!artifact?.id) {
+        popup.close();
+        this.error = t("tasksPage.artifactsFailed");
+        return;
+      }
+      const download = await scope.client.request<ArtifactDownloadResult | null>(
+        "artifacts.download",
+        { taskId, artifactId: artifact.id },
+      );
+      if (download?.url) {
+        popup.location.href = download.url.startsWith("/__openclaw__/")
+          ? `${this.context.resourceBasePath}${download.url}`
+          : download.url;
+      } else {
+        popup.close();
+        this.error = t("tasksPage.artifactsFailed");
+      }
+    } catch (error) {
+      popup.close();
+      if (this.gateway.isCurrent(scope)) {
+        this.error = formatUiError(error, t("tasksPage.artifactsFailed"));
+      }
+    }
+  }
+
   override render() {
     const fallbackAgentId = resolveSessionNavigationAgentId(this.context);
     return html`
@@ -439,6 +480,7 @@ class TasksPage extends OpenClawLightDomElement {
           onRetry: (taskId) => void this.recoverTask(taskId, "retry"),
           onDismiss: (taskId) => void this.recoverTask(taskId, "dismiss"),
           onCopyResult: (taskId) => void this.copyTaskResult(taskId),
+          onOpenArtifacts: (taskId) => void this.openTaskArtifacts(taskId),
           onNavigateToChat: (sessionKey) => {
             const face = resolveSessionPreferredFaceForKey(this.context, sessionKey);
             this.context.navigate(

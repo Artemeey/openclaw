@@ -176,6 +176,7 @@ export function recordTaskRunProgressByRunIdCore(params: {
   lastEventAt?: number;
   progressSummary?: string | null;
   eventSummary?: string | null;
+  detail?: import("./task-registry.types.js").JsonValue;
 }) {
   return recordTaskProgressByRunId(params);
 }

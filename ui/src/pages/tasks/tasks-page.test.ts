@@ -129,10 +129,12 @@ async function createDeferredTaskRefresh(initialTasks: TaskSummary[]) {
 function createContext(
   gateway: ApplicationContext["gateway"],
   scopeId: string | null = "main",
+  resourceBasePath = "",
 ): ApplicationContext {
   const subscribe = () => () => undefined;
   return {
-    basePath: "",
+    basePath: resourceBasePath,
+    resourceBasePath,
     gateway,
     agents: {
       state: {
@@ -544,6 +546,48 @@ describe("TasksPage cancellation lifecycle", () => {
         Reflect.deleteProperty(navigator, "clipboard");
       }
     }
+  });
+
+  it("opens retained generated media through the authorized artifact API", async () => {
+    const retained = createTask("task-retained-media", "completed", {
+      deliveryStatus: "failed",
+      terminalOutcome: "blocked",
+    });
+    retained.kind = "image_generation";
+    const request = vi.fn((method: string) => {
+      if (method === "artifacts.list") {
+        return Promise.resolve({ artifacts: [{ id: "generated_media_1" }] });
+      }
+      if (method === "artifacts.download") {
+        return Promise.resolve({
+          artifact: { id: "generated_media_1" },
+          url: "/__openclaw__/assistant-media?mediaTicket=ticket",
+        });
+      }
+      return Promise.resolve({ tasks: [retained] });
+    });
+    const source = createGateway({ request } as unknown as GatewayBrowserClient);
+    const page = document.createElement("openclaw-tasks-page") as TasksPageTestElement;
+    page.context = createContext(source.gateway, "main", "/openclaw");
+    const popup = { close: vi.fn(), location: { href: "" } };
+    const open = vi.spyOn(window, "open").mockReturnValue(popup as unknown as WindowProxy);
+    document.body.append(page);
+    await waitForFast(() => expect(page.tasks).toHaveLength(1));
+
+    const button = [...page.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent?.trim() === "Open media",
+    );
+    button?.click();
+
+    await vi.waitFor(() =>
+      expect(popup.location.href).toBe("/openclaw/__openclaw__/assistant-media?mediaTicket=ticket"),
+    );
+    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(request).toHaveBeenCalledWith("artifacts.list", { taskId: retained.taskId });
+    expect(request).toHaveBeenCalledWith("artifacts.download", {
+      taskId: retained.taskId,
+      artifactId: "generated_media_1",
+    });
   });
 
   it("qualifies unscoped task session links with the selected agent", async () => {

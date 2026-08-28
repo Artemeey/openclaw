@@ -42,6 +42,7 @@ type TasksProps = {
   onRetry: (taskId: string) => void;
   onDismiss: (taskId: string) => void;
   onCopyResult: (taskId: string) => void;
+  onOpenArtifacts: (taskId: string) => void;
   onNavigateToChat: (sessionKey: string) => void;
 };
 
@@ -81,11 +82,13 @@ function renderTask(task: TaskSummary, props: TasksProps) {
   const title = taskTitle(task);
   const cancelling = props.cancellingTaskIds.has(task.id);
   const retainedResult = task.terminalOutcome === "blocked";
+  const generatedMedia = task.kind?.endsWith("_generation") === true;
   const recoverableDelivery = retainedResult && task.deliveryStatus === "failed";
   const dismissedDelivery = retainedResult && task.deliveryStatus === "dismissed";
   const showActions =
     (active && props.canCancel) ||
     (retainedResult && props.canCopy) ||
+    (generatedMedia && task.status === "completed" && props.canCopy) ||
     (recoverableDelivery && props.canCancel);
   return html`
     <div class="settings-row task-row" data-task-id=${task.id}>
@@ -145,6 +148,16 @@ function renderTask(task: TaskSummary, props: TasksProps) {
                     @click=${() => props.onCopyResult(task.taskId)}
                   >
                     ${t("tasksPage.copyResult")}
+                  </button>`
+                : nothing}
+              ${generatedMedia && task.status === "completed" && props.canCopy
+                ? html`<button
+                    class="btn btn--sm"
+                    type="button"
+                    ?disabled=${cancelling || !props.connected}
+                    @click=${() => props.onOpenArtifacts(task.taskId)}
+                  >
+                    ${t("tasksPage.openArtifacts")}
                   </button>`
                 : nothing}
               ${recoverableDelivery && props.canCancel

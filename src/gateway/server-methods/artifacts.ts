@@ -18,7 +18,12 @@ import {
 } from "../../../packages/gateway-protocol/src/index.js";
 import { AgentSelectionRequiredError } from "../../agents/agent-scope-config.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { isPathInside, openLocalFileSafely } from "../../infra/fs-safe.js";
+import { getMediaDir } from "../../media/store.js";
 import { parseAgentSessionKey, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
+import { parseGeneratedMediaTaskDetail } from "../../tasks/generated-media-task-artifacts.js";
+import { getTaskById } from "../../tasks/runtime-internal.js";
+import { createAssistantMediaTicket } from "../control-ui.js";
 import {
   parseManagedOutgoingArtifactId,
   resolveManagedOutgoingMediaArtifactDownload,
@@ -30,6 +35,7 @@ import {
 } from "../session-request-agent.js";
 import { visitSessionMessagesAsync } from "../session-transcript-readers.js";
 import { loadGatewaySessionEntryReadOnly } from "../session-utils.js";
+import { canAccessTaskRequesterSession } from "../task-session-access.js";
 import {
   type ArtifactBase64Payload,
   base64FromDataUrl,
@@ -425,6 +431,75 @@ function toSummary(artifact: ArtifactRecord): ArtifactSummary {
   return summary;
 }
 
+function retainedTaskArtifacts(taskId: string): ArtifactRecord[] {
+  const detail = parseGeneratedMediaTaskDetail(getTaskById(taskId)?.detail);
+  return (
+    detail?.artifacts.map((artifact, index) =>
+      Object.assign(
+        {
+          id: `generated_media_${index + 1}`,
+          type: artifact.type,
+          title: artifact.name ?? `${artifact.type} ${index + 1}`,
+          taskId,
+          source: "generated-media-task",
+          download: {
+            mode: artifact.path || artifact.url ? ("url" as const) : ("unsupported" as const),
+          },
+        },
+        artifact.mimeType ? { mimeType: artifact.mimeType } : {},
+        artifact.sizeBytes !== undefined ? { sizeBytes: artifact.sizeBytes } : {},
+        artifact.path || artifact.url ? { url: artifact.path ?? artifact.url } : {},
+      ),
+    ) ?? []
+  );
+}
+
+function authorizedRetainedTaskArtifacts(params: {
+  taskId: string;
+  cfg: OpenClawConfig | undefined;
+  client: GatewayClient | null;
+}): ArtifactRecord[] {
+  const task = getTaskById(params.taskId);
+  if (
+    !task ||
+    !canAccessTaskRequesterSession({ cfg: params.cfg ?? {}, client: params.client, task })
+  ) {
+    return [];
+  }
+  return retainedTaskArtifacts(params.taskId);
+}
+
+async function resolveRetainedTaskArtifactDownload(
+  taskId: string,
+  requestedArtifactId: string,
+): Promise<{ artifact: ArtifactRecord; url: string; expiresAt?: string } | undefined> {
+  const artifact = retainedTaskArtifacts(taskId).find((entry) => entry.id === requestedArtifactId);
+  if (!artifact?.url) {
+    return undefined;
+  }
+  if (isSafeDownloadUrl(artifact.url)) {
+    return { artifact, url: artifact.url };
+  }
+  const opened = await openLocalFileSafely({ filePath: artifact.url });
+  try {
+    if (!isPathInside(getMediaDir(), opened.realPath)) {
+      return undefined;
+    }
+  } finally {
+    await opened.handle.close().catch(() => {});
+  }
+  const ticket = createAssistantMediaTicket(artifact.url);
+  if (!ticket.mediaTicket || !ticket.mediaTicketExpiresAt) {
+    return undefined;
+  }
+  const query = new URLSearchParams({ source: artifact.url, mediaTicket: ticket.mediaTicket });
+  return {
+    artifact,
+    url: `/__openclaw__/assistant-media?${query.toString()}`,
+    expiresAt: ticket.mediaTicketExpiresAt,
+  };
+}
+
 /** Gateway handlers for listing, summarizing, and downloading transcript artifacts. */
 export const artifactsHandlers: GatewayRequestHandlers = {
   "artifacts.list": async ({ params, respond, context, client }) => {
@@ -454,7 +529,10 @@ export const artifactsHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    respond(true, { artifacts: artifacts.map(toSummary) });
+    const retained = params.taskId
+      ? authorizedRetainedTaskArtifacts({ taskId: params.taskId, cfg, client })
+      : [];
+    respond(true, { artifacts: [...artifacts, ...retained].map(toSummary) });
   },
   "artifacts.get": async ({ params, respond, context, client }) => {
     if (!assertValidParams(params, validateArtifactsGetParams, "artifacts.get", respond)) {
@@ -466,6 +544,17 @@ export const artifactsHandlers: GatewayRequestHandlers = {
     const cfg = context.getRuntimeConfig?.();
     const admittedQuery = admitArtifactQuery(params, cfg, respond);
     if (!admittedQuery) {
+      return;
+    }
+    if (params.taskId && params.artifactId.startsWith("generated_media_")) {
+      const artifact = authorizedRetainedTaskArtifacts({ taskId: params.taskId, cfg, client }).find(
+        (entry) => entry.id === params.artifactId,
+      );
+      if (artifact) {
+        respond(true, { artifact: toSummary(artifact) });
+        return;
+      }
+      respondArtifactNotFound(respond, params.artifactId);
       return;
     }
     const found = await runArtifactSessionOperation(respond, () =>
@@ -493,6 +582,23 @@ export const artifactsHandlers: GatewayRequestHandlers = {
     const cfg = context.getRuntimeConfig?.();
     const admittedQuery = admitArtifactQuery(params, cfg, respond);
     if (!admittedQuery) {
+      return;
+    }
+    if (params.taskId && params.artifactId.startsWith("generated_media_")) {
+      if (authorizedRetainedTaskArtifacts({ taskId: params.taskId, cfg, client }).length === 0) {
+        respondArtifactNotFound(respond, params.artifactId);
+        return;
+      }
+      const retained = await resolveRetainedTaskArtifactDownload(params.taskId, params.artifactId);
+      if (retained) {
+        respond(true, {
+          artifact: toSummary(retained.artifact),
+          url: retained.url,
+          ...(retained.expiresAt ? { expiresAt: retained.expiresAt } : {}),
+        });
+        return;
+      }
+      respondArtifactNotFound(respond, params.artifactId);
       return;
     }
     if (

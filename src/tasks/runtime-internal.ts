@@ -27,6 +27,7 @@ export {
   findTaskByRunId,
   finalizeTaskRecordByRunId,
   getTaskById,
+  getTaskDeliveryState,
   hasActiveTaskForChildSessionKey,
   listFreshTasksForOwnerKey,
   listTaskRecordPage,
@@ -46,5 +47,6 @@ export {
   setTaskCleanupAfterById,
   setTaskRunDeliveryStatusByRunId,
   updateTaskNotifyPolicyById,
+  updateTaskRecordById,
 } from "./task-registry.js";
 export type { TaskRecord } from "./task-registry.types.js";

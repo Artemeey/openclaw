@@ -316,6 +316,7 @@ export function updateTaskStateByRunId(params: {
   detail?: JsonValue;
   eventSummary?: string | null;
   suppressDelivery?: boolean;
+  deliveryStatus?: TaskDeliveryStatus;
 }) {
   ensureTaskRegistryReady();
   const matches = getTasksByRunScope(params);
@@ -387,6 +388,9 @@ export function updateTaskStateByRunId(params: {
     }
     if (params.detail !== undefined) {
       patch.detail = params.detail;
+    }
+    if (params.deliveryStatus !== undefined) {
+      patch.deliveryStatus = params.deliveryStatus;
     }
     if (params.suppressDelivery) {
       // Teardown suppression must survive redundant lifecycle finalizers that
@@ -476,6 +480,7 @@ export function recordTaskProgressByRunId(params: {
   lastEventAt?: number;
   progressSummary?: string | null;
   eventSummary?: string | null;
+  detail?: JsonValue;
 }) {
   return updateTaskStateByRunId({
     runId: params.runId,
@@ -485,6 +490,7 @@ export function recordTaskProgressByRunId(params: {
     lastEventAt: params.lastEventAt,
     progressSummary: params.progressSummary,
     eventSummary: params.eventSummary,
+    detail: params.detail,
   });
 }
 
@@ -505,6 +511,7 @@ export function finalizeTaskRecordByRunId(params: {
   terminalOutcome?: TaskTerminalOutcome | null;
   detail?: JsonValue;
   suppressDelivery?: boolean;
+  deliveryStatus?: TaskDeliveryStatus;
 }) {
   return updateTaskStateByRunId({
     runId: params.runId,
@@ -523,6 +530,7 @@ export function finalizeTaskRecordByRunId(params: {
     terminalOutcome: params.terminalOutcome,
     detail: params.detail,
     suppressDelivery: params.suppressDelivery,
+    deliveryStatus: params.deliveryStatus,
   });
 }
 
