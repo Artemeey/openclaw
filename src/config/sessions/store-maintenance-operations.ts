@@ -124,12 +124,14 @@ async function applyWarnOnlyMaintenance(params: {
       preserveRecentMs: params.maintenance.preserveRecentMs,
     });
     if (warning) {
+      const outcome = warning.wouldPrune || warning.capOutcome === "remove" ? "remove" : "archive";
       params.operation.log.warn(
-        "session maintenance would evict active session; skipping enforcement",
+        `session maintenance would ${outcome} active session; skipping enforcement`,
         {
           activeSessionKey: warning.activeSessionKey,
           wouldPrune: warning.wouldPrune,
           wouldCap: warning.wouldCap,
+          capOutcome: warning.capOutcome,
           pruneAfterMs: warning.pruneAfterMs,
           maxEntries: warning.maxEntries,
         },
