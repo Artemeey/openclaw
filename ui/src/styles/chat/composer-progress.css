@@ -70,20 +70,7 @@
     > .chat-pane__header
     .chat-pane__face-row
     .chat-pane__face-switch {
-    width: 100%;
     margin-left: 0;
-  }
-
-  .chat-main__conversation-column > .chat-pane__header .chat-pane__face-row .settings-segmented {
-    flex: 1 1 auto;
-  }
-
-  .chat-main__conversation-column
-    > .chat-pane__header
-    .chat-pane__face-row
-    .settings-segmented__btn {
-    flex: 1 1 0;
-    justify-content: center;
   }
 
   .chat-main__conversation-column > .agent-chat__search-bar {

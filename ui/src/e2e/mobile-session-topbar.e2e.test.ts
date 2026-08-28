@@ -105,6 +105,7 @@ suite.define(() => {
           if (board) {
             expect(geometry.switcher).not.toBeNull();
             expect(geometry.switcher!.top).toBeGreaterThanOrEqual(geometry.row!.bottom - 0.1);
+            expect(geometry.switcher!.width).toBeLessThan(geometry.header!.width * 0.75);
           } else {
             expect(geometry.switcher).toBeNull();
             expect(geometry.header!.height).toBeCloseTo(52, 0);
