@@ -1,0 +1,316 @@
+# Task-only scope selector. Parsed macos-swift job configuration and global env
+# match CI at 22a0fa21a9598abe46ea51ef2501a4aeb0a2fa1d;
+# normal runner routing, budgets, build/test commands and rendering stay intact.
+name: Native macOS CI proof (one-off)
+on:
+  push:
+    branches:
+      - diagnostics/macos-native-131866
+permissions:
+  contents: read
+concurrency:
+  group: native-macos-proof-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  IOS_SCREENSHOT_FASTLANE_VERSION: 2.238.0
+  IOS_SCREENSHOT_NODE_VERSION: 24.16.0
+  IOS_SCREENSHOT_XCODE_VERSION: Xcode 26.6 Build version 17F113
+  NODE_VERSION: 24.x
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run_macos_swift: "true"
+      compatibility_target: "false"
+      checkout_revision: 22a0fa21a9598abe46ea51ef2501a4aeb0a2fa1d
+      cache_mode: restore
+      run_openclawkit_tests: "true"
+      cache_write_allowed: "false"
+    steps:
+      - name: Record the pinned proof target
+        run: printf '%s\n' 'macos-swift target 22a0fa21a9598abe46ea51ef2501a4aeb0a2fa1d; normal push routing; cache restore only'
+  macos-swift:
+    permissions:
+      contents: read
+    name: macos-swift
+    needs:
+      - preflight
+    if: needs.preflight.outputs.run_macos_swift == 'true'
+    runs-on: ${{ vars.OPENCLAW_CI_RUNNER_BACKEND == 'github' && 'macos-26' || (github.event_name == 'workflow_dispatch' || github.run_attempt > 1) && 'macos-26' || (github.repository == 'openclaw/openclaw' && (github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association)) && 'blacksmith-12vcpu-macos-26' || 'macos-26') }}
+    timeout-minutes: ${{ (vars.OPENCLAW_CI_RUNNER_BACKEND == 'github' || github.event_name == 'workflow_dispatch' || github.run_attempt > 1 || github.repository != 'openclaw/openclaw' || (github.event_name == 'pull_request' && !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association))) && 30 || 20 }}
+    env:
+      HISTORICAL_TARGET: ${{ needs.preflight.outputs.compatibility_target }}
+      SWIFT_TEST_EXECUTION: ${{ (github.event_name == 'workflow_dispatch' || github.run_attempt > 1) && 'serial' || 'parallel' }}
+    steps:
+      - name: Checkout
+        env:
+          CHECKOUT_REPO: ${{ github.repository }}
+          CHECKOUT_SHA: ${{ needs.preflight.outputs.checkout_revision }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          git init "$GITHUB_WORKSPACE"
+          git -C "$GITHUB_WORKSPACE" config gc.auto 0
+          git -C "$GITHUB_WORKSPACE" remote add origin "https://github.com/${CHECKOUT_REPO}.git"
+          fetch_timeout_seconds=90
+          fetch_checkout_ref_once() {
+            git -C "$GITHUB_WORKSPACE" \
+              -c protocol.version=2 \
+              fetch --no-tags --prune --no-recurse-submodules --depth=1 origin \
+              "+${CHECKOUT_SHA}:refs/remotes/origin/checkout" &
+            local fetch_pid="$!"
+            local elapsed=0
+            while kill -0 "$fetch_pid" 2>/dev/null; do
+              if [ "$elapsed" -ge "$fetch_timeout_seconds" ]; then
+                kill -TERM "$fetch_pid" 2>/dev/null || true
+                sleep 10
+                kill -KILL "$fetch_pid" 2>/dev/null || true
+                wait "$fetch_pid" || true
+                return 124
+              fi
+              sleep 1
+              elapsed=$((elapsed + 1))
+            done
+            wait "$fetch_pid"
+          }
+          fetch_checkout_ref() {
+            local fetch_status
+            for attempt in 1 2 3; do
+              fetch_checkout_ref_once && return 0
+              fetch_status="$?"
+              if [ "$fetch_status" != "124" ] && [ "$fetch_status" != "137" ]; then
+                return "$fetch_status"
+              fi
+              if [ "$attempt" = "3" ]; then
+                return "$fetch_status"
+              fi
+              echo "::warning::checkout fetch for '$CHECKOUT_SHA' timed out on attempt $attempt; retrying"
+              sleep 5
+            done
+          }
+          fetch_checkout_ref
+          git -C "$GITHUB_WORKSPACE" checkout --detach refs/remotes/origin/checkout
+          harness_dir="$GITHUB_WORKSPACE/.ci-harness"
+          git init "$harness_dir"
+          git -C "$harness_dir" remote add origin "https://github.com/${CHECKOUT_REPO}.git"
+          git -C "$harness_dir" -c protocol.version=2 fetch \
+            --no-tags --no-recurse-submodules --depth=1 origin \
+            "+${WORKFLOW_SHA}:refs/remotes/origin/ci-harness"
+          git -C "$harness_dir" sparse-checkout set .github/actions
+          git -C "$harness_dir" checkout --force --detach "$WORKFLOW_SHA"
+          test -f "$harness_dir/.github/actions/setup-node-env/action.yml"
+      - name: Install XcodeGen / SwiftLint / SwiftFormat
+        run: |
+          if [[ -x ./scripts/install-xcodegen.sh && -x ./scripts/install-swift-tools.sh ]]; then
+            swift_tools_dir="$RUNNER_TEMP/openclaw-swift-tools"
+            ./scripts/install-xcodegen.sh "$swift_tools_dir"
+            ./scripts/install-swift-tools.sh "$swift_tools_dir"
+            echo "$swift_tools_dir" >> "$GITHUB_PATH"
+            "$swift_tools_dir/xcodegen" --version
+            "$swift_tools_dir/swiftformat" --version
+            "$swift_tools_dir/swiftlint" version
+          elif [[ "$HISTORICAL_TARGET" == "true" ]]; then
+            # Frozen release targets before the pinned installer used one of these
+            # reviewed formatter contracts. Fail closed for any unknown minimum.
+            brew update
+            brew install xcodegen swiftlint
+            swiftformat_min_version="$(awk '$1 == "--min-version" { print $2; exit }' config/swiftformat)"
+            case "$swiftformat_min_version" in
+              ""|0.61.1)
+                swiftformat_version="0.61.1"
+                swiftformat_checksum="b990400779aceb7d7020796eb9ba814d4480543f671d38fc0ff48cb72f04c584"
+                ;;
+              0.62.1)
+                swiftformat_version="0.62.1"
+                swiftformat_checksum="7cb1cb1fae04932047c7015441c543848e8e60e1572d808d080e0a1f1661114a"
+                ;;
+              *)
+                echo "Unsupported frozen-target SwiftFormat minimum: $swiftformat_min_version" >&2
+                exit 1
+                ;;
+            esac
+            swiftformat_archive="$RUNNER_TEMP/swiftformat-$swiftformat_version.zip"
+            swift_tools_dir="$RUNNER_TEMP/openclaw-legacy-swift-tools"
+            curl --fail --location --silent --show-error \
+              --connect-timeout 10 --max-time 120 \
+              --retry 3 --retry-max-time 120 \
+              --output "$swiftformat_archive" \
+              "https://github.com/nicklockwood/SwiftFormat/releases/download/$swiftformat_version/swiftformat.zip"
+            if [[ "$(shasum -a 256 "$swiftformat_archive" | awk '{print $1}')" != "$swiftformat_checksum" ]]; then
+              echo "SwiftFormat $swiftformat_version archive checksum mismatch" >&2
+              exit 1
+            fi
+            mkdir -p "$swift_tools_dir"
+            unzip -q "$swiftformat_archive" -d "$swift_tools_dir"
+            chmod +x "$swift_tools_dir/swiftformat"
+            echo "$swift_tools_dir" >> "$GITHUB_PATH"
+            [[ "$("$swift_tools_dir/swiftformat" --version)" == "$swiftformat_version" ]]
+          else
+            echo "Current CI targets must provide scripts/install-xcodegen.sh and scripts/install-swift-tools.sh." >&2
+            exit 1
+          fi
+      - name: Detect Swift toolchain cache key
+        id: swift-toolchain
+        run: |
+          set -euo pipefail
+          xcode_version="$(xcodebuild -version | tr '\n' ' ' | sed 's/  */ /g; s/ $//')"
+          swift_version="$(swift --version | head -n 1)"
+          toolchain_key="$(printf '%s\n%s\n' "$xcode_version" "$swift_version" | shasum -a 256 | awk '{print $1}')"
+          echo "key=$toolchain_key" >> "$GITHUB_OUTPUT"
+      - name: Restore SwiftPM cache
+        id: swiftpm-cache
+        if: needs.preflight.outputs.cache_mode != 'off'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-swiftpm-${{ hashFiles('apps/macos/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-
+      - name: Restore Swift build directory cache
+        id: swift-build-cache
+        if: needs.preflight.outputs.cache_mode != 'off'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: apps/macos/.build
+          key: ${{ runner.os }}-swift-build-v4-native-tests-${{ steps.swift-toolchain.outputs.key }}-${{ hashFiles('apps/macos/Package.swift', 'apps/macos/Package.resolved', 'apps/macos/Sources/**', 'apps/macos/Tests/**', 'apps/shared/OpenClawKit/Package.swift', 'apps/shared/OpenClawKit/Sources/**', 'apps/swabble/Package.swift', 'apps/swabble/Sources/**') }}
+          restore-keys: |
+            ${{ runner.os }}-swift-build-v4-native-tests-${{ steps.swift-toolchain.outputs.key }}-
+      - name: Validate Swift build cache
+        id: validate-swift-build-cache
+        run: |
+          set -euo pipefail
+          cache_valid=true
+          sparkle_info="apps/macos/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/Info.plist"
+          if [[ -d apps/macos/.build && ! -f "$sparkle_info" ]]; then
+            echo "::warning::Swift build cache is missing Sparkle; resetting the local SwiftPM build directory."
+            swift package --package-path apps/macos reset
+            cache_valid=false
+          fi
+          echo "cache-valid=$cache_valid" >> "$GITHUB_OUTPUT"
+      - name: Preserve Swift build cache hit
+        if: steps.swift-build-cache.outputs.cache-hit == 'true' && steps.validate-swift-build-cache.outputs.cache-valid == 'true'
+        run: |
+          set -euo pipefail
+          # Exact source-hash cache hits already match these inputs; checkout
+          # mtimes are the only reason SwiftPM rebuilds cached products.
+          find apps/macos/Sources apps/macos/Tests apps/shared/OpenClawKit/Sources apps/swabble/Sources apps/macos/.build/checkouts \
+            -type f -exec touch -t 200001010000 {} +
+          touch -t 200001010000 \
+            apps/macos/Package.swift \
+            apps/macos/Package.resolved \
+            apps/shared/OpenClawKit/Package.swift \
+            apps/swabble/Package.swift
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: Native state schema version contract
+        run: |
+          if [[ -f scripts/check-native-state-schema-version.mjs ]]; then
+            node scripts/check-native-state-schema-version.mjs
+          elif [[ "$HISTORICAL_TARGET" == "true" ]]; then
+            echo "[skip] native state schema version guard is not present in this historical target"
+          else
+            echo "Current CI targets must provide scripts/check-native-state-schema-version.mjs." >&2
+            exit 1
+          fi
+      - name: Swift lint
+        run: |
+          if [[ -x ./scripts/lint-swift.sh && -x ./scripts/format-swift.sh ]]; then
+            ./scripts/lint-swift.sh macos
+            ./scripts/format-swift.sh macos
+          elif [[ "$HISTORICAL_TARGET" == "true" ]]; then
+            # Frozen release targets before the shared wrappers used these commands directly.
+            swiftlint lint --config config/swiftlint.yml
+            swiftformat --lint apps/macos/Sources --config config/swiftformat --exclude '**/OpenClawProtocol,**/HostEnvSecurityPolicy.generated.swift'
+          else
+            echo "Current CI targets must provide the Swift lint and format wrappers." >&2
+            exit 1
+          fi
+      - name: Swift build (release)
+        run: |
+          set -euo pipefail
+          # The macOS lane validates the desktop app build; the CLI product is
+          # intentionally left to its own narrower surfaces instead of making
+          # this lane rebuild the whole package graph.
+          if swift build --package-path apps/macos --product OpenClaw --configuration release; then
+            exit 0
+          fi
+
+          sparkle_framework="apps/macos/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework"
+          [[ -d "$sparkle_framework" && ! -f "$sparkle_framework/Info.plist" ]] || exit 1
+          echo "::warning::SwiftPM did not produce complete Sparkle metadata; resetting once before retry."
+          swift package --package-path apps/macos reset
+          swift build --package-path apps/macos --product OpenClaw --configuration release
+      - name: OpenClawKit Talk-trait opt-out (no ElevenLabsKit when default traits disabled)
+        run: |
+          set -euo pipefail
+          # Guard: chat-only consumers build OpenClawKit with the Talk trait
+          # disabled and must NOT link ElevenLabsKit. Assert that future sources
+          # under OpenClawKit cannot silently reintroduce an unconditional
+          # ElevenLabsKit dependency while the manifest still looks correct.
+          deps="$(swift package --package-path apps/shared/OpenClawKit show-dependencies --disable-default-traits)"
+          echo "$deps"
+          if grep -qi 'elevenlabs' <<<"$deps"; then
+            echo "::error::ElevenLabsKit resolved with the Talk trait disabled; keep it gated behind the Talk trait."
+            exit 1
+          fi
+          swift build --package-path apps/shared/OpenClawKit --target OpenClawKit --disable-default-traits
+      - name: OpenClawKit tests
+        if: needs.preflight.outputs.run_openclawkit_tests == 'true'
+        run: |
+          set -euo pipefail
+          openclawkit_scratch="$(mktemp -d "$RUNNER_TEMP/openclawkit.XXXXXX")"
+          trap 'rm -rf "$openclawkit_scratch"' EXIT
+          swift test \
+            --package-path apps/shared/OpenClawKit \
+            --scratch-path "$openclawkit_scratch" \
+            --parallel
+      - name: Swift test
+        id: swift-test
+        run: |
+          set -euo pipefail
+          # SwiftPM's swiftbuild backend can omit the test-bundle rpath for Sparkle.
+          # Remove once runner toolchains pass with swiftlang/swift-package-manager#10394.
+          # Keep the release build above on the default backend.
+          swift_test_args=(--package-path apps/macos --build-system native --enable-code-coverage)
+          swift build "${swift_test_args[@]}" --build-tests
+          echo "debug-tests-built=true" >> "$GITHUB_OUTPUT"
+          swift_test_args+=(--skip-build)
+          if [[ "$SWIFT_TEST_EXECUTION" == "parallel" ]]; then
+            swift_test_args+=(--parallel)
+          else
+            swift_test_args+=(--no-parallel)
+          fi
+          swift test "${swift_test_args[@]}"
+      - name: Render isolated macOS health fixtures
+        id: health-render
+        if: ${{ !cancelled() && steps.swift-test.outputs.debug-tests-built == 'true' && hashFiles('scripts/test-macos-health-render.sh') != '' }}
+        run: bash scripts/test-macos-health-render.sh
+      - name: Upload macOS health component renders
+        if: ${{ always() && steps.health-render.outputs.artifact-path != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: macos-health-component-renders
+          path: |
+            ${{ steps.health-render.outputs.artifact-path }}/ready.png
+            ${{ steps.health-render.outputs.artifact-path }}/startup-grace.png
+            ${{ steps.health-render.outputs.artifact-path }}/stale-socket.png
+            ${{ steps.health-render.outputs.artifact-path }}/disabled.png
+          if-no-files-found: error
+          retention-days: 7
+      - name: Save SwiftPM cache
+        if: needs.preflight.outputs.cache_write_allowed == 'true' && steps.swiftpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: ${{ steps.swiftpm-cache.outputs.cache-primary-key }}
+      - name: Save Swift build directory cache
+        if: needs.preflight.outputs.cache_write_allowed == 'true' && steps.swift-build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: apps/macos/.build
+          key: ${{ steps.swift-build-cache.outputs.cache-primary-key }}
