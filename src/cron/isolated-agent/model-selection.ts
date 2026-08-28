@@ -166,6 +166,7 @@ export async function resolveCronThinkingSelection(params: {
       cfg: params.cfg,
       provider: params.provider,
       model: params.model,
+      agentId: params.owner.agentId,
     });
   const catalog =
     requestedThinkLevel === "off"

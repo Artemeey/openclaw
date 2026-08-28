@@ -503,7 +503,7 @@ async function handleChatHistoryRequest({
     projection.thinkingDefault =
       resolveAgentConfig(cfg, sessionAgentId)?.thinkingDefault ??
       (provider && model
-        ? resolveConfiguredThinkingDefault({ cfg, provider, model })
+        ? resolveConfiguredThinkingDefault({ cfg, provider, model, agentId: sessionAgentId })
         : cfg.agents?.defaults?.thinkingDefault);
   }
   const thinkingLevel = sessionInfo.thinkingLevel ?? sessionInfo.thinkingDefault;

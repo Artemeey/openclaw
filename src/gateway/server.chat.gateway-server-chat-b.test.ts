@@ -1827,6 +1827,12 @@ describe("gateway server chat", () => {
       expectedDefault: "low",
     },
     {
+      name: "respects flat agent params over model and global defaults without metadata",
+      rawCatalog: "slow",
+      configured: { agentParam: "high", model: "medium", global: "off" },
+      expectedDefault: "high",
+    },
+    {
       name: "keeps explicit Off when the inherited default is unknown",
       rawCatalog: "slow",
       thinkingLevel: "off",
@@ -1851,7 +1857,14 @@ describe("gateway server chat", () => {
       };
       testState.agentsConfig = {
         defaults: testState.agentConfig,
-        entries: { main: { thinkingDefault: fixture.configured?.agent } },
+        entries: {
+          main: {
+            thinkingDefault: fixture.configured?.agent,
+            ...(fixture.configured?.agentParam
+              ? { params: { thinking: fixture.configured.agentParam } }
+              : {}),
+          },
+        },
       };
       const config = { agents: testState.agentsConfig };
 
