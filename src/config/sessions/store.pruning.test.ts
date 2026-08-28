@@ -383,7 +383,7 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
     },
   );
 
-  it("counts protected sessions when triggering capping but never evicts them", async () => {
+  it("excludes archived sessions from cap pressure", async () => {
     const now = Date.now();
     const store = makeStore([
       ["archived-1", { ...makeEntry(now - 5), archivedAt: now }],
@@ -413,13 +413,13 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
       artifacts: createMaintenanceArtifacts(),
     });
 
-    expect(capped).toBe(2);
-    expect(Object.keys(store)).toHaveLength(3);
+    expect(capped).toBe(0);
+    expect(Object.keys(store)).toHaveLength(5);
     expect(store).toHaveProperty("archived-1");
     expect(store).toHaveProperty("archived-2");
     expect(store).toHaveProperty("archived-3");
-    expect(store["dashboard-1"]).toBeUndefined();
-    expect(store["dashboard-2"]).toBeUndefined();
+    expect(store["dashboard-1"]?.archivedAt).toBeUndefined();
+    expect(store["dashboard-2"]?.archivedAt).toBeUndefined();
   });
 
   it.each([
@@ -500,8 +500,8 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
       for (const [key] of preserved) {
         expect(store).toHaveProperty(key);
       }
-      expect(store["removable-old"]).toBeUndefined();
-      expect(store["removable-recent"]).toBeUndefined();
+      expect(store["removable-old"]?.archivedAt).toEqual(expect.any(Number));
+      expect(store["removable-recent"]?.archivedAt).toEqual(expect.any(Number));
     } finally {
       admission.release();
       unregisterProvider?.();
@@ -680,7 +680,7 @@ describe("pruneStaleModelRunEntries", () => {
 });
 
 describe("capEntryCount", () => {
-  it("over limit: keeps N most recent by updatedAt, deletes rest", () => {
+  it("over limit: keeps N most recent unarchived and archives the rest", () => {
     const now = Date.now();
     const store = makeStore([
       ["oldest", makeEntry(now - 4 * DAY_MS)],
@@ -693,12 +693,12 @@ describe("capEntryCount", () => {
     const evicted = capEntryCount(store, 3);
 
     expect(evicted).toBe(2);
-    expect(Object.keys(store)).toHaveLength(3);
-    expect(store).toHaveProperty("newest");
-    expect(store).toHaveProperty("recent");
-    expect(store).toHaveProperty("mid");
-    expect(store.oldest).toBeUndefined();
-    expect(store.old).toBeUndefined();
+    expect(Object.keys(store)).toHaveLength(5);
+    expect(store.newest?.archivedAt).toBeUndefined();
+    expect(store.recent?.archivedAt).toBeUndefined();
+    expect(store.mid?.archivedAt).toBeUndefined();
+    expect(store.oldest?.archivedAt).toEqual(expect.any(Number));
+    expect(store.old?.archivedAt).toEqual(expect.any(Number));
   });
 
   it("preserves durable external conversation entries when capping", () => {
@@ -715,12 +715,12 @@ describe("capEntryCount", () => {
     const evicted = capEntryCount(store, 3);
 
     expect(evicted).toBe(2);
-    expect(Object.keys(store)).toHaveLength(3);
+    expect(Object.keys(store)).toHaveLength(5);
     expect(store).toHaveProperty(threadKey);
-    expect(store).toHaveProperty("newest");
-    expect(store).toHaveProperty("recent");
-    expect(store.oldest).toBeUndefined();
-    expect(store.old).toBeUndefined();
+    expect(store.newest?.archivedAt).toBeUndefined();
+    expect(store.recent?.archivedAt).toBeUndefined();
+    expect(store.oldest?.archivedAt).toEqual(expect.any(Number));
+    expect(store.old?.archivedAt).toEqual(expect.any(Number));
   });
 
   it("never evicts the agent primary main session even when protected entries fill the cap (#112637)", () => {
@@ -757,7 +757,7 @@ describe("capEntryCount", () => {
     expect(evicted).toBe(1);
     expect(store).toHaveProperty(lockedKey);
     expect(store).toHaveProperty("recent");
-    expect(store.old).toBeUndefined();
+    expect(store.old?.archivedAt).toEqual(expect.any(Number));
   });
 
   it("preserves archived sessions when capping", () => {
@@ -768,10 +768,10 @@ describe("capEntryCount", () => {
       ["old", makeEntry(now - DAY_MS)],
     ]);
 
-    expect(capEntryCount(store, 2)).toBe(1);
+    expect(capEntryCount(store, 2)).toBe(0);
     expect(store).toHaveProperty("archived");
-    expect(store).toHaveProperty("recent");
-    expect(store.old).toBeUndefined();
+    expect(store.recent?.archivedAt).toBeUndefined();
+    expect(store.old?.archivedAt).toBeUndefined();
   });
 
   it("preserves runtime-provided pending subagent sessions when capping", () => {
@@ -791,11 +791,11 @@ describe("capEntryCount", () => {
       });
 
       expect(evicted).toBe(2);
-      expect(Object.keys(store)).toHaveLength(2);
+      expect(Object.keys(store)).toHaveLength(4);
       expect(store).toHaveProperty(childKey);
-      expect(store).toHaveProperty("recent-1");
-      expect(store["recent-2"]).toBeUndefined();
-      expect(store.old).toBeUndefined();
+      expect(store["recent-1"]?.archivedAt).toBeUndefined();
+      expect(store["recent-2"]?.archivedAt).toEqual(expect.any(Number));
+      expect(store.old?.archivedAt).toEqual(expect.any(Number));
     } finally {
       unregister();
     }
@@ -821,10 +821,10 @@ describe("capEntryCount", () => {
       });
 
       expect(evicted).toBe(1);
-      expect(Object.keys(store)).toHaveLength(2);
+      expect(Object.keys(store)).toHaveLength(3);
       expect(store).toHaveProperty(childKey);
-      expect(store).toHaveProperty("recent-1");
-      expect(store.old).toBeUndefined();
+      expect(store["recent-1"]?.archivedAt).toBeUndefined();
+      expect(store.old?.archivedAt).toEqual(expect.any(Number));
     } finally {
       unregister();
     }

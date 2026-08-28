@@ -14,11 +14,7 @@ import {
   runSqliteSessionDeletionTransaction as runOpenClawAgentWriteTransaction,
   withSqliteSessionDeletions,
 } from "./session-accessor.sqlite-deletion.js";
-import {
-  readSessionEntryCount,
-  readSessionEntryStore,
-  writeSessionEntry,
-} from "./session-accessor.sqlite-entry-store.js";
+import { readSessionEntryStore, writeSessionEntry } from "./session-accessor.sqlite-entry-store.js";
 import { emitCommittedSessionEntryRemovals } from "./session-accessor.sqlite-identity.js";
 import {
   assertPlannedLifecycleArtifactEntriesUnchanged,
@@ -50,6 +46,7 @@ import { resolveMaintenanceConfig } from "./store-maintenance-runtime.js";
 import {
   archiveStaleDashboardEntries,
   capEntryCount,
+  countUnarchivedSessionEntries,
   pruneStaleModelRunEntries,
   pruneStaleEntries,
   normalizeResolvedMaintenanceConfigInput,
@@ -261,6 +258,15 @@ function hasStaleSqliteSessionEntryCandidate(
   });
 }
 
+function readUnarchivedSessionEntryCount(database: OpenClawAgentDatabase): number {
+  const db = getSessionKysely(database.db);
+  const rows = executeSqliteQuerySync(
+    database.db,
+    db.selectFrom("session_nodes").select("entry_json").where("archived_at", "is", null),
+  ).rows;
+  return rows.reduce((count, row) => count + (parseSessionEntryRow(row) ? 1 : 0), 0);
+}
+
 async function readSessionTranscriptJsonlBytes(
   scope: Pick<ResolvedSqliteReadScope, "agentId" | "env" | "path">,
   sessionIds: readonly string[],
@@ -334,9 +340,9 @@ export function applySessionEntryMaintenance(
     };
   }
 
-  // Count all rows before loading their payloads. Protection controls eviction candidates, not
-  // whether a row consumes maxEntries; the full snapshot is needed only when maintenance runs.
-  const entryCount = readSessionEntryCount(database);
+  // Count rows before loading their payloads. The browsing cap applies only to unarchived rows;
+  // the full snapshot is needed only when maintenance runs.
+  const unarchivedEntryCount = readUnarchivedSessionEntryCount(database);
   const preserveCandidateKeys = collectSessionMaintenancePreserveKeys([params.activeSessionKey]);
   const hasStaleCandidate = hasStaleSqliteSessionEntryCandidate(
     database,
@@ -362,16 +368,16 @@ export function applySessionEntryMaintenance(
     );
   const shouldMaintainStore =
     params.forceMaintenance === true ||
-    entryCount > maintenance.maxEntries ||
+    unarchivedEntryCount > maintenance.maxEntries ||
     hasStaleDashboardCandidate ||
     hasStaleCandidate ||
     shouldRunModelRunPrune({
       maintenance,
-      entryCount,
+      entryCount: unarchivedEntryCount,
       force: params.forceMaintenance,
     }) ||
     shouldRunSessionEntryMaintenance({
-      entryCount,
+      entryCount: unarchivedEntryCount,
       maxEntries: maintenance.maxEntries,
       force: params.forceMaintenance,
     });
@@ -411,7 +417,7 @@ export function applySessionEntryMaintenance(
         removedSessionIds.add(sessionId);
       }
     };
-  let remainingEntryCount = entryCount;
+  let remainingEntryCount = countUnarchivedSessionEntries(store);
   let modelRunPruned = 0;
   if (
     shouldRunModelRunPrune({
@@ -429,7 +435,7 @@ export function applySessionEntryMaintenance(
     remainingEntryCount -= modelRunPruned;
   }
   const archivedWorktrees: NonNullable<SessionEntryMaintenancePlan["archivedWorktrees"]> = [];
-  const archived = archiveStaleDashboardEntries(store, maintenance.archiveDashboardAfterMs, {
+  let archived = archiveStaleDashboardEntries(store, maintenance.archiveDashboardAfterMs, {
     log: false,
     onArchived: ({ key, entry }) => {
       writeSessionEntry(database, key, entry);
@@ -443,6 +449,7 @@ export function applySessionEntryMaintenance(
     },
     preserveKeys,
   });
+  remainingEntryCount -= archived;
   let pruned = 0;
   if (
     params.forceMaintenance === true ||
@@ -467,7 +474,18 @@ export function applySessionEntryMaintenance(
   ) {
     capped = capEntryCount(store, maintenance.maxEntries, {
       log: false,
-      onCapped: rememberRemovedEntry("capped"),
+      onArchived: ({ key, entry }) => {
+        archived += 1;
+        writeSessionEntry(database, key, entry);
+        if (entry.worktree) {
+          archivedWorktrees.push({
+            entry: cloneSessionEntry(entry),
+            sessionKey: key,
+            storePath: params.storePath,
+          });
+        }
+      },
+      onRemoved: rememberRemovedEntry("capped"),
       preserveKeys,
       preserveRecentMs: maintenance.preserveRecentMs,
     });
@@ -533,7 +551,13 @@ export async function finalizeSessionEntryMaintenancePlansAfterWriterReleaseBest
     archived: plans.reduce((count, plan) => count + plan.archived, 0),
     modelRunPruned: 0,
     pruned: 0,
-    capped: 0,
+    capped: plans.reduce(
+      (count, plan) =>
+        count +
+        plan.capped -
+        plan.entryRemovals.filter((removal) => removal.maintenanceReason === "capped").length,
+      0,
+    ),
   };
   if (entryRemovals.length === 0 && stateDeletePlans.length === 0) {
     return { archivedTranscripts: [], ...committedCounts };
