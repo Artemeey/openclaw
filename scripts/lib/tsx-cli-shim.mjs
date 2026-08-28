@@ -135,7 +135,9 @@ async function runTsxCliShimInner(moduleUrl, options) {
         cwd: process.cwd(),
         detached,
         env: process.env,
-        stdio: "inherit",
+        // The implementation's managed commands must observe launcher loss even
+        // when an enclosing deadline SIGKILLs this shim before signal forwarding.
+        stdio: ["inherit", "inherit", "inherit", "ipc"],
       },
     );
     const result = await new Promise((resolve, reject) => {

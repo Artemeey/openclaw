@@ -266,10 +266,11 @@ describe("prepare-extension-package-boundary-artifacts", () => {
       const descendantScript = [
         "const fs = require('node:fs');",
         "process.on('SIGTERM', () => {",
-        "  setTimeout(() => {",
+        // Exercise asynchronous draining without racing a second wall-clock deadline against grace.
+        "  setImmediate(() => {",
         `    fs.writeFileSync(${JSON.stringify(drainedPath)}, 'drained');`,
         "    process.exit(0);",
-        "  }, 50);",
+        "  });",
         "});",
         `fs.writeFileSync(${JSON.stringify(readyPath)}, 'ready');`,
         "setInterval(() => {}, 1000);",

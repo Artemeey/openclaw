@@ -1,6 +1,6 @@
 // Run Oxlint tests cover run oxlint script behavior.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -24,6 +24,8 @@ import {
   filterSparseMissingOxlintTargets,
   shouldPrepareExtensionPackageBoundaryArtifacts,
 } from "../../scripts/run-oxlint.mts";
+import { waitForPidFile } from "../helpers/process-wait.js";
+import { startProcessWatchdogFixture } from "../helpers/process-watchdog.js";
 import { createScriptTestHarness } from "./test-helpers.js";
 
 const { createTempDir } = createScriptTestHarness();
@@ -65,9 +67,10 @@ function createSignalRunner(mode: SignalScenario, target: string): void {
     const childScript = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);";
     writeModule(target, [
       "import { spawn } from 'node:child_process';",
-      "import { writeFileSync } from 'node:fs';",
+      "import { writeFileSync, renameSync } from 'node:fs';",
       `const child = spawn(process.execPath, ['-e', ${JSON.stringify(childScript)}], { stdio: 'ignore' });`,
-      "writeFileSync(process.env.CHILD_PID_PATH, String(child.pid)); writeFileSync(process.env.READY_FILE, String(process.pid));",
+      // Publish only complete PIDs: an empty file parses as 0, which signals the caller's group.
+      "writeFileSync(process.env.CHILD_PID_PATH + '.tmp', String(child.pid)); renameSync(process.env.CHILD_PID_PATH + '.tmp', process.env.CHILD_PID_PATH); writeFileSync(process.env.READY_FILE, String(process.pid));",
       "process.on('SIGTERM', () => process.exit(0));",
       "setInterval(() => {}, 1000);",
     ]);
@@ -113,6 +116,7 @@ function runParentTerminationScenario(mode: SignalScenario) {
     "const waitPath = groupScenario ? process.env.CHILD_PID_PATH : process.env.READY_FILE;",
     "if (!(await waitFor(() => existsSync(waitPath)))) process.exit(2);",
     "const childPid = groupScenario ? Number(readFileSync(process.env.CHILD_PID_PATH, 'utf8')) : 0;",
+    "if (groupScenario && (!Number.isSafeInteger(childPid) || childPid <= 1)) process.exit(6);",
     "process.kill(process.pid, 'SIGTERM'); const status = await promise;",
     "if (process.env.MARKER_FILE && !existsSync(process.env.MARKER_FILE)) process.exit(3);",
     "if (groupScenario && !(await waitFor(() => { try { process.kill(childPid, 0); return false; } catch { return true; } }))) { process.kill(childPid, 'SIGKILL'); process.exit(5); }",
@@ -388,17 +392,17 @@ describe("run-oxlint", () => {
       const childPidPath = join(tempDir, "child.pid");
       let childPid = 0;
       const childScript = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);";
-      try {
-        writeModule(runner, [
-          "import { spawn } from 'node:child_process';",
-          "import { writeFileSync } from 'node:fs';",
-          `const child = spawn(process.execPath, ['-e', ${JSON.stringify(childScript)}], { stdio: 'ignore' });`,
-          "writeFileSync(process.env.CHILD_PID_PATH, String(child.pid));",
-          "process.on('SIGTERM', () => process.exit(0));",
-          "setInterval(() => {}, 1000);",
-        ]);
+      writeModule(runner, [
+        "import { spawn } from 'node:child_process';",
+        "import { writeFileSync, renameSync } from 'node:fs';",
+        `const child = spawn(process.execPath, ['-e', ${JSON.stringify(childScript)}], { stdio: 'ignore' });`,
+        "writeFileSync(process.env.CHILD_PID_PATH + '.tmp', String(child.pid)); renameSync(process.env.CHILD_PID_PATH + '.tmp', process.env.CHILD_PID_PATH);",
+        "process.on('SIGTERM', () => process.exit(0));",
+        "setInterval(() => {}, 1000);",
+      ]);
 
-        const command = runShard({
+      const releaseAndWait = startProcessWatchdogFixture(() =>
+        runShard({
           env: {
             ...process.env,
             CHILD_PID_PATH: childPidPath,
@@ -409,15 +413,17 @@ describe("run-oxlint", () => {
           extraArgs: [],
           runner,
           shard: { name: "timeout-group-test", args: [] },
-        });
+        }),
+      );
 
-        await waitFor(() => existsSync(childPidPath), 15_000);
-        childPid = Number(readFileSync(childPidPath, "utf8"));
+      try {
+        childPid = await waitForPidFile(childPidPath, 15_000);
         expect(isProcessAlive(childPid)).toBe(true);
 
-        await expect(command).resolves.toBe(124);
+        await expect(releaseAndWait()).resolves.toBe(124);
         await waitFor(() => !isProcessAlive(childPid), 15_000);
       } finally {
+        await releaseAndWait();
         if (childPid && isProcessAlive(childPid)) {
           process.kill(childPid, "SIGKILL");
         }

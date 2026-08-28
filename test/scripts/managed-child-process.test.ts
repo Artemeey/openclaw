@@ -438,6 +438,48 @@ describe("managed-child-process", () => {
     expect(signals.map((signal) => process.listenerCount(signal))).toEqual(baseline);
   });
 
+  it("does not launch commands after its IPC launcher has disconnected", async () => {
+    const dir = createTempDir("openclaw-managed-disconnected-");
+    const marker = path.join(dir, "unexpected-command");
+    const runnerPath = path.join(dir, "runner.mjs");
+    const helperUrl = pathToFileURL(path.resolve("scripts/lib/managed-child-process.mts")).href;
+    fs.writeFileSync(
+      runnerPath,
+      `
+// Lose the launcher before importing the command owner, as during slow startup.
+await new Promise(resolve => {
+  process.once('disconnect', resolve);
+  process.send('ready');
+});
+const { runManagedCommand } = await import(${JSON.stringify(helperUrl)});
+process.exitCode = await runManagedCommand({
+  bin: process.execPath,
+  args: ['-e', ${JSON.stringify(`require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'started')`)}],
+  shell: false,
+  stdio: 'ignore',
+});
+`,
+    );
+    const runner = spawn(process.execPath, [runnerPath], {
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+    });
+    const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
+      runner.once("exit", (code, signal) => resolve({ code, signal })),
+    );
+    const deadline = setTimeout(() => runner.kill("SIGKILL"), 5_000);
+    runner.once("message", () => runner.disconnect());
+    try {
+      expect(await exited).toEqual({ code: 137, signal: null });
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      clearTimeout(deadline);
+      if (runner.exitCode === null && runner.signalCode === null) {
+        runner.kill("SIGKILL");
+      }
+      await exited;
+    }
+  });
+
   it("times out and kills managed command descendants", async () => {
     const dir = createTempDir("openclaw-managed-timeout-");
     const childPath = path.join(dir, "child.mjs");

@@ -249,6 +249,11 @@ export async function runManagedCommand({
   runTaskkill = spawnSync,
   onReady,
 }: RunManagedCommandOptions) {
+  // A shim can disappear during module loading, before we register a child.
+  // An IPC disconnect is permanent; never start new work for that launcher.
+  if (process.disconnect && !process.connected) {
+    return signalExitCode("SIGKILL");
+  }
   if (platform === "win32" && requireProcessTreeExit) {
     throw createManagedCommandUnsupportedTreeVerificationError();
   }
@@ -299,7 +304,9 @@ export async function runManagedCommand({
           clearTimeout(managedChild.forceKillTimer);
         }
         if (managedChild.receivedSignal) {
-          terminateManagedChild(child, "SIGKILL");
+          if (managedChild.receivedSignal !== "SIGKILL") {
+            terminateManagedChild(child, "SIGKILL");
+          }
           resolve(signalExitCode(managedChild.receivedSignal));
           return;
         }
@@ -478,6 +485,9 @@ function createManagedCommandCleanupError(
 }
 
 function installSignalHandlers() {
+  if (signalHandlers.size === 0) {
+    process.on("disconnect", handleParentDisconnect);
+  }
   for (const signal of FORWARDED_SIGNALS) {
     if (signalHandlers.has(signal)) {
       continue;
@@ -496,12 +506,27 @@ function removeSignalHandlersIfIdle() {
     process.off(signal, handler);
   }
   signalHandlers.clear();
+  process.off("disconnect", handleParentDisconnect);
+}
+
+function handleParentDisconnect() {
+  // The live IPC endpoint belongs to the spawning shim, unlike a polled PPID
+  // that can be reparented or reused. Only this owner's registered groups die.
+  forwardSignalToManagedChildren("SIGKILL");
 }
 
 function forwardSignalToManagedChildren(signal: NodeJS.Signals) {
   for (const managedChild of managedChildren) {
     managedChild.receivedSignal ??= signal;
     terminateManagedChild(managedChild.child, signal);
+    if (signal === "SIGKILL") {
+      managedChild.receivedSignal = signal;
+      if (managedChild.forceKillTimer) {
+        clearTimeout(managedChild.forceKillTimer);
+        managedChild.forceKillTimer = null;
+      }
+      continue;
+    }
     managedChild.forceKillTimer ??= setTimeout(() => {
       terminateManagedChild(managedChild.child, "SIGKILL");
     }, FORCE_KILL_DELAY_MS);
