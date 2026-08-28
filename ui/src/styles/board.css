@@ -127,12 +127,22 @@ openclaw-board-view {
 }
 
 .board-grid {
+  container-type: inline-size;
   display: grid;
   gap: 12px;
   grid-auto-rows: 56px;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   min-width: 0;
   position: relative;
+}
+
+@container (max-width: 560px) {
+  /* Narrow boards stack every persisted desktop rect. Both axes need an
+     override because adjacent desktop cells can share the same inline row. */
+  .board-widget {
+    grid-column: 1 / -1 !important;
+    grid-row: auto / span var(--board-widget-rows) !important;
+  }
 }
 
 .board-grid__append-zone {

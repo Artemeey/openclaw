@@ -1178,7 +1178,7 @@ function buildConfigMocks(options: { swarmEnabled?: boolean; workboardEnabled?: 
   };
 }
 
-function buildWorkboardMocks(baseTime: number) {
+function buildWorkboardMocks(baseTime: number, approval = false) {
   const boardId = "peter-tasks";
   const card = (
     id: string,
@@ -1233,34 +1233,61 @@ function buildWorkboardMocks(baseTime: number) {
         sessionKey,
         revision: 1,
         tabs: [{ tabId: "main", title: "Workboard", position: 0, chatDock: "hidden" }],
-        widgets: [
-          {
-            name: "session-progress",
-            tabId: "main",
-            title: "Session progress",
-            contentKind: "plugin",
-            pluginKind: "session:progress",
-            sizeW: 6,
-            sizeH: 5,
-            position: 0,
-            grantState: "none",
-            revision: 1,
-          },
-          {
-            name: "workboard-product-operations",
-            tabId: "main",
-            title: "Product Operations",
-            contentKind: "plugin",
-            pluginKind: "workboard:board",
-            props: { boardId },
-            heightMode: "fixed",
-            sizeW: 12,
-            sizeH: 16,
-            position: 1,
-            grantState: "none",
-            revision: 1,
-          },
-        ],
+        widgets: approval
+          ? [
+              {
+                name: "approval-request",
+                tabId: "main",
+                title: "Production access",
+                contentKind: "html",
+                sizeW: 6,
+                sizeH: 4,
+                position: 0,
+                grantState: "pending",
+                declared: { netOrigins: ["https://api.example.test"] },
+                revision: 1,
+              },
+              {
+                name: "session-progress",
+                tabId: "main",
+                title: "Session progress",
+                contentKind: "plugin",
+                pluginKind: "session:progress",
+                sizeW: 12,
+                sizeH: 5,
+                position: 1,
+                grantState: "none",
+                revision: 1,
+              },
+            ]
+          : [
+              {
+                name: "session-progress",
+                tabId: "main",
+                title: "Session progress",
+                contentKind: "plugin",
+                pluginKind: "session:progress",
+                sizeW: 6,
+                sizeH: 5,
+                position: 0,
+                grantState: "none",
+                revision: 1,
+              },
+              {
+                name: "workboard-product-operations",
+                tabId: "main",
+                title: "Product Operations",
+                contentKind: "plugin",
+                pluginKind: "workboard:board",
+                props: { boardId },
+                heightMode: "fixed",
+                sizeW: 12,
+                sizeH: 16,
+                position: 1,
+                grantState: "none",
+                revision: 1,
+              },
+            ],
       },
       "workboard.boards.list": { boards: [board] },
       "workboard.cards.list": { boards: [board], cards, statuses },
@@ -1699,7 +1726,8 @@ async function createChatPickerScenario(
           }),
         ]
       : [];
-  const workboardMocks = buildWorkboardMocks(baseTime);
+  const dashboardFixture = fixture === "workboard" || fixture === "approval";
+  const workboardMocks = buildWorkboardMocks(baseTime, fixture === "approval");
   const activityTime = Date.now();
   const activitySessions = buildActivitySessionRows(activityTime);
   const activeGoal = {
@@ -1718,7 +1746,7 @@ async function createChatPickerScenario(
   };
   const sessions = [
     ...activitySessions,
-    ...(fixture === "workboard"
+    ...(dashboardFixture
       ? [
           sessionRow(workboardMocks.sessionKey, "Product operations dashboard", baseTime, {
             boardFace: "dashboard",
@@ -2041,7 +2069,7 @@ async function createChatPickerScenario(
       "system.info",
       "terminal.open",
       ...(updateFixture ? ["update.hold", "update.run", "update.status"] : []),
-      ...(fixture === "workboard"
+      ...(dashboardFixture
         ? [
             "board.get",
             "workboard.boards.list",
@@ -3002,7 +3030,7 @@ async function createChatPickerScenario(
         ],
       },
       "sessions.search": { results: [] },
-      ...(fixture === "workboard" ? workboardMocks.methodResponses : {}),
+      ...(dashboardFixture ? workboardMocks.methodResponses : {}),
     },
     models: modelProviders.models,
     repeatingSessionEvents: {
@@ -3069,7 +3097,7 @@ async function createChatPickerScenario(
       ],
     },
     sessionArchiveFiltering: true,
-    sessionKey: fixture === "workboard" ? workboardMocks.sessionKey : "agent:main:main",
+    sessionKey: dashboardFixture ? workboardMocks.sessionKey : "agent:main:main",
     workspace: "/Users/peter/Projects/openclaw",
     workspaceGit: true,
   };

@@ -89,6 +89,19 @@ describe.skipIf(!hasBrowserLayout)("openclaw-board-view browser layout", () => {
     expect(Math.round(first?.height ?? 0)).toBe(BOARD_GRID_ROW_HEIGHT * 3 + BOARD_GRID_GAP * 2);
   });
 
+  it("stacks every widget at full width when the board column is narrow", async () => {
+    const view = await mount();
+    view.style.width = "350px";
+    const grid = view.querySelector<HTMLElement>(".board-grid");
+    const cells = [...view.querySelectorAll<HTMLElement>('[data-test-id="board-widget"]')];
+    const [first, second] = cells.map((cell) => cell.getBoundingClientRect());
+    const gridBounds = grid!.getBoundingClientRect();
+
+    expect(first?.width).toBeCloseTo(gridBounds.width, 0);
+    expect(second?.width).toBeCloseTo(gridBounds.width, 0);
+    expect(second?.top).toBeGreaterThanOrEqual((first?.bottom ?? 0) + BOARD_GRID_GAP - 1);
+  });
+
   it("hides widget chrome by default on fine-pointer devices", async () => {
     const view = await mount();
     const bar = view.querySelector<HTMLElement>(".board-widget__bar");
