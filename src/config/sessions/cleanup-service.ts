@@ -31,6 +31,7 @@ import { resolveMaintenanceConfig } from "./store-maintenance-runtime.js";
 import {
   archiveStaleDashboardEntries,
   capEntryCount,
+  countUnarchivedSessionEntries,
   pruneStaleModelRunEntries,
   pruneStaleEntries,
   shouldPreserveMaintenanceEntry,
@@ -57,6 +58,7 @@ export type SessionsCleanupOptions = SessionStoreSelectionOptions & {
 type SessionCleanupAction =
   | "keep"
   | "archive-dashboard"
+  | "archive-cap"
   | "prune-missing"
   | "prune-model-run"
   | "prune-stale"
@@ -100,6 +102,7 @@ type SessionsCleanupRunResult = {
     missingKeys: Set<string>;
     modelRunPrunedKeys: Set<string>;
     archivedKeys?: Set<string>;
+    capArchivedKeys?: Set<string>;
     staleKeys: Set<string>;
     cappedKeys: Set<string>;
     dmScopeRetiredKeys: Set<string>;
@@ -177,6 +180,7 @@ export function resolveSessionCleanupAction(params: {
   missingKeys: Set<string>;
   modelRunPrunedKeys: Set<string>;
   archivedKeys?: Set<string>;
+  capArchivedKeys?: Set<string>;
   staleKeys: Set<string>;
   cappedKeys: Set<string>;
   dmScopeRetiredKeys: Set<string>;
@@ -190,8 +194,8 @@ export function resolveSessionCleanupAction(params: {
   if (params.modelRunPrunedKeys.has(params.key)) {
     return "prune-model-run";
   }
-  if (params.archivedKeys?.has(params.key)) {
-    return "archive-dashboard";
+  if (params.archivedKeys?.has(params.key) || params.capArchivedKeys?.has(params.key)) {
+    return params.archivedKeys?.has(params.key) ? "archive-dashboard" : "archive-cap";
   }
   if (params.staleKeys.has(params.key)) {
     return "prune-stale";
@@ -378,6 +382,7 @@ async function previewStoreCleanup(params: {
   const missingKeys = new Set<string>();
   const modelRunPrunedKeys = new Set<string>();
   const archivedKeys = new Set<string>();
+  const capArchivedKeys = new Set<string>();
   const dmScopeRetiredKeys = new Set<string>();
   const missing =
     params.fixMissing === true
@@ -408,7 +413,7 @@ async function previewStoreCleanup(params: {
   });
   const modelRunPruned = shouldRunModelRunPrune({
     maintenance: params.maintenance,
-    entryCount: Object.keys(previewStore).length,
+    entryCount: countUnarchivedSessionEntries(previewStore),
     // `sessions cleanup` applies the cap immediately (apply path forces maintenance and the
     // preview caps unconditionally below), so mirror that here: prune stale probes before the
     // forced cap can evict real sessions in their place.
@@ -448,7 +453,7 @@ async function previewStoreCleanup(params: {
     preserveRecentMs: params.maintenance.preserveRecentMs,
     onArchived: ({ key }) => {
       archived += 1;
-      archivedKeys.add(key);
+      capArchivedKeys.add(key);
     },
     onRemoved: ({ key }) => {
       cappedKeys.add(key);
@@ -533,6 +538,7 @@ async function previewStoreCleanup(params: {
     missingKeys,
     modelRunPrunedKeys,
     archivedKeys,
+    capArchivedKeys,
     staleKeys,
     cappedKeys,
     dmScopeRetiredKeys,

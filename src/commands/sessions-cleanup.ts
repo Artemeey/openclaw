@@ -61,6 +61,9 @@ function formatCleanupActionCell(
   if (action === "archive-dashboard") {
     return theme.warn(label);
   }
+  if (action === "archive-cap") {
+    return theme.warn(label);
+  }
   if (action === "prune-missing") {
     return theme.error(label);
   }
@@ -84,6 +87,7 @@ function buildActionRows(params: {
   missingKeys: Set<string>;
   modelRunPrunedKeys: Set<string>;
   archivedKeys?: Set<string>;
+  capArchivedKeys?: Set<string>;
   staleKeys: Set<string>;
   cappedKeys: Set<string>;
   dmScopeRetiredKeys: Set<string>;
@@ -98,6 +102,7 @@ function buildActionRows(params: {
         missingKeys: params.missingKeys,
         modelRunPrunedKeys: params.modelRunPrunedKeys,
         archivedKeys: params.archivedKeys,
+        capArchivedKeys: params.capArchivedKeys,
         staleKeys: params.staleKeys,
         cappedKeys: params.cappedKeys,
         dmScopeRetiredKeys: params.dmScopeRetiredKeys,
@@ -116,7 +121,11 @@ function buildLabelSummaries(actionRows: SessionCleanupActionRow[]): SessionClea
       summary = { label, kept: 0, pruned: 0 };
       summaryByLabel.set(label, summary);
     }
-    if (actionRow.action === "keep" || actionRow.action === "archive-dashboard") {
+    if (
+      actionRow.action === "keep" ||
+      actionRow.action === "archive-dashboard" ||
+      actionRow.action === "archive-cap"
+    ) {
       summary.kept += 1;
     } else {
       summary.pruned += 1;
