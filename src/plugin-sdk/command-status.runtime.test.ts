@@ -11,6 +11,7 @@ const resolveDefaultModelForAgent = vi.fn();
 const resolveDefaultModel = vi.fn();
 const createModelSelectionState = vi.fn();
 const resolveCurrentDirectiveLevels = vi.fn();
+const resolveEffectiveElevatedState = vi.fn();
 
 vi.mock("../auto-reply/reply/commands-status.js", () => ({
   buildStatusReply,
@@ -41,6 +42,10 @@ vi.mock("../auto-reply/reply/directive-handling.levels.js", () => ({
   resolveCurrentDirectiveLevels,
 }));
 
+vi.mock("../auto-reply/reply/reply-elevated.js", () => ({
+  resolveEffectiveElevatedState,
+}));
+
 const { resolveDirectStatusReplyForSessionCore } = await import("./command-status.runtime.js");
 
 function expectResolvedReasoningLevel(value: unknown, expected: string) {
@@ -65,6 +70,7 @@ describe("resolveDirectStatusReplyForSessionCore", () => {
     resolveDefaultModel.mockReset();
     createModelSelectionState.mockReset();
     resolveCurrentDirectiveLevels.mockReset();
+    resolveEffectiveElevatedState.mockReset();
 
     buildStatusReply.mockImplementation(async (params: unknown) => params);
     loadSessionEntry.mockReturnValue({
@@ -96,8 +102,8 @@ describe("resolveDirectStatusReplyForSessionCore", () => {
       currentFastMode: false,
       currentVerboseLevel: "off",
       currentReasoningLevel: "off",
-      currentElevatedLevel: "off",
     });
+    resolveEffectiveElevatedState.mockReturnValue({ level: "off" });
   });
 
   it("treats agentCfg reasoningDefault as explicit for direct /status", async () => {
@@ -137,7 +143,6 @@ describe("resolveDirectStatusReplyForSessionCore", () => {
       currentFastMode: false,
       currentVerboseLevel: "off",
       currentReasoningLevel: "stream",
-      currentElevatedLevel: "off",
     });
 
     const result = await resolveDirectStatusReplyForSessionCore({
@@ -174,7 +179,6 @@ describe("resolveDirectStatusReplyForSessionCore", () => {
       currentFastMode: false,
       currentVerboseLevel: "off",
       currentReasoningLevel: "stream",
-      currentElevatedLevel: "off",
     });
 
     const result = await resolveDirectStatusReplyForSessionCore({
@@ -206,7 +210,6 @@ describe("resolveDirectStatusReplyForSessionCore", () => {
       currentFastMode: false,
       currentVerboseLevel: "off",
       currentReasoningLevel: "stream",
-      currentElevatedLevel: "off",
     });
 
     const result = await resolveDirectStatusReplyForSessionCore({
@@ -238,7 +241,6 @@ describe("resolveDirectStatusReplyForSessionCore", () => {
       currentFastMode: false,
       currentVerboseLevel: "off",
       currentReasoningLevel: "stream",
-      currentElevatedLevel: "off",
     });
 
     const result = await resolveDirectStatusReplyForSessionCore({
@@ -252,5 +254,31 @@ describe("resolveDirectStatusReplyForSessionCore", () => {
     });
 
     expectResolvedReasoningLevel(result, "stream");
+  });
+
+  it("uses the sender-aware effective elevated level", async () => {
+    resolveEffectiveElevatedState.mockReturnValueOnce({ level: "on" });
+
+    const result = await resolveDirectStatusReplyForSessionCore({
+      cfg: {},
+      sessionKey: "main",
+      channel: "discord",
+      accountId: "primary",
+      senderId: "owner",
+      senderIsOwner: true,
+      isAuthorizedSender: true,
+      isGroup: false,
+      defaultGroupActivation: () => "always",
+    });
+
+    expect(resolveEffectiveElevatedState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "main",
+        provider: "discord",
+        sessionKey: "main",
+        ctx: expect.objectContaining({ AccountId: "primary", SenderId: "owner" }),
+      }),
+    );
+    expect(result).toMatchObject({ resolvedElevatedLevel: "on" });
   });
 });
