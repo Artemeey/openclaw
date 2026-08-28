@@ -722,7 +722,7 @@ describe("createPdfTool", () => {
     });
   });
 
-  it("rejects explicit page ranges that resolve to no pages before native PDF analysis", async () => {
+  it("passes later explicit pages to native provider validation", async () => {
     await withTempPdfAgentDir(async (agentDir) => {
       await stubPdfToolInfra(agentDir, { provider: "anthropic", input: ["text", "document"] });
       const nativeSpy = vi
@@ -737,7 +737,7 @@ describe("createPdfTool", () => {
           pdf: "/tmp/doc.pdf",
           pages: "999",
         }),
-      ).rejects.toThrow('No PDF pages matched requested range "999"');
+      ).rejects.toThrow("pages is not supported with native PDF providers");
       expect(nativeSpy).not.toHaveBeenCalled();
     });
   });

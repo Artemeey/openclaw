@@ -17,6 +17,7 @@ import { readResponseWithLimit } from "../infra/http-body.js";
 import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
 import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import { logWarn } from "../logger.js";
+import type { DocumentExtractionMetadata } from "../plugins/document-extractor-types.js";
 import { convertHeicToJpeg } from "./media-services.js";
 import { extractPdfContent, type PdfExtractedImage } from "./pdf-extract.js";
 
@@ -28,6 +29,7 @@ type InputFileExtractResult = {
   filename: string;
   text?: string;
   images?: InputImageContent[];
+  metadata?: DocumentExtractionMetadata;
 };
 
 /** PDF extraction limits applied before model-visible input_file content is produced. */
@@ -265,11 +267,11 @@ function decodeTextContent(buffer: Buffer, charset: string | undefined): string 
   }
 }
 
-function clampText(text: string, maxChars: number): string {
+function clampText(text: string, maxChars: number): { text: string; truncated: boolean } {
   if (text.length <= maxChars) {
-    return text;
+    return { text, truncated: false };
   }
-  return truncateUtf16Safe(text, maxChars);
+  return { text: truncateUtf16Safe(text, maxChars), truncated: true };
 }
 
 function withInputFileTimeout<T>(params: {
@@ -460,14 +462,24 @@ export async function extractFileContentFromSource(params: {
         },
       }),
     });
-    const text = extracted.text ? clampText(extracted.text, limits.maxChars) : "";
+    const clamped = clampText(extracted.text, limits.maxChars);
+    const metadata: DocumentExtractionMetadata = {
+      ...extracted.metadata,
+      textTruncated: extracted.metadata?.textTruncated === true || clamped.truncated,
+      imagesTruncated: extracted.metadata?.imagesTruncated === true,
+    };
     return {
       filename,
-      text,
+      text: clamped.text,
       images: extracted.images.length > 0 ? extracted.images : undefined,
+      metadata,
     };
   }
 
-  const text = clampText(decodeTextContent(buffer, charset), limits.maxChars);
-  return { filename, text };
+  const clamped = clampText(decodeTextContent(buffer, charset), limits.maxChars);
+  return {
+    filename,
+    text: clamped.text,
+    ...(clamped.truncated ? { metadata: { textTruncated: true, imagesTruncated: false } } : {}),
+  };
 }
