@@ -565,14 +565,17 @@ class SessionDiffPanel extends OpenClawLightDomElement {
     </button>`;
   }
 
-  private renderBody(): TemplateResult {
+  private renderBody(): TemplateResult | typeof nothing {
     if (this.diffTask.status === TaskStatus.ERROR) {
       const error = this.diffTask.error;
       return html`<div class="callout danger">${formatUiError(error)}</div>`;
     }
+    if (this.diffTask.status === TaskStatus.PENDING) {
+      return renderPanelLoadingSkeleton("review", t("chat.sessionDiff.loading"));
+    }
     const value = this.diffTask.value;
     if (!value) {
-      return renderPanelLoadingSkeleton("review", t("chat.sessionDiff.loading"));
+      return nothing;
     }
     const { result, views } = value;
     if (result.unavailableReason === "not_git") {

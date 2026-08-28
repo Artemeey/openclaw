@@ -80,6 +80,15 @@ afterEach(() => {
 });
 
 describe("SessionDiffPanel", () => {
+  it("does not render a skeleton without a pending diff request", async () => {
+    const panel = document.createElement("openclaw-session-diff") as SessionDiffElement;
+    document.body.append(panel);
+
+    await panel.updateComplete;
+
+    expect(panel.querySelector("openclaw-panel-loading-skeleton")).toBeNull();
+  });
+
   it.each([false, true])(
     "highlights source in split=%s without changing its text",
     async (split) => {

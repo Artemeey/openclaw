@@ -253,8 +253,11 @@ class SessionDiscussionPanel extends OpenClawLightDomElement {
     ) {
       return renderPanelLoadingSkeleton("discussion", t("chat.sessionDiscussion.opening"));
     }
-    if (this.discussionTask.status !== TaskStatus.COMPLETE || !value) {
+    if (this.discussionTask.status === TaskStatus.PENDING) {
       return renderPanelLoadingSkeleton("discussion", t("chat.sessionDiscussion.loading"));
+    }
+    if (this.discussionTask.status !== TaskStatus.COMPLETE || !value) {
+      return nothing;
     }
     const { info } = value;
     if (info.state === "none") {
@@ -262,7 +265,11 @@ class SessionDiscussionPanel extends OpenClawLightDomElement {
     }
     if (info.state === "available") {
       return this.canOpen
-        ? renderPanelLoadingSkeleton("discussion", t("chat.sessionDiscussion.opening"))
+        ? renderPanelEmptyState({
+            icon: icons.messageSquare,
+            heading: t("chat.sidePanel.discussion"),
+            description: t("chat.sessionDiscussion.unavailable"),
+          })
         : renderPanelEmptyState({
             icon: icons.messageSquare,
             heading: t("chat.sidePanel.discussion"),

@@ -326,6 +326,9 @@ function renderViewport(controller: BrowserPanelController) {
       aria-busy=${controller.loading ? "true" : "false"}
     >
       ${renderViewportContent(controller)}
+      ${controller.loading && controller.view
+        ? renderPanelLoadingSkeleton("browser", t("browser.loading"), false, true)
+        : nothing}
     </wa-tab-panel>
   `;
 }

@@ -51,6 +51,66 @@ describe("session workspace state", () => {
     expect(state.settings?.chatWorkspaceDock).toBe("right");
   });
 
+  it("shows the Files skeleton only while a slow cloud workspace request is pending", async () => {
+    let resolveList!: (value: {
+      sessionKey: string;
+      root: string;
+      files: Array<{ kind: "modified"; name: string; path: string; missing: false }>;
+    }) => void;
+    const listFiles = vi.fn(
+      () =>
+        new Promise<{
+          sessionKey: string;
+          root: string;
+          files: Array<{ kind: "modified"; name: string; path: string; missing: false }>;
+        }>((resolve) => {
+          resolveList = resolve;
+        }),
+    );
+    const state = {
+      client: { request: vi.fn().mockResolvedValue({ artifacts: [] }) },
+      connected: true,
+      connectionEpoch: 1,
+      handleOpenSidebar: vi.fn(),
+      hello: null,
+      agentsList: { agents: [] },
+      requestUpdate: vi.fn(),
+      sessionKey: "agent:main:cloud",
+      sidebarContent: null,
+      sessions: { listFiles },
+    } as unknown as SessionWorkspaceHost;
+    const mount = document.createElement("div");
+
+    render(
+      renderSessionWorkspaceRail(createSessionWorkspaceProps(state, { expanded: true }), {
+        embedded: true,
+      }),
+      mount,
+    );
+
+    expect(listFiles).toHaveBeenCalledOnce();
+    expect(
+      mount.querySelector('openclaw-panel-loading-skeleton[data-panel-skeleton="files"]'),
+    ).not.toBeNull();
+    expect(mount.textContent).not.toContain("Loading session workspace");
+
+    resolveList({
+      sessionKey: state.sessionKey,
+      root: "/workspace/cloud",
+      files: [{ kind: "modified", name: "slow.ts", path: "src/slow.ts", missing: false }],
+    });
+    await vi.waitFor(() => expect(createSessionWorkspaceProps(state).loading).toBe(false));
+    render(
+      renderSessionWorkspaceRail(createSessionWorkspaceProps(state, { expanded: true }), {
+        embedded: true,
+      }),
+      mount,
+    );
+
+    expect(mount.querySelector("openclaw-panel-loading-skeleton")).toBeNull();
+    expect(mount.textContent).toContain("src/slow.ts");
+  });
+
   it("rotates Files and Review ownership across a same-client reconnect", async () => {
     let resolveReplacementList!: (value: {
       sessionKey: string;
@@ -404,6 +464,7 @@ describe("openSessionWorkspaceFile", () => {
     expect(getFile).not.toHaveBeenCalled();
     expect(handleOpenSidebar).not.toHaveBeenCalled();
     expect(sidebarContent).toBe(existingContent);
+    expect(isSessionWorkspaceItemLoading(state)).toBe(false);
   });
 
   it("opens Markdown with a canonical Gateway- and pane-scoped draft identity", async () => {

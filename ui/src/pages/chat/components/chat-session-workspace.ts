@@ -191,11 +191,11 @@ function openWorkspaceItem<T>(
   render: (result: T) => SidebarContent | null,
   missingMessage: string,
 ) {
+  if (!state.client || !state.connected) {
+    return;
+  }
   const request = beginWorkspaceOpenRequest(workspace, itemId);
   void (async () => {
-    if (!state.client || !state.connected) {
-      return;
-    }
     state.handleOpenSidebar(null);
     workspace.error = null;
     try {

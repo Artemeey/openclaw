@@ -40,6 +40,20 @@ describe("session discussion panel", () => {
     expect(panel.querySelector("button")).toBeNull();
   });
 
+  it("stops the skeleton when auto-open settles without opening", async () => {
+    const panel = mount({
+      loadInfo: vi.fn().mockResolvedValue({ state: "available" }),
+      openDiscussion: vi.fn().mockResolvedValue({ state: "available" }),
+    });
+
+    await vi.waitFor(async () => {
+      expect(await emptyStateText(panel)).toContain("cannot be embedded");
+    });
+    expect(
+      panel.querySelector('openclaw-panel-loading-skeleton[data-panel-skeleton="discussion"]'),
+    ).toBeNull();
+  });
+
   it("does not auto-open without operator write access", async () => {
     const openDiscussion = vi.fn<SessionDiscussionOpener>();
     const panel = mount({
