@@ -119,7 +119,9 @@ describe("resolveStoredModelOverride", () => {
         sessionEntry: {
           sessionId: "child-session",
           updatedAt: 2,
-          modelSelectionMode: "default",
+          modelOverrideSource: "default",
+          providerOverride: "google-vertex",
+          modelOverride: "stale-model",
         },
         sessionKey: "agent:main:dashboard:child",
         parentSessionKey: "agent:main:dashboard:parent",

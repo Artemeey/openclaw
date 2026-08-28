@@ -43,10 +43,10 @@ describe("resolveResetPreservedSelection", () => {
         entry: {
           sessionId: "explicit-default",
           updatedAt: 1,
-          modelSelectionMode: "default",
+          modelOverrideSource: "default",
         },
       }),
-    ).toEqual({ modelSelectionMode: "default" });
+    ).toEqual({ modelOverrideSource: "default" });
   });
 
   it("preserves legacy user auth pins while dropping legacy automatic pins", () => {

@@ -7,7 +7,6 @@ type ResetPreservedSelectionState = Pick<
   SessionEntry,
   | "providerOverride"
   | "modelOverride"
-  | "modelSelectionMode"
   | "modelOverrideSource"
   | "modelOverrideRouteResolution"
   | "authProfileOverride"
@@ -35,8 +34,8 @@ export function resolveResetPreservedSelection(params: {
   }
 
   const preserved: Partial<ResetPreservedSelectionState> = {};
-  if (entry.modelSelectionMode === "default") {
-    preserved.modelSelectionMode = "default";
+  if (entry.modelOverrideSource === "default") {
+    preserved.modelOverrideSource = "default";
   }
   if (resolveSessionModelOverrideSource(entry) === "user" && entry.modelOverride) {
     preserved.providerOverride = entry.providerOverride;

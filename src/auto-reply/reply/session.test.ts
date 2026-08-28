@@ -2140,8 +2140,8 @@ describe("initSessionState RawBody", () => {
     {
       name: "preserves explicit configured-default selection across daily rollover",
       slug: "explicit-default",
-      entry: { modelSelectionMode: "default" as const },
-      expected: { modelSelectionMode: "default" },
+      entry: { modelOverrideSource: "default" as const },
+      expected: { modelOverrideSource: "default" },
       persisted: true,
     },
     {

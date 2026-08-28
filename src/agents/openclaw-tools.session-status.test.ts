@@ -2686,7 +2686,7 @@ describe("session_status tool", () => {
     const saved = savedStore.main as Record<string, unknown>;
     expect(saved.providerOverride).toBeUndefined();
     expect(saved.modelOverride).toBeUndefined();
-    expect(saved.modelSelectionMode).toBe("default");
+    expect(saved.modelOverrideSource).toBe("default");
     expect(saved.authProfileOverride).toBeUndefined();
     expect(saved.liveModelSwitchPending).toBe(true);
   });

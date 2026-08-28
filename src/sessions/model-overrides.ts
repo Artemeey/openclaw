@@ -65,8 +65,12 @@ export function applyModelOverrideToSessionEntry(params: {
   let profileUpdated = false;
 
   if (selection.isDefault) {
-    if (params.explicitDefaultSelection && entry.modelSelectionMode !== "default") {
-      entry.modelSelectionMode = "default";
+    if (params.explicitDefaultSelection && entry.modelOverrideSource !== "default") {
+      entry.modelOverrideSource = "default";
+      updated = true;
+      selectionUpdated = true;
+    } else if (!params.explicitDefaultSelection && entry.modelOverrideSource !== undefined) {
+      delete entry.modelOverrideSource;
       updated = true;
       selectionUpdated = true;
     }
@@ -80,21 +84,12 @@ export function applyModelOverrideToSessionEntry(params: {
       updated = true;
       selectionUpdated = true;
     }
-    if (entry.modelOverrideSource) {
-      delete entry.modelOverrideSource;
-      updated = true;
-    }
     if (entry.modelOverrideRouteResolution) {
       delete entry.modelOverrideRouteResolution;
       updated = true;
     }
     updated = clearFallbackOrigin(entry) || updated;
   } else {
-    if (selectionSource === "user" && entry.modelSelectionMode !== undefined) {
-      delete entry.modelSelectionMode;
-      updated = true;
-      selectionUpdated = true;
-    }
     if (entry.providerOverride !== selection.provider) {
       entry.providerOverride = selection.provider;
       updated = true;

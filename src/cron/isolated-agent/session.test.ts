@@ -138,16 +138,15 @@ describe("resolveCronSession", () => {
       entry: {
         sessionId: "old-session-id",
         updatedAt: 1000,
-        modelSelectionMode: "default",
+        modelOverrideSource: "default",
         providerOverride: "anthropic",
         modelOverride: "claude-sonnet-4-6",
-        modelOverrideSource: "auto",
         modelOverrideFallbackOriginProvider: "openai",
         modelOverrideFallbackOriginModel: "gpt-5.4",
       },
     });
 
-    expect(result.sessionEntry.modelSelectionMode).toBe("default");
+    expect(result.sessionEntry.modelOverrideSource).toBe("default");
     expect(result.sessionEntry.modelOverride).toBeUndefined();
   });
 

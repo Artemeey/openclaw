@@ -1667,7 +1667,7 @@ describe("/model chat UX", () => {
       }),
     });
 
-    expect(sessionEntry.modelSelectionMode).toBe("default");
+    expect(sessionEntry.modelOverrideSource).toBe("default");
     expect(
       resolveStoredModelOverride({
         sessionEntry,

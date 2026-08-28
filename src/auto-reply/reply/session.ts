@@ -377,11 +377,7 @@ export function resolveReplySessionPreprocessingState(
 /** Initializes or reuses the reply session state for one inbound turn. */
 type SessionModelOverrideSelection = Pick<
   SessionEntry,
-  | "modelOverride"
-  | "providerOverride"
-  | "modelSelectionMode"
-  | "modelOverrideSource"
-  | "modelOverrideRouteResolution"
+  "modelOverride" | "providerOverride" | "modelOverrideSource" | "modelOverrideRouteResolution"
 >;
 
 function selectSessionModelOverride(
@@ -390,7 +386,6 @@ function selectSessionModelOverride(
   return {
     modelOverride: entry.modelOverride,
     providerOverride: entry.providerOverride,
-    modelSelectionMode: entry.modelSelectionMode,
     modelOverrideSource: entry.modelOverrideSource,
     modelOverrideRouteResolution: entry.modelOverrideRouteResolution,
   };

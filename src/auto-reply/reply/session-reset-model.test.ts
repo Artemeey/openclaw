@@ -128,7 +128,7 @@ describe("applyResetModelOverride", () => {
       modelCatalog,
     });
 
-    expect(fixture.sessionEntry.modelSelectionMode).toBe("default");
+    expect(fixture.sessionEntry.modelOverrideSource).toBe("default");
     expect(
       resolveStoredModelOverride({
         sessionEntry: fixture.sessionEntry,

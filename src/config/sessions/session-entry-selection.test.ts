@@ -35,9 +35,9 @@ describe("inheritSessionSelection", () => {
       inheritSessionSelection({
         sessionId: "explicit-default",
         updatedAt: 1,
-        modelSelectionMode: "default",
+        modelOverrideSource: "default",
       }),
-    ).toMatchObject({ modelSelectionMode: "default" });
+    ).toMatchObject({ modelOverrideSource: "default" });
   });
   it.each([
     { source: "auto" as const, profile: "google-vertex:fallback", inheritedProfile: undefined },
