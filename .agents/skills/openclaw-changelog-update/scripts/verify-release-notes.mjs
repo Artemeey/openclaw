@@ -478,49 +478,29 @@ function sectionFor(changelog, version) {
   return section;
 }
 
-const referencePattern =
-  /(?<![A-Za-z0-9_.&-])(?:(?<owner>[A-Za-z0-9_.-]+)\/(?<name>[A-Za-z0-9_.-]+))?#(?<number>\d+)(?![A-Za-z0-9])/g;
-
-function referenceMatchesIn(text) {
-  return [...text.matchAll(referencePattern)].filter((match) => {
-    const matchIndex = match.index;
-    if (matchIndex === undefined) {
-      return true;
-    }
-    const hashIndex = matchIndex + match[0].lastIndexOf("#");
-    const lineStart = text.lastIndexOf("\n", hashIndex) + 1;
-    const lineEnd = text.indexOf("\n", hashIndex);
-    const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
-    const customPropertyIndex = line.search(/--[A-Za-z0-9_-]+(?:\s*:|\s+)/u);
-    const token = text.slice(hashIndex + 1).match(/^[A-Fa-f0-9]+/u)?.[0] ?? "";
-    const isCssHexLength = [3, 4, 6, 8].includes(token.length);
-    // Commit prose often compares CSS custom-property colors. Those tokens are
-    // not GitHub references and must never contaminate release attribution.
-    return (
-      customPropertyIndex < 0 || hashIndex - lineStart < customPropertyIndex || !isCssHexLength
-    );
-  });
-}
-
 function referencesIn(text) {
-  const references = [];
-  for (const match of referenceMatchesIn(text)) {
-    const qualifiedRepository = match.groups?.owner
-      ? `${match.groups.owner}/${match.groups.name}`.toLowerCase()
-      : undefined;
-    if (!qualifiedRepository || qualifiedRepository === repo) {
-      references.push(Number(match.groups?.number));
-    }
-  }
-  return references;
+  return referenceLabelsIn(text)
+    .filter((reference) => reference.startsWith("#"))
+    .map((reference) => Number(reference.slice(1)));
 }
 
 function referenceLabelsIn(text) {
+  const hexColor = String.raw`#(?:[A-Fa-f0-9]{8}|[A-Fa-f0-9]{6}|[A-Fa-f0-9]{4}|[A-Fa-f0-9]{3})(?![A-Za-z0-9_])`;
+  // Mask only custom-property color values/transitions, never the rest of a line:
+  // a following issue ref must still participate in release attribution.
+  const source = text.replace(
+    new RegExp(
+      String.raw`--[\w-]+(?:[ \t]*:[ \t]*|[ \t]+)${hexColor}(?:[ \t]*(?:->|→)[ \t]*${hexColor})*`,
+      "g",
+    ),
+    " ",
+  );
   const labels = [];
-  for (const match of referenceMatchesIn(text)) {
-    const qualifiedRepository = match.groups?.owner
-      ? `${match.groups.owner}/${match.groups.name}`
-      : undefined;
+  // Issue ids are complete positive decimal tokens, not hex prefixes or zero-padded colors.
+  for (const match of source.matchAll(
+    /(?<![A-Za-z0-9_.&-])(?<repository>[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#(?<number>[1-9]\d*)(?![A-Za-z0-9_])/g,
+  )) {
+    const qualifiedRepository = match.groups?.repository;
     labels.push(
       !qualifiedRepository || qualifiedRepository.toLowerCase() === repo
         ? `#${match.groups?.number}`
@@ -2300,23 +2280,22 @@ export function ledgerChecks(section, pullRequests, nodes, directCommits, shippe
     }
   }
   const editorialProse = section.source.slice(0, ledgerStart);
+  const editorialReferences = new Set(referencesIn(editorialProse));
   for (const entry of pullRequests) {
-    if (
-      !entry.editorialEligible &&
-      new RegExp(`(?<![A-Za-z0-9_./-])#${entry.number}\\b`).test(editorialProse)
-    ) {
+    if (!entry.editorialEligible && editorialReferences.has(entry.number)) {
       errors.push(
         `editorial release prose references non-editorial ${entry.type} PR #${entry.number} (${entry.type})`,
       );
     }
   }
   const editorialLines = editorialProse.split("\n");
-  for (const entry of pullRequests) {
-    for (const line of editorialLines) {
-      if (
-        !new RegExp(`(?<![A-Za-z0-9_./-])#${entry.number}\\b`).test(line) ||
-        !line.startsWith("- ")
-      ) {
+  for (const line of editorialLines) {
+    if (!line.startsWith("- ")) {
+      continue;
+    }
+    const lineReferences = new Set(referencesIn(line));
+    for (const entry of pullRequests) {
+      if (!lineReferences.has(entry.number)) {
         continue;
       }
       for (const handle of entry.thanks) {
@@ -2324,11 +2303,6 @@ export function ledgerChecks(section, pullRequests, nodes, directCommits, shippe
           errors.push(`missing editorial Thanks @${handle} for PR #${entry.number}`);
         }
       }
-    }
-  }
-  for (const line of editorialLines) {
-    if (!line.startsWith("- ")) {
-      continue;
     }
     for (const handle of directCommitCreditsForLine(line, directCommits)) {
       if (!line.toLowerCase().includes(`@${handle.toLowerCase()}`)) {
