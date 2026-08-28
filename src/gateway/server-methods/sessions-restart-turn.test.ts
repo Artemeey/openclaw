@@ -33,12 +33,17 @@ describe("sessions.restartTurn", () => {
         entry: { sessionId: "session-1" },
       },
     });
-    handleTrustedInternalChatSend.mockReset().mockImplementation(async (options) => {
-      options.respond(true, { runId: "run-next", status: "started" });
-    });
+    handleTrustedInternalChatSend
+      .mockReset()
+      .mockImplementation(async (options, onAdmissionOwned) => {
+        if (onAdmissionOwned && !(await onAdmissionOwned())) {
+          return;
+        }
+        options.respond(true, { runId: "run-next", status: "started" });
+      });
   });
 
-  it("patches permissions before restarting the exact active turn", async () => {
+  it("patches permissions after claiming the exact active turn", async () => {
     const { respond, run } = invokeRestart({
       key: "agent:main:main",
       runId: "run-current",
@@ -60,7 +65,6 @@ describe("sessions.restartTurn", () => {
           idempotencyKey: "restart-1",
           message: expect.stringContaining("Permissions changed to Workspace"),
           queueMode: "interrupt",
-          sessionId: "session-1",
           sessionKey: "agent:main:main",
           suppressCommandInterpretation: true,
           systemInputProvenance: {
@@ -70,11 +74,11 @@ describe("sessions.restartTurn", () => {
           },
         }),
       }),
-      undefined,
+      expect.any(Function),
       { expectedInterruptRunId: "run-current" },
     );
-    expect(executeSessionPatch.mock.invocationCallOrder[0]).toBeLessThan(
-      handleTrustedInternalChatSend.mock.invocationCallOrder[0]!,
+    expect(handleTrustedInternalChatSend.mock.invocationCallOrder[0]).toBeLessThan(
+      executeSessionPatch.mock.invocationCallOrder[0]!,
     );
     expect(respond).toHaveBeenCalledWith(
       true,
@@ -86,6 +90,29 @@ describe("sessions.restartTurn", () => {
       },
       undefined,
     );
+  });
+
+  it("does not start a successor when the permission patch fails", async () => {
+    executeSessionPatch.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "INVALID_REQUEST", message: "Session changed before patch. Retry." },
+    });
+    const { respond, run } = invokeRestart({
+      key: "agent:main:main",
+      runId: "run-current",
+      reason: "permission-change",
+      permissionMode: "workspace",
+      idempotencyKey: "restart-1",
+    });
+
+    await run;
+
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ message: "Session changed before patch. Retry." }),
+    );
+    expect(respond).not.toHaveBeenCalledWith(true, expect.anything(), expect.anything());
   });
 
   it("requires operator.admin before selecting full access", async () => {

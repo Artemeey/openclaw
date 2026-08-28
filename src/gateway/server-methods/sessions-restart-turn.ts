@@ -40,13 +40,14 @@ async function launchPermissionChangeRestart(params: {
   permissionMode: SessionPermissionMode | null;
   req: GatewayRequestHandlerOptions["req"];
   runId: string;
-  sessionId: string;
   sessionKey: string;
+  sessionMutationAuthorization: GatewayRequestHandlerOptions["sessionMutationAuthorization"];
 }) {
   let outcome:
     | { ok: true; runId: string }
     | { ok: false; error: ReturnType<typeof errorShape> }
     | undefined;
+  let patchError: ReturnType<typeof errorShape> | undefined;
   const mode = permissionModeLabel(params.permissionMode);
   try {
     await handleTrustedInternalChatSend(
@@ -55,7 +56,6 @@ async function launchPermissionChangeRestart(params: {
         params: {
           sessionKey: params.sessionKey,
           ...(params.agentId ? { agentId: params.agentId } : {}),
-          sessionId: params.sessionId,
           message: formatSystemTurnPrompt(
             `Permissions changed to ${mode}. Continue the interrupted response from the existing transcript. ` +
               `Treat interrupted or missing tool results as having an unknown outcome. ${TOOL_FAILURE_INSTRUCTION}`,
@@ -86,7 +86,23 @@ async function launchPermissionChangeRestart(params: {
         client: params.client,
         isWebchatConnect: () => false,
       },
-      undefined,
+      async () => {
+        const patched = await executeSessionPatch({
+          client: params.client,
+          context: params.context,
+          patch: {
+            key: params.sessionKey,
+            ...(params.agentId ? { agentId: params.agentId } : {}),
+            permissionMode: params.permissionMode,
+          },
+          sessionMutationAuthorization: params.sessionMutationAuthorization,
+        });
+        if (!patched.ok) {
+          patchError = patched.error;
+          return false;
+        }
+        return true;
+      },
       { expectedInterruptRunId: params.runId },
     );
   } catch (error) {
@@ -99,10 +115,13 @@ async function launchPermissionChangeRestart(params: {
     };
   }
   return (
-    outcome ?? {
-      ok: false,
-      error: errorShape(ErrorCodes.UNAVAILABLE, "Turn restart returned no outcome."),
-    }
+    outcome ??
+    (patchError
+      ? { ok: false, error: patchError }
+      : {
+          ok: false,
+          error: errorShape(ErrorCodes.UNAVAILABLE, "Turn restart returned no outcome."),
+        })
   );
 }
 
@@ -129,29 +148,6 @@ export const sessionRestartTurnHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const patched = await executeSessionPatch({
-      client,
-      context,
-      patch: {
-        key: params.key,
-        ...(params.agentId ? { agentId: params.agentId } : {}),
-        permissionMode: params.permissionMode,
-      },
-      sessionMutationAuthorization,
-    });
-    if (!patched.ok) {
-      respond(false, undefined, patched.error);
-      return;
-    }
-    const sessionId = patched.result.entry.sessionId;
-    if (!sessionId) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.UNAVAILABLE, "Session has no runtime identity."),
-      );
-      return;
-    }
     const restarted = await launchPermissionChangeRestart({
       ...(params.agentId ? { agentId: params.agentId } : {}),
       client,
@@ -160,8 +156,8 @@ export const sessionRestartTurnHandlers: GatewayRequestHandlers = {
       permissionMode: params.permissionMode,
       req,
       runId: params.runId,
-      sessionId,
-      sessionKey: patched.result.key,
+      sessionKey: params.key,
+      sessionMutationAuthorization,
     });
     if (!restarted.ok) {
       respond(false, undefined, restarted.error);

@@ -603,9 +603,63 @@ describe("gateway server chat", () => {
       });
 
       expect(stale.ok).toBe(false);
+      expect(
+        loadSessionEntry({ sessionKey: "main", storePath: testState.sessionStorePath })
+          ?.permissionMode,
+      ).toBeUndefined();
       expect(replyRunRegistry.get("agent:main:main")).toBeDefined();
       await abortChatRun("idem-permission-current");
       await waitForFast(() => expect(replyRunRegistry.get("agent:main:main")).toBeUndefined());
+    });
+  });
+
+  test("sessions.restartTurn lets only one duplicate request patch and restart", async () => {
+    await withMainSessionStore(async () => {
+      const activeRunStarted = createDeferred();
+      mockGetReplyFromConfigOnce(async (_ctx, opts) => {
+        activeRunStarted.resolve(undefined);
+        if (!opts?.abortSignal?.aborted) {
+          await new Promise<void>((resolve) => {
+            opts?.abortSignal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+        }
+        return undefined;
+      });
+      const active = await rpcReq(ws, "chat.send", {
+        sessionKey: "main",
+        message: "turn before duplicate permission changes",
+        idempotencyKey: "idem-permission-duplicate-old",
+      });
+      expect(active.ok).toBe(true);
+      await activeRunStarted.promise;
+
+      const [workspaceRestart, guardedRestart] = await Promise.all([
+        rpcReq(ws, "sessions.restartTurn", {
+          key: "main",
+          runId: "idem-permission-duplicate-old",
+          reason: "permission-change",
+          permissionMode: "workspace",
+          idempotencyKey: "idem-permission-duplicate-workspace",
+        }),
+        rpcReq(ws, "sessions.restartTurn", {
+          key: "main",
+          runId: "idem-permission-duplicate-old",
+          reason: "permission-change",
+          permissionMode: "guarded",
+          idempotencyKey: "idem-permission-duplicate-guarded",
+        }),
+      ]);
+      const outcomes = [workspaceRestart, guardedRestart];
+      expect(outcomes.filter((outcome) => outcome.ok)).toHaveLength(1);
+      const winningMode = workspaceRestart.ok ? "workspace" : "guarded";
+      const winningRunId = workspaceRestart.ok
+        ? "idem-permission-duplicate-workspace"
+        : "idem-permission-duplicate-guarded";
+      expect(
+        loadSessionEntry({ sessionKey: "main", storePath: testState.sessionStorePath })
+          ?.permissionMode,
+      ).toBe(winningMode);
+      await waitForAgentRunDrained(winningRunId);
     });
   });
 

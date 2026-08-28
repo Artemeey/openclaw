@@ -547,6 +547,24 @@ describe("reply run registry", () => {
     }
   });
 
+  it("uses restart cancellation for an exact restart target", async () => {
+    const operation = createTestReplyOperation({ sessionId: "session-interrupt-restart" });
+    const cancel = vi.fn(() => operation.complete());
+    operation.setPhase("running");
+    operation.attachBackend({ kind: "embedded", cancel });
+    const target = replyRunRegistry.resolveCurrentInterruptTarget(operation.key);
+    if (!target) {
+      throw new Error("expected captured interrupt target");
+    }
+
+    await expect(interruptReplyRunTarget(target, 1_000, "restart")).resolves.toMatchObject({
+      aborted: true,
+    });
+    expect(operation.result).toEqual({ kind: "aborted", code: "aborted_for_restart" });
+    expect(cancel).toHaveBeenCalledWith("restart");
+    operation.complete();
+  });
+
   it("captures the backend run identity with an interrupt target", () => {
     const operation = createTestReplyOperation({
       sessionId: "session-interrupt-identity",

@@ -201,9 +201,10 @@ export const replyRunRegistry: ReplyRunRegistry = {
 export async function interruptReplyRunTarget(
   target: ReplyRunInterruptTarget,
   timeoutMs = REPLY_RUN_IDLE_SETTLE_TIMEOUT_MS,
+  reason: "user_abort" | "restart" = "user_abort",
 ): Promise<{ aborted: boolean; settled: boolean }> {
   const operation = target[replyRunInterruptTargetOperation];
-  const aborted = operation.abortByUser();
+  const aborted = reason === "restart" ? operation.abortForRestart() : operation.abortByUser();
   const settled = await waitForReplyOperationOwnerSettlement(operation, timeoutMs);
   return { aborted, settled };
 }

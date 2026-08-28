@@ -519,10 +519,22 @@ export async function admitChatSend(params: {
   try {
     let interruptionSettled = true;
     if (runInterruptTarget) {
-      interruptedActiveRun = true;
-      interruptionSettled = (
-        await interruptReplyRunTarget(runInterruptTarget, REPLY_RUN_IDLE_SETTLE_TIMEOUT_MS)
-      ).settled;
+      const interruption = await interruptReplyRunTarget(
+        runInterruptTarget,
+        REPLY_RUN_IDLE_SETTLE_TIMEOUT_MS,
+        expectedInterruptRunId ? "restart" : "user_abort",
+      );
+      if (expectedInterruptRunId && !interruption.aborted) {
+        cleanupPreDispatchAdmission();
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "Active run changed before restart."),
+        );
+        return { ok: false as const };
+      }
+      interruptedActiveRun = interruption.aborted;
+      interruptionSettled = interruption.settled;
     } else if (p.queueMode === "interrupt") {
       const identities = [sessionKey, backingSessionId, admittedSessionId];
       // The fallback runs inside the new admission so the lifecycle owner excludes itself.
