@@ -353,7 +353,17 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
         };
 
         const phaseContext = {
-          handler: params,
+          handler: {
+            ...params,
+            setClient: (nextClient) => {
+              if (!params.setClient(nextClient)) {
+                return false;
+              }
+              // Finish registration before replaying work that now has an authenticated owner.
+              queueMicrotask(flushQueuedHandshakeFrames);
+              return true;
+            },
+          },
           frame,
           connectParams,
           configSnapshot,
@@ -522,7 +532,7 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
   };
 
   let queuedHandshakeFrames: RawData[] | undefined;
-  const flushQueuedHandshakeFrames = () => {
+  function flushQueuedHandshakeFrames() {
     const frames = queuedHandshakeFrames?.splice(0) ?? [];
     queuedHandshakeFrames = undefined;
     if (isClosed()) {
@@ -531,19 +541,13 @@ export function attachGatewayWsMessageHandler(params: GatewayWsMessageHandlerPar
     for (const frame of frames) {
       onMessage(frame);
     }
-  };
+  }
 
   const onMessage = (data: RawData): void => {
     if (isClosed()) {
       return;
     }
     if (queuedHandshakeFrames) {
-      // Registration ends preauth ownership even if hello bookkeeping is still pending.
-      if (getClient()) {
-        queuedHandshakeFrames.push(data);
-        flushQueuedHandshakeFrames();
-        return;
-      }
       // Keep the preauth cap authoritative for pipelined frames until this
       // connection actually owns an admitted client.
       if (rejectOversizedPreauthFrame(data)) {

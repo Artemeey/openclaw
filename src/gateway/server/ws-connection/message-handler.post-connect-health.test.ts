@@ -644,17 +644,17 @@ describe("attachGatewayWsMessageHandler post-connect health refresh", () => {
 
     try {
       harness.sendConnect("connect-before-registered-burst", BACKEND_CONNECT_PARAMS);
+      for (let index = 0; index < MAX_QUEUED_GATEWAY_PREAUTH_FRAMES - 1; index += 1) {
+        harness.sendRequest(`registered-request-${index}`, "status.summary");
+      }
+
       await waitForFast(() => {
         expect(harness.setClient).toHaveBeenCalledOnce();
         expect(harness.socketSend).toHaveBeenCalledOnce();
       });
 
-      for (let index = 0; index < MAX_QUEUED_GATEWAY_PREAUTH_FRAMES; index += 1) {
-        harness.sendRequest(`registered-request-${index}`, "status.summary");
-      }
-
       await waitForFast(() => {
-        expect(handleGatewayRequest).toHaveBeenCalledTimes(MAX_QUEUED_GATEWAY_PREAUTH_FRAMES);
+        expect(handleGatewayRequest).toHaveBeenCalledTimes(MAX_QUEUED_GATEWAY_PREAUTH_FRAMES - 1);
       });
       expect(close).not.toHaveBeenCalled();
     } finally {
