@@ -17,7 +17,7 @@ import {
   resolveTokenExpiryState,
   type AuthCredentialReasonCode,
 } from "./credential-state.js";
-import { dedupeProfileIds, listProfilesForProvider } from "./profile-list.js";
+import { dedupeProfileIds } from "./profile-list.js";
 import type { AuthProfileCredential, AuthProfileStore } from "./types.js";
 import {
   clearExpiredCooldowns,
@@ -38,30 +38,6 @@ type AuthProfileEligibility = {
   reasonCode: AuthProfileEligibilityReasonCode;
 };
 
-const OPENAI_PROVIDER_ID = "openai";
-const OPENAI_CODEX_PROVIDER_ID = "openai";
-
-// OpenAI Codex auth can reuse OpenAI API-key credentials. Keep this special
-// case local so generic provider alias resolution stays provider-owned.
-function isOpenAIApiKeyCompatibleWithCodexAuth(params: {
-  cfg?: OpenClawConfig;
-  authAliasLookupParams?: ProviderAuthAliasLookupParams;
-  providerAuthKey: string;
-  credential?: AuthProfileCredential;
-  profileProvider?: string;
-  profileMode?: string;
-}): boolean {
-  if (params.providerAuthKey !== OPENAI_CODEX_PROVIDER_ID) {
-    return false;
-  }
-  const providerKey = resolveProviderIdForAuth(params.profileProvider ?? "", {
-    config: params.cfg,
-    ...params.authAliasLookupParams,
-  });
-  const mode = params.credential?.type ?? params.profileMode;
-  return providerKey === OPENAI_PROVIDER_ID && mode === "api_key";
-}
-
 function isCredentialProviderCompatibleWithAuthProvider(params: {
   cfg?: OpenClawConfig;
   authAliasLookupParams?: ProviderAuthAliasLookupParams;
@@ -72,16 +48,7 @@ function isCredentialProviderCompatibleWithAuthProvider(params: {
     config: params.cfg,
     ...params.authAliasLookupParams,
   });
-  return (
-    credentialProviderKey === params.providerAuthKey ||
-    isOpenAIApiKeyCompatibleWithCodexAuth({
-      cfg: params.cfg,
-      authAliasLookupParams: params.authAliasLookupParams,
-      providerAuthKey: params.providerAuthKey,
-      credential: params.credential,
-      profileProvider: params.credential.provider,
-    })
-  );
+  return credentialProviderKey === params.providerAuthKey;
 }
 
 /** Returns true when a stored credential can authenticate the requested provider. */
@@ -107,36 +74,20 @@ function isConfiguredProfileCompatibleWithAuthProvider(params: {
   authAliasLookupParams?: ProviderAuthAliasLookupParams;
   providerAuthKey: string;
   provider: string;
-  mode?: string;
-  credential?: AuthProfileCredential;
 }): boolean {
   const configProviderKey = resolveProviderIdForAuth(params.provider, {
     config: params.cfg,
     ...params.authAliasLookupParams,
   });
-  return (
-    configProviderKey === params.providerAuthKey ||
-    isOpenAIApiKeyCompatibleWithCodexAuth({
-      cfg: params.cfg,
-      authAliasLookupParams: params.authAliasLookupParams,
-      providerAuthKey: params.providerAuthKey,
-      credential: params.credential,
-      profileProvider: params.provider,
-      profileMode: params.mode,
-    })
-  );
+  return configProviderKey === params.providerAuthKey;
 }
 
 function listProfilesCompatibleWithAuthProvider(params: {
   cfg?: OpenClawConfig;
   authAliasLookupParams?: ProviderAuthAliasLookupParams;
   store: AuthProfileStore;
-  provider: string;
   providerAuthKey: string;
 }): string[] {
-  if (params.providerAuthKey !== OPENAI_CODEX_PROVIDER_ID) {
-    return listProfilesForProvider(params.store, params.provider);
-  }
   return Object.entries(params.store.profiles)
     .filter(([, credential]) =>
       isCredentialProviderCompatibleWithAuthProvider({
@@ -238,8 +189,6 @@ export function resolveAuthProfileEligibility(params: {
         authAliasLookupParams: params.authAliasLookupParams,
         providerAuthKey,
         provider: profileConfig.provider,
-        mode: profileConfig.mode,
-        credential: cred,
       })
     ) {
       return { eligible: false, reasonCode: "provider_mismatch" };
@@ -328,14 +277,12 @@ export function resolveAuthProfileOrderWithMetadata(
     });
   const explicitProfiles = cfg?.auth?.profiles
     ? Object.entries(cfg.auth.profiles)
-        .filter(([profileId, profile]) =>
+        .filter(([, profile]) =>
           isConfiguredProfileCompatibleWithAuthProvider({
             cfg,
             authAliasLookupParams: params.authAliasLookupParams,
             providerAuthKey,
             provider: profile.provider,
-            mode: profile.mode,
-            credential: store.profiles[profileId],
           }),
         )
         .map(([profileId]) => profileId)
@@ -344,7 +291,6 @@ export function resolveAuthProfileOrderWithMetadata(
     cfg,
     authAliasLookupParams: params.authAliasLookupParams,
     store,
-    provider,
     providerAuthKey,
   });
   const baseOrder =

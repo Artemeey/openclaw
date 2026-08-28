@@ -19,7 +19,7 @@ beforeEach(() => {
   normalizeModel.mockReset().mockReturnValue(undefined);
 });
 
-it.each(["text", "image", "runner"] as const)(
+it.each(["text", "image", "runner", "default"] as const)(
   "keeps captured model context through %s fallback normalization",
   async (surface) => {
     const modelSelection = {
@@ -50,7 +50,10 @@ it.each(["text", "image", "runner"] as const)(
             modelIdNormalization: {
               providers: {
                 fixture: {
-                  aliases: { current: "captured-primary", backup: "captured-backup" },
+                  aliases: {
+                    current: "fixture/captured-primary",
+                    backup: "fixture/captured-backup",
+                  },
                 },
               },
             },
@@ -87,11 +90,15 @@ it.each(["text", "image", "runner"] as const)(
           ]
         : surface === "image"
           ? resolveImageFallbackCandidates({ ...context, defaultProvider: "fixture" })
-          : resolveModelCandidateChain({ ...context, provider: "fixture", model: "current" });
+          : resolveModelCandidateChain({
+              ...context,
+              provider: surface === "default" ? "" : "fixture",
+              model: surface === "default" ? "" : "current",
+            });
 
     expect(candidates.map(({ provider, model }) => ({ provider, model }))).toEqual([
-      { provider: "fixture", model: "captured-primary" },
-      ...(surface === "runner" ? [] : [{ provider: "fixture", model: "captured-backup" }]),
+      { provider: "fixture", model: "fixture/captured-primary" },
+      ...(surface === "runner" ? [] : [{ provider: "fixture", model: "fixture/captured-backup" }]),
     ]);
     expect(normalizeModel).toHaveBeenCalled();
     for (const [params] of normalizeModel.mock.calls) {
@@ -101,6 +108,42 @@ it.each(["text", "image", "runner"] as const)(
         snapshot: params.pluginMetadataSnapshot,
       }).toEqual({ config: cfg, workspaceDir, snapshot });
     }
+  },
+);
+
+it.each(["text", "image"] as const)(
+  "retains distinct configured model namespaces in %s fallbacks",
+  (surface) => {
+    const selection = { primary: "custom/model", fallbacks: ["custom/custom/model"] };
+    const cfg: OpenClawConfig = {
+      models: {
+        providers: {
+          custom: {
+            api: "openai-completions",
+            baseUrl: "https://custom.example/v1",
+            models: ["model", "custom/model"].map((id) => ({
+              id,
+              name: id,
+              reasoning: false,
+              input: ["text"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              maxTokens: 1_024,
+            })),
+          },
+        },
+      },
+      agents: { defaults: { model: selection, imageModel: selection } },
+    };
+    const params = { cfg, manifestPlugins: [] };
+    const candidates =
+      surface === "image"
+        ? resolveImageFallbackCandidates({ ...params, defaultProvider: "custom" })
+        : resolveModelCandidateChain({ ...params, provider: "custom", model: "model" });
+
+    expect(candidates.map(({ provider, model }) => ({ provider, model }))).toEqual([
+      { provider: "custom", model: "model" },
+      { provider: "custom", model: "custom/model" },
+    ]);
   },
 );
 

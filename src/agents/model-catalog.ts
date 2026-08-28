@@ -2,6 +2,7 @@
  * Loads bundled, manifest, and discovered model catalog entries.
  */
 import { resolveClaudeFable5ModelIdentity } from "@openclaw/llm-core";
+import { buildModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import {
   normalizeLowercaseStringOrEmpty,
@@ -27,7 +28,6 @@ import type {
 } from "./model-catalog.types.js";
 import { resolveCatalogOwnedModelCompat } from "./model-compat-catalog.js";
 import {
-  modelKey,
   normalizeConfiguredProviderCatalogModelId,
   type ProviderModelIdNormalizationOptions,
 } from "./model-ref-shared.js";
@@ -114,7 +114,7 @@ export function canonicalizePreparedModelCatalogProvider(
 
 function catalogEntryDedupeKey(provider: string, id: string): string {
   const normalizedProvider = normalizeProviderId(provider);
-  return normalizeLowercaseStringOrEmpty(modelKey(normalizedProvider, id));
+  return normalizeLowercaseStringOrEmpty(buildModelCatalogRef(normalizedProvider, id));
 }
 
 function mergeCatalogCompat(
@@ -596,16 +596,11 @@ export async function buildPreparedModelCatalogSnapshot(
         },
       });
       if (supplemental.length > 0) {
-        // Explicitly configured rows are user-authorized even when live
-        // discovery omits them; normalize both sets to preserve their routes.
+        // These rows already carry their normalized identity. Reapplying a
+        // non-idempotent alias would lose an account-authorized model.
         const accountVisibleModelKeys = new Set(
           [...models, ...configuredModels].map((entry) =>
-            catalogEntryDedupeKey(
-              entry.provider,
-              normalizeConfiguredProviderCatalogModelId(entry.provider, entry.id, {
-                manifestPlugins: getManifestPlugins(),
-              }),
-            ),
+            catalogEntryDedupeKey(entry.provider, entry.id),
           ),
         );
         const normalizedSupplemental: ModelCatalogEntry[] = [];

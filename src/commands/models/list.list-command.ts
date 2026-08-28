@@ -5,6 +5,7 @@ import { resolveConfiguredModelEntries } from "../../agents/configured-model-ent
 import { DEFAULT_PROVIDER } from "../../agents/defaults.js";
 import { resolveLegacyInheritedAuthDir } from "../../agents/legacy-inherited-auth-dir.js";
 import { parseModelRef } from "../../agents/model-selection-normalize.js";
+import { formatModelRefForConfig } from "../../agents/model-selection-shared.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import { ExpectedCliError } from "../../cli/failure-output.js";
 import { requestExitAfterOneShotOutput } from "../../cli/one-shot-exit.js";
@@ -207,6 +208,8 @@ export async function modelsListCommand(
     .catch(() => undefined);
   const rowContext = {
     cfg,
+    formatModelRef: (ref: { provider: string; model: string }) =>
+      formatModelRefForConfig(ref, { cfg, manifestPlugins: metadataSnapshot.plugins }),
     agentId,
     agentDir,
     ...(inheritedAuthDir ? { inheritedAuthDir } : {}),

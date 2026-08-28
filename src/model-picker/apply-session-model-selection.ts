@@ -1,10 +1,11 @@
+import { buildModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import {
   isDefaultAgentRuntimeId,
   normalizeOptionalAgentRuntimeId,
 } from "../agents/agent-runtime-id.js";
 import { resolveAgentDir, type AgentModelPrimaryWriteTarget } from "../agents/agent-scope.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
-import { modelKey, normalizeProviderId } from "../agents/model-selection.js";
+import { normalizeProviderId } from "../agents/model-selection.js";
 import { resolveContextConfigProviderForRuntime } from "../agents/openai-routing.js";
 import {
   resolveCompatibleAgentRuntimeForProvider,
@@ -196,16 +197,19 @@ export async function applySessionModelSelection(
     return { status: "rejected", reason: "locked", message: MODEL_SELECTION_LOCKED_MESSAGE };
   }
 
-  const normalizedModelKey = modelKey(params.request.provider, params.request.model);
+  const normalizedModelKey = buildModelCatalogRef(params.request.provider, params.request.model);
   if (
     (params.allowedModelKeys.size > 0 && !params.allowedModelKeys.has(normalizedModelKey)) ||
-    !params.modelCatalog.some((entry) => modelKey(entry.provider, entry.id) === normalizedModelKey)
+    !params.modelCatalog.some(
+      (entry) => buildModelCatalogRef(entry.provider, entry.id) === normalizedModelKey,
+    )
   ) {
     return rejectNotAllowed(params.request.provider, params.request.model);
   }
   const request: SessionModelSelectionRequest = {
     ...params.request,
-    isDefault: normalizedModelKey === modelKey(params.defaultProvider, params.defaultModel),
+    isDefault:
+      normalizedModelKey === buildModelCatalogRef(params.defaultProvider, params.defaultModel),
   };
 
   const runtime = resolveRuntimeDirective({
@@ -366,7 +370,7 @@ export async function applySessionModelSelection(
   }
 
   const selectedCatalogEntry = params.modelCatalog.find(
-    (entry) => modelKey(entry.provider, entry.id) === normalizedModelKey,
+    (entry) => buildModelCatalogRef(entry.provider, entry.id) === normalizedModelKey,
   );
   const contextProvider = resolveContextConfigProviderForRuntime({
     provider,

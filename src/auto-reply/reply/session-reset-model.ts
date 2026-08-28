@@ -1,11 +1,15 @@
 /** Applies model override tokens embedded in reset/new command text. */
+import { buildModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { resolveAgentDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
 import {
   buildAllowedModelSet,
+  createModelManifestPluginContext,
   isModelKeyAllowedBySet,
+  type ModelSelectionNormalizationContext,
+  resolveModelRefFromString,
 } from "../../agents/model-selection-shared.js";
 import type { InternalSessionEntry as SessionEntry } from "../../config/sessions.js";
 import { SessionWorkStartInvalidatedError } from "../../config/sessions/lifecycle.js";
@@ -18,9 +22,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { applyModelOverrideWithAuthProfileCompatibility } from "../../sessions/auth-profile-preservation.js";
 import type { MsgContext, TemplateContext } from "../templating.js";
 import {
-  modelKey,
   resolveModelDirectiveSelection,
-  resolveModelRefFromDirectiveString,
   type ModelAliasIndex,
   type ModelDirectiveSelection,
 } from "./model-selection-directive.js";
@@ -58,37 +60,39 @@ async function loadResetModelCatalog(params: {
   });
 }
 
-function buildResetAllowedModelKeys(params: {
-  cfg: OpenClawConfig;
-  catalog: ModelCatalogEntry[];
-  defaultProvider: string;
-  defaultModel?: string;
-  agentId?: string;
-}): Set<string> {
+function buildResetAllowedModelKeys(
+  params: {
+    cfg: OpenClawConfig;
+    catalog: ModelCatalogEntry[];
+    defaultProvider: string;
+    defaultModel?: string;
+    agentId?: string;
+  } & ModelSelectionNormalizationContext,
+): Set<string> {
   const allowed = buildAllowedModelSet(params);
   const defaultModel = params.defaultModel?.trim();
   if (allowed.allowAny && defaultModel) {
-    allowed.allowedKeys.add(modelKey(normalizeProviderId(params.defaultProvider), defaultModel));
+    allowed.allowedKeys.add(buildModelCatalogRef(params.defaultProvider, defaultModel));
   }
   return allowed.allowedKeys;
 }
 
-function buildSelectionFromExplicit(params: {
-  raw: string;
-  defaultProvider: string;
-  defaultModel: string;
-  aliasIndex: ModelAliasIndex;
-  allowedModelKeys: Set<string>;
-}): ModelDirectiveSelection | undefined {
-  const resolved = resolveModelRefFromDirectiveString({
-    raw: params.raw,
-    defaultProvider: params.defaultProvider,
-    aliasIndex: params.aliasIndex,
-  });
+function buildSelectionFromExplicit(
+  params: {
+    cfg: OpenClawConfig;
+    agentId?: string;
+    raw: string;
+    defaultProvider: string;
+    defaultModel: string;
+    aliasIndex: ModelAliasIndex;
+    allowedModelKeys: Set<string>;
+  } & ModelSelectionNormalizationContext,
+): ModelDirectiveSelection | undefined {
+  const resolved = resolveModelRefFromString(params);
   if (!resolved) {
     return undefined;
   }
-  const key = modelKey(resolved.ref.provider, resolved.ref.model);
+  const key = buildModelCatalogRef(resolved.ref.provider, resolved.ref.model);
   if (params.allowedModelKeys.size > 0 && !isModelKeyAllowedBySet(params.allowedModelKeys, key)) {
     return undefined;
   }
@@ -161,13 +165,13 @@ async function applySelectionToSession(params: {
   return selectionApplied;
 }
 
-/** Applies a model override embedded in a reset command body. */
 /** Applies a valid reset model override to session state and returns the cleaned body. */
 export async function applyResetModelOverride(params: {
   cfg: OpenClawConfig;
   agentId?: string;
   agentDir?: string;
   workspaceDir?: string;
+  manifestPluginContext?: ModelSelectionNormalizationContext["manifestPluginContext"];
   resetTriggered: boolean;
   bodyStripped?: string;
   sessionCtx: TemplateContext;
@@ -195,6 +199,9 @@ export async function applyResetModelOverride(params: {
     return {};
   }
 
+  const manifestPluginContext =
+    params.manifestPluginContext ?? createModelManifestPluginContext(params);
+  const normalization = { ...manifestPluginContext.getContext(), manifestPluginContext };
   const catalog =
     params.modelCatalog ??
     (await loadResetModelCatalog({
@@ -204,6 +211,7 @@ export async function applyResetModelOverride(params: {
       workspaceDir: params.workspaceDir,
     }));
   const allowedModelKeys = buildResetAllowedModelKeys({
+    ...normalization,
     cfg: params.cfg,
     catalog,
     defaultProvider: params.defaultProvider,
@@ -225,6 +233,7 @@ export async function applyResetModelOverride(params: {
 
   const resolveSelection = (raw: string) =>
     resolveModelDirectiveSelection({
+      ...normalization,
       raw,
       defaultProvider: params.defaultProvider,
       defaultModel: params.defaultModel,
@@ -249,6 +258,9 @@ export async function applyResetModelOverride(params: {
 
   if (!selection) {
     selection = buildSelectionFromExplicit({
+      ...normalization,
+      cfg: params.cfg,
+      agentId: params.agentId,
       raw: first,
       defaultProvider: params.defaultProvider,
       defaultModel: params.defaultModel,

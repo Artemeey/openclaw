@@ -135,6 +135,7 @@ export async function handleDirectiveOnly(
     runtimePolicySessionKey,
     resetModelOverride,
     workspaceDir: params.workspaceDir,
+    manifestPluginContext: params.manifestPluginContext,
     surface: params.surface,
     sessionEntry,
   });
@@ -146,6 +147,8 @@ export async function handleDirectiveOnly(
     directives,
     cfg: params.cfg,
     agentDir,
+    workspaceDir: params.workspaceDir,
+    manifestPluginContext: params.manifestPluginContext,
     defaultProvider,
     defaultModel,
     aliasIndex,

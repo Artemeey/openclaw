@@ -1,5 +1,5 @@
 // Tests model selection resolution from directives, config, and session state.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   getContextWindowCaches,
   providerContextTokenCacheKey,
@@ -8,7 +8,10 @@ import {
   loadManifestModelCatalog,
   loadPreparedModelCatalog as loadModelCatalogLocal,
 } from "../../agents/model-catalog.runtime.js";
+import { createModelManifestPluginContext } from "../../agents/model-selection-shared.js";
+import * as providerModelNormalizationRuntime from "../../agents/provider-model-normalization.runtime.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { createPluginMetadataSnapshot } from "../../config/plugin-auto-enable.test-helpers.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { createModelSelectionState, resolveContextTokens } from "./model-selection.js";
 
@@ -72,7 +75,9 @@ vi.mock("../../channels/plugins/session-conversation.js", () => ({
 
 vi.mock("../../plugins/current-plugin-metadata-snapshot.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../plugins/current-plugin-metadata-snapshot.js")>()),
-  getCurrentPluginMetadataSnapshot: () => ({ plugins: [] }),
+  getCurrentPluginMetadataSnapshot: vi.fn<
+    typeof import("../../plugins/current-plugin-metadata-snapshot.js").getCurrentPluginMetadataSnapshot
+  >(() => createPluginMetadataSnapshot({ manifestRegistry: { plugins: [], diagnostics: [] } })),
 }));
 
 vi.mock("./session-entry-persistence.js", () => ({
@@ -84,7 +89,9 @@ const authProfileStoreMock = vi.hoisted(() => {
     version: 1;
     profiles: Record<string, { type: "api_key"; provider: string; key: string }>;
   };
-  const ensureAuthProfileStore = vi.fn(() => store);
+  const ensureAuthProfileStore = vi.fn<
+    typeof import("../../agents/auth-profiles.runtime.js").ensureAuthProfileStore
+  >(() => store);
   return {
     get store() {
       return store;
@@ -1151,6 +1158,58 @@ describe("createModelSelectionState respects session model override", () => {
     expect(state.resetModelOverride).toBe(false);
   });
 
+  it("preserves configured stored override aliases in the captured config", async () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: { primary: "fixture-provider/primary" },
+          models: {
+            "fixture-provider/primary": {},
+            "fixture-provider/captured-pin": {},
+          },
+        },
+      },
+    };
+    const normalize = vi
+      .spyOn(providerModelNormalizationRuntime, "normalizeProviderModelIdWithRuntime")
+      .mockImplementation((params) =>
+        params.provider === "fixture-provider" && params.context.modelId === "legacy-pin"
+          ? params.config === cfg
+            ? "captured-pin"
+            : "ambient-pin"
+          : undefined,
+      );
+    onTestFinished(() => normalize.mockRestore());
+    const sessionEntry = makeEntry({
+      providerOverride: "fixture-provider",
+      modelOverride: "legacy-pin",
+      modelOverrideSource: "user",
+    });
+    const state = await createModelSelectionState({
+      cfg,
+      agentCfg: cfg.agents?.defaults,
+      sessionEntry,
+      sessionStore: { main: sessionEntry },
+      sessionKey: "main",
+      defaultProvider: "fixture-provider",
+      defaultModel: "primary",
+      provider: "fixture-provider",
+      model: "primary",
+      hasModelDirective: false,
+    });
+
+    expect(state).toMatchObject({
+      provider: "fixture-provider",
+      model: "captured-pin",
+      resetModelOverride: false,
+    });
+    expect(sessionEntry).toMatchObject({
+      providerOverride: "fixture-provider",
+      modelOverride: "legacy-pin",
+      modelOverrideSource: "user",
+    });
+  });
+
   it("keeps provider-qualified stored overrides when providerOverride is also persisted", async () => {
     const cfg = {
       agents: {
@@ -1638,6 +1697,7 @@ describe("createModelSelectionState auto-failover overrides", () => {
   const sessionKey = "agent:main:telegram:direct:1";
 
   async function resolveStateWithOverride(params: {
+    cfg?: OpenClawConfig;
     providerOverride: string;
     modelOverride: string;
     modelOverrideSource: "auto" | "user" | undefined;
@@ -1654,7 +1714,7 @@ describe("createModelSelectionState auto-failover overrides", () => {
     isHeartbeat?: boolean;
     skipStoredModelOverride?: boolean;
   }) {
-    const cfg = {} as OpenClawConfig;
+    const cfg = params.cfg ?? ({} as OpenClawConfig);
     const sessionEntry = makeEntry({
       providerOverride: params.providerOverride,
       modelOverride: params.modelOverride,
@@ -2038,6 +2098,47 @@ describe("createModelSelectionState auto-failover overrides", () => {
     expect(sessionStore[sessionKey]?.modelOverride).toBe("minimax/minimax-m2.7");
   });
 
+  it.each(["auto", undefined] as const)(
+    "keeps heartbeat fallback origin equality in the captured config with source %s",
+    async (modelOverrideSource) => {
+      const cfg: OpenClawConfig = {};
+      const normalize = vi
+        .spyOn(providerModelNormalizationRuntime, "normalizeProviderModelIdWithRuntime")
+        .mockImplementation((params) => {
+          if (params.provider !== defaultProvider || params.context.modelId !== "legacy-primary") {
+            return undefined;
+          }
+          return params.config === cfg ? defaultModel : "ambient-primary";
+        });
+      onTestFinished(() => normalize.mockRestore());
+
+      const { state, sessionStore } = await resolveStateWithOverride({
+        cfg,
+        providerOverride: "openrouter",
+        modelOverride: "minimax/minimax-m2.7",
+        modelOverrideSource,
+        modelOverrideFallbackOriginProvider: defaultProvider,
+        modelOverrideFallbackOriginModel: "legacy-primary",
+        provider: "openrouter",
+        model: "minimax/minimax-m2.7",
+        isHeartbeat: true,
+      });
+
+      expect(state).toMatchObject({
+        provider: "openrouter",
+        model: "minimax/minimax-m2.7",
+        resetModelOverride: false,
+      });
+      expect(sessionStore[sessionKey]).toMatchObject({
+        providerOverride: "openrouter",
+        modelOverride: "minimax/minimax-m2.7",
+        modelOverrideSource,
+        modelOverrideFallbackOriginProvider: defaultProvider,
+        modelOverrideFallbackOriginModel: "legacy-primary",
+      });
+    },
+  );
+
   it("keeps heartbeat auto-failover override when the origin matches the channel primary", async () => {
     const { state, sessionStore } = await resolveStateWithOverride({
       providerOverride: "openrouter",
@@ -2285,9 +2386,27 @@ describe("createModelSelectionState auth-profile override flapping regression", 
       authProfileOverride: "anthropic:claude-cli",
     };
     const sessionStore = { [sessionKey]: sessionEntry };
-
-    await createModelSelectionState({
-      cfg: {} as OpenClawConfig,
+    const agentDir = "/tmp/captured-auth-owner";
+    const workspaceDir = "/workspace/captured-auth";
+    const cfg: OpenClawConfig = {
+      agents: { list: [{ id: "main", workspace: workspaceDir }] },
+    };
+    const pluginMetadataSnapshot = createPluginMetadataSnapshot({
+      config: cfg,
+      workspaceDir,
+      manifestRegistry: { plugins: [], diagnostics: [] },
+    });
+    const selectionParams = {
+      cfg,
+      agentId: "main",
+      agentDir,
+      workspaceDir,
+      manifestPluginContext: createModelManifestPluginContext({
+        cfg,
+        agentId: "main",
+        workspaceDir,
+        pluginMetadataSnapshot,
+      }),
       agentCfg: undefined,
       sessionEntry,
       sessionStore,
@@ -2297,12 +2416,18 @@ describe("createModelSelectionState auth-profile override flapping regression", 
       provider: "claude-cli",
       model: "claude-opus-4-7",
       hasModelDirective: false,
-    });
+    };
+
+    await createModelSelectionState(selectionParams);
 
     // The override must NOT have been cleared — the anthropic credential is
     // alias-compatible with the claude-cli provider.
     expect(sessionStore[sessionKey]?.authProfileOverride).toBe("anthropic:claude-cli");
     expect(sessionEntry.authProfileOverride).toBe("anthropic:claude-cli");
+    expect(authProfileStoreMock.ensureAuthProfileStore).toHaveBeenCalledWith(
+      agentDir,
+      expect.objectContaining({ config: cfg, workspaceDir, pluginMetadataSnapshot }),
+    );
   });
 });
 

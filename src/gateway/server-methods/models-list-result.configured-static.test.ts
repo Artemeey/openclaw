@@ -174,4 +174,47 @@ describe("models.list configured static entries", () => {
       });
     });
   });
+
+  it("keeps exact model namespaces distinct in configured aliases and role tags", async () => {
+    const ids = ["model", "custom/model"];
+    const cfg: OpenClawConfig = {
+      models: {
+        providers: {
+          custom: {
+            api: "openai-completions",
+            baseUrl: "https://custom.example/v1",
+            models: ids.map((id) => ({
+              id,
+              name: id,
+              reasoning: false,
+              input: ["text"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              maxTokens: 1_024,
+            })),
+          },
+        },
+      },
+      agents: {
+        defaults: {
+          model: { primary: "custom/model", fallbacks: ["custom/custom/model"] },
+          models: {
+            "custom/model": { alias: "plain" },
+            "custom/custom/model": { alias: "nested" },
+          },
+        },
+      },
+    };
+    const result = await listModels({
+      cfg,
+      view: "configured",
+      catalog: ids.map((id) => providerCatalogEntry("custom", id)),
+    });
+
+    expect(
+      Object.fromEntries(result.models.map(({ id, alias, tags }) => [id, { alias, tags }])),
+    ).toEqual({
+      model: { alias: "plain", tags: ["default", "configured"] },
+      "custom/model": { alias: "nested", tags: ["fallback#1", "configured"] },
+    });
+  });
 });

@@ -4,6 +4,9 @@
  */
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { buildModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
+import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
+import { normalizeBuiltInProviderModelId } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
@@ -11,7 +14,6 @@ import {
   resolveAgentDir,
   tryResolveDefaultAgentId,
 } from "../agents/agent-scope-config.js";
-import { modelKey, normalizeModelRef, normalizeProviderId } from "../agents/model-ref-shared.js";
 import type { NormalizedUsage } from "../agents/usage.js";
 import { resolveStateDir } from "../config/paths.js";
 import type { ModelProviderConfig } from "../config/types.models.js";
@@ -84,11 +86,12 @@ export function formatUsd(value?: number): string | undefined {
 }
 
 function normalizeRawModelKey(provider: string, model: string): string {
-  const normalized = normalizeModelRef(provider, model, {
-    allowManifestNormalization: false,
-    allowPluginNormalization: false,
-  });
-  return modelKey(normalized.provider, normalized.model);
+  const providerId = normalizeProviderId(provider);
+  // Built-in aliases remain valid; a provider-shaped prefix alone is model data.
+  return buildModelCatalogRef(
+    providerId,
+    normalizeBuiltInProviderModelId(providerId, model.trim()),
+  );
 }
 
 function isRawModelCostConfig(value: unknown): value is RawModelCostConfig {
@@ -404,7 +407,7 @@ export function resolveModelCostConfig(
   if (!provider || !model) {
     return undefined;
   }
-  const rawKey = modelKey(provider, model);
+  const rawKey = normalizeRawModelKey(provider, model);
   const agentDir = resolveCostAgentDir(params.config, params.agentDir, params.agentId);
   // Favor direct configured keys first so local pricing/status lookups stay
   // synchronous and do not drag plugin/provider discovery into the hot path.
@@ -415,10 +418,7 @@ export function resolveModelCostConfig(
     return rawModelsJsonCost;
   }
 
-  const rawConfiguredCost = getProviderCostFromIndex(
-    params.config?.models?.providers,
-    normalizeRawModelKey(provider, model),
-  );
+  const rawConfiguredCost = getProviderCostFromIndex(params.config?.models?.providers, rawKey);
   if (rawConfiguredCost) {
     return rawConfiguredCost;
   }

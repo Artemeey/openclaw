@@ -1,5 +1,7 @@
 // Covers plugin-owned model id normalization through selection surfaces.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolveModelRefWithConfiguredAliases } from "./model-selection-shared.js";
 
 const normalizeProviderModelIdWithPluginMock = vi.fn();
 const emptyPluginMetadataSnapshot = vi.hoisted(() => ({
@@ -95,6 +97,206 @@ describe("model-selection plugin runtime normalization", () => {
     });
     expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
   });
+
+  it.each([
+    "selected-provider/selected-provider/selected-provider/model",
+    "speech-summary",
+    "selected-provider/speech-summary",
+  ])("normalizes only the authored selected target for %s", (raw) => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          models: {
+            "unused-provider/another-model": { alias: "unused" },
+            "selected-provider/selected-provider/selected-provider/model": {
+              alias: "speech-summary",
+            },
+          },
+        },
+      },
+    };
+    normalizeProviderModelIdWithPluginMock.mockImplementation(({ provider, context, config }) => {
+      expect(config).toBe(cfg);
+      expect(provider).toBe("selected-provider");
+      expect(context.modelId).toBe("selected-provider/model");
+      return "runtime-summary";
+    });
+
+    expect(
+      resolveModelRefWithConfiguredAliases({ cfg, raw, defaultProvider: "unused-provider" }),
+    ).toEqual({ provider: "selected-provider", model: "runtime-summary" });
+    expect(normalizeProviderModelIdWithPluginMock).toHaveBeenCalledOnce();
+  });
+
+  it.each(["configured/configured/model", "speech-summary"])(
+    "preserves exact configured provider model paths for %s",
+    (raw) => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            models: {
+              "unused-provider/another-model": { alias: "unused" },
+              "configured/configured/model": { alias: "speech-summary" },
+            },
+          },
+        },
+        models: {
+          providers: {
+            configured: {
+              api: "openai-completions",
+              baseUrl: "https://configured.test/v1",
+              models: [
+                {
+                  id: "configured/model",
+                  name: "Configured model",
+                  reasoning: false,
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  maxTokens: 1_024,
+                },
+              ],
+            },
+          },
+        },
+      };
+
+      expect(
+        resolveModelRefWithConfiguredAliases({ cfg, raw, defaultProvider: "unused-provider" }),
+      ).toEqual({ provider: "configured", model: "configured/model" });
+      expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {
+      raw: "shared",
+      expected: { provider: "other-provider", model: "second" },
+    },
+    {
+      raw: "selected-provider/Shared",
+      expected: { provider: "selected-provider", model: "first" },
+    },
+    {
+      raw: "redirected/model",
+      expected: { provider: "selected-provider", model: "third" },
+    },
+    {
+      raw: "shared",
+      agentAlias: "Shared",
+      expected: { provider: "selected-provider", model: "first" },
+    },
+    {
+      raw: "selected-provider/shared",
+      agentAlias: "",
+      expected: { provider: "selected-provider", model: "shared" },
+    },
+  ])(
+    "preserves alias precedence for $raw with agent alias $agentAlias",
+    ({ raw, agentAlias, expected }) => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            models: {
+              "selected-provider/first": { alias: "shared" },
+              "other-provider/second": { alias: "Shared" },
+              "selected-provider/third": { alias: "redirected/model" },
+            },
+          },
+          entries: {
+            ops: {
+              models: {
+                "selected-provider/first": agentAlias === undefined ? {} : { alias: agentAlias },
+              },
+            },
+          },
+        },
+      };
+
+      expect(
+        resolveModelRefWithConfiguredAliases({
+          cfg,
+          raw,
+          agentId: "ops",
+          defaultProvider: "unused-provider",
+        }),
+      ).toEqual(expected);
+      expect(normalizeProviderModelIdWithPluginMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: expected.provider,
+          context: { provider: expected.provider, modelId: expected.model },
+        }),
+      );
+    },
+  );
+
+  const runtimeAliasCollisionCases: Array<{
+    name: string;
+    defaults: Record<string, { alias: string }>;
+    agent: Record<string, { alias: string }>;
+    expected: { provider: string; model: string };
+  }> = [
+    {
+      name: "canonical agent key disables a legacy default alias",
+      defaults: { "provider/legacy": { alias: "fast" } },
+      agent: { "provider/current": { alias: "" } },
+      expected: { provider: "fallback-provider", model: "fast" },
+    },
+    {
+      name: "legacy agent key disables a canonical default alias",
+      defaults: { "provider/current": { alias: "fast" } },
+      agent: { "provider/legacy": { alias: "" } },
+      expected: { provider: "fallback-provider", model: "fast" },
+    },
+    {
+      name: "agent alias replaces the default at its runtime canonical key",
+      defaults: { "provider/legacy": { alias: "fast" } },
+      agent: { "provider/current": { alias: "slow" } },
+      expected: { provider: "fallback-provider", model: "fast" },
+    },
+    {
+      name: "another provider wins after a later duplicate alias is disabled",
+      defaults: {
+        "provider/older": { alias: "fast" },
+        "other-provider/other": { alias: "fast" },
+        "provider/legacy": { alias: "fast" },
+      },
+      agent: { "provider/current": { alias: "" } },
+      expected: { provider: "other-provider", model: "other" },
+    },
+  ];
+
+  it.each(runtimeAliasCollisionCases)(
+    "preserves runtime alias collisions: $name",
+    ({ defaults, agent, expected }) => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            model: { primary: "unused-provider/primary" },
+            models: {
+              "unused-provider/another-model": { alias: "unused" },
+              ...defaults,
+            },
+          },
+          entries: { worker: { models: agent } },
+        },
+      };
+      normalizeProviderModelIdWithPluginMock.mockImplementation(({ provider, context }) => {
+        if (provider === "unused-provider") {
+          throw new Error("Unrelated provider normalization must remain cold");
+        }
+        return provider === "provider" && context.modelId === "legacy" ? "current" : undefined;
+      });
+
+      expect(
+        resolveModelRefWithConfiguredAliases({
+          cfg,
+          raw: "fast",
+          agentId: "worker",
+          defaultProvider: "fallback-provider",
+        }),
+      ).toEqual(expected);
+    },
+  );
 
   it("keeps allowed model selection on manifest policy without executable hooks", async () => {
     normalizeProviderModelIdWithPluginMock.mockReturnValue("runtime-only-model");

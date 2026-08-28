@@ -523,6 +523,60 @@ describe("applySessionModelSelection", () => {
     expect(effects.triggerSessionPatchHook).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { boundary: "allowlist", allowed: ["model"], catalog: ["model", "custom/model"] },
+    { boundary: "catalog", allowed: ["model", "custom/model"], catalog: ["model"] },
+    {
+      boundary: "accepted selection",
+      allowed: ["model", "custom/model"],
+      catalog: ["model", "custom/model"],
+    },
+  ])(
+    "keeps exact model namespaces distinct at $boundary",
+    async ({ boundary, allowed, catalog: catalogKeys }) => {
+      const sessionEntry = createEntry();
+      const initial = structuredClone(sessionEntry);
+      const result = await applySessionModelSelection(
+        createParams({
+          sessionEntry,
+          defaultProvider: "custom",
+          defaultModel: "model",
+          currentProvider: "custom",
+          currentModel: "model",
+          allowedModelKeys: new Set(allowed.map((id) => `custom/${id}`)),
+          modelCatalog: catalogKeys.map((id) => ({
+            provider: "custom",
+            id,
+            name: id,
+            contextTokens: id === "model" ? 8_000 : 16_000,
+          })),
+          request: {
+            provider: "custom",
+            model: "custom/model",
+            isDefault: false,
+            runtime: { kind: "unchanged" },
+          },
+        }),
+      );
+
+      if (boundary === "accepted selection") {
+        expect(result).toMatchObject({
+          status: "applied",
+          effectiveModelRef: "custom/custom/model",
+          contextTokens: 16_000,
+        });
+        expect(sessionEntry).toMatchObject({
+          providerOverride: "custom",
+          modelOverride: "custom/model",
+        });
+      } else {
+        expect(result).toMatchObject({ status: "rejected", reason: "not-allowed" });
+        expect(sessionEntry).toEqual(initial);
+        expect(effects.triggerSessionPatchHook).not.toHaveBeenCalled();
+      }
+    },
+  );
+
   it("remaps unsupported thinking and reasserts live switching", async () => {
     const sessionEntry = createEntry({ thinkingLevel: "adaptive" });
     const result = await applySessionModelSelection(createParams({ sessionEntry }));

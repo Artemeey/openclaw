@@ -239,6 +239,7 @@ describe("unit-fast vitest lane", () => {
     for (const file of [
       "src/agents/agent-command.compaction-rotation.test.ts",
       "src/agents/agent-command.embedded-maintenance.test.ts",
+      "src/agents/prepared-model-runtime.scoped-refresh.test.ts",
     ]) {
       expect(isUnitFastTestFile(file), file).toBe(false);
       expect(resolveUnitFastTestIncludePattern(file), file).toBeNull();
@@ -312,14 +313,14 @@ describe("unit-fast vitest lane", () => {
     ]);
   });
 
-  it("isolates tests that import stateful test helpers", () => {
-    // Fixture files must genuinely import a stateful test helper; #121923
+  it("isolates otherwise stateless tests that import stateful test helpers", () => {
+    // Direct mock use belongs to the owner lane. These fixtures must otherwise qualify
+    // for unit-fast and genuinely import a stateful test helper; #121923
     // rewrote the outbound poll tests to be stateless, so they left this list.
     const files = [
       "src/acp/translator.error-kind.test.ts",
       "src/agents/auth-profiles/oauth-refresh-error.test.ts",
       "src/agents/embedded-agent-runner/model.provider-hooks.timeout.test.ts",
-      "src/agents/prepared-model-runtime.scoped-refresh.test.ts",
       "src/agents/tools/computer-tool.context.test.ts",
       "src/agents/tools/computer-tool.schema.test.ts",
       "src/agents/tools/computer-tool.v2.test.ts",

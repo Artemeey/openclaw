@@ -1,9 +1,12 @@
 import type { AgentExecutionAuthBinding } from "../../execution-auth-binding.js";
+import type { ModelRef } from "../../model-ref-shared.js";
 import type { PreparedModelRuntimePluginGeneration } from "../../prepared-model-runtime.types.js";
 import type { SystemAgentToolOptions } from "../../tools/system-agent-tool.js";
 import type { RunEmbeddedAgentParams } from "./params.js";
 
 export type RunEmbeddedAgentInternalParams = RunEmbeddedAgentParams & {
+  /** Reject-only target consistency for the authorized initial attempt, never fallbacks. */
+  expectedInitialModel?: Readonly<ModelRef>;
   onSuccessfulAuthBinding?: (binding: AgentExecutionAuthBinding) => void;
   /** Maintenance needs the winning profile, not native runtime artifact capture. */
   onSuccessfulAuthProfile?: (profileId: string | undefined) => void;

@@ -1,11 +1,10 @@
 import { isIP } from "node:net";
 import type { RemoteModelCatalogPricing } from "@openclaw/model-catalog-core";
+import { buildModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import type { ModelCatalogCost } from "@openclaw/model-catalog-core/model-catalog-types";
-import { stripSelfProviderModelPrefix } from "@openclaw/model-catalog-core/provider-model-id-normalization";
 import {
   createStaticProviderModelIdNormalizer,
   type ModelManifestNormalizationContext,
-  modelKey,
   normalizeProviderId,
 } from "../agents/model-ref-shared.js";
 import { createModelManifestPluginContext } from "../agents/model-selection-shared.js";
@@ -87,15 +86,12 @@ function buildPricingContext(
   const normalizeModel = createStaticProviderModelIdNormalizer(normalization);
   const normalizeKey = (provider: string, model: string) => {
     const providerId = normalizeProviderId(provider);
-    return modelKey(
-      providerId,
-      normalizeModel(providerId, stripSelfProviderModelPrefix(providerId, model.trim())),
-    );
+    return buildModelCatalogRef(providerId, normalizeModel(providerId, model.trim()));
   };
   const catalog = new Map<string, PricingValue>();
   for (const row of planEffectiveModelCatalogRows({ registry, config }).rows) {
     if (row.cost) {
-      catalog.set(modelKey(row.provider, row.id), row.cost);
+      catalog.set(buildModelCatalogRef(row.provider, row.id), row.cost);
     }
   }
   const policies = new Map<string, ExternalPricingPolicy>();
@@ -238,9 +234,10 @@ function findConfiguredModel(
   model: string,
   normalizeKey: PricingContext["normalizeKey"],
 ): ModelDefinitionConfig | undefined {
-  return config.models?.providers?.[provider]?.models?.find((entry) => {
-    return normalizeKey(provider, entry.id) === modelKey(provider, model);
-  });
+  const key = buildModelCatalogRef(provider, model);
+  return config.models?.providers?.[provider]?.models?.find(
+    (entry) => normalizeKey(provider, entry.id) === key,
+  );
 }
 
 function allowsHostedPricing(

@@ -1,6 +1,8 @@
 // Verifies plugin public surface loading and fallback behavior.
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { importFreshModule } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTempDirTracker } from "../../test/helpers/temp-dir.js";
@@ -30,7 +32,6 @@ afterEach(() => {
   vi.doUnmock("./bundled-dir.js");
   vi.doUnmock("./native-module-require.js");
   vi.doUnmock("./public-surface-runtime.js");
-  vi.doUnmock("node:module");
   if (originalBundledPluginsDir === undefined) {
     delete process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
   } else {
@@ -127,45 +128,43 @@ describe("bundled plugin public surface loader", () => {
     });
   });
 
-  it("prefers source require for bundled source public artifacts when a ts require hook exists", async () => {
-    const createJiti = vi.fn(() => vi.fn(() => ({ marker: "jiti-should-not-run" })));
-    vi.doMock("jiti", () => ({
-      createJiti,
-    }));
-    const requireLoader = Object.assign(
-      vi.fn(() => ({ marker: "source-require-ok" })),
-      {
-        extensions: {
-          ".ts": vi.fn(),
-        },
-      },
-    );
-    vi.doMock("node:module", async () => {
-      const actual = await vi.importActual<typeof import("node:module")>("node:module");
-      return Object.assign({}, actual, {
-        createRequire: vi.fn(() => requireLoader),
-      });
-    });
-
-    const publicSurfaceLoader = await importFreshModule<
-      typeof import("./public-surface-loader.js")
-    >(import.meta.url, "./public-surface-loader.js?scope=source-require-fast-path");
+  it("loads source public artifacts with SDK aliases after a namespaced TypeScript loader", () => {
     const tempRoot = tempDirs.make("openclaw-public-surface-loader-");
-    const bundledPluginsDir = path.join(tempRoot, "extensions");
-    process.env.OPENCLAW_BUNDLED_PLUGINS_DIR = bundledPluginsDir;
+    const pluginRoot = path.join(tempRoot, "plugin");
+    fs.mkdirSync(pluginRoot);
+    fs.writeFileSync(path.join(pluginRoot, "package.json"), '{"type":"module"}\n');
+    fs.writeFileSync(
+      path.join(pluginRoot, "api.ts"),
+      [
+        'import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";',
+        'import { marker } from "./marker.js";',
+        "export const readMarker = () => normalizeOptionalString(marker);",
+      ].join("\n"),
+    );
+    fs.writeFileSync(path.join(pluginRoot, "marker.ts"), 'export const marker = " source-sdk ";\n');
+    const loaderUrl = pathToFileURL(path.resolve("src/plugins/public-surface-loader.ts")).href;
+    const probePath = path.join(tempRoot, "probe.mjs");
+    fs.writeFileSync(
+      probePath,
+      [
+        'import { createRequire } from "node:module";',
+        `const require = createRequire(${JSON.stringify(loaderUrl)});`,
+        // A namespaced CJS hook must not be mistaken for a native ESM source loader.
+        'const loader = require("tsx/cjs/api").require(',
+        `  ${JSON.stringify(loaderUrl)}, import.meta.url,`,
+        ");",
+        `const artifact = loader.loadPluginPublicArtifactModuleSync({ pluginRoot: ${JSON.stringify(pluginRoot)}, artifactBasename: "api.js" });`,
+        "console.log(artifact.readMarker());",
+      ].join("\n"),
+    );
 
-    const modulePath = path.join(bundledPluginsDir, "demo", "secret-contract-api.ts");
-    fs.mkdirSync(path.dirname(modulePath), { recursive: true });
-    fs.writeFileSync(modulePath, 'export const marker = "source-require-ok";\n', "utf8");
-
-    expect(
-      publicSurfaceLoader.loadBundledPluginPublicArtifactModuleSync<{ marker: string }>({
-        dirName: "demo",
-        artifactBasename: "secret-contract-api.js",
-      }).marker,
-    ).toBe("source-require-ok");
-    expect(requireLoader).toHaveBeenCalledWith(fs.realpathSync(modulePath));
-    expect(createJiti).not.toHaveBeenCalled();
+    const result = spawnSync(process.execPath, [probePath], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("source-sdk");
   });
 
   it("keeps bundled dist public artifacts on the native path", async () => {

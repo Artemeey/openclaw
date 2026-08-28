@@ -14,6 +14,7 @@ import {
   setActiveEmbeddedRun,
 } from "../agents/embedded-agent-runner/runs.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.types.js";
+import * as modelNormalizationRuntime from "../agents/provider-model-normalization.runtime.js";
 import { createSessionsHistoryTool } from "../agents/tools/sessions-history-tool.js";
 import type { GetReplyOptions } from "../auto-reply/get-reply-options.types.js";
 import { HEARTBEAT_PROMPT } from "../auto-reply/heartbeat.js";
@@ -1675,7 +1676,21 @@ describe("gateway server chat", () => {
 
   test("chat.startup does not start optional model catalog discovery", async () => {
     openDirectChatSession();
+    const previousAgentConfig = testState.agentConfig;
+    const normalizeRuntime = vi.spyOn(
+      modelNormalizationRuntime,
+      "normalizeProviderModelIdWithRuntime",
+    );
     try {
+      testState.agentConfig = {
+        model: { primary: "history-model" },
+        models: { "anthropic/claude-opus-4-6": { alias: "history-model" } },
+      };
+      clearConfigCache();
+      const config = getRuntimeConfig();
+      normalizeRuntime.mockImplementation(() => {
+        throw new Error("history projection must not execute provider normalization");
+      });
       await writeStoredMainSession({
         modelProvider: "test-provider",
         model: "slow-catalog-model",
@@ -1683,7 +1698,7 @@ describe("gateway server chat", () => {
       const responses: Array<{ ok: boolean; payload?: unknown; error?: unknown }> = [];
       const context = createDirectChatContext({
         loadGatewayModelCatalogSnapshot: vi.fn(),
-        getRuntimeConfig: () => ({}),
+        getRuntimeConfig: () => config,
       });
       await callDirectChat("chat.startup", {
         id: "startup-slow-catalog",
@@ -1692,19 +1707,28 @@ describe("gateway server chat", () => {
         context,
       });
 
+      expect(normalizeRuntime.mock.calls.length).toBe(0);
       expect(context.loadGatewayModelCatalogSnapshot).not.toHaveBeenCalled();
       expect(responses).toHaveLength(1);
       expect(responses[0]?.ok).toBe(true);
       const payload = responses[0]?.payload as
         | {
             metadata?: unknown;
+            defaults?: { modelProvider?: string | null; model?: string | null };
             sessionInfo?: { sessionId?: string };
           }
         | undefined;
       expect(payload?.sessionInfo?.sessionId).toBe("sess-main");
+      expect(payload?.defaults).toMatchObject({
+        modelProvider: "anthropic",
+        model: "claude-opus-4-6",
+      });
       expect(payload?.metadata).toBeUndefined();
     } finally {
+      normalizeRuntime.mockRestore();
+      testState.agentConfig = previousAgentConfig;
       testState.sessionStorePath = undefined;
+      clearConfigCache();
     }
   });
 
@@ -1757,6 +1781,11 @@ describe("gateway server chat", () => {
 
   test("chat.history degrades promptly when the optional model catalog is slow", async () => {
     openDirectChatSession();
+    const normalizeRuntime = vi
+      .spyOn(modelNormalizationRuntime, "normalizeProviderModelIdWithRuntime")
+      .mockImplementation(() => {
+        throw new Error("history projection must not execute provider normalization");
+      });
     try {
       await writeStoredMainSession({
         modelProvider: "test-provider",
@@ -1780,6 +1809,7 @@ describe("gateway server chat", () => {
         context,
       });
 
+      expect(normalizeRuntime.mock.calls.length).toBe(0);
       expect(context.loadGatewayModelCatalogSnapshot).toHaveBeenCalledTimes(1);
       expect(responses).toHaveLength(1);
       expect(responses[0]?.ok).toBe(true);
@@ -1787,6 +1817,7 @@ describe("gateway server chat", () => {
         (responses[0]?.payload as { sessionInfo?: { sessionId?: string } })?.sessionInfo?.sessionId,
       ).toBe("sess-main");
     } finally {
+      normalizeRuntime.mockRestore();
       testState.sessionStorePath = undefined;
     }
   });

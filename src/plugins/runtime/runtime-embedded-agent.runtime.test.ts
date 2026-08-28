@@ -250,16 +250,21 @@ describe("plugin embedded-agent runtime admission", () => {
     expect(mocks.runEmbeddedAgentCore).not.toHaveBeenCalled();
   });
 
-  it.each(["admittedRunContext", "preparedRunAdmission"] as const)(
-    "rejects a plugin-supplied %s",
-    async (field) => {
-      await expect(
-        withPluginRuntimePluginIdScope("memory-plugin", () =>
-          runPluginEmbeddedAgent({ ...params, [field]: {} } as never),
-        ),
-      ).rejects.toThrow("cannot supply host run authority");
-      expect(mocks.prepareAgentRunAdmission).not.toHaveBeenCalled();
-      expect(mocks.runEmbeddedAgentCore).not.toHaveBeenCalled();
-    },
-  );
+  it.each(
+    ["admittedRunContext", "preparedRunAdmission", "expectedInitialModel"].flatMap((field) =>
+      [false, true].map((inherited) => ({ field, inherited })),
+    ),
+  )("rejects a plugin-supplied $field (inherited: $inherited)", async ({ field, inherited }) => {
+    const input = { ...params };
+    if (inherited) {
+      Object.setPrototypeOf(input, { [field]: {} });
+    } else {
+      Object.defineProperty(input, field, { value: {}, enumerable: true });
+    }
+    await expect(
+      withPluginRuntimePluginIdScope("memory-plugin", () => runPluginEmbeddedAgent(input)),
+    ).rejects.toThrow("cannot supply host run authority");
+    expect(mocks.prepareAgentRunAdmission).not.toHaveBeenCalled();
+    expect(mocks.runEmbeddedAgentCore).not.toHaveBeenCalled();
+  });
 });

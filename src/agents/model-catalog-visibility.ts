@@ -206,16 +206,6 @@ export async function resolveLogicalVisibleModelCatalog(params: {
     routeVariants: readonly ModelCatalogEntry[],
   ): Promise<LogicalModelCatalogEntryState>;
 }): Promise<ModelCatalogEntry[]> {
-  const policy =
-    params.policy ??
-    createModelVisibilityPolicy({
-      cfg: params.cfg,
-      catalog: params.catalog,
-      defaultProvider: params.defaultProvider,
-      defaultModel: params.defaultModel,
-      agentId: params.agentId,
-      ...RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
-    });
   const projectionCatalog =
     params.routeVariants && params.routeVariants.length > 0 ? params.routeVariants : params.catalog;
   const routeVariantsByKey = new Map<string, ModelCatalogEntry[]>();
@@ -244,17 +234,6 @@ export async function resolveLogicalVisibleModelCatalog(params: {
       preferred: selectedRoute ? params.routePolicy.matchesRoute(entry, selectedRoute) : false,
     };
   };
-  const normalizePolicyKey = (key: string) => {
-    const slashIndex = key.indexOf("/");
-    return slashIndex > 0
-      ? resolveLogicalKey(
-          { provider: key.slice(0, slashIndex), id: key.slice(slashIndex + 1) },
-          params.routePolicy,
-        )
-      : key;
-  };
-  const configuredKeys = new Set([...policy.configuredKeys].map(normalizePolicyKey));
-  const retainedKeys = new Set([...policy.retainedKeys].map(normalizePolicyKey));
   const projectEntries = async (entries: readonly ModelCatalogEntry[]) => {
     const projected = await Promise.all(
       entries.map(async (entry) => {
@@ -277,6 +256,30 @@ export async function resolveLogicalVisibleModelCatalog(params: {
   if (params.view === "all") {
     return await projectEntries(params.catalog);
   }
+
+  // All-view projection needs no visibility policy; constructing one can activate
+  // provider runtime just to normalize configured refs that this view never uses.
+  const policy =
+    params.policy ??
+    createModelVisibilityPolicy({
+      cfg: params.cfg,
+      catalog: params.catalog,
+      defaultProvider: params.defaultProvider,
+      defaultModel: params.defaultModel,
+      agentId: params.agentId,
+      ...RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
+    });
+  const normalizePolicyKey = (key: string) => {
+    const slashIndex = key.indexOf("/");
+    return slashIndex > 0
+      ? resolveLogicalKey(
+          { provider: key.slice(0, slashIndex), id: key.slice(slashIndex + 1) },
+          params.routePolicy,
+        )
+      : key;
+  };
+  const configuredKeys = new Set([...policy.configuredKeys].map(normalizePolicyKey));
+  const retainedKeys = new Set([...policy.retainedKeys].map(normalizePolicyKey));
 
   const catalogKeys = new Set(
     params.catalog.map((entry) => resolveLogicalKey(entry, params.routePolicy)),

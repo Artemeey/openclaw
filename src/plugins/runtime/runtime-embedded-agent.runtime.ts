@@ -19,7 +19,11 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
   if (!pluginId) {
     throw new Error("Plugin embedded-agent execution requires an active plugin runtime scope.");
   }
-  if ("admittedRunContext" in params || "preparedRunAdmission" in params) {
+  if (
+    "admittedRunContext" in params ||
+    "preparedRunAdmission" in params ||
+    "expectedInitialModel" in params
+  ) {
     throw new Error("Plugin embedded-agent execution cannot supply host run authority.");
   }
   params.abortSignal?.throwIfAborted();

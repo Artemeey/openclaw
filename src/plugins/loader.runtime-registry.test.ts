@@ -1,4 +1,6 @@
 // Verifies plugin loader runtime registry behavior.
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -28,7 +30,12 @@ import {
   writePlugin,
 } from "./loader.test-fixtures.js";
 import { buildMemoryPromptSection, registerMemoryCapability } from "./memory-state.js";
+import {
+  preparePluginMetadata,
+  withPluginMetadataCollectionScope,
+} from "./plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
+import { normalizeProviderModelIdWithPlugin } from "./provider-runtime.js";
 import { createEmptyPluginRegistry } from "./registry.js";
 import { getActivePluginRegistry, setActivePluginRegistry } from "./runtime.js";
 import type { PluginRuntime } from "./runtime/types.js";
@@ -383,6 +390,68 @@ describe("resolvePluginLoadCacheContext", () => {
 });
 
 describe("resolveRuntimePluginRegistry", () => {
+  it.each(["current", "captured"] as const)(
+    "reuses registration for cold hook aliases and repeated provider misses with %s metadata",
+    (metadataSource) => {
+      const plugin = writePlugin({
+        id: "cold-alias-fixture",
+        body: `let registrations = 0;
+module.exports = {
+  id: "cold-alias-fixture",
+  register(api) {
+    const instance = ++registrations;
+    api.registerProvider({
+      id: "fixture-provider", label: "Fixture", auth: [],
+      hookAliases: ["fixture-runtime-alias"],
+      normalizeModelId: ({ modelId }) => modelId + ":registration-" + instance,
+    });
+  },
+};`,
+      });
+      fs.writeFileSync(
+        path.join(plugin.dir, "openclaw.plugin.json"),
+        JSON.stringify({
+          id: plugin.id,
+          providers: ["fixture-provider"],
+          configSchema: { type: "object", additionalProperties: false, properties: {} },
+        }),
+      );
+      const config: OpenClawConfig = {
+        plugins: {
+          allow: [plugin.id],
+          entries: { [plugin.id]: { enabled: true } },
+          load: { paths: [plugin.file] },
+          slots: { memory: "none" },
+        },
+      };
+      const metadata = preparePluginMetadata({
+        config,
+        workspaceDir: plugin.dir,
+        allowCurrent: false,
+      });
+      const normalize = (provider: string) =>
+        normalizeProviderModelIdWithPlugin({
+          provider,
+          config,
+          workspaceDir: plugin.dir,
+          ...(metadataSource === "captured"
+            ? { pluginMetadataSnapshot: metadata.selectedSnapshot }
+            : {}),
+          context: { provider, modelId: "model" },
+        });
+      withPluginMetadataCollectionScope(
+        metadata,
+        () => {
+          expect(normalize("fixture-runtime-alias")).toBe("model:registration-1");
+          expect(normalize("missing-one")).toBeUndefined();
+          expect(normalize("missing-two")).toBeUndefined();
+          expect(normalize("missing-one")).toBeUndefined();
+          expect(normalize("fixture-runtime-alias")).toBe("model:registration-1");
+        },
+        { config, workspaceDir: plugin.dir },
+      );
+    },
+  );
   it("falls back to the current active runtime when no explicit load context is provided", () => {
     const registry = createEmptyPluginRegistry();
     setActivePluginRegistry(registry, "startup-registry");

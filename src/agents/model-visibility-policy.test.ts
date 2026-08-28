@@ -129,6 +129,90 @@ describe("explicit model visibility policy", () => {
     expect(policy.allows({ provider: "anthropic", model: "claude-sonnet-4-6" })).toBe(false);
   });
 
+  it.each([
+    {
+      name: "allows only the plain model",
+      allow: ["custom/model"],
+      liveCatalog: true,
+      expected: [{ id: "model", name: "Plain", contextWindow: 8_000, alias: "plain" }],
+    },
+    {
+      name: "allows only the nested model",
+      allow: ["custom/custom/model"],
+      liveCatalog: true,
+      expected: [{ id: "custom/model", name: "Nested", contextWindow: 16_000, alias: "nested" }],
+    },
+    {
+      name: "retains both configured rows without a live catalog",
+      allow: [],
+      liveCatalog: false,
+      expected: [
+        { id: "model", name: "Plain", contextWindow: 8_000, alias: "plain" },
+        { id: "custom/model", name: "Nested", contextWindow: 16_000, alias: "nested" },
+      ],
+    },
+  ])(
+    "keeps exact configured model namespaces distinct: $name",
+    ({ allow, liveCatalog, expected }) => {
+      const cfg: OpenClawConfig = {
+        models: {
+          providers: {
+            custom: {
+              api: "openai-completions",
+              baseUrl: "https://custom.example/v1",
+              models: [
+                { id: "model", name: "Plain", contextWindow: 8_000 },
+                { id: "custom/model", name: "Nested", contextWindow: 16_000 },
+              ].map(({ id, name, contextWindow }) => ({
+                id,
+                name,
+                contextWindow,
+                reasoning: false,
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                maxTokens: 1_024,
+              })),
+            },
+          },
+        },
+        agents: {
+          defaults: {
+            models: {
+              "custom/model": { alias: "plain" },
+              "custom/custom/model": { alias: "nested" },
+            },
+            modelPolicy: { allow },
+          },
+        },
+      };
+      const policy = createModelVisibilityPolicy({
+        cfg,
+        catalog: liveCatalog
+          ? [
+              { provider: "custom", id: "model", name: "Discovered plain" },
+              { provider: "custom", id: "custom/model", name: "Discovered nested" },
+            ]
+          : [],
+        defaultProvider: "custom",
+      });
+
+      expect(policy.allows({ provider: "custom", model: "model" })).toBe(
+        expected.some((entry) => entry.id === "model"),
+      );
+      expect(policy.allows({ provider: "custom", model: "custom/model" })).toBe(
+        expected.some((entry) => entry.id === "custom/model"),
+      );
+      expect(
+        policy.allowedCatalog.map(({ id, name, contextWindow, alias }) => ({
+          id,
+          name,
+          contextWindow,
+          alias,
+        })),
+      ).toEqual(expected);
+    },
+  );
+
   it("keeps configured fallbacks failover-only while retaining the configured primary", () => {
     const policy = createPolicy({
       agents: {

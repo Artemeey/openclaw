@@ -1,6 +1,5 @@
 // Loads documented plugin public surfaces while preserving lazy boundaries.
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { openRootFileSync } from "../infra/boundary-file-read.js";
@@ -19,7 +18,7 @@ import {
   resolveBundledPluginPublicSurfacePath,
   resolvePluginRootPublicSurfacePath,
 } from "./public-surface-runtime.js";
-import { resolvePluginLoaderTryNative, resolveLoaderPackageRoot } from "./sdk-alias.js";
+import { resolveLoaderPackageRoot } from "./sdk-alias.js";
 
 const OPENCLAW_PACKAGE_ROOT =
   resolveLoaderPackageRoot({
@@ -27,7 +26,6 @@ const OPENCLAW_PACKAGE_ROOT =
     moduleUrl: import.meta.url,
   }) ?? fileURLToPath(new URL("../..", import.meta.url));
 const publicSurfaceModuleCache = new Map<string, unknown>();
-const sourceArtifactRequire = createRequire(import.meta.url);
 type PublicSurfaceLocation = {
   modulePath: string;
   boundaryRoot: string;
@@ -42,28 +40,6 @@ registerPluginMetadataProcessMemoLifecycleClear(() => {
   publicSurfaceModuleCache.clear();
   clearPluginModuleLoaderLifecycleCache({ moduleLoaders, moduleRoots: publicSurfaceModuleRoots });
 });
-
-function isSourceArtifactPath(modulePath: string): boolean {
-  switch (path.extname(modulePath).toLowerCase()) {
-    case ".ts":
-    case ".tsx":
-    case ".mts":
-    case ".cts":
-    case ".mtsx":
-    case ".ctsx":
-      return true;
-    default:
-      return false;
-  }
-}
-
-function canUseSourceArtifactRequire(params: { modulePath: string; tryNative: boolean }): boolean {
-  return (
-    !params.tryNative &&
-    isSourceArtifactPath(params.modulePath) &&
-    typeof sourceArtifactRequire.extensions?.[".ts"] === "function"
-  );
-}
 
 function createResolutionKey(params: { dirName: string; artifactBasename: string }): string {
   const bundledPluginsDir = resolveBundledPluginsDir();
@@ -109,22 +85,16 @@ function resolvePublicSurfaceLocation(params: {
   return resolved;
 }
 
-function getModuleLoader(modulePath: string) {
+function loadPublicSurfaceModule(modulePath: string): unknown {
+  // Ambient TypeScript hooks may be namespaced; only the plugin loader owns
+  // both source transformation and the SDK aliases required by public surfaces.
   return getCachedPluginModuleLoader({
     cache: moduleLoaders,
     modulePath,
     importerUrl: import.meta.url,
     preferBuiltDist: true,
     loaderFilename: import.meta.url,
-  });
-}
-
-function loadPublicSurfaceModule(modulePath: string): unknown {
-  const tryNative = resolvePluginLoaderTryNative(modulePath, { preferBuiltDist: true });
-  if (canUseSourceArtifactRequire({ modulePath, tryNative })) {
-    return sourceArtifactRequire(modulePath);
-  }
-  return getModuleLoader(modulePath)(modulePath);
+  })(modulePath);
 }
 
 function loadValidatedPublicSurfaceModule(params: {

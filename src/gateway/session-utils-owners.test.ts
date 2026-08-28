@@ -541,6 +541,14 @@ it("preserves list output across visibility, scope, owner, and search filters", 
 it("keeps the serialized list response deterministic for the current filter path", () => {
   vi.spyOn(Date, "now").mockReturnValue(1_000_000);
   const result = listSessionsFromStore({
+    modelCatalog: [
+      {
+        id: "gpt-5.4",
+        name: "GPT-5.4",
+        provider: "openai",
+        compat: { supportedReasoningEfforts: ["xhigh"] },
+      },
+    ],
     cfg: {
       agents: {
         defaults: { model: { primary: "openai/gpt-5.4" } },

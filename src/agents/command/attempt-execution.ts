@@ -490,6 +490,7 @@ export async function persistCliTurnTranscript(params: {
 }
 
 export function runAgentAttempt(params: {
+  expectedInitialModel?: RunEmbeddedAgentInternalParams["expectedInitialModel"];
   preparedRunAdmission: PreparedAgentRunAdmission;
   providerOverride: string;
   modelOverride: string;
@@ -1189,6 +1190,7 @@ export function runAgentAttempt(params: {
     sessionRoot: params.sessionEntry?.sessionRoot,
     config: params.cfg,
     ...(params.pluginGeneration ? { pluginGeneration: params.pluginGeneration } : {}),
+    expectedInitialModel: params.expectedInitialModel,
     agentHarnessId: embeddedAgentHarnessOverride,
     modelSelectionLocked: !isRawModelRun && params.sessionEntry?.modelSelectionLocked === true,
     agentHarnessRuntimeOverride: embeddedAgentHarnessOverride,

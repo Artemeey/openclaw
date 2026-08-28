@@ -1,6 +1,7 @@
 // Handles native slash commands before full get-reply pipeline execution.
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import type { QueueMode } from "../../../packages/gateway-protocol/src/schema/logs-chat.js";
+import type { ModelManifestPluginContext } from "../../agents/model-selection-shared.js";
 import {
   resolveModelRefFromString,
   resolveThinkingDefaultWithRuntimeCatalog,
@@ -137,6 +138,7 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
   defaultProvider: string;
   defaultModel: string;
   aliasIndex: ModelAliasIndex;
+  manifestPluginContext?: ModelManifestPluginContext;
   provider: string;
   model: string;
   workspaceDir: string;
@@ -209,6 +211,10 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
       params.provider === params.defaultProvider && params.model === params.defaultModel;
     const storedModelOverride = canApplyStoredModel
       ? resolveStoredModelOverride({
+          config: params.cfg,
+          agentId: params.agentId,
+          workspaceDir: params.workspaceDir,
+          manifestPluginContext: params.manifestPluginContext,
           sessionEntry: targetSessionEntry,
           sessionStore: sessionState.sessionStore,
           sessionKey: sessionState.sessionKey,

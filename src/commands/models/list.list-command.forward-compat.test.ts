@@ -90,6 +90,8 @@ const mocks = vi.hoisted(() => {
     models: {
       providers: {
         openai: {
+          baseUrl: "https://api.openai.com/v1",
+          models: [],
           apiKey: "sk-resolved-runtime-value", // pragma: allowlist secret
         },
       },
@@ -222,6 +224,7 @@ function modelRegistryOptions(index = 0): Record<string, unknown> {
 
 let modelsListCommand: typeof import("./list.list-command.js").modelsListCommand;
 let listRowsModule: typeof import("./list.rows.js");
+let formatModelRefForConfig: typeof import("../../agents/model-selection-shared.js").formatModelRefForConfig;
 
 function installModelsListCommandForwardCompatMocks() {
   const suppressOpenAiSpark = ({
@@ -282,11 +285,11 @@ function installModelsListCommandForwardCompatMocks() {
       };
     },
     loadConfiguredListModelRegistry: (
-      _cfg: unknown,
+      cfg: unknown,
       _entries: unknown,
       opts?: { providerFilter?: string; normalizeModels?: boolean },
     ) => {
-      mocks.loadModelRegistry(mocks.resolvedConfig, opts);
+      mocks.loadModelRegistry(cfg, opts);
       return {
         registry: {
           find: () => undefined,
@@ -365,6 +368,7 @@ function installModelsListCommandForwardCompatMocks() {
 beforeAll(async () => {
   installModelsListCommandForwardCompatMocks();
   listRowsModule = await import("./list.rows.js");
+  ({ formatModelRefForConfig } = await import("../../agents/model-selection-shared.js"));
   ({ modelsListCommand } = await import("./list.list-command.js"));
 });
 
@@ -373,6 +377,11 @@ async function buildAllOpenAiCodexRows(opts: { supplementCatalog?: boolean } = {
   const rows: unknown[] = [];
   const context = {
     cfg: mocks.resolvedConfig,
+    formatModelRef: (ref: { provider: string; model: string }) =>
+      formatModelRefForConfig(ref, {
+        cfg: mocks.resolvedConfig,
+        manifestPlugins: mocks.emptyPluginMetadataSnapshot.plugins,
+      }),
     agentDir: "/tmp/openclaw-agent",
     authIndex: {
       evaluateModelAuth: (provider: string) => ({
@@ -1065,6 +1074,13 @@ describe("modelsListCommand forward-compat", () => {
     });
 
     it("keeps configured local openai gpt-5.4 entries visible in --local output", async () => {
+      const localConfig = structuredClone(mocks.resolvedConfig);
+      localConfig.models.providers.openai.baseUrl = "http://localhost:4000/v1";
+      mocks.loadModelsConfigWithSource.mockResolvedValueOnce({
+        sourceConfig: localConfig,
+        resolvedConfig: localConfig,
+        diagnostics: [],
+      });
       mocks.resolveConfiguredEntries.mockReturnValueOnce({
         entries: [
           {
@@ -1080,7 +1096,7 @@ describe("modelsListCommand forward-compat", () => {
         id: "gpt-5.4",
         name: "GPT-5.4",
         api: "openai-responses",
-        baseUrl: "http://localhost:4000/v1",
+        baseUrl: localConfig.models.providers.openai.baseUrl,
         input: ["text", "image"],
         contextWindow: 1_050_000,
         maxTokens: 128_000,
@@ -1091,7 +1107,7 @@ describe("modelsListCommand forward-compat", () => {
       await modelsListCommand({ json: true, local: true }, runtime as never);
 
       expect(mocks.loadModelRegistry).toHaveBeenCalledWith(
-        mocks.resolvedConfig,
+        localConfig,
         expect.objectContaining({
           agentId: "main",
           agentDir: "/tmp/openclaw-agent",
@@ -1617,6 +1633,11 @@ describe("modelsListCommand forward-compat", () => {
         ] as never,
         context: {
           cfg: mocks.resolvedConfig,
+          formatModelRef: (ref: { provider: string; model: string }) =>
+            formatModelRefForConfig(ref, {
+              cfg: mocks.resolvedConfig,
+              manifestPlugins: mocks.emptyPluginMetadataSnapshot.plugins,
+            }),
           authIndex: {
             evaluateModelAuth: () => ({ availability: false, routeResolution: null }),
           },

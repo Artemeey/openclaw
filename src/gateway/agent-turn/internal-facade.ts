@@ -4,6 +4,7 @@ import {
   validateAgentParams,
   validateAgentWaitParams,
 } from "../../../packages/gateway-protocol/src/index.js";
+import type { ModelRef } from "../../agents/model-ref-shared.js";
 import type { GatewayMethodRegistry } from "../methods/registry.js";
 import {
   type GatewayMethodDispatchResponse,
@@ -34,6 +35,7 @@ type InternalAgentTurnFacadeOptions = {
 };
 
 type InternalAgentTurnDispatchOptions = {
+  expectedInitialModel?: Readonly<ModelRef>;
   expectFinal?: boolean;
   onAccepted?: (payload: unknown) => void;
   onExecutionStarted?: () => void;
@@ -153,7 +155,13 @@ export function createInternalAgentTurnFacade(options: InternalAgentTurnFacadeOp
         await createAgentTurnService(
           { context, isWebchatConnect },
           options.assertContextCurrent,
-        ).startTurn({ preflight, principal, io, onRunObserved });
+        ).startTurn({
+          preflight,
+          principal,
+          io,
+          onRunObserved,
+          expectedInitialModel: dispatchOptions.expectedInitialModel,
+        });
       },
       {
         context,

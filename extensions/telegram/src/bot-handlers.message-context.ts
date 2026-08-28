@@ -214,6 +214,8 @@ export function createTelegramMessageSessionRuntime({
     });
     const entry = loadSessionEntry({ storePath, sessionKey });
     const storedOverride = resolveStoredModelOverride({
+      config: params.runtimeCfg,
+      agentId: route.agentId,
       sessionEntry: entry,
       loadSessionEntry: (parentSessionKey) =>
         loadSessionEntry({ storePath, sessionKey: parentSessionKey }),

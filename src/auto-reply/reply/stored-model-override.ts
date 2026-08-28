@@ -35,25 +35,23 @@ export function normalizeStoredRuntimeModelRef(
   return canonicalProvider ? { ...normalized, provider: canonicalProvider } : normalized;
 }
 
-function resolveModelRefKey(params: {
-  defaultProvider: string;
-  overrideProvider?: string;
-  overrideModel?: string;
-}): string | null {
+function resolveModelRefKey(
+  params: {
+    defaultProvider: string;
+    overrideProvider?: string;
+    overrideModel?: string;
+  } & RuntimeModelNormalization,
+): string | null {
   const normalizedOverride = normalizeStoredOverrideModel({
     providerOverride: params.overrideProvider,
     modelOverride: params.overrideModel,
   });
   const ref = resolvePersistedOverrideModelRef({
-    defaultProvider: params.defaultProvider,
+    ...params,
     overrideProvider: normalizedOverride.providerOverride,
     overrideModel: normalizedOverride.modelOverride,
   });
-  if (!ref) {
-    return null;
-  }
-  const normalizedRef = normalizeModelRef(ref.provider, ref.model);
-  return modelKey(normalizedRef.provider, normalizedRef.model);
+  return ref ? modelKey(ref.provider, ref.model) : null;
 }
 
 /** Detects heartbeat auto-fallback overrides that no longer match the primary model. */
@@ -66,6 +64,7 @@ export function isStaleHeartbeatAutoFallbackOverride(params: {
   defaultModel: string;
   primaryProvider?: string;
   primaryModel?: string;
+  normalization: RuntimeModelNormalization | undefined;
 }): boolean {
   if (params.isHeartbeat !== true || params.hasResolvedHeartbeatModelOverride === true) {
     return false;
@@ -86,7 +85,12 @@ export function isStaleHeartbeatAutoFallbackOverride(params: {
     return false;
   }
 
+  const normalization = {
+    ...params.normalization,
+    ...params.normalization?.manifestPluginContext?.getContext(),
+  };
   const primaryKey = resolveModelRefKey({
+    ...normalization,
     defaultProvider: params.defaultProvider,
     overrideProvider: params.primaryProvider ?? params.defaultProvider,
     overrideModel: params.primaryModel ?? params.defaultModel,
@@ -96,6 +100,7 @@ export function isStaleHeartbeatAutoFallbackOverride(params: {
   }
 
   const originKey = resolveModelRefKey({
+    ...normalization,
     defaultProvider: params.defaultProvider,
     overrideProvider: entry.modelOverrideFallbackOriginProvider,
     overrideModel: entry.modelOverrideFallbackOriginModel,
@@ -105,6 +110,7 @@ export function isStaleHeartbeatAutoFallbackOverride(params: {
   }
 
   const noticeSelectedKey = resolveModelRefKey({
+    ...normalization,
     defaultProvider: params.defaultProvider,
     overrideModel: normalizeOptionalString(entry.fallbackNotice?.selectedModel),
   });
@@ -113,6 +119,7 @@ export function isStaleHeartbeatAutoFallbackOverride(params: {
   }
 
   const storedOverrideKey = resolveModelRefKey({
+    ...normalization,
     defaultProvider: params.defaultProvider,
     overrideProvider: params.storedOverride.provider,
     overrideModel: params.storedOverride.model,

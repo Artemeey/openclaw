@@ -6,6 +6,7 @@ import {
   releaseMainSessionRecoveryOwner,
   type MainSessionRecoveryOwnerLease,
 } from "../../agents/main-session-recovery/main-session-recovery-store.js";
+import type { ModelRef } from "../../agents/model-ref-shared.js";
 import { mergeSessionEntry, type SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { getAgentEventLifecycleGeneration } from "../../infra/agent-events.js";
@@ -36,6 +37,7 @@ import { persistAgentSessionPhase } from "./agent-session-persist.js";
 import type { AgentTurnIo, AgentTurnPrincipal } from "./types.js";
 
 type AgentTurnStartRequest = {
+  expectedInitialModel?: Readonly<ModelRef>;
   preflight: AgentRequestPreflight;
   principal: AgentTurnPrincipal | null;
   io: AgentTurnIo;
@@ -102,6 +104,7 @@ export function createAgentTurnService(
     principal,
     io,
     onRunObserved,
+    expectedInitialModel,
   }: AgentTurnStartRequest): Promise<void> => {
     if (replayAgentTurnIfCached({ preflight, context, io })) {
       return;
@@ -373,7 +376,6 @@ export function createAgentTurnService(
         sessionPersistedBeforeGatewayAdmission =
           preparedSession.sessionPersistedBeforeGatewayAdmission;
         isNewSession = preparedSession.isNewSession;
-        const sessionAgent = canonicalSessionAgentId;
         const requestDeliveryHint = normalizeDeliveryContext({
           channel: recipientChannel?.trim(),
           to,
@@ -388,7 +390,7 @@ export function createAgentTurnService(
             freshEntry,
             initialEntry: entry,
             cfg: cfgLocal,
-            sessionAgentId: sessionAgent,
+            sessionAgentId: canonicalSessionAgentId,
             canonicalSessionKey: canonicalKey,
             storePath,
             normalizedSpawned,
@@ -415,13 +417,10 @@ export function createAgentTurnService(
         sessionEntry = mergeSessionEntry(entry, patchBuild.patch);
         resolvedSessionId = sessionEntry?.sessionId ?? sessionId;
         admittedSessionId = resolvedSessionId ?? runId;
-        const canonicalSessionKey = canonicalKey;
-        resolvedSessionKey = canonicalSessionKey;
-        const sessionAgentId = canonicalSessionAgentId;
-        resolvedSessionAgentId = sessionAgentId;
-        const mainSessionKey = mainSessionKeyForRequest;
+        resolvedSessionKey = canonicalKey;
+        resolvedSessionAgentId = canonicalSessionAgentId;
         try {
-          await acquireGatewayWorkAdmission(storePath ?? `agent:${sessionAgentId}`);
+          await acquireGatewayWorkAdmission(storePath ?? `agent:${canonicalSessionAgentId}`);
         } catch (err) {
           io.emitAcceptance([
             false,
@@ -439,9 +438,9 @@ export function createAgentTurnService(
           storePath,
           storeKeys,
           entry,
-          canonicalSessionKey,
-          sessionAgentId,
-          mainSessionKey,
+          canonicalSessionKey: canonicalKey,
+          sessionAgentId: canonicalSessionAgentId,
+          mainSessionKey: mainSessionKeyForRequest,
           creation: resolveAgentRunSessionCreation(principal),
           ...(principal?.authenticatedUserProfile
             ? { requestingOperatorProfileId: principal.authenticatedUserProfile.profileId }
@@ -591,6 +590,7 @@ export function createAgentTurnService(
       // frame on the existing detached chain after the router returns its acceptance.
       startAgentRunExecution({
         assertContextCurrent,
+        expectedInitialModel,
         prepared: preparedDispatch,
         mainRestartRecoveryOwnerLease,
         request,

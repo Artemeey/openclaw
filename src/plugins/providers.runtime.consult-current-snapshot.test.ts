@@ -1,15 +1,31 @@
 // Verifies provider runtime uses current plugin metadata snapshots.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { overlayExternalAuthProfiles } from "../agents/auth-profiles/external-auth.js";
+import {
+  listRuntimeAuthProfileStoreSnapshots,
+  replaceRuntimeAuthProfileStoreSnapshots,
+  setRuntimeAuthProfileStoreSnapshot,
+} from "../agents/auth-profiles/runtime-snapshots.js";
+import { saveAuthProfileStore } from "../agents/auth-profiles/store.js";
+import type { AuthProfileStore } from "../agents/auth-profiles/types.js";
+import { FailoverError } from "../agents/failover-error.js";
+import { isFallbackSummaryError } from "../agents/model-fallback-attempt.js";
+import { runWithModelFallback } from "../agents/model-fallback-runner.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { setCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-snapshot.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
 import type { InstalledPluginIndex } from "./installed-plugin-index.js";
 import * as pluginLoader from "./loader.js";
 import type { PluginManifestRecord, PluginManifestRegistry } from "./manifest-registry.js";
 import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
-import { loadPluginMetadataSnapshot } from "./plugin-metadata-snapshot.js";
+import {
+  loadPluginMetadataSnapshot,
+  projectPluginMetadataSnapshot,
+} from "./plugin-metadata-snapshot.js";
 import { createEmptyPluginRegistry } from "./registry-empty.js";
 import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "./runtime.js";
+import { withPluginRuntimeRegistryScope } from "./runtime/gateway-request-scope.js";
 import { createPluginRecord } from "./status.test-helpers.js";
 
 // Mock the persisted-registry loaders so direct metadata loads are observable.
@@ -92,16 +108,21 @@ function makeManifestRegistry(pluginId = "demo"): PluginManifestRegistry {
 // Build a snapshot from a provided index (no disk) and register it as the
 // process-current snapshot, then clear the loader spies so later assertions only
 // see calls triggered by the function under test.
-function registerCurrentSnapshot(config: OpenClawConfig, workspaceDir = WORKSPACE) {
-  const index = makeIndex();
+function registerCurrentSnapshot(
+  config: OpenClawConfig,
+  workspaceDir = WORKSPACE,
+  pluginId = "demo",
+  env: NodeJS.ProcessEnv = {},
+) {
+  const index = makeIndex(pluginId);
   index.policyHash = resolveInstalledPluginIndexPolicyHash(config);
   loadPluginRegistrySnapshotWithMetadata.mockReturnValue({
     source: "runtime",
     snapshot: index,
     diagnostics: [],
   });
-  const snapshot = loadPluginMetadataSnapshot({ config, env: {}, index, workspaceDir });
-  setCurrentPluginMetadataSnapshot(snapshot, { config, env: {}, workspaceDir });
+  const snapshot = loadPluginMetadataSnapshot({ config, env, index, workspaceDir });
+  setCurrentPluginMetadataSnapshot(snapshot, { config, env, workspaceDir });
   loadPluginRegistrySnapshotWithMetadata.mockClear();
   loadPluginManifestRegistryForInstalledIndex.mockClear();
   return snapshot;
@@ -263,6 +284,275 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
   });
 
   describe("resolveExternalAuthProfilesWithPlugins", () => {
+    it.each(["order", "locked profile", "exhaustion"] as const)(
+      "keeps captured auth aliases for %s",
+      async (scenario) => {
+        const previousStores = listRuntimeAuthProfileStoreSnapshots();
+        onTestFinished(() => replaceRuntimeAuthProfileStoreSnapshots(previousStores));
+        await withOpenClawTestState({ scenario: "minimal" }, async () => {
+          const models = ["one", "two"].map((id) => ({
+            id,
+            name: id,
+            reasoning: false,
+            input: ["text" as const],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            maxTokens: 1_024,
+          }));
+          const config: OpenClawConfig = {
+            plugins: { entries: { captured: { enabled: true }, published: { enabled: true } } },
+            models: {
+              providers: {
+                route: { baseUrl: "https://route.example/v1", models },
+                backup: { baseUrl: "https://backup.example/v1", models },
+              },
+            },
+          };
+          const prepareAliases = (pluginId: string, workspaceDir: string) => {
+            const manifestRegistry = makeManifestRegistry(pluginId);
+            for (const plugin of manifestRegistry.plugins) {
+              plugin.providerAuthAliases = { route: pluginId };
+            }
+            loadPluginManifestRegistryForInstalledIndex.mockReturnValue(manifestRegistry);
+            return registerCurrentSnapshot(config, workspaceDir, pluginId, process.env);
+          };
+          const pluginMetadataSnapshot = prepareAliases("captured", WORKSPACE);
+          prepareAliases("published", "/workspace/b");
+          const store: AuthProfileStore = {
+            version: 1,
+            profiles: {
+              "captured:profile": { type: "api_key", provider: "captured", key: "fixture-a" },
+              "published:profile": { type: "api_key", provider: "published", key: "fixture-b" },
+              "backup:available": { type: "api_key", provider: "backup", key: "fixture-backup" },
+            },
+          };
+          const capturedCooldown = Date.now() + 60_000;
+          const publishedCooldown = capturedCooldown + 60_000;
+          if (scenario === "order") {
+            store.usageStats = {
+              "captured:profile": { disabledUntil: capturedCooldown, disabledReason: "auth" },
+            };
+          } else if (scenario === "locked profile") {
+            store.profiles["route:blocked"] = {
+              type: "api_key",
+              provider: "route",
+              key: "fixture-blocked",
+            };
+            store.order = { route: ["route:blocked"] };
+            store.usageStats = {
+              "route:blocked": { disabledUntil: capturedCooldown, disabledReason: "auth" },
+            };
+          } else {
+            // Attempts start from prepared auth, then exhaustion must read the
+            // newer persisted cooldowns through the same captured alias owner.
+            saveAuthProfileStore(
+              {
+                ...store,
+                usageStats: {
+                  "captured:profile": { disabledUntil: capturedCooldown, disabledReason: "auth" },
+                  "published:profile": { disabledUntil: publishedCooldown, disabledReason: "auth" },
+                },
+              },
+              undefined,
+              { filterExternalAuthProfiles: false, syncExternalCli: false },
+            );
+          }
+          setRuntimeAuthProfileStoreSnapshot(store);
+          const attempted: string[] = [];
+          const result = withPluginRuntimeRegistryScope(createEmptyPluginRegistry(), () =>
+            runWithModelFallback({
+              cfg: config,
+              provider: "route",
+              model: "one",
+              workspaceDir: WORKSPACE,
+              pluginMetadataSnapshot,
+              fallbacksOverride: [scenario === "exhaustion" ? "route/two" : "backup/one"],
+              ...(scenario === "locked profile"
+                ? { userLockedAuthProfileId: "captured:profile" }
+                : {}),
+              run: async (provider, model) => {
+                attempted.push(`${provider}/${model}`);
+                if (scenario === "exhaustion") {
+                  throw new FailoverError("fixture auth failure", {
+                    reason: "auth",
+                    provider,
+                    model,
+                  });
+                }
+                return provider;
+              },
+            }),
+          );
+          if (scenario === "exhaustion") {
+            const failure = await result.catch((error: unknown) => error);
+            expect(attempted).toEqual(["route/one", "route/two"]);
+            expect(
+              isFallbackSummaryError(failure) ? failure.soonestCooldownExpiry : undefined,
+            ).toBe(capturedCooldown);
+          } else {
+            const expectedProvider = scenario === "order" ? "backup" : "route";
+            expect(await result).toMatchObject({
+              outcome: "completed",
+              result: expectedProvider,
+              provider: expectedProvider,
+              model: "one",
+            });
+          }
+          expect(loadPluginRegistrySnapshotWithMetadata.mock.calls.length).toBe(0);
+          expect(loadPluginManifestRegistryForInstalledIndex.mock.calls.length).toBe(0);
+        });
+      },
+    );
+
+    it.each([
+      {
+        scope: "captured workspace",
+        surface: "overlay",
+        pluginIds: ["captured"],
+        expected: ["captured:prepared"],
+      },
+      { scope: "explicit empty workspace", surface: "overlay", pluginIds: [], expected: [] },
+      {
+        scope: "captured workspace during fallback admission",
+        surface: "fallback",
+        pluginIds: ["captured"],
+        expected: ["captured:prepared"],
+      },
+    ])(
+      "keeps external auth on the $scope after another workspace is published",
+      async ({ surface, pluginIds, expected }) => {
+        const env = surface === "fallback" ? process.env : {};
+        const configuredModel = {
+          id: "model",
+          name: "Fixture model",
+          reasoning: false,
+          input: ["text" as const],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          maxTokens: 1_024,
+        };
+        const config: OpenClawConfig = {
+          plugins: { entries: { captured: { enabled: true }, published: { enabled: true } } },
+          ...(surface === "fallback"
+            ? {
+                models: {
+                  providers: {
+                    captured: {
+                      baseUrl: "https://captured.example/v1",
+                      models: [configuredModel],
+                    },
+                    backup: {
+                      baseUrl: "https://backup.example/v1",
+                      models: [configuredModel],
+                    },
+                  },
+                },
+              }
+            : {}),
+        };
+        const prepareWorkspace = (pluginId: string, workspaceDir: string) => {
+          const manifestRegistry = makeManifestRegistry(pluginId);
+          for (const plugin of manifestRegistry.plugins) {
+            plugin.contracts = { externalAuthProviders: [pluginId] };
+          }
+          loadPluginManifestRegistryForInstalledIndex.mockReturnValue(manifestRegistry);
+          const snapshot = registerCurrentSnapshot(config, workspaceDir, pluginId, env);
+          const registry = createEmptyPluginRegistry();
+          const rootDir = `/plugins/${pluginId}`;
+          registry.plugins.push(
+            createPluginRecord({
+              id: pluginId,
+              origin: "global",
+              rootDir,
+              source: `${rootDir}/index.js`,
+              providerIds: [pluginId],
+            }),
+          );
+          registry.providers.push({
+            pluginId,
+            rootDir,
+            source: `${rootDir}/index.js`,
+            provider: {
+              id: pluginId,
+              label: pluginId,
+              auth: [],
+              resolveExternalAuthProfiles: (context) => [
+                {
+                  profileId: `${pluginId}:${context.config === config && context.workspaceDir === workspaceDir ? "prepared" : "ambient"}`,
+                  credential: {
+                    type: "oauth",
+                    provider: pluginId,
+                    access: "fixture-access",
+                    refresh: "fixture-refresh",
+                    expires: Date.now() + 60_000,
+                  },
+                },
+              ],
+            },
+          });
+          return { snapshot, registry };
+        };
+        const captured = prepareWorkspace("captured", WORKSPACE);
+        const pluginMetadataSnapshot = projectPluginMetadataSnapshot(captured.snapshot, {
+          pluginIds,
+        });
+        const publishedWorkspace = "/workspace/b";
+        const published = prepareWorkspace("published", publishedWorkspace);
+        setActivePluginRegistry(published.registry, undefined, "default", publishedWorkspace);
+        const overlayOptions = {
+          config,
+          workspaceDir: WORKSPACE,
+          pluginMetadataSnapshot,
+          env: {},
+          allowKeychainPrompt: false,
+        };
+
+        if (surface === "fallback") {
+          const previousStores = listRuntimeAuthProfileStoreSnapshots();
+          onTestFinished(() => replaceRuntimeAuthProfileStoreSnapshots(previousStores));
+          setRuntimeAuthProfileStoreSnapshot({
+            version: 1,
+            profiles: {
+              "captured:blocked": { type: "api_key", provider: "captured", key: "fixture-key" },
+              "backup:available": { type: "api_key", provider: "backup", key: "fixture-backup" },
+            },
+            usageStats: {
+              "captured:blocked": {
+                disabledUntil: Date.now() + 60_000,
+                disabledReason: "auth",
+              },
+            },
+          });
+          const result = await withPluginRuntimeRegistryScope(captured.registry, () =>
+            runWithModelFallback({
+              cfg: config,
+              provider: "captured",
+              model: "model",
+              workspaceDir: WORKSPACE,
+              pluginMetadataSnapshot,
+              fallbacksOverride: ["backup/model"],
+              userLockedAuthProfileId: "captured:prepared",
+              run: async (provider) => provider,
+            }),
+          );
+          expect(result).toMatchObject({
+            outcome: "completed",
+            result: "captured",
+            provider: "captured",
+            model: "model",
+          });
+          expect(loadPluginRegistrySnapshotWithMetadata.mock.calls.length).toBe(0);
+          expect(loadPluginManifestRegistryForInstalledIndex.mock.calls.length).toBe(0);
+        } else {
+          const store = withPluginRuntimeRegistryScope(captured.registry, () =>
+            overlayExternalAuthProfiles({ version: 1, profiles: {} }, overlayOptions),
+          );
+
+          expect(Object.keys(store.profiles)).toEqual(expected);
+          expect(loadPluginRegistrySnapshotWithMetadata).not.toHaveBeenCalled();
+          expect(loadPluginManifestRegistryForInstalledIndex).not.toHaveBeenCalled();
+        }
+      },
+    );
+
     it("reuses a compatible current snapshot without a direct disk load", () => {
       const config: OpenClawConfig = {};
       registerCurrentSnapshot(config);

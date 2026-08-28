@@ -13,6 +13,7 @@ import {
   type MainSessionRecoveryPendingTarget,
   type MainSessionRecoveryOwnerLease,
 } from "../../agents/main-session-recovery/main-session-recovery-store.js";
+import type { ModelRef } from "../../agents/model-ref-shared.js";
 import { loadPublishedGatewayReplyDispatchRuntime } from "../../agents/prepared-model-runtime.js";
 import { resolveScheduledToolPolicyContext } from "../../agents/scheduled-tool-policy.js";
 import { resolveIngressWorkspaceOverrideForSessionRun } from "../../agents/spawned-context.js";
@@ -66,6 +67,7 @@ import type { AgentTurnContext, AgentTurnIo, AgentTurnPrincipal } from "./types.
 
 export function startAgentRunExecution(params: {
   assertContextCurrent?: () => void;
+  expectedInitialModel?: Readonly<ModelRef>;
   prepared: PreparedAgentRunDispatch;
   mainRestartRecoveryOwnerLease?: MainSessionRecoveryOwnerLease;
   request: AgentRunRequest;
@@ -290,6 +292,7 @@ export function startAgentRunExecution(params: {
             commandRuntimeContext: {
               config: replyDispatchRuntime.config,
               pluginGeneration: replyDispatchRuntime.pluginGeneration,
+              expectedInitialModel: params.expectedInitialModel,
             },
             cronCreatorAuthority: prepared.cronCreatorAuthority,
             ingressOpts: {

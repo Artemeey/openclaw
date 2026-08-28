@@ -1021,6 +1021,49 @@ describe("model-selection", () => {
       });
     });
 
+    it.each([
+      { name: "keeps both aliases", disableNested: false },
+      { name: "disables only the nested model's alias", disableNested: true },
+    ])("distinguishes exact configured model namespaces: $name", ({ disableNested }) => {
+      const cfg: OpenClawConfig = {
+        models: {
+          providers: {
+            custom: {
+              api: "openai-completions",
+              baseUrl: "https://custom.example/v1",
+              models: ["model", "custom/model"].map((id) => ({
+                id,
+                name: id,
+                reasoning: false,
+                input: ["text"],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                maxTokens: 1_024,
+              })),
+            },
+          },
+        },
+        agents: {
+          defaults: {
+            models: {
+              "custom/model": { alias: "plain" },
+              "custom/custom/model": { alias: "nested" },
+            },
+          },
+          entries: {
+            worker: {
+              models: disableNested ? { "custom/custom/model": { alias: "" } } : {},
+            },
+          },
+        },
+      };
+      const index = buildModelAliasIndex({ cfg, agentId: "worker", defaultProvider: "custom" });
+
+      expect(index.byAlias.get("plain")?.ref).toEqual({ provider: "custom", model: "model" });
+      expect(index.byAlias.get("nested")?.ref).toEqual(
+        disableNested ? undefined : { provider: "custom", model: "custom/model" },
+      );
+    });
+
     it("does not normalize configured model keys that have no alias", () => {
       providerModelNormalizationMock.normalizeProviderModelIdWithRuntime.mockClear();
       const models = Object.fromEntries(
@@ -2519,6 +2562,53 @@ describe("model-selection", () => {
       } as OpenClawConfig;
 
       expect(resolveAnthropicOpusThinking(cfg)).toBe(thinking);
+    });
+
+    it.each([
+      { name: "authored", entry: { params: { thinking: "high" } }, expected: "high" },
+      { name: "empty", entry: {}, expected: "medium" },
+      { name: "absent", entry: undefined, expected: "medium" },
+    ])("keeps $name thinking settings scoped to the exact nested model", ({ entry, expected }) => {
+      const cfg = {
+        models: {
+          providers: {
+            custom: { api: "openai-completions", baseUrl: "https://custom.example/v1", models: [] },
+          },
+        },
+        agents: {
+          defaults: {
+            thinkingDefault: "medium",
+            models: {
+              "custom/model": { params: { thinking: "low" } },
+              ...(entry ? { "custom/custom/model": entry } : {}),
+            },
+          },
+        },
+      } satisfies OpenClawConfig;
+
+      expect(
+        resolveThinkingDefault({ cfg, provider: "custom", model: "custom/model", catalog: [] }),
+      ).toBe(expected);
+    });
+
+    it("resolves per-model thinking from a shipped short OpenRouter ref after normalization", () => {
+      const cfg = {
+        agents: {
+          defaults: {
+            models: { "openrouter/auto": { params: { thinking: "high" } } },
+          },
+        },
+      } satisfies OpenClawConfig;
+      const ref = parseModelRef("openrouter/auto", "openai", {
+        allowManifestNormalization: false,
+        allowPluginNormalization: false,
+      });
+      expect(ref).toEqual({ provider: "openrouter", model: "openrouter/auto" });
+      if (!ref) {
+        throw new Error("Expected the shipped OpenRouter ref to parse");
+      }
+
+      expect(resolveThinkingDefault({ cfg, ...ref, catalog: [] })).toBe("high");
     });
 
     it("accepts legacy duplicated OpenRouter keys for per-model thinking", () => {

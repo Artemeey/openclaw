@@ -2,8 +2,11 @@ import { hasAgentRosterProperty } from "../agents/agent-scope-config.js";
 import {
   listAgentEntries,
   listAgentEntriesWithSource,
+  resolveAgentDir,
   resolveAgentExplicitModelPrimary,
   resolveAgentModelFallbacksOverride,
+  resolveAgentWorkspaceDir,
+  resolveDefaultAgentId,
   tryResolveLegacyCompatibilityAgentId,
 } from "../agents/agent-scope.js";
 import { DEFAULT_PROVIDER } from "../agents/defaults.js";
@@ -11,6 +14,7 @@ import { splitTrailingAuthProfile } from "../agents/model-ref-profile.js";
 import { resolveDefaultModelForAgent } from "../agents/model-selection-config.js";
 import {
   buildModelAliasIndex,
+  type ModelSelectionNormalizationContext,
   resolveConfiguredModelRef,
   resolveModelRefFromString,
 } from "../agents/model-selection-shared.js";
@@ -23,6 +27,7 @@ import {
 import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
 import { normalizeAgentId } from "../routing/session-key.js";
 import { formatCliCommand } from "./command-format.js";
 
@@ -170,10 +175,14 @@ function collectTouchedTextModelRefs(params: {
   const touchedRefs = refs.filter((ref) => {
     if (ref.fallback && defaultPrimaryProviderChanged) {
       const previousRef = previousRefsByIdentity?.get(modelRefComparisonKey(ref));
-      const nextResolved = resolveCanonicalFallbackRef(params.config, ref.value);
+      const nextResolved = resolveCanonicalModelRef(params.config, ref, {
+        allowPluginNormalization: true,
+      });
       const previousResolved =
         params.previousConfig && previousRef
-          ? resolveCanonicalFallbackRef(params.previousConfig, previousRef.value)
+          ? resolveCanonicalModelRef(params.previousConfig, previousRef, {
+              allowPluginNormalization: true,
+            })
           : undefined;
       if (
         !nextResolved ||
@@ -242,49 +251,58 @@ function collectTouchedTextModelRefs(params: {
   return touchedRefs;
 }
 
-function resolveCanonicalPrimaryRef(
+type ModelRefNormalizationOptions = ModelSelectionNormalizationContext & {
+  allowPluginNormalization?: boolean;
+};
+
+function resolveFallbackRef(
   config: OpenClawConfig,
-  value: string,
-): { provider: string; model: string } | undefined {
-  const validationConfig: OpenClawConfig = {
-    ...config,
-    agents: {
-      ...config.agents,
-      defaults: {
-        ...config.agents?.defaults,
-        model: value,
-      },
-    },
+  ref: Pick<TouchedModelRef, "value" | "agentId">,
+  options: ModelRefNormalizationOptions = {},
+) {
+  const agentId = ref.agentId ?? tryResolveLegacyCompatibilityAgentId(config);
+  const defaultProvider = resolveDefaultModelForAgent({
+    allowPluginNormalization: false,
+    ...options,
+    cfg: config,
+  }).provider;
+  const params = {
+    allowPluginNormalization: false,
+    workspaceDir:
+      options.workspaceDir ?? (agentId ? resolveAgentWorkspaceDir(config, agentId) : undefined),
+    ...options,
+    cfg: config,
+    agentId,
+    raw: ref.value,
+    defaultProvider,
   };
+  return resolveModelRefFromString({
+    ...params,
+    aliasIndex: buildModelAliasIndex(params),
+  });
+}
+
+function resolveCanonicalModelRef(
+  config: OpenClawConfig,
+  ref: Pick<TouchedModelRef, "value" | "agentId" | "fallback">,
+  options: ModelRefNormalizationOptions = {},
+): { provider: string; model: string } | undefined {
+  if (ref.fallback) {
+    return resolveFallbackRef(config, ref, options)?.ref;
+  }
+  const agentId = ref.agentId ?? tryResolveLegacyCompatibilityAgentId(config);
   const resolved = resolveConfiguredModelRef({
-    cfg: validationConfig,
+    allowPluginNormalization: false,
+    workspaceDir:
+      options.workspaceDir ?? (agentId ? resolveAgentWorkspaceDir(config, agentId) : undefined),
+    ...options,
+    cfg: config,
+    agentId,
+    rawModel: ref.value,
     defaultProvider: DEFAULT_PROVIDER,
     defaultModel: "",
-    allowPluginNormalization: true,
   });
   return resolved.model ? resolved : undefined;
-}
-
-function resolveFallbackRef(config: OpenClawConfig, value: string) {
-  const defaultProvider = resolveDefaultModelForAgent({ cfg: config }).provider;
-  return resolveModelRefFromString({
-    cfg: config,
-    raw: value,
-    defaultProvider,
-    aliasIndex: buildModelAliasIndex({
-      cfg: config,
-      defaultProvider,
-      allowPluginNormalization: true,
-    }),
-    allowPluginNormalization: true,
-  });
-}
-
-function resolveCanonicalFallbackRef(
-  config: OpenClawConfig,
-  value: string,
-): { provider: string; model: string } | undefined {
-  return resolveFallbackRef(config, value)?.ref;
 }
 
 function hasUnresolvedInheritedFallbackProvider(
@@ -307,7 +325,7 @@ function hasUnresolvedInheritedFallbackProvider(
   const primaryModel = splitTrailingAuthProfile(primary).model;
   const slash = primaryModel.indexOf("/");
   const provider = slash > 0 ? primaryModel.slice(0, slash) : primaryModel;
-  const fallback = resolveFallbackRef(config, ref.value);
+  const fallback = resolveFallbackRef(config, ref);
   return Boolean(fallback && !fallback.alias && containsEnvVarReference(provider));
 }
 
@@ -376,17 +394,12 @@ function validateModelRefSyntax(
   if (unresolvedPaths.has(modelRefEnvSourcePath(ref.path))) {
     return "Model reference contains an unresolved environment variable";
   }
-  const resolved = ref.fallback
-    ? resolveCanonicalFallbackRef(config, ref.value)
-    : resolveCanonicalPrimaryRef(config, ref.value);
+  const resolved = resolveCanonicalModelRef(config, ref);
   return resolved ? undefined : "Invalid model reference or configured model alias target";
 }
 
 async function createRuntimeModelRefResolver(): Promise<ConfigModelRefResolver> {
-  const [agentScope, modelSelection] = await Promise.all([
-    import("../agents/agent-scope.js"),
-    import("../agents/model-selection.js"),
-  ]);
+  const { isCliProvider } = await import("../agents/model-selection-cli.js");
   const preparedByAgent = new Map<
     string,
     Awaited<ReturnType<typeof loadPreparedModelCatalogOwnerSnapshot>>
@@ -406,54 +419,73 @@ async function createRuntimeModelRefResolver(): Promise<ConfigModelRefResolver> 
     ]));
 
   return async ({ config, ref }) => {
-    const resolvedRef = ref.fallback
-      ? resolveCanonicalFallbackRef(config, ref.value)
-      : resolveCanonicalPrimaryRef(config, ref.value);
-    if (!resolvedRef) {
+    const staticRef = resolveCanonicalModelRef(config, ref);
+    if (!staticRef) {
       return `Unknown model: ${ref.value}`;
     }
     // CLI backends validate their own ids and do not require a roster-owned catalog.
-    if (modelSelection.isCliProvider(resolvedRef.provider, config)) {
+    if (isCliProvider(staticRef.provider, config)) {
       return undefined;
     }
     const targetAgentId =
-      ref.agentId ??
-      agentScope.tryResolveLegacyCompatibilityAgentId(config) ??
-      agentScope.resolveDefaultAgentId(config);
-    const agentDir = agentScope.resolveAgentDir(config, targetAgentId);
-    const workspaceDir = agentScope.resolveAgentWorkspaceDir(config, targetAgentId);
+      ref.agentId ?? tryResolveLegacyCompatibilityAgentId(config) ?? resolveDefaultAgentId(config);
+    const agentDir = resolveAgentDir(config, targetAgentId);
+    const workspaceDir = resolveAgentWorkspaceDir(config, targetAgentId);
     const [modelRuntime, preparedCatalog] = await loadModelModules();
 
-    let prepared = preparedByAgent.get(targetAgentId);
-    if (!prepared) {
-      prepared = await preparedCatalog.loadPreparedModelCatalogOwnerSnapshot({
+    const prepared =
+      preparedByAgent.get(targetAgentId) ??
+      (await preparedCatalog.loadPreparedModelCatalogOwnerSnapshot({
         agentId: targetAgentId,
         agentDir,
         config,
         readOnly: true,
         workspaceDir,
-      });
-      preparedByAgent.set(targetAgentId, prepared);
-    }
-    const stores = prepared.createStores();
-    const resolution = await modelRuntime.resolveModelAsync(
-      resolvedRef.provider,
-      resolvedRef.model,
-      agentDir,
-      config,
+      }));
+    preparedByAgent.set(targetAgentId, prepared);
+    // Read-only catalogs omit executable registries. Pin their metadata without disabling
+    // validation's lazy provider model-id normalization hooks with an empty registry.
+    return await withPluginMetadataSnapshotScope(
+      prepared.metadataSnapshot,
+      async () => {
+        const resolvedRef = resolveCanonicalModelRef(
+          config,
+          { ...ref, agentId: targetAgentId },
+          {
+            allowPluginNormalization: true,
+            workspaceDir,
+            pluginMetadataSnapshot: prepared.metadataSnapshot,
+          },
+        );
+        if (!resolvedRef) {
+          return `Unknown model: ${ref.value}`;
+        }
+        const stores = prepared.createStores();
+        const resolution = await modelRuntime.resolveModelAsync(
+          resolvedRef.provider,
+          resolvedRef.model,
+          agentDir,
+          config,
+          {
+            agentId: targetAgentId,
+            allowBundledStaticCatalogFallback: true,
+            authStorage: stores.authStorage,
+            ...(ref.authProfileId ? { authProfileId: ref.authProfileId } : {}),
+            modelRegistry: stores.modelRegistry,
+            preparedModelRuntime: prepared,
+            workspaceDir,
+          },
+        );
+        return resolution.model
+          ? undefined
+          : (resolution.error ?? `Unknown model: ${resolvedRef.provider}/${resolvedRef.model}`);
+      },
       {
-        agentId: targetAgentId,
-        allowBundledStaticCatalogFallback: true,
-        authStorage: stores.authStorage,
-        ...(ref.authProfileId ? { authProfileId: ref.authProfileId } : {}),
-        modelRegistry: stores.modelRegistry,
-        preparedModelRuntime: prepared,
+        config,
         workspaceDir,
+        preparedConfigFingerprint: prepared.metadataSnapshot.configFingerprint,
       },
     );
-    return resolution.model
-      ? undefined
-      : (resolution.error ?? `Unknown model: ${resolvedRef.provider}/${resolvedRef.model}`);
   };
 }
 

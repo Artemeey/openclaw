@@ -442,6 +442,12 @@ const config = {
   },
   workspaces: {
     ".": {
+      // tsdown emits this facade under dist/plugins for callers in root-level chunks.
+      paths: {
+        "./plugins/provider-model-normalization.runtime.js": [
+          "./src/plugins/provider-model-normalization.runtime.ts",
+        ],
+      },
       ignoreDependencies: [
         "@openclaw/*",
         // Cloudflare template dependency: declared in scripts/cloudflare/package.json

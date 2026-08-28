@@ -1,4 +1,5 @@
 // Resolves public model catalogs without exposing runtime-only provider params.
+import { buildModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import type { ModelChoice } from "../../../packages/gateway-protocol/src/schema/agents-models-skills.js";
 import type { PreparedAgentCredentialModes } from "../../agents/agent-auth-credential-modes.js";
@@ -29,7 +30,6 @@ import {
   resolveLogicalVisibleModelCatalog,
 } from "../../agents/model-catalog-visibility.js";
 import type { ModelCatalogSnapshot, ModelCatalogEntry } from "../../agents/model-catalog.types.js";
-import { modelKey } from "../../agents/model-ref-shared.js";
 import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
 import {
   createModelVisibilityPolicy,
@@ -363,7 +363,9 @@ async function buildPublicModelsListEntries(params: {
 }): Promise<ModelsListEntryWithCapabilities[]> {
   return Promise.all(
     params.catalog.map(async (entry): Promise<ModelsListEntryWithCapabilities> => {
-      const configuredEntry = params.configuredEntriesByKey.get(modelKey(entry.provider, entry.id));
+      const configuredEntry = params.configuredEntriesByKey.get(
+        buildModelCatalogRef(entry.provider, entry.id),
+      );
       const alias = configuredEntry?.aliases.at(-1);
       const publicEntry = configuredEntry?.aliasDisabled
         ? { ...entry, alias: undefined }
@@ -602,6 +604,8 @@ export async function buildModelsListResult(
     defaultModel,
     ...RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
     manifestPlugins: metadataSnapshot.plugins,
+    pluginMetadataSnapshot: metadataSnapshot,
+    workspaceDir,
   }).byKey;
   if (view === "provider-config") {
     const sourceConfig = getRuntimeConfigSourceSnapshot() ?? cfg;
@@ -654,7 +658,9 @@ export async function buildModelsListResult(
     defaultModel,
     agentId,
     ...RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
-    manifestPlugins: metadataSnapshot?.plugins,
+    manifestPlugins: metadataSnapshot.plugins,
+    pluginMetadataSnapshot: metadataSnapshot,
+    workspaceDir,
   });
   const evaluateEntry =
     (usedPreloadedCatalog ? params.catalogProjector?.evaluateEntry : undefined) ??

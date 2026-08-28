@@ -13,7 +13,9 @@ import {
 import { resolveConversationCapabilityProfile } from "../../agents/conversation-capability-profile.js";
 import { projectConversationToolNames } from "../../agents/conversation-tool-policy-pipeline.js";
 import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
+import { createModelManifestPluginContext } from "../../agents/model-selection-shared.js";
 import { resolveModelRefFromString } from "../../agents/model-selection.js";
+import { RUNTIME_MODEL_VISIBILITY_NORMALIZATION } from "../../agents/model-visibility-policy.js";
 import { publishedModelCatalogOwnerMatchesAgent } from "../../agents/prepared-model-catalog-owner.js";
 import { resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
@@ -374,6 +376,17 @@ export async function getReplyFromConfig(
   const preparedWorkspaceDir = preparedReplyDispatchRuntime?.workspaceDir;
   const preparedModelCatalog: ModelCatalogSnapshot | undefined =
     preparedReplyDispatchRuntime?.modelCatalog;
+  // Capture the admitted packet before awaited session work. Stored pins resolve
+  // this lazy context only when needed, without borrowing a later publication.
+  const runtimeModelNormalization = {
+    ...RUNTIME_MODEL_VISIBILITY_NORMALIZATION,
+    manifestPluginContext: createModelManifestPluginContext({
+      cfg,
+      agentId,
+      workspaceDir: preparedWorkspaceDir,
+      pluginMetadataSnapshot: preparedReplyDispatchRuntime?.pluginGeneration.pluginMetadataSnapshot,
+    }),
+  };
   const traceAttributes = resolverTiming.measureSync("reply.resolve_trace_context", () => ({
     surface: normalizeOptionalString(finalized.Surface ?? finalized.Provider) ?? "unknown",
     hasSessionKey: Boolean(agentSessionKey),
@@ -491,6 +504,7 @@ export async function getReplyFromConfig(
     "reply.native_slash_command_fast_path",
     () =>
       maybeResolveNativeSlashCommandFastReply({
+        manifestPluginContext: runtimeModelNormalization.manifestPluginContext,
         ctx: finalized,
         cfg,
         agentId,
@@ -741,6 +755,7 @@ export async function getReplyFromConfig(
         agentId,
         agentDir,
         workspaceDir,
+        manifestPluginContext: runtimeModelNormalization.manifestPluginContext,
         resetTriggered,
         bodyStripped,
         sessionCtx,
@@ -810,6 +825,7 @@ export async function getReplyFromConfig(
     normalizeOptionalString(sessionEntry.providerOverride),
   );
   const storedModelOverride = resolveStoredModelOverride({
+    ...runtimeModelNormalization,
     sessionEntry,
     sessionStore,
     sessionKey,
@@ -830,6 +846,7 @@ export async function getReplyFromConfig(
       defaultModel,
       primaryProvider,
       primaryModel,
+      normalization: runtimeModelNormalization,
     });
   const staleLegacyAutoFallbackWithoutOrigin =
     !sessionModelSelectionLocked &&
@@ -997,6 +1014,7 @@ export async function getReplyFromConfig(
       opts: withExtractedFileImages(resolvedOpts, extractedFileImages),
       skillFilter: mergedSkillFilter,
       preparedModelCatalog,
+      manifestPluginContext: runtimeModelNormalization.manifestPluginContext,
     }),
   );
   if (directiveResult.kind === "reply") {

@@ -487,6 +487,8 @@ snapshots; OpenClaw owns all persistence and lifecycle coordination.
     Model overrides (`provider`/`model`) require operator opt-in via `plugins.entries.<id>.subagent.allowModelOverride: true` in config. Untrusted plugins can still run subagents, but override requests are rejected.
     </Warning>
 
+    For background calls without an operator request, `subagent.allowedModels` can restrict overrides to canonical `provider/model` targets. A finite allowlist binds the authorized initial target to the calling runtime's metadata. If the destination workspace resolves the override to a different model, the run fails before inference. ACP sessions reject these constrained overrides because they cannot guarantee that initial model selection. Configured automatic fallbacks remain separate from override authorization.
+
     `toolsAlsoAllow` adds exact, uniquely owned tools registered by the calling plugin to the worker's normal tool surface. The runtime rejects core tools and names shared with another plugin. Profiles and operator tool policies still apply, including explicit allowlists and denies.
 
     `completionDelivery: "current-requester"` is default-off and is only available while a `before_dispatch` hook is handling an authenticated inbound request. OpenClaw captures the canonical requester session and delivery route before invoking the plugin, then delivers the subagent completion through the normal announce path. Plugins cannot provide or override requester lineage or destination fields. Calls outside that requester-bound hook context are rejected.

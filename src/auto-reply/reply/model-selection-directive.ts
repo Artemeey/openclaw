@@ -1,16 +1,16 @@
 // Normalizes model selection directives into provider and model ids.
+import { buildModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
-import { modelKey } from "../../agents/model-ref-shared.js";
 import {
   isModelKeyAllowedBySet,
   type ModelAliasIndex,
+  type ModelSelectionNormalizationContext,
   resolveConfiguredModelPolicyAllow,
   resolveModelRefFromString,
 } from "../../agents/model-selection-shared.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-export { modelKey };
 export type { ModelAliasIndex };
 
 /** Resolved model choice from a `/model` directive. */
@@ -52,15 +52,6 @@ const FUZZY_VARIANT_TOKENS = [
   "small",
   "nano",
 ];
-
-/** Resolves an explicit model directive string into a provider/model ref. */
-export function resolveModelRefFromDirectiveString(params: {
-  raw: string;
-  defaultProvider: string;
-  aliasIndex: ModelAliasIndex;
-}): { ref: { provider: string; model: string }; alias?: string } | null {
-  return resolveModelRefFromString(params);
-}
 
 function boundedLevenshteinDistance(a: string, b: string, maxDistance: number): number | null {
   if (a === b) {
@@ -138,7 +129,7 @@ function scoreFuzzyMatch(params: {
   const providerLower = normalizeLowercaseStringOrEmpty(provider);
   const modelLower = normalizeLowercaseStringOrEmpty(model);
   const haystack = `${providerLower}/${modelLower}`;
-  const key = modelKey(provider, model);
+  const key = buildModelCatalogRef(provider, model);
 
   const scoreFragment = (
     value: string,
@@ -225,23 +216,25 @@ function scoreFuzzyMatch(params: {
 }
 
 /** Resolves a `/model` directive into an allowlisted model selection or error. */
-export function resolveModelDirectiveSelection(params: {
-  raw: string;
-  defaultProvider: string;
-  defaultModel: string;
-  aliasIndex: ModelAliasIndex;
-  allowedModelKeys: Set<string>;
-  cfg?: OpenClawConfig;
-  agentId?: string;
-  rawRuntime?: string | undefined;
-}): { selection?: ModelDirectiveSelection; error?: string } {
+export function resolveModelDirectiveSelection(
+  params: {
+    raw: string;
+    defaultProvider: string;
+    defaultModel: string;
+    aliasIndex: ModelAliasIndex;
+    allowedModelKeys: Set<string>;
+    cfg?: OpenClawConfig;
+    agentId?: string;
+    rawRuntime?: string | undefined;
+  } & ModelSelectionNormalizationContext,
+): { selection?: ModelDirectiveSelection; error?: string } {
   const { raw, defaultProvider, defaultModel, aliasIndex, allowedModelKeys } = params;
 
   const rawTrimmed = raw.trim();
   const rawLower = normalizeLowercaseStringOrEmpty(rawTrimmed);
 
   const pickAliasForKey = (provider: string, model: string): string | undefined =>
-    aliasIndex.byKey.get(modelKey(provider, model))?.[0];
+    aliasIndex.byKey.get(buildModelCatalogRef(provider, model))?.[0];
 
   const buildSelection = (provider: string, model: string): ModelDirectiveSelection => {
     const alias = pickAliasForKey(provider, model);
@@ -296,7 +289,7 @@ export function resolveModelDirectiveSelection(params: {
         });
       }
       for (const match of aliasMatches) {
-        const key = modelKey(match.provider, match.model);
+        const key = buildModelCatalogRef(match.provider, match.model);
         if (!isModelKeyAllowedBySet(allowedModelKeys, key)) {
           continue;
         }
@@ -356,7 +349,8 @@ export function resolveModelDirectiveSelection(params: {
     return { selection: buildSelection(best.provider, best.model) };
   };
 
-  const resolved = resolveModelRefFromDirectiveString({
+  const resolved = resolveModelRefFromString({
+    ...params,
     raw: rawTrimmed,
     defaultProvider,
     aliasIndex,
@@ -372,7 +366,7 @@ export function resolveModelDirectiveSelection(params: {
     };
   }
 
-  const resolvedKey = modelKey(resolved.ref.provider, resolved.ref.model);
+  const resolvedKey = buildModelCatalogRef(resolved.ref.provider, resolved.ref.model);
   if (allowedModelKeys.size === 0 || isModelKeyAllowedBySet(allowedModelKeys, resolvedKey)) {
     return {
       selection: {

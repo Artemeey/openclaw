@@ -18,7 +18,10 @@ import type { ModelProviderConfig } from "../config/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { providerUsageLabel } from "../infra/provider-usage.shared.js";
 import type { UsageProviderId } from "../infra/provider-usage.types.js";
-import { getCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-snapshot.js";
+import {
+  getCurrentPluginMetadataSnapshot,
+  isCurrentPluginMetadataSnapshotRuntimeGeneration,
+} from "./current-plugin-metadata-snapshot.js";
 import { normalizeProviderModelIdWithManifest } from "./manifest-model-id-normalization.js";
 import type { PluginManifestRecord, PluginManifestRegistry } from "./manifest-registry.js";
 import { resolvePluginMetadataSnapshot } from "./plugin-metadata-snapshot.js";
@@ -1007,9 +1010,12 @@ export function resolveExternalAuthProfilesWithPlugins(params: {
   config?: OpenClawConfig;
   workspaceDir?: string;
   env?: NodeJS.ProcessEnv;
+  pluginMetadataSnapshot?: PluginMetadataRegistryView;
   context: ProviderResolveExternalAuthProfilesContext;
 }): ProviderExternalAuthProfile[] {
-  const workspaceDir = params.workspaceDir ?? getActivePluginRegistryWorkspaceDirFromState();
+  const workspaceDir = params.pluginMetadataSnapshot
+    ? params.pluginMetadataSnapshot.workspaceDir
+    : (params.workspaceDir ?? getActivePluginRegistryWorkspaceDirFromState());
   const env = params.env ?? process.env;
   const config = params.config ?? {};
   const currentMetadataSnapshot = getCurrentPluginMetadataSnapshot({
@@ -1017,21 +1023,20 @@ export function resolveExternalAuthProfilesWithPlugins(params: {
     ...(params.config ? { config } : { requireDefaultDiscoveryContext: true }),
     ...(workspaceDir ? { workspaceDir } : { allowWorkspaceScopedSnapshot: true }),
   });
-  const { manifestRegistry } =
-    currentMetadataSnapshot ?? resolvePluginMetadataSnapshot({ config, workspaceDir, env });
-  // A lifecycle-owned manifest is authoritative: no external-auth contracts means
-  // no provider registry discovery or runtime activation is needed for this overlay.
-  if (
+  // Retained execution owns its exact graph; otherwise an admitted packet wins
+  // over newer process metadata, including an explicitly empty/shared-root view.
+  const metadataSnapshot =
     currentMetadataSnapshot &&
-    !manifestRegistry.plugins.some((plugin) => plugin.contracts?.externalAuthProviders?.length)
-  ) {
-    return [];
-  }
+    isCurrentPluginMetadataSnapshotRuntimeGeneration(currentMetadataSnapshot)
+      ? currentMetadataSnapshot
+      : (params.pluginMetadataSnapshot ??
+        currentMetadataSnapshot ??
+        resolvePluginMetadataSnapshot({ config, workspaceDir, env }));
   const externalAuthPluginIds = resolveExternalAuthProfileProviderPluginIds({
     config: params.config,
-    workspaceDir,
+    workspaceDir: metadataSnapshot.workspaceDir,
     env,
-    manifestRegistry,
+    manifestRegistry: metadataSnapshot.manifestRegistry,
   });
   if (externalAuthPluginIds.length === 0) {
     return [];
@@ -1039,11 +1044,15 @@ export function resolveExternalAuthProfilesWithPlugins(params: {
   const matches: ProviderExternalAuthProfile[] = [];
   for (const plugin of resolveProviderPluginsForHooks({
     ...params,
-    workspaceDir,
+    workspaceDir: metadataSnapshot.workspaceDir,
+    pluginMetadataSnapshot: metadataSnapshot,
     env,
     onlyPluginIds: externalAuthPluginIds,
   })) {
-    const profiles = plugin.resolveExternalAuthProfiles?.(params.context);
+    const profiles = plugin.resolveExternalAuthProfiles?.({
+      ...params.context,
+      workspaceDir: metadataSnapshot.workspaceDir,
+    });
     if (!profiles || profiles.length === 0) {
       continue;
     }

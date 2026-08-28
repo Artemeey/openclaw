@@ -1,4 +1,5 @@
 import type { OperationalRunInstanceRef } from "../../agents/admitted-run-context.js";
+import type { ModelRef } from "../../agents/model-ref-shared.js";
 import type { ExecutionIdentityAdmissionToken } from "../../audit/execution-identity-admission.js";
 import {
   getActiveAgentRunDelegatedAuthority,
@@ -55,10 +56,11 @@ type BoundWorkerTurnOwner = {
   capability?: WorkerTurnExecutionIdentityCapability;
   claim: WorkerSessionTurnClaim;
   claimKey: string;
-  continuation?: {
+  admission?: {
     delegatedAuthority: AgentRunDelegatedAuthority;
-    scope: GatewayRootWorkAdmissionContinuationScope;
+    scope?: GatewayRootWorkAdmissionContinuationScope;
     store: WorkerTurnExecutionIdentityStore;
+    expectedInitialModel?: Readonly<ModelRef>;
   };
 };
 
@@ -67,7 +69,7 @@ const workerTurnOwners = resolveGlobalMap<string, Map<string, BoundWorkerTurnOwn
   (ownersByPath) => {
     for (const owners of ownersByPath.values()) {
       for (const owner of owners.values()) {
-        owner.continuation?.scope.release();
+        owner.admission?.scope?.release();
       }
     }
     ownersByPath.clear();
@@ -134,7 +136,7 @@ export function bindWorkerTurnExecutionIdentity(
   const existing = owners.get(claim.sessionId);
   const currentClaimKey = claimKey(claim);
   if (existing && existing.claimKey !== currentClaimKey) {
-    existing.continuation?.scope.release();
+    existing.admission?.scope?.release();
   }
   owners.set(claim.sessionId, {
     ...(existing?.claimKey === currentClaimKey ? existing : {}),
@@ -156,39 +158,43 @@ export function getWorkerTurnExecutionIdentityCapability(
     : undefined;
 }
 
-/** Completion authority follows the exact admitted run, not optional audit provenance. */
-export function bindWorkerTurnAdmissionContinuation(
+/** Worker execution follows the exact admitted run, independent of audit or shutdown scope. */
+export function bindWorkerTurnAdmission(
   store: WorkerTurnExecutionIdentityStore,
   claim: WorkerSessionTurnClaim,
   operationalRunInstance: OperationalRunInstanceRef,
+  expectedInitialModel?: Readonly<ModelRef>,
 ): void {
   const scope = captureGatewayRootWorkAdmissionContinuationScope();
-  if (!scope) {
-    return;
-  }
   const path = store[WORKER_TURN_EXECUTION_IDENTITY_PATH];
   const delegatedAuthority = getActiveAgentRunDelegatedAuthority(operationalRunInstance);
   if (!path || !store.validateTurnClaim(claim) || !delegatedAuthority) {
-    scope.release();
+    scope?.release();
     throw new Error(`Session ${claim.sessionId} worker turn authority changed`);
   }
   const owners = workerTurnOwners.get(path) ?? new Map();
   const existing = owners.get(claim.sessionId);
-  existing?.continuation?.scope.release();
+  existing?.admission?.scope?.release();
   const currentClaimKey = claimKey(claim);
   owners.set(claim.sessionId, {
     ...(existing?.claimKey === currentClaimKey ? existing : {}),
     claim,
     claimKey: currentClaimKey,
-    continuation: { delegatedAuthority, scope, store },
+    admission: {
+      delegatedAuthority,
+      scope,
+      store,
+      expectedInitialModel: expectedInitialModel
+        ? Object.freeze({ ...expectedInitialModel })
+        : undefined,
+    },
   });
   workerTurnOwners.set(path, owners);
 }
 
-export function runWorkerTurnAdmissionContinuation<T>(
+function resolveWorkerTurnOwner(
   identity: WorkerConnectionIdentity,
-  run: () => Promise<T>,
-): Promise<T> | null {
+): BoundWorkerTurnOwner | undefined {
   const claim = identity.turnClaim;
   if (
     !claim ||
@@ -198,7 +204,7 @@ export function runWorkerTurnAdmissionContinuation<T>(
     identity.environmentId !== claim.owner.environmentId ||
     identity.ownerEpoch !== claim.owner.ownerEpoch
   ) {
-    return null;
+    return undefined;
   }
   const currentClaimKey = claimKey(claim);
   let owner: BoundWorkerTurnOwner | undefined;
@@ -208,20 +214,40 @@ export function runWorkerTurnAdmissionContinuation<T>(
       continue;
     }
     if (owner) {
-      return null;
+      return undefined;
     }
     owner = candidate;
   }
-  const continuation = owner?.continuation;
+  const admission = owner?.admission;
   if (
     !owner ||
-    !continuation ||
-    !continuation.store.validateTurnClaim(owner.claim) ||
-    !validateAgentRunDelegatedAuthority(continuation.delegatedAuthority)
+    !admission ||
+    !admission.store.validateTurnClaim(owner.claim) ||
+    !validateAgentRunDelegatedAuthority(admission.delegatedAuthority)
   ) {
-    return null;
+    return undefined;
   }
-  return continuation.scope.run(run);
+  return owner;
+}
+
+export function resolveWorkerTurnInferenceAuthority(identity: WorkerConnectionIdentity) {
+  const owner = resolveWorkerTurnOwner(identity);
+  if (!owner) {
+    return undefined;
+  }
+  return {
+    expectedInitialModel: owner.admission?.expectedInitialModel,
+    // The captured owner, not a copied claim or replacement under the same key,
+    // must still own every privileged use after awaited preparation.
+    isCurrent: () => resolveWorkerTurnOwner(identity) === owner,
+  };
+}
+
+export function runWorkerTurnAdmissionContinuation<T>(
+  identity: WorkerConnectionIdentity,
+  run: () => Promise<T>,
+): Promise<T> | null {
+  return resolveWorkerTurnOwner(identity)?.admission?.scope?.run(run) ?? null;
 }
 
 export function attachWorkerTurnExecutionIdentityStore(store: object, path: string): void {
@@ -296,7 +322,7 @@ export function signalWorkerTurnClaimClosed(path: string, claim: WorkerSessionTu
   const owners = workerTurnOwners.get(path);
   const owner = owners?.get(claim.sessionId);
   if (owner?.claimKey === claimKey(claim)) {
-    owner.continuation?.scope.release();
+    owner.admission?.scope?.release();
     owners?.delete(claim.sessionId);
     if (owners?.size === 0) {
       workerTurnOwners.delete(path);

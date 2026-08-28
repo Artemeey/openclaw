@@ -72,6 +72,7 @@ import {
   type WorkerInferenceModelIdentity,
 } from "./inference-terminal-message.js";
 import { createWorkerToolCallStream } from "./inference-tool-call-stream.js";
+import { resolveWorkerTurnInferenceAuthority } from "./placement-turn-claim-events.js";
 import { resolveWorkerSessionTarget, type ResolvedWorkerSessionTarget } from "./session-target.js";
 import { boundedWorkerError } from "./worker-error.js";
 
@@ -350,6 +351,8 @@ async function resolveApprovedModel(params: {
   target: WorkerInferenceSessionTarget;
   request: WorkerInferenceStartParams;
   dependencies: WorkerInferenceRuntimeDependencies;
+  authority: NonNullable<ReturnType<typeof resolveWorkerTurnInferenceAuthority>>;
+  isCurrent: () => boolean;
 }): Promise<
   | {
       provider: string;
@@ -374,8 +377,12 @@ async function resolveApprovedModel(params: {
     agentDir: resolveAgentDir(config, target.agentId),
   });
   const runtimeSnapshot = runtimeLease.snapshot;
+  let retained = false;
   try {
-    return await withPluginRuntimeGenerationScope(runtimeSnapshot, async () => {
+    if (!params.isCurrent()) {
+      return undefined;
+    }
+    const approved = await withPluginRuntimeGenerationScope(runtimeSnapshot, async () => {
       const lifecycleConfig = runtimeSnapshot.config;
       const agentDir = runtimeSnapshot.agentDir;
       const workspaceDir =
@@ -406,9 +413,11 @@ async function resolveApprovedModel(params: {
       if (
         !resolved ||
         normalizeProviderId(resolved.ref.provider) !==
-          normalizeProviderId(request.modelRef.provider)
+          normalizeProviderId(request.modelRef.provider) ||
+        (params.authority.expectedInitialModel &&
+          (resolved.ref.provider !== params.authority.expectedInitialModel.provider ||
+            resolved.ref.model !== params.authority.expectedInitialModel.model))
       ) {
-        runtimeLease.release();
         return undefined;
       }
       const catalog = runtimeSnapshot.modelCatalog.entries;
@@ -431,7 +440,6 @@ async function resolveApprovedModel(params: {
           (entry: ModelCatalogEntry) => resolvedKey === modelCatalogLogicalKey(entry),
         ) || policy.retainedKeys.has(resolvedKey);
       if (!known || !policy.allows(resolved.ref)) {
-        runtimeLease.release();
         return undefined;
       }
       const configuredDefaultProfile =
@@ -453,6 +461,9 @@ async function resolveApprovedModel(params: {
         lifecycleConfig.plugins?.entries?.codex?.enabled === true
           ? harnessPolicy.runtime
           : undefined;
+      if (!params.isCurrent()) {
+        return undefined;
+      }
       const sessionSelection = await dependencies.resolveSessionAuthSelection({
         cfg: lifecycleConfig,
         provider: resolved.ref.provider,
@@ -466,6 +477,9 @@ async function resolveApprovedModel(params: {
         storePath: target.storePath,
         isNewSession: false,
       });
+      if (!params.isCurrent()) {
+        return undefined;
+      }
       const selectedProfileId = sessionSelection?.profileId;
       const routeRequirement = sessionSelection?.routeRequirement;
       let modelConfig = lifecycleConfig;
@@ -494,6 +508,9 @@ async function resolveApprovedModel(params: {
       }
       // Route projection and credential selection are one decision. Pin even an
       // automatic profile so generic auth fallback cannot cross to another route.
+      if (!params.isCurrent()) {
+        return undefined;
+      }
       const prepared = await dependencies.prepareModel({
         cfg: modelConfig,
         agentId: target.agentId,
@@ -510,6 +527,9 @@ async function resolveApprovedModel(params: {
         workspaceDir,
         ...(agentRuntimeId ? { agentRuntimeId } : {}),
       });
+      if (!params.isCurrent()) {
+        return undefined;
+      }
       return {
         provider: resolved.ref.provider,
         model: resolved.ref.model,
@@ -521,9 +541,13 @@ async function resolveApprovedModel(params: {
         release: runtimeLease.release,
       };
     });
-  } catch (error) {
-    runtimeLease.release();
-    throw error;
+    retained = approved !== undefined;
+    return approved;
+  } finally {
+    // Only an approved, still-owned model transfers the lease to streaming.
+    if (!retained) {
+      runtimeLease.release();
+    }
   }
 }
 
@@ -543,7 +567,12 @@ export function createWorkerInferenceExecutor(
     if (identity.ownerEpoch !== request.runEpoch) {
       return inferenceError("epoch-mismatch");
     }
-    if (signal.aborted || !params.isCurrent()) {
+    const authority = resolveWorkerTurnInferenceAuthority(identity);
+    if (!authority) {
+      return inferenceError("cancelled");
+    }
+    const executionIsCurrent = () => !signal.aborted && params.isCurrent() && authority.isCurrent();
+    if (!executionIsCurrent()) {
       return inferenceError("cancelled");
     }
     const config = params.config ?? getRuntimeConfig();
@@ -560,12 +589,17 @@ export function createWorkerInferenceExecutor(
       target,
       request,
       dependencies,
+      authority,
+      isCurrent: executionIsCurrent,
     });
     if (!approved) {
-      return inferenceError("model-not-approved");
+      return inferenceError(executionIsCurrent() ? "model-not-approved" : "cancelled");
     }
     return await withPluginRuntimeGenerationScope(approved.runtimeSnapshot, async () => {
       try {
+        if (!executionIsCurrent()) {
+          return inferenceError("cancelled");
+        }
         if ("error" in approved.prepared) {
           return inferenceError(
             "provider-error",
@@ -641,7 +675,7 @@ export function createWorkerInferenceExecutor(
         if (!optionBudgetsFitModel(request.options, model)) {
           return inferenceError("invalid-context");
         }
-        if (signal.aborted || !params.isCurrent()) {
+        if (!executionIsCurrent()) {
           return inferenceError("cancelled");
         }
 
@@ -680,7 +714,6 @@ export function createWorkerInferenceExecutor(
             trace,
           });
         };
-        const executionIsCurrent = () => !signal.aborted && params.isCurrent();
         const toolCalls = createWorkerToolCallStream({
           emit: params.emit,
           isCurrent: executionIsCurrent,
@@ -689,6 +722,9 @@ export function createWorkerInferenceExecutor(
         const providerAbort = new AbortController();
         const providerSignal = AbortSignal.any([signal, providerAbort.signal]);
         try {
+          if (!executionIsCurrent()) {
+            return inferenceError("cancelled");
+          }
           const events = await stream(
             model,
             context,
@@ -701,7 +737,7 @@ export function createWorkerInferenceExecutor(
           for await (const event of events) {
             if (event.type === "done") {
               recordUsage(event.message.usage);
-              if (signal.aborted || !params.isCurrent()) {
+              if (!executionIsCurrent()) {
                 return inferenceError("cancelled", event.message.usage);
               }
               for (const [contentIndex, content] of event.message.content.entries()) {
@@ -747,11 +783,13 @@ export function createWorkerInferenceExecutor(
             if (event.type === "error") {
               recordUsage(event.error.usage);
               return inferenceError(
-                event.reason === "aborted" ? "cancelled" : "provider-error",
+                event.reason === "aborted" || !executionIsCurrent()
+                  ? "cancelled"
+                  : "provider-error",
                 event.error.usage,
               );
             }
-            if (signal.aborted || !params.isCurrent()) {
+            if (!executionIsCurrent()) {
               return inferenceError("cancelled");
             }
             if (event.type === "toolcall_start") {
@@ -785,9 +823,9 @@ export function createWorkerInferenceExecutor(
               params.emit(workerEvent);
             }
           }
-          return inferenceError(signal.aborted ? "cancelled" : "provider-error");
+          return inferenceError(executionIsCurrent() ? "provider-error" : "cancelled");
         } catch {
-          return inferenceError(signal.aborted ? "cancelled" : "provider-error");
+          return inferenceError(executionIsCurrent() ? "provider-error" : "cancelled");
         } finally {
           providerAbort.abort();
         }

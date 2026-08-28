@@ -77,6 +77,7 @@ import type {
   ModelFallbackRouteResolution,
 } from "./model-fallback.types.js";
 import type { ModelManifestNormalizationContext } from "./model-ref-shared.js";
+import type { ProviderAuthAliasLookupParams } from "./provider-auth-aliases.js";
 import {
   resolveSessionSuspensionReason,
   suspendSession,
@@ -161,18 +162,12 @@ async function runWithModelFallbackInternal<T>(
   params: RunWithModelFallbackParams<T>,
   deferredSuspension: DeferredSessionSuspensionState,
 ): Promise<ModelFallbackRunResult<T>> {
-  const candidates = resolveModelCandidateChain({
-    cfg: params.cfg,
-    agentId: params.agentId,
-    provider: params.provider,
-    model: params.model,
-    fallbacksOverride: params.fallbacksOverride,
-    requestedRouteResolution: params.requestedRouteResolution,
-    config: params.config,
+  const authAliasLookupParams: ProviderAuthAliasLookupParams = {
+    config: params.cfg,
     workspaceDir: params.workspaceDir,
-    pluginMetadataSnapshot: params.pluginMetadataSnapshot,
-    manifestPlugins: params.manifestPlugins,
-  });
+    metadataSnapshot: params.pluginMetadataSnapshot?.manifestRegistry,
+  };
+  const candidates = resolveModelCandidateChain(params);
   await params.prepareCandidateChain?.(candidates);
   const userLockedAuthProfileId = params.userLockedAuthProfileId?.trim() || undefined;
   const authRuntime =
@@ -181,6 +176,8 @@ async function runWithModelFallbackInternal<T>(
       : null;
   const authStore = authRuntime
     ? authRuntime.ensureAuthProfileStore(params.agentDir, {
+        workspaceDir: params.workspaceDir,
+        pluginMetadataSnapshot: params.pluginMetadataSnapshot,
         externalCli: externalCliDiscoveryScoped({
           config: params.cfg,
           allowKeychainPrompt: false,
@@ -305,6 +302,7 @@ async function runWithModelFallbackInternal<T>(
         userLockedAuthProfileId !== undefined &&
         authRuntime.resolveAuthProfileEligibility({
           cfg: params.cfg,
+          authAliasLookupParams,
           store: authStore,
           provider: candidate.provider,
           profileId: userLockedAuthProfileId,
@@ -312,6 +310,7 @@ async function runWithModelFallbackInternal<T>(
       if (!candidateHarnessAuth.skipsProviderAuthCooldown) {
         const orderedProfileIds = authRuntime.resolveAuthProfileOrder({
           cfg: params.cfg,
+          authAliasLookupParams,
           store: authStore,
           provider: candidate.provider,
           forModel: candidate.model,
@@ -412,7 +411,6 @@ async function runWithModelFallbackInternal<T>(
 
           // Only record terminal session suspension when no remaining candidate
           // can serve the turn. Provider cooldown state prevents repeat probes.
-          const hasRemainingCandidates = hasRemainingCandidate;
           if (params.sessionId) {
             emitFailoverEvent({
               sessionId: params.sessionId,
@@ -420,9 +418,9 @@ async function runWithModelFallbackInternal<T>(
               fromProvider: candidate.provider,
               fromModel: candidate.model,
               reason: decision.reason,
-              suspended: !hasRemainingCandidates,
+              suspended: !hasRemainingCandidate,
             });
-            if (!hasRemainingCandidates) {
+            if (!hasRemainingCandidate) {
               deferredSuspension.pending = undefined;
               void suspendSession({
                 cfg: params.cfg,
@@ -663,8 +661,7 @@ async function runWithModelFallbackInternal<T>(
         continue;
       }
 
-      const switchMsg = err.message;
-      const switchNormalized = new FailoverError(switchMsg, {
+      const switchNormalized = new FailoverError(err.message, {
         reason: "unknown",
         ...candidateRef,
         ...runAttribution,
@@ -764,6 +761,8 @@ async function runWithModelFallbackInternal<T>(
     soonestCooldownExpiry: resolveFallbackSoonestCooldownExpiry({
       authRuntime,
       authStore,
+      authAliasLookupParams,
+      pluginMetadataSnapshot: params.pluginMetadataSnapshot,
       agentDir: params.agentDir,
       cfg: params.cfg,
       candidates,

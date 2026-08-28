@@ -1,18 +1,24 @@
 /** Resolves /model directive selections and auth profile overrides. */
+import { buildModelCatalogRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import { ensureAuthProfileStore } from "../../agents/auth-profiles.js";
-import { isModelKeyAllowedBySet } from "../../agents/model-selection-shared.js";
 import {
-  type ModelAliasIndex,
-  modelKey,
-  resolveModelRefFromString,
-} from "../../agents/model-selection.js";
+  createModelManifestPluginContext,
+  isModelKeyAllowedBySet,
+  type ModelManifestPluginContext,
+} from "../../agents/model-selection-shared.js";
+import { type ModelAliasIndex, resolveModelRefFromString } from "../../agents/model-selection.js";
 import { resolveProviderIdForAuth } from "../../agents/provider-auth-aliases.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveProfileOverride } from "./directive-handling.auth-profile.js";
 import type { InlineDirectives } from "./directive-handling.parse.js";
 import { type ModelDirectiveSelection, resolveModelDirectiveSelection } from "./model-selection.js";
 
-function resolveStoredNumericProfileModelDirective(params: { raw: string; agentDir: string }): {
+function resolveStoredNumericProfileModelDirective(params: {
+  raw: string;
+  agentDir: string;
+  cfg: OpenClawConfig;
+  manifestPluginContext: ModelManifestPluginContext;
+}): {
   modelRaw: string;
   profileId: string;
   profileProvider: string;
@@ -34,8 +40,12 @@ function resolveStoredNumericProfileModelDirective(params: { raw: string; agentD
     return null;
   }
 
+  const context = params.manifestPluginContext.getContext();
   const store = ensureAuthProfileStore(params.agentDir, {
     allowKeychainPrompt: false,
+    config: params.cfg,
+    workspaceDir: context.workspaceDir,
+    pluginMetadataSnapshot: context.pluginMetadataSnapshot,
   });
   const profile = store.profiles[profileId];
   if (!profile) {
@@ -57,6 +67,8 @@ export function resolveModelSelectionFromDirective(params: {
   allowedModelCatalog: Array<{ provider: string; id?: string; name?: string }>;
   provider: string;
   agentId?: string;
+  workspaceDir?: string;
+  manifestPluginContext?: ModelManifestPluginContext;
 }): {
   modelSelection?: ModelDirectiveSelection;
   profileOverride?: string;
@@ -79,11 +91,20 @@ export function resolveModelSelectionFromDirective(params: {
       },
     };
   }
+  const manifestPluginContext =
+    params.manifestPluginContext ??
+    createModelManifestPluginContext({
+      cfg: params.cfg,
+      agentId: params.agentId,
+      workspaceDir: params.workspaceDir,
+    });
   const storedNumericProfile =
     params.directives.rawModelProfile === undefined
       ? resolveStoredNumericProfileModelDirective({
           raw,
           agentDir: params.agentDir,
+          cfg: params.cfg,
+          manifestPluginContext,
         })
       : null;
   const storedNumericProfileSelection = storedNumericProfile
@@ -95,17 +116,34 @@ export function resolveModelSelectionFromDirective(params: {
         allowedModelKeys: params.allowedModelKeys,
         cfg: params.cfg,
         agentId: params.agentId,
+        workspaceDir: params.workspaceDir,
+        manifestPluginContext,
         rawRuntime: params.directives.rawModelRuntime,
       })
     : null;
+  const profileContext = storedNumericProfileSelection?.selection
+    ? manifestPluginContext.getContext()
+    : undefined;
+  const authAliasLookupParams = {
+    config: params.cfg,
+    workspaceDir: profileContext?.pluginMetadataSnapshot
+      ? profileContext.workspaceDir
+      : params.workspaceDir,
+    ...(profileContext?.pluginMetadataSnapshot
+      ? {
+          metadataSnapshot: {
+            plugins: profileContext.pluginMetadataSnapshot.manifestRegistry.plugins,
+          },
+        }
+      : {}),
+  };
   const useStoredNumericProfile =
     Boolean(storedNumericProfileSelection?.selection) &&
-    resolveProviderIdForAuth(storedNumericProfileSelection?.selection?.provider ?? "", {
-      config: params.cfg,
-    }) ===
-      resolveProviderIdForAuth(storedNumericProfile?.profileProvider ?? "", {
-        config: params.cfg,
-      });
+    resolveProviderIdForAuth(
+      storedNumericProfileSelection?.selection?.provider ?? "",
+      authAliasLookupParams,
+    ) ===
+      resolveProviderIdForAuth(storedNumericProfile?.profileProvider ?? "", authAliasLookupParams);
   const modelRaw =
     useStoredNumericProfile && storedNumericProfile ? storedNumericProfile.modelRaw : raw;
   let modelSelection: ModelDirectiveSelection | undefined;
@@ -127,9 +165,10 @@ export function resolveModelSelectionFromDirective(params: {
     raw: modelRaw,
     defaultProvider: params.defaultProvider,
     aliasIndex: params.aliasIndex,
+    manifestPluginContext,
   });
   if (explicit) {
-    const explicitKey = modelKey(explicit.ref.provider, explicit.ref.model);
+    const explicitKey = buildModelCatalogRef(explicit.ref.provider, explicit.ref.model);
     if (
       params.allowedModelKeys.size === 0 ||
       isModelKeyAllowedBySet(params.allowedModelKeys, explicitKey)
@@ -154,6 +193,8 @@ export function resolveModelSelectionFromDirective(params: {
       allowedModelKeys: params.allowedModelKeys,
       cfg: params.cfg,
       agentId: params.agentId,
+      workspaceDir: params.workspaceDir,
+      manifestPluginContext,
       rawRuntime: params.directives.rawModelRuntime,
     });
 
@@ -176,6 +217,8 @@ export function resolveModelSelectionFromDirective(params: {
       provider: modelSelection.provider,
       cfg: params.cfg,
       agentDir: params.agentDir,
+      workspaceDir: params.workspaceDir,
+      manifestPluginContext,
     });
     if (profileResolved.error) {
       return { errorText: profileResolved.error };

@@ -2,7 +2,7 @@
  * Regression coverage for provider auth alias resolution.
  * Verifies plugin metadata aliases, origin priority, trust, and cache behavior.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pluginRegistryMocks = vi.hoisted(() => {
   const loadManifestRegistry = vi.fn();
@@ -55,6 +55,7 @@ import type { InstalledPluginIndexRecord } from "../plugins/installed-plugin-ind
 import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
+import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
 import { createProviderAuthResolver } from "./models-config.providers.secrets.js";
 import { resolveProviderIdForAuth } from "./provider-auth-aliases.js";
 import { resetProviderAuthAliasMapCacheForTest } from "./provider-auth-aliases.test-support.js";
@@ -155,6 +156,62 @@ describe("provider auth aliases", () => {
     pluginRegistryMocks.loadPluginMetadataSnapshot.mockClear();
   });
 
+  afterEach(() => {
+    clearPluginMetadataLifecycleCaches();
+    resetProviderAuthAliasMapCacheForTest();
+  });
+
+  it.each([
+    { lookup: "ambient", empty: false, expected: "retained-provider" },
+    { lookup: "explicit", empty: false, expected: "retained-provider" },
+    { lookup: "ambient", empty: true, expected: "fixture" },
+    { lookup: "explicit", empty: true, expected: "fixture" },
+  ])(
+    "keeps $lookup auth aliases inside the retained generation (empty=$empty)",
+    ({ lookup, empty, expected }) => {
+      const config = {};
+      const env = {};
+      const published = createPluginMetadataSnapshot({
+        config,
+        plugins: [
+          createPluginManifestRecord({
+            id: "published",
+            origin: "global",
+            providerAuthAliases: { fixture: "published-provider" },
+          }),
+        ],
+      });
+      setCurrentPluginMetadataSnapshot(published, { config, env });
+      expect(resolveProviderIdForAuth("fixture", { config, env })).toBe("published-provider");
+      const retained = createPluginMetadataSnapshot({
+        config,
+        plugins: empty
+          ? []
+          : [
+              createPluginManifestRecord({
+                id: "retained",
+                origin: "global",
+                providerAuthAliases: { fixture: "retained-provider" },
+              }),
+            ],
+      });
+      retained.pluginIds = empty ? [] : ["retained"];
+
+      const resolved = withPluginRuntimeGenerationScope(
+        { config, metadataSnapshot: retained },
+        () =>
+          resolveProviderIdForAuth("fixture", {
+            config,
+            env,
+            ...(lookup === "explicit" ? { metadataSnapshot: published } : {}),
+          }),
+      );
+
+      expect(resolved).toBe(expected);
+      expect(pluginRegistryMocks.loadPluginMetadataSnapshot).not.toHaveBeenCalled();
+    },
+  );
+
   it("treats deprecated auth choice ids as provider auth aliases", () => {
     const metadataSnapshot = createPluginMetadataSnapshot({
       plugins: [
@@ -249,9 +306,7 @@ describe("provider auth aliases", () => {
 
   it("uses caller-provided metadata snapshots without loading plugin metadata", () => {
     const env = { HOME: "/home/test" } as NodeJS.ProcessEnv;
-    const metadataSnapshot = {
-      plugins: [],
-    } as never;
+    const metadataSnapshot = createPluginMetadataSnapshot({ plugins: [] });
 
     expect(
       resolveProviderIdForAuth("fixture", {

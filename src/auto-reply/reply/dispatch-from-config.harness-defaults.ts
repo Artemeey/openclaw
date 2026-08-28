@@ -159,6 +159,8 @@ function resolveStoredModelCandidate(params: {
   sessionStore?: Record<string, SessionEntry>;
 }): HarnessDefaultCandidate | undefined {
   const storedModelRef = resolveStoredModelOverride({
+    config: params.cfg,
+    agentId: params.sessionAgentId,
     loadSessionEntry: (sessionKey) => {
       const agentId = resolveSessionAgentId({
         sessionKey,

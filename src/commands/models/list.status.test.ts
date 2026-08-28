@@ -1450,7 +1450,7 @@ describe("modelsStatusCommand auth overview", () => {
       baseUrl: "https://api.openai.com/v1",
     };
     const chatGPT = {
-      id: "openai/gpt-5.4-nano",
+      id: "gpt-5.4-nano",
       name: "ChatGPT Nano",
       provider: "openai",
       api: "openai-chatgpt-responses",
