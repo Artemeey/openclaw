@@ -174,7 +174,12 @@ wa-tab.hub-tab:focus-visible::part(base) {
 
 @media (max-width: 768px), (max-width: 932px) and (max-height: 500px) and (orientation: landscape) {
   .content-header.hub-page-header--stacked {
-    padding-inline: var(--space-3);
     gap: var(--space-4);
+  }
+}
+
+@media (max-width: 640px) {
+  .content-header.hub-page-header--stacked {
+    padding-inline: var(--space-3);
   }
 }
