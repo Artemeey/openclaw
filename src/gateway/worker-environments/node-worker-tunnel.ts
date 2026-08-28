@@ -268,8 +268,8 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
   const createHandle = (
     entry: NodeTunnelEntry,
     restoredWorkspace: NodeWorkerWorkspaceBinding | undefined,
-  ): { handle: WorkerTurnTunnelHandle; validateRestoredWorkspace: () => Promise<void> } => {
-    const { validateRestoredWorkspace, ...workspaceActions } = createNodeWorkerWorkspaceActions({
+  ): { handle: WorkerTurnTunnelHandle; restoreWorkspace: () => Promise<void> } => {
+    const { restoreWorkspace, ...workspaceActions } = createNodeWorkerWorkspaceActions({
       environmentId: entry.environmentId,
       ownerEpoch: entry.ownerEpoch,
       sessionId: entry.sessionId,
@@ -329,7 +329,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
         await stopEntry(entry);
       },
     };
-    return { handle, validateRestoredWorkspace };
+    return { handle, restoreWorkspace };
   };
 
   function stopEntry(entry: NodeTunnelEntry, reason?: WorkerTunnelStopReason): Promise<void> {
@@ -496,7 +496,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
           ) {
             throw new Error("node worker tunnel owner binding changed within one epoch");
           }
-          return current.readiness.promise; // Share restored-workspace validation without false readiness.
+          return current.readiness.promise; // Share workspace restoration without false readiness.
         }
       }
       const readiness = createDeferredCore<WorkerTurnTunnelHandle>();
@@ -532,7 +532,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
           return;
         }
         const created = createHandle(entry, restoredWorkspace);
-        await created.validateRestoredWorkspace();
+        await created.restoreWorkspace();
         if (!isLiveEntry(entry)) {
           return;
         }
