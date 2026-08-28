@@ -1062,7 +1062,6 @@ export async function maybeRestartService(params: {
   restartScriptPath?: string | null;
   invocationCwd?: string;
   nodeRunner?: string;
-  skipLegacyServiceRestart?: boolean;
   requireRunningServiceAfterRestart?: boolean;
   serviceMutationSkipMessage?: string;
   timeoutMs: number;
@@ -1310,8 +1309,7 @@ export async function maybeRestartService(params: {
         }
       } else if (
         !refreshedGatewayAlreadyHealthy &&
-        shouldUseLegacyProcessRestartAfterUpdate({ updateMode: params.result.mode }) &&
-        !params.skipLegacyServiceRestart
+        shouldUseLegacyProcessRestartAfterUpdate({ updateMode: params.result.mode })
       ) {
         await createUpdateConfigSnapshot();
         restarted = await runDaemonRestart();
