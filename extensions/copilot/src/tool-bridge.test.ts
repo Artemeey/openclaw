@@ -19,7 +19,10 @@ import {
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { readMemoryArtifactProvenance } from "openclaw/plugin-sdk/memory-core-host-runtime-core";
 import {
+  createMockPluginRegistry,
+  initializeGlobalHookRunner,
   loadPluginManifestRegistryCore,
+  resetGlobalHookRunner,
   resetPluginRuntimeStateForTest,
 } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { withTempDir } from "openclaw/plugin-sdk/test-env";
@@ -137,6 +140,7 @@ async function convertOpenClawToolToSdkToolForTest(
 }
 
 afterEach(() => {
+  resetGlobalHookRunner();
   vi.restoreAllMocks();
 });
 
@@ -2262,13 +2266,17 @@ describe("createCopilotToolBridge tool conversion", () => {
       sourceName: string;
       toolCallId: string;
       parentToolCallId: string;
+      replaySafe?: boolean;
       input: unknown;
+      bindEffectReceipt: (target: unknown, receipt: { state: string }) => void;
     }) => Promise<unknown>;
     let catalogExecutor: CatalogExecutor | undefined;
     const observeToolTerminal = vi.fn(() => ({
       executionStarted: true,
       sideEffectEvidence: true,
+      effectReceipt: { state: "uncertain" as const },
     }));
+    const bindEffectReceipt = vi.fn();
     await createCopilotToolBridge({
       attemptParams: {
         config: { tools: { toolSearch: true } },
@@ -2303,7 +2311,9 @@ describe("createCopilotToolBridge tool conversion", () => {
         sourceName: "memory-lancedb",
         toolCallId: "catalog-forget-1",
         parentToolCallId: "tool-search-1",
+        replaySafe: false,
         input: args,
+        bindEffectReceipt,
       }),
     ).rejects.toThrow("catalog delete failed");
 
@@ -2312,10 +2322,129 @@ describe("createCopilotToolBridge tool conversion", () => {
       toolName: "memory_forget",
       arguments: args,
       executionStarted: true,
+      replaySafe: false,
       outcome: "failure",
       failure: { error: "catalog delete failed" },
       ownerMutation: { ownerKey: '["memory-lancedb","memory_forget"]' },
     });
+    expect(bindEffectReceipt).toHaveBeenCalledWith(expect.any(Error), {
+      state: "uncertain",
+    });
+  });
+
+  it("classifies catalog failures from hook-finalized arguments", async () => {
+    type CatalogExecutor = (params: {
+      tool: AnyAgentTool;
+      toolName: string;
+      source: "openclaw";
+      sourceName: string;
+      toolCallId: string;
+      parentToolCallId: string;
+      replaySafe?: boolean;
+      input: unknown;
+      bindEffectReceipt: (target: unknown, receipt: { state: string }) => void;
+    }) => Promise<unknown>;
+    let catalogExecutor: CatalogExecutor | undefined;
+    const observeToolTerminal = vi.fn(() => ({
+      executionStarted: true,
+      sideEffectEvidence: true,
+      effectReceipt: { state: "uncertain" as const },
+    }));
+    const bindEffectReceipt = vi.fn();
+    await createCopilotToolBridge({
+      attemptParams: {
+        config: { tools: { toolSearch: true } },
+        observeToolTerminal,
+        runId: "run-tool-search-rewrite",
+        sessionKey: "agent:agent-1:main",
+      } as never,
+      createOpenClawCodingTools: async (options: unknown) => {
+        catalogExecutor = (options as { toolSearchCatalogExecutor?: CatalogExecutor })
+          .toolSearchCatalogExecutor;
+        return [makeTool({ name: "tool_search_code" })];
+      },
+    });
+    const target = createOwnerBackedContractTool({
+      pluginId: "example-owner",
+      name: "records",
+      result: textToolResult("unused"),
+    });
+    target.classifyEffect = (input) =>
+      (input as { action?: string }).action === "list" ? "read" : "mutation";
+    target.execute = vi.fn(async () => {
+      throw new Error("delete failed");
+    });
+    initializeGlobalHookRunner(
+      createMockPluginRegistry([
+        {
+          hookName: "before_tool_call",
+          handler: vi.fn(async () => ({ params: { action: "delete" } })),
+        },
+      ]),
+    );
+    const wrappedTarget = wrapToolWithBeforeToolCallHook(target, {
+      runId: "run-tool-search-rewrite",
+      sessionKey: "agent:agent-1:main",
+    });
+
+    await expect(
+      expectDefined(
+        catalogExecutor,
+        "Copilot catalog executor",
+      )({
+        tool: wrappedTarget,
+        toolName: "records",
+        source: "openclaw",
+        sourceName: "example-owner",
+        toolCallId: "catalog-records-1",
+        parentToolCallId: "tool-search-1",
+        replaySafe: true,
+        input: { action: "list" },
+        bindEffectReceipt,
+      }),
+    ).rejects.toThrow("delete failed");
+
+    expect(target.execute).toHaveBeenCalledWith(
+      "catalog-records-1",
+      { action: "delete" },
+      undefined,
+      undefined,
+    );
+    expect(observeToolTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        arguments: { action: "delete" },
+        replaySafe: false,
+      }),
+    );
+    expect(bindEffectReceipt).toHaveBeenCalledWith(expect.any(Error), {
+      state: "uncertain",
+    });
+
+    observeToolTerminal.mockClear();
+    target.classifyEffect = undefined;
+    const wrappedUnclassifiedTarget = wrapToolWithBeforeToolCallHook(target, {
+      runId: "run-tool-search-rewrite",
+      sessionKey: "agent:agent-1:main",
+    });
+    await expect(
+      expectDefined(
+        catalogExecutor,
+        "Copilot catalog executor",
+      )({
+        tool: wrappedUnclassifiedTarget,
+        toolName: "records",
+        source: "openclaw",
+        sourceName: "example-owner",
+        toolCallId: "catalog-records-2",
+        parentToolCallId: "tool-search-1",
+        replaySafe: true,
+        input: { action: "list" },
+        bindEffectReceipt,
+      }),
+    ).rejects.toThrow("delete failed");
+    expect(observeToolTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ arguments: { action: "delete" }, replaySafe: false }),
+    );
   });
 
   it("joins multiple text blocks with newlines", async () => {

@@ -50,6 +50,10 @@ import {
   type VideoGenerationTaskHandle,
 } from "./media-generate-background.js";
 import {
+  classifyMediaGenerateEffect,
+  MediaGenerateActionSchema,
+} from "./media-generate-tool-actions-shared.js";
+import {
   applyAgentDefaultModelConfig,
   buildMediaReferenceDetails,
   buildTaskRunDetails,
@@ -88,11 +92,7 @@ const GENERATED_VIDEO_PROBE_CONCURRENCY = 2;
 const MAX_GENERATED_VIDEO_PROBES = 8;
 
 const VideoGenerateToolProperties = {
-  action: Type.Optional(
-    Type.String({
-      description: '"generate" default, "status" active task, "list" providers/models.',
-    }),
-  ),
+  action: MediaGenerateActionSchema,
   prompt: Type.Optional(Type.String({ description: "Video prompt." })),
   image: Type.Optional(
     Type.String({
@@ -838,6 +838,7 @@ export function createVideoGenerateTool(options?: {
       (includeAudioReferences ? "; audio refs condition sound" : "") +
       ". resolution up to 4K; audio/watermark toggles. action=list discovers providers/models. Session chat background: call once/request, await, then visible reply + structured media. status checks active task. Duration may round to provider value.",
     parameters: createVideoGenerateToolSchema({ includeAudioReferences }),
+    classifyEffect: classifyMediaGenerateEffect,
     execute: async (_toolCallId, rawArgs, signal) => {
       const args = rawArgs as Record<string, unknown>;
       const action = resolveGenerateAction(args);

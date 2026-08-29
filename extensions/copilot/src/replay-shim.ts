@@ -20,6 +20,10 @@
 //   - `src/agents/pi-embedded-runner/run/types.ts` —
 //     `AgentHarnessAttemptResult.replayMetadata` field requirement.
 
+import {
+  type AnyAgentTool,
+  isToolWrappedWithBeforeToolCallHook,
+} from "openclaw/plugin-sdk/agent-harness-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 
 type ReplayDecision =
@@ -210,6 +214,21 @@ export function computeReplayMetadata(input: ReplayMetadataComputeInput): Comput
     priorHadPotentialSideEffects || timedOut || thisAttemptHadPotentialSideEffects;
   const replaySafe = !(priorReplayInvalid || downgraded || recovered || hadPotentialSideEffects);
   return { hadPotentialSideEffects, replaySafe };
+}
+
+export function classifyCopilotToolReplaySafe(
+  tool: AnyAgentTool,
+  args: unknown,
+  fallback: boolean | undefined,
+): boolean | undefined {
+  if (!tool.classifyEffect) {
+    return isToolWrappedWithBeforeToolCallHook(tool) ? false : fallback;
+  }
+  try {
+    return tool.classifyEffect(args) === "read";
+  } catch {
+    return false;
+  }
 }
 
 const COPILOT_REPLAY_SAFE_READ_ONLY_TOOL_NAMES = new Set([

@@ -21,6 +21,7 @@ export class GatewayProtocolRequestError extends Error {
   readonly code: string;
   readonly gatewayCode: string;
   readonly details?: unknown;
+  readonly requestEffect?: ErrorShape["requestEffect"];
   readonly retryable: boolean;
   readonly retryAfterMs?: number;
   declare readonly responsePayload?: unknown;
@@ -31,6 +32,7 @@ export class GatewayProtocolRequestError extends Error {
     this.code = error.code ?? "UNAVAILABLE";
     this.gatewayCode = this.code;
     this.details = error.details;
+    this.requestEffect = error.requestEffect;
     this.retryable = error.retryable === true;
     this.retryAfterMs = error.retryAfterMs;
   }

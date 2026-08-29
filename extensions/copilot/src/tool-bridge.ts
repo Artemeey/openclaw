@@ -13,6 +13,7 @@ import type {
 import {
   applyEmbeddedAttemptToolsAllow,
   buildEmbeddedAttemptToolRunContext,
+  consumeAdjustedParamsForToolCall,
   extractToolErrorMessage,
   getPluginToolMeta,
   getPluginToolSideEffectOwnerKey,
@@ -26,6 +27,7 @@ import {
 import { createAgentHarnessToolSurfaceRuntime } from "openclaw/plugin-sdk/agent-harness-tool-runtime";
 import { toStringifiedError as toCopilotToolError } from "openclaw/plugin-sdk/error-runtime";
 import { isRawCopilotModelRun } from "./attempt-mode.js";
+import { classifyCopilotToolReplaySafe } from "./replay-shim.js";
 
 type CreateOpenClawCodingTools =
   (typeof import("openclaw/plugin-sdk/agent-harness"))["createOpenClawCodingTools"];
@@ -718,21 +720,28 @@ async function executeCatalogTool(
       params.signal ?? input.abortSignal,
       params.onUpdate,
     );
+    preparedArgs =
+      consumeAdjustedParamsForToolCall(params.toolCallId, input.attemptParams?.runId) ??
+      preparedArgs;
     const sanitizedResult = sanitizeToolResult(result);
     const isError = isToolResultError(sanitizedResult);
     const error = isError
       ? (extractToolErrorMessage(sanitizedResult) ?? "tool returned an error")
       : undefined;
     terminalObserved = true;
-    input.attemptParams?.observeToolTerminal?.({
+    const terminalResolution = input.attemptParams?.observeToolTerminal?.({
       toolCallId: params.toolCallId,
       toolName: params.toolName,
       arguments: preparedArgs,
       executionStarted,
+      replaySafe: classifyCopilotToolReplaySafe(sourceTool, preparedArgs, params.replaySafe),
       outcome: isError ? "failure" : "success",
       ...(error ? { failure: { error } } : {}),
       ...(ownerMutation ? { ownerMutation } : {}),
     });
+    if (terminalResolution) {
+      params.bindEffectReceipt?.(result, terminalResolution.effectReceipt);
+    }
     input.attemptParams?.onAgentToolResult?.({
       toolName: params.toolName,
       result: sanitizedResult,
@@ -748,19 +757,26 @@ async function executeCatalogTool(
     });
     return result;
   } catch (error: unknown) {
+    preparedArgs =
+      consumeAdjustedParamsForToolCall(params.toolCallId, input.attemptParams?.runId) ??
+      preparedArgs;
     const message = toCopilotToolError(error).message;
     // Completion hooks can throw after the tool terminal outcome. Do not
     // rewrite that recorded outcome as a second, contradictory tool failure.
     if (!terminalObserved) {
-      input.attemptParams?.observeToolTerminal?.({
+      const terminalResolution = input.attemptParams?.observeToolTerminal?.({
         toolCallId: params.toolCallId,
         toolName: params.toolName,
         arguments: preparedArgs,
         executionStarted,
+        replaySafe: classifyCopilotToolReplaySafe(sourceTool, preparedArgs, params.replaySafe),
         outcome: "failure",
         failure: { error: message },
         ...(ownerMutation ? { ownerMutation } : {}),
       });
+      if (terminalResolution) {
+        params.bindEffectReceipt?.(error, terminalResolution.effectReceipt);
+      }
     }
     const failure = sanitizeToolResult({
       content: [{ type: "text", text: message }],

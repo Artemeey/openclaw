@@ -33,6 +33,7 @@ export function unwrapGatewayMethodDispatchResponse(
       code: response.error?.code,
       message: response.error?.message ?? `Gateway method "${method}" failed.`,
       details: response.error?.details,
+      requestEffect: response.error?.requestEffect,
       retryable: response.error?.retryable,
       retryAfterMs: response.error?.retryAfterMs,
     });

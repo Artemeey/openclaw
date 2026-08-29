@@ -63,6 +63,10 @@ import {
   type ImageGenerationTaskHandle,
 } from "./media-generate-background.js";
 import {
+  classifyMediaGenerateEffect,
+  MediaGenerateActionSchema,
+} from "./media-generate-tool-actions-shared.js";
+import {
   applyAgentDefaultModelConfig,
   buildMediaReferenceDetails,
   buildTaskRunDetails,
@@ -121,11 +125,7 @@ const SUPPORTED_ASPECT_RATIOS = new Set([
 const log = createSubsystemLogger("agents/tools/image-generate");
 
 const ImageGenerateToolSchema = Type.Object({
-  action: Type.Optional(
-    Type.String({
-      description: '"generate" default, "status" active task, "list" providers/models.',
-    }),
-  ),
+  action: MediaGenerateActionSchema,
   prompt: Type.Optional(Type.String({ description: "Image prompt." })),
   image: Type.Optional(
     Type.String({
@@ -807,6 +807,7 @@ export function createImageGenerateTool(options?: {
     description:
       'Create/edit images. Batch via count; aspectRatio and resolution up to 4K. Session chat runs background: call once/request, await completion, then visible reply with structured media attachment. Transparent: outputFormat png|webp + background="transparent"; OpenAI also openai.background, default gpt-image-1.5. action=list providers/models/readiness/auth; status active task.',
     parameters: ImageGenerateToolSchema,
+    classifyEffect: classifyMediaGenerateEffect,
     execute: async (_toolCallId, args, signal) => {
       const params = args as Record<string, unknown>;
       const action = resolveGenerateAction(params);

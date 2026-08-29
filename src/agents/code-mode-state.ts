@@ -4,7 +4,7 @@ import {
   resolveExpiresAtMsFromDurationSeconds,
 } from "@openclaw/normalization-core/number-coercion";
 import { raceWithAbortSignal } from "./agent-tools.abort.js";
-import { runBridgeRequest } from "./code-mode-bridge.js";
+import { CODE_MODE_NODES_TOOL_ID, runBridgeRequest } from "./code-mode-bridge.js";
 import type { CodeModeCatalogProjection } from "./code-mode-catalog.js";
 import { CODE_MODE_EXEC_TOOL_NAME, CODE_MODE_WAIT_TOOL_NAME } from "./code-mode-control-tools.js";
 import type { CodeModeOutputState } from "./code-mode-json.js";
@@ -317,16 +317,33 @@ export function pendingBridgeRequestsReplaySafe(
   pending: readonly PendingBridgeRequest[],
   runtime: ToolSearchRuntime,
   catalogProjection: CodeModeCatalogProjection,
+  requireFinalArgs = false,
 ): boolean {
   return pending.every((request) =>
-    isPendingBridgeRequestReplaySafe(request, runtime, catalogProjection),
+    isPendingBridgeRequestReplaySafe(request, runtime, catalogProjection, requireFinalArgs),
   );
 }
 
+function pendingBridgeStatesReplaySafe(
+  pending: readonly PendingBridgeState[],
+  runtime: ToolSearchRuntime,
+  catalogProjection: CodeModeCatalogProjection,
+): boolean {
+  return pending.every(
+    (request) =>
+      request.settled ||
+      !["callValue", "nodes"].includes(request.method) ||
+      isPendingBridgeRequestReplaySafe(request, runtime, catalogProjection, true),
+  );
+}
+
+// Raw arguments admit restart-safe calls, but parking/recovery requires the exact tool to have
+// no before-tool wrapper that could rewrite them; terminal receipts supersede this fallback.
 function isPendingBridgeRequestReplaySafe(
   request: PendingBridgeRequest,
   runtime: ToolSearchRuntime,
   catalogProjection: CodeModeCatalogProjection,
+  requireFinalArgs = false,
 ): boolean {
   if (
     request.method === "search" ||
@@ -341,7 +358,12 @@ function isPendingBridgeRequestReplaySafe(
     return true;
   }
   if (request.method === "nodes") {
-    return request.args[0] === "list" || request.args[0] === "get";
+    const readAction = request.args[0] === "list" || request.args[0] === "get";
+    return (
+      readAction &&
+      (!requireFinalArgs ||
+        runtime.isReplaySafeExactId(CODE_MODE_NODES_TOOL_ID, { action: "status" }, true))
+    );
   }
   if (request.method !== "callValue") {
     return false;
@@ -351,7 +373,9 @@ function isPendingBridgeRequestReplaySafe(
     return false;
   }
   const binding = catalogProjection.byCallableName.get(callableName);
-  return binding ? runtime.isReplaySafeExactId(binding.id) : false;
+  return binding
+    ? runtime.isReplaySafeExactId(binding.id, request.args[1] ?? {}, requireFinalArgs)
+    : false;
 }
 
 export function createPendingBridgeStates(params: {
@@ -382,11 +406,11 @@ export function createPendingBridgeStates(params: {
       onAbort();
     }
     const tracksDispatch = request.method !== "sleep";
-    // Discovery is read-only; replay-safe actions such as agentSpawn may still mutate.
+    // Catalog hooks may rewrite inputs, so only their terminal receipt can prove no effect.
     const recoverySafe =
       ["search", "describe", "skillsList", "skillsRead"].includes(request.method) ||
       (["nodes", "callValue"].includes(request.method) &&
-        isPendingBridgeRequestReplaySafe(request, params.runtime, params.catalogProjection));
+        isPendingBridgeRequestReplaySafe(request, params.runtime, params.catalogProjection, true));
     if (tracksDispatch) {
       params.bridgeDispatch.started = true;
       params.bridgeDispatch.operations.set(request.id, "pending");
@@ -484,6 +508,9 @@ export function storeSnapshotState(params: {
         params.config.snapshotTtlSeconds * MAX_AGENT_WAIT_SNAPSHOT_TTL_WINDOWS,
       )
     : undefined;
+  const replaySafe =
+    params.replaySafe &&
+    pendingBridgeStatesReplaySafe(params.pending, params.runtime, params.catalogProjection);
   const state: CodeModeRunState = {
     runId,
     replayId: params.replayId,
@@ -493,7 +520,7 @@ export function storeSnapshotState(params: {
     snapshotBytes: params.snapshotBytes,
     pending: params.pending,
     settlementMode: params.settlementMode,
-    replaySafe: params.replaySafe,
+    replaySafe,
     output: params.output,
     expiresAt,
     agentWaitRetainUntil,
@@ -509,7 +536,7 @@ export function storeSnapshotState(params: {
       runId,
       reason: codeModeWaitingReason(params.pending),
       pendingToolCalls: pendingToolCalls(params.pending),
-      replaySafe: params.replaySafe,
+      replaySafe,
       telemetry: telemetry(params.runtime),
     },
     {},

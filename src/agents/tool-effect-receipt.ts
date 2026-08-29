@@ -1,7 +1,27 @@
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
+
 /** Host-owned effect provenance for one completed tool lifecycle. */
 export type ToolEffectReceipt = Readonly<{
   state: "not_started" | "read_completed" | "failed_no_effect" | "mutation_committed" | "uncertain";
 }>;
+
+/** Input-aware effect class declared by the concrete tool instance that owns the operation. */
+export type ToolEffectClass = "read" | "mutation" | "unknown";
+export type ToolEffectClassifier = (params: unknown) => ToolEffectClass;
+
+/** Builds one owner classifier from the same closed action table used by its schema/handler. */
+export function createActionEffectClassifier(
+  effects: Readonly<Record<string, ToolEffectClass>>,
+  defaultEffect: ToolEffectClass = "unknown",
+): ToolEffectClassifier {
+  return (params) => {
+    if (!isRecord(params)) {
+      return defaultEffect;
+    }
+    const action = params.action;
+    return typeof action === "string" ? (effects[action] ?? "unknown") : defaultEffect;
+  };
+}
 
 const toolEffectReceipts = new WeakMap<object, ToolEffectReceipt>();
 

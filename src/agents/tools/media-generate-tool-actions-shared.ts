@@ -3,6 +3,9 @@
  *
  * Builds provider list output, active-task status, and duplicate-guard responses for image/video/music tools.
  */
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
+import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
+import { Type } from "typebox";
 import {
   listMediaGenerationProviderModels,
   synthesizeMediaGenerationCatalogEntries,
@@ -11,7 +14,24 @@ import {
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { getProviderEnvVars } from "../../secrets/provider-env-vars.js";
 import type { AuthProfileStore } from "../auth-profiles/types.js";
+import { createActionEffectClassifier, type ToolEffectClassifier } from "../tool-effect-receipt.js";
 import { isCapabilityProviderConfigured } from "./media-tool-shared.js";
+
+export const MediaGenerateActionSchema = Type.Optional(
+  Type.String({
+    description: '"generate" default, "status" active task, "list" providers/models.',
+  }),
+);
+const classifyNormalizedMediaGenerateEffect = createActionEffectClassifier(
+  { generate: "mutation", status: "read", list: "read" },
+  "mutation",
+);
+export const classifyMediaGenerateEffect: ToolEffectClassifier = (params) =>
+  isRecord(params)
+    ? classifyNormalizedMediaGenerateEffect({
+        action: normalizeOptionalLowercaseString(params.action),
+      })
+    : "mutation";
 
 type MediaGenerateActionResult = {
   content: Array<{ type: "text"; text: string }>;

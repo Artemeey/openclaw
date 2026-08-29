@@ -10,6 +10,7 @@ import {
 import { buildPayloads } from "./embedded-agent-runner/run/payloads.test-helpers.js";
 import { inferToolMetaFromArgsCore } from "./tool-display.js";
 import { consumeToolEffectReceipt, registerToolEffectReceipt } from "./tool-effect-receipt.js";
+import { collectToolEffectClassifiers } from "./tool-replay-safety.js";
 import { createToolTerminalObserver } from "./tool-terminal-outcome.js";
 
 describe("tool terminal outcome observer", () => {
@@ -201,6 +202,26 @@ describe("tool terminal outcome observer", () => {
     expect(consumeToolEffectReceipt({ ...result })).toBeUndefined();
     expect(consumeToolEffectReceipt(result)).toEqual({ state: "failed_no_effect" });
     expect(consumeToolEffectReceipt(result)).toBeUndefined();
+  });
+
+  it("retains input-aware classifiers only for uniquely owned tool names", () => {
+    const classifyEffect = () => "read" as const;
+    const owned = { name: "mixed_tool", classifyEffect };
+
+    expect(collectToolEffectClassifiers([owned])).toEqual(
+      new Map([["mixed_tool", classifyEffect]]),
+    );
+    expect(collectToolEffectClassifiers([owned, { name: "mixed_tool" }])).toEqual(new Map());
+  });
+
+  it("does not inherit a host-owned receipt through an arbitrary error cause", () => {
+    const ownerError = registerToolEffectReceipt(new Error("owner rejected"), {
+      state: "failed_no_effect",
+    });
+    const wrapped = new Error("adapter wrapped the owner error", { cause: ownerError });
+
+    expect(consumeToolEffectReceipt(wrapped)).toBeUndefined();
+    expect(consumeToolEffectReceipt(ownerError)).toEqual({ state: "failed_no_effect" });
   });
 
   it("clears a failed sessions_spawn once a retry with adjusted arguments succeeds", () => {

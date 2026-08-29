@@ -3,11 +3,17 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { withEnvAsync } from "../../test-utils/env.js";
 import { createHostSandboxFsBridge } from "../test-helpers/host-sandbox-fs-bridge.js";
+import {
+  classifyMediaGenerateEffect,
+  MediaGenerateActionSchema,
+} from "./media-generate-tool-actions-shared.js";
 import {
   hasGenerationToolAvailability,
   isCapabilityProviderConfigured,
@@ -51,6 +57,17 @@ function normalizeHostPath(value: string): string {
 }
 
 describe("resolveGenerateAction", () => {
+  const schema = Type.Object({ action: MediaGenerateActionSchema });
+
+  it("shares one closed action and effect contract", () => {
+    expect(classifyMediaGenerateEffect({})).toBe("mutation");
+    expect(classifyMediaGenerateEffect({ action: "status" })).toBe("read");
+    expect(classifyMediaGenerateEffect({ action: "list" })).toBe("read");
+    expect(classifyMediaGenerateEffect({ action: " STATUS " })).toBe("read");
+    expect(classifyMediaGenerateEffect({ action: " list " })).toBe("read");
+    expect(classifyMediaGenerateEffect({ action: "future" })).toBe("unknown");
+  });
+
   it.each([
     { name: "absent action", args: {}, expected: "generate" },
     { name: "blank action", args: { action: "   " }, expected: "generate" },
@@ -60,6 +77,10 @@ describe("resolveGenerateAction", () => {
     { name: "list action", args: { action: "list" }, expected: "list" },
   ])("$name", ({ args, expected }) => {
     expect(resolveGenerateAction(args)).toBe(expected);
+  });
+
+  it.each(["", "   ", " STATUS "])("keeps normalized action %j schema-valid", (action) => {
+    expect(Value.Check(schema, { action })).toBe(true);
   });
 
   it("rejects invalid actions with the ordered contract message", () => {

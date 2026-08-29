@@ -28,6 +28,7 @@ import { emitAssistantTextDeltaAndEnd } from "./embedded-agent-subscribe.e2e-har
 import { countActiveToolExecutions } from "./embedded-agent-subscribe.handlers.tools.js";
 import { attachInternalToolExecutionPreparer } from "./runtime/internal-hooks.js";
 import { SessionManager } from "./sessions/session-manager.js";
+import { consumeToolEffectReceipt, registerToolEffectReceipt } from "./tool-effect-receipt.js";
 import { clearToolSearchCatalog } from "./tool-search.js";
 import { jsonResult } from "./tools/common.js";
 import { createSessionsYieldTool } from "./tools/sessions-yield-tool.js";
@@ -64,6 +65,37 @@ describe("Code Mode subscribed bridge lifecycle", () => {
         completedCount: 1,
         activeCount: 0,
       });
+    } finally {
+      harness.dispose();
+    }
+  });
+
+  it("preserves an owner-proven no-effect receipt through the nested error lifecycle", async () => {
+    const harness = createSubscribedCodeModeHarness({ name: "owner-no-effect" });
+    const ownerError = new Error("Gateway rejected before mutation");
+    const target = pluginToolWithExecute("mutate", "Mutate a record", async () => {
+      throw registerToolEffectReceipt(ownerError, { state: "failed_no_effect" });
+    });
+    try {
+      let terminalError: unknown;
+      try {
+        await harness.executeTool({
+          tool: target,
+          toolName: target.name,
+          source: "openclaw",
+          toolCallId: "nested-owner-no-effect",
+          parentToolCallId: "outer-exec",
+          input: { action: "update" },
+          acceptResultBeforeProjection: async (result) => result,
+        });
+      } catch (error) {
+        terminalError = error;
+      }
+      expect(terminalError).toBe(ownerError);
+      expect(consumeToolEffectReceipt(terminalError)).toEqual({ state: "failed_no_effect" });
+      expect(harness.subscription.toolMetas).toEqual([
+        expect.objectContaining({ toolName: "mutate", isError: true }),
+      ]);
     } finally {
       harness.dispose();
     }

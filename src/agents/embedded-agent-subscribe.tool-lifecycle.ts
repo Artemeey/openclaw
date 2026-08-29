@@ -4,7 +4,11 @@ import {
 } from "./embedded-agent-subscribe.handlers.tools.js";
 import type { EmbeddedAgentSubscribeContext } from "./embedded-agent-subscribe.handlers.types.js";
 import { buildToolLifecycleErrorResult } from "./embedded-agent-tool-results.js";
-import { registerToolEffectReceipt, type ToolEffectReceipt } from "./tool-effect-receipt.js";
+import {
+  consumeToolEffectReceipt,
+  registerToolEffectReceipt,
+  type ToolEffectReceipt,
+} from "./tool-effect-receipt.js";
 import { consumeTrustedToolNoStartError } from "./tool-result-error.js";
 
 type ToolTerminal = {
@@ -47,6 +51,7 @@ export function createEmbeddedToolLifecycleRunner(
     try {
       completedResult = await toolParams.execute(onImplementationStart);
     } catch (error) {
+      const ownerEffectReceipt = consumeToolEffectReceipt(error);
       const trustedNoStart = consumeTrustedToolNoStartError(error);
       const result = buildToolLifecycleErrorResult(error);
       const terminal = await finishToolLifecycle(ctx, toolParams, {
@@ -54,9 +59,11 @@ export function createEmbeddedToolLifecycleRunner(
         isError: true,
         result,
       });
-      const effectReceipt = trustedNoStart
-        ? ({ state: "not_started" } as const)
-        : terminal.effectReceipt;
+      // The concrete tool owner can prove a post-dispatch failure had no effect;
+      // preserve that stronger fact instead of replacing it with lifecycle inference.
+      const effectReceipt =
+        ownerEffectReceipt ??
+        (trustedNoStart ? ({ state: "not_started" } as const) : terminal.effectReceipt);
       await notifyTerminal(toolParams.onTerminal, { ...terminal, effectReceipt });
       throw registerToolEffectReceipt(error, effectReceipt);
     }
