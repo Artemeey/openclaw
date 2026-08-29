@@ -42,6 +42,7 @@ import {
   toCodexDynamicToolProtocolResponse,
 } from "./dynamic-tool-execution.js";
 import {
+  CODEX_TOOL_SCHEMA_LOOKUP_NAME,
   createCodexDynamicToolBridge,
   projectCodexExecutableDynamicTools,
 } from "./dynamic-tools.js";
@@ -743,7 +744,7 @@ describe("createCodexDynamicToolBridge", () => {
     });
 
     const specs = flattenSpecsWithNamespace(bridge.specs);
-    expect(bridge.specs).toHaveLength(2);
+    expect(bridge.specs).toHaveLength(3);
     expectDynamicSpec(
       specs.find((tool) => tool.name === "message"),
       { name: "message" },
@@ -757,6 +758,97 @@ describe("createCodexDynamicToolBridge", () => {
       },
     );
     expectNoNamespace(specs.find((tool) => tool.name === "message"));
+    expectNoNamespace(specs.find((tool) => tool.name === CODEX_TOOL_SCHEMA_LOOKUP_NAME));
+  });
+
+  it("publishes compact deferred discovery specs and returns exact schemas on demand", async () => {
+    const exactSchema = {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+      additionalProperties: false,
+    } as const;
+    const fullDescription = `Search private records. ${"Detailed behavior. ".repeat(40)}`;
+    const bridge = createCodexDynamicToolBridge({
+      tools: [
+        createTool({
+          name: "records_search",
+          description: fullDescription,
+          displaySummary: "Search private records.",
+          parameters: exactSchema,
+        }),
+      ],
+      signal: new AbortController().signal,
+    });
+
+    const specs = flattenSpecsWithNamespace(bridge.specs);
+    const deferred = specs.find((tool) => tool.name === "records_search");
+    expect(deferred).toMatchObject({
+      description: "Search private records.",
+      deferLoading: true,
+      inputSchema: { type: "object", additionalProperties: true },
+    });
+    expect(JSON.stringify(bridge.specs)).not.toContain("Detailed behavior");
+
+    const lookup = await bridge.handleToolCall({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      callId: "call-schema",
+      namespace: null,
+      tool: CODEX_TOOL_SCHEMA_LOOKUP_NAME,
+      arguments: { name: "records_search" },
+    });
+    expect(lookup.success).toBe(true);
+    const text = lookup.contentItems[0];
+    expect(text?.type).toBe("inputText");
+    expect(
+      text?.type === "inputText" && typeof text.text === "string"
+        ? JSON.parse(text.text)
+        : undefined,
+    ).toEqual({
+      name: "records_search",
+      description: fullDescription,
+      inputSchema: exactSchema,
+    });
+
+    const rejected = await bridge.handleToolCall({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      callId: "call-invalid",
+      namespace: CODEX_OPENCLAW_DYNAMIC_TOOL_NAMESPACE,
+      tool: "records_search",
+      arguments: {},
+    });
+    expect(rejected.success).toBe(false);
+    expect(rejected.contentItems[0]).toMatchObject({
+      type: "inputText",
+      text: expect.stringContaining("must have required property 'query'"),
+    });
+  });
+
+  it("bounds a large deferred catalog independently of full tool schemas", () => {
+    const tools = Array.from({ length: 60 }, (_, index) =>
+      createTool({
+        name: `catalog_tool_${index}`,
+        description: `Catalog tool ${index}. ${"Verbose documentation. ".repeat(200)}`,
+        parameters: {
+          type: "object",
+          properties: Object.fromEntries(
+            Array.from({ length: 20 }, (__, propertyIndex) => [
+              `field_${propertyIndex}`,
+              { type: "string", description: "x".repeat(200) },
+            ]),
+          ),
+        },
+      }),
+    );
+    const bridge = createCodexDynamicToolBridge({
+      tools,
+      signal: new AbortController().signal,
+    });
+
+    expect(JSON.stringify(bridge.specs).length).toBeLessThan(30_000);
+    expect(specNames(bridge.specs)).toHaveLength(61);
   });
 
   it("keeps progress_card direct when searchable loading defers broad tools", () => {
@@ -830,6 +922,7 @@ describe("createCodexDynamicToolBridge", () => {
       "web_search",
       "browser",
       "computer",
+      CODEX_TOOL_SCHEMA_LOOKUP_NAME,
     ]);
     expect(forward.specs.filter((spec) => spec.type === "namespace")).toEqual([
       expect.objectContaining({
@@ -863,9 +956,13 @@ describe("createCodexDynamicToolBridge", () => {
       hookContext: { runId: "run-unavailable", onToolOutcome },
     });
 
-    expect(specNames(bridge.availableSpecs)).toEqual(["message"]);
+    expect(specNames(bridge.availableSpecs)).toEqual(["message", CODEX_TOOL_SCHEMA_LOOKUP_NAME]);
     expect(bridge.availableTools.map((tool) => tool.name)).toEqual(["message"]);
-    expect(specNames(bridge.specs)).toEqual([HEARTBEAT_RESPONSE_TOOL_NAME, "message"]);
+    expect(specNames(bridge.specs)).toEqual([
+      HEARTBEAT_RESPONSE_TOOL_NAME,
+      "message",
+      CODEX_TOOL_SCHEMA_LOOKUP_NAME,
+    ]);
 
     const result = await bridge.handleToolCall(
       {
@@ -1209,6 +1306,7 @@ describe("createCodexDynamicToolBridge", () => {
         }),
       ],
       signal: new AbortController().signal,
+      loading: "direct",
     });
 
     expect(flattenSpecsWithNamespace(bridge.availableSpecs)[0]?.inputSchema).toEqual({
@@ -1221,7 +1319,7 @@ describe("createCodexDynamicToolBridge", () => {
     });
   });
 
-  it("validates execution against the repaired schema published to Codex", async () => {
+  it("validates deferred execution against the exact repaired schema", async () => {
     const { bridge, execute, response } = await runSchemaToolCall({
       arguments: { action: "inspect" },
       callId: "call-repaired-schema",
@@ -1234,7 +1332,7 @@ describe("createCodexDynamicToolBridge", () => {
 
     expect(flattenSpecsWithNamespace(bridge.specs)[0]?.inputSchema).toEqual({
       type: "object",
-      properties: { action: { type: "string" } },
+      additionalProperties: true,
     });
     expect(bridge.telemetry.quarantinedTools).toEqual([]);
     expect(response).toEqual(expectInputText("done"));
@@ -1244,7 +1342,7 @@ describe("createCodexDynamicToolBridge", () => {
     });
   });
 
-  it("enforces the strict empty-object schema published to Codex", async () => {
+  it("enforces the strict exact schema behind a permissive deferred declaration", async () => {
     const { bridge, execute, response } = await runSchemaToolCall({
       arguments: { unexpected: true },
       callId: "call-strict-empty-schema",
@@ -1254,9 +1352,7 @@ describe("createCodexDynamicToolBridge", () => {
 
     expect(flattenSpecsWithNamespace(bridge.specs)[0]?.inputSchema).toEqual({
       type: "object",
-      properties: {},
-      required: [],
-      additionalProperties: false,
+      additionalProperties: true,
     });
     expectSchemaRejection(response, execute, 'must not have additional properties: "unexpected"');
   });
@@ -1292,8 +1388,8 @@ describe("createCodexDynamicToolBridge", () => {
       unsubscribeDiagnostics();
     }
 
-    expect(specNames(bridge.availableSpecs)).toEqual(["message"]);
-    expect(specNames(bridge.specs)).toEqual(["message"]);
+    expect(specNames(bridge.availableSpecs)).toEqual(["message", CODEX_TOOL_SCHEMA_LOOKUP_NAME]);
+    expect(specNames(bridge.specs)).toEqual(["message", CODEX_TOOL_SCHEMA_LOOKUP_NAME]);
     expect(bridge.telemetry.quarantinedTools).toEqual([
       {
         tool: "fuzzplugin_move_angles",
@@ -1436,8 +1532,12 @@ describe("createCodexDynamicToolBridge", () => {
     expect(codexDynamicToolsFingerprint(bridge.specs)).toBe(
       codexDynamicToolsFingerprint(healthyBridge.specs),
     );
-    expect(specNames(bridge.availableSpecs)).toEqual(["valid_sibling"]);
-    expect(specNames(bridge.specs).toSorted()).toEqual(["registered_sibling", "valid_sibling"]);
+    const searchableHelperNames =
+      testCase.placement === "searchable" ? [CODEX_TOOL_SCHEMA_LOOKUP_NAME] : [];
+    expect(specNames(bridge.availableSpecs)).toEqual(["valid_sibling", ...searchableHelperNames]);
+    expect(specNames(bridge.specs).toSorted()).toEqual(
+      ["registered_sibling", "valid_sibling", ...searchableHelperNames].toSorted(),
+    );
     const siblingSpec = flattenSpecsWithNamespace(bridge.availableSpecs)[0];
     if (testCase.placement === "searchable") {
       expect(siblingSpec).toMatchObject({
@@ -1585,8 +1685,8 @@ describe("createCodexDynamicToolBridge", () => {
       signal: new AbortController().signal,
     });
 
-    expect(specNames(bridge.availableSpecs)).toEqual(["message"]);
-    expect(specNames(bridge.specs)).toEqual(["message"]);
+    expect(specNames(bridge.availableSpecs)).toEqual(["message", CODEX_TOOL_SCHEMA_LOOKUP_NAME]);
+    expect(specNames(bridge.specs)).toEqual(["message", CODEX_TOOL_SCHEMA_LOOKUP_NAME]);
     expect(bridge.telemetry.quarantinedTools).toEqual([
       {
         tool: "tool[0]",
@@ -1644,8 +1744,11 @@ describe("createCodexDynamicToolBridge", () => {
       signal: new AbortController().signal,
     });
 
-    expect(specNames(registeredBridge.availableSpecs)).toEqual(["message"]);
-    expect(specNames(registeredBridge.specs)).toEqual(["message"]);
+    expect(specNames(registeredBridge.availableSpecs)).toEqual([
+      "message",
+      CODEX_TOOL_SCHEMA_LOOKUP_NAME,
+    ]);
+    expect(specNames(registeredBridge.specs)).toEqual(["message", CODEX_TOOL_SCHEMA_LOOKUP_NAME]);
   });
 
   it("can expose all dynamic tools directly for compatibility", () => {
@@ -1735,7 +1838,7 @@ describe("createCodexDynamicToolBridge", () => {
     { label: "negative", contextWindowTokens: -1, maxChars: 16_000 },
     { label: "non-finite", contextWindowTokens: Number.POSITIVE_INFINITY, maxChars: 16_000 },
     { label: "tiny", contextWindowTokens: 1, maxChars: 1 },
-    { label: "extra-large", contextWindowTokens: 200_000, maxChars: 64_000 },
+    { label: "extra-large", contextWindowTokens: 200_000, maxChars: 32_000 },
   ])(
     "preserves the canonical cap for $label contexts",
     async ({ contextWindowTokens, maxChars }) => {
