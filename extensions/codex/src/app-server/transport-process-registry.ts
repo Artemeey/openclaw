@@ -131,7 +131,11 @@ async function reapProcesses(runtime: ProcessRegistryRuntime): Promise<void> {
       withRegistryStore((store) => store.delete(key));
       continue;
     }
-    if (byPid.get(value.ownerPid)?.startedAt === value.ownerStartedAt) {
+    const owner = byPid.get(value.ownerPid);
+    // A zombie owner is dead: an unreaped SIGKILLed gateway (wedged supervisor,
+    // init-less container) keeps its pid+lstart in the snapshot but no longer
+    // owns cleanup, and the memoized pass would otherwise skip its orphan forever.
+    if (owner?.startedAt === value.ownerStartedAt && !owner.state.startsWith("Z")) {
       continue;
     }
     if (byPid.get(value.pid)?.startedAt !== value.startedAt) {

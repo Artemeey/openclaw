@@ -166,15 +166,20 @@ describe("Codex app-server process registry", () => {
   });
 
   it.each([
-    { name: "dead owner, group leader", pgid: 101, ownerReused: false, target: -101 },
-    { name: "reused owner PID", pgid: 101, ownerReused: true, target: -101 },
-    { name: "non-leader child", pgid: 99, ownerReused: false, target: 101 },
-  ])("reaps an identity-confirmed orphan: $name", async ({ pgid, ownerReused, target }) => {
+    { name: "dead owner, group leader", pgid: 101, ownerRow: "absent", target: -101 },
+    { name: "reused owner PID", pgid: 101, ownerRow: "reused", target: -101 },
+    { name: "zombie owner", pgid: 101, ownerRow: "zombie", target: -101 },
+    { name: "non-leader child", pgid: 99, ownerRow: "absent", target: 101 },
+  ] as const)("reaps an identity-confirmed orphan: $name", async ({ pgid, ownerRow, target }) => {
     const { store, runtime, seed, child } = createHarness();
     const row = seed();
     runtime.inspectSnapshot.mockResolvedValue([
       child,
-      ...(ownerReused ? [processRow(row.ownerPid, "new owner")] : []),
+      // A zombie keeps its exact pid + lstart in the snapshot; only the state marks it dead.
+      ...(ownerRow === "reused" ? [processRow(row.ownerPid, "new owner")] : []),
+      ...(ownerRow === "zombie"
+        ? [{ ...processRow(row.ownerPid, row.ownerStartedAt), state: "Z+" }]
+        : []),
     ]);
     runtime.inspectProcess.mockResolvedValue({ ...child, pgid });
     await reapOrphanedCodexAppServerProcesses(runtime);

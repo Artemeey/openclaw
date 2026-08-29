@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   inspectCodexTransportProcess,
   inspectCodexTransportProcessSnapshot,
+  type PosixProcess,
 } from "./transport-process-containment.js";
 import {
   reapOrphanedCodexAppServerProcesses,
@@ -83,6 +84,86 @@ describe.skipIf(process.platform === "win32")("Codex app-server orphan process r
         }
       }
       await Promise.all([owner.exited, orphan.exited]);
+      store.clear();
+      resetCodexAppServerProcessRegistryForTests();
+    }
+  }, 20_000);
+
+  it("treats an unreaped zombie owner as dead and reaps its orphan", async () => {
+    const store = createCodexProcessRegistryTestStore();
+    const orphan = spawnSleepFixture(true);
+    // The inner sleep exits after 1s; its parent becomes the exec'd sleep binary,
+    // which never calls wait, so the inner pid stays a real Z-state process.
+    const holder = spawn("sh", ["-c", 'sh -c "exec sleep 1" & echo $!; exec sleep 60'], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const holderExited = new Promise<void>((resolve) => {
+      holder.once("exit", () => resolve());
+      holder.once("error", () => resolve());
+    });
+    resetCodexAppServerProcessRegistryForTests();
+    setCodexAppServerProcessRegistryStore(() => store);
+
+    try {
+      const zombiePid = await new Promise<number>((resolve, reject) => {
+        let buffered = "";
+        holder.stdout.on("data", (chunk: Buffer) => {
+          buffered += chunk.toString("utf8");
+          const line = buffered.split("\n")[0]?.trim();
+          if (line) {
+            resolve(Number(line));
+          }
+        });
+        holder.once("error", reject);
+        holder.once("exit", () => reject(new Error("holder exited before printing the pid")));
+      });
+      expect(Number.isSafeInteger(zombiePid)).toBe(true);
+      // The orphan's "spawn" event has usually fired while reading holder stdout;
+      // pid is assigned synchronously on success, so only wait when it is absent.
+      if (!orphan.child.pid) {
+        await once(orphan.child, "spawn");
+      }
+      const orphanPid = orphan.child.pid;
+      if (!orphanPid) {
+        throw new Error("orphan fixture did not acquire a PID");
+      }
+      let zombieRow: PosixProcess | undefined;
+      const zombieDeadline = Date.now() + 10_000;
+      while (Date.now() < zombieDeadline && !zombieRow) {
+        const snapshot = await inspectCodexTransportProcessSnapshot(Date.now() + 5_000);
+        const row = snapshot?.find((candidate) => candidate.pid === zombiePid);
+        if (row?.state.startsWith("Z")) {
+          zombieRow = row;
+          break;
+        }
+        await new Promise((resolve) => {
+          setTimeout(resolve, 100);
+        });
+      }
+      const orphanIdentity = await inspectCodexTransportProcess(orphanPid, Date.now() + 5_000);
+      if (!zombieRow || !orphanIdentity) {
+        throw new Error("could not inspect zombie or orphan fixture identities");
+      }
+      store.register(String(orphanPid), {
+        pid: orphanPid,
+        startedAt: orphanIdentity.startedAt,
+        ownerPid: zombiePid,
+        ownerStartedAt: zombieRow.startedAt,
+        spawnedAtMs: Date.now(),
+      });
+
+      await reapOrphanedCodexAppServerProcesses();
+      await expect.poll(() => orphan.child.signalCode, { timeout: 5_000 }).toBe("SIGKILL");
+      await orphan.exited;
+      expect(store.entries()).toEqual([]);
+    } finally {
+      if (holder.exitCode === null && holder.signalCode === null) {
+        holder.kill("SIGKILL");
+      }
+      if (orphan.child.exitCode === null && orphan.child.signalCode === null) {
+        orphan.child.kill("SIGKILL");
+      }
+      await Promise.all([holderExited, orphan.exited]);
       store.clear();
       resetCodexAppServerProcessRegistryForTests();
     }
