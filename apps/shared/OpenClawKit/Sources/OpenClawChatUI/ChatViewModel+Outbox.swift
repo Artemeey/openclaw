@@ -20,7 +20,9 @@ public enum OpenClawChatOutboxMessageState: Equatable, Sendable {
         switch self {
         case let .failed(reason):
             reason != OpenClawChatSQLiteTranscriptCache.outboxChangedSessionError &&
-                reason != OpenClawChatSQLiteTranscriptCache.outboxClientUpgradeRequiredError
+                reason != OpenClawChatSQLiteTranscriptCache.outboxClientUpgradeRequiredError &&
+                reason != OpenClawChatSQLiteTranscriptCache.outboxSettingsGatewayUpgradeRequiredError &&
+                reason != OpenClawChatSQLiteTranscriptCache.outboxStructuredGatewayUpgradeRequiredError
         case .queued, .sending, .confirming:
             false
         }
@@ -1171,7 +1173,7 @@ extension OpenClawChatViewModel {
         _ command: OpenClawChatOutboxCommand,
         outbox: any OpenClawChatCommandOutbox) async -> OutboxFlushDisposition
     {
-        let reason = OpenClawChatSQLiteTranscriptCache.outboxClientUpgradeRequiredError
+        let reason = OpenClawChatSQLiteTranscriptCache.outboxStructuredGatewayUpgradeRequiredError
         let update = await outbox.markCommandFailedIfPresent(
             id: command.id,
             attemptVersion: command.attemptVersion,
@@ -1539,6 +1541,12 @@ extension OpenClawChatViewModel {
             .confirming
         case .failed where command.lastError == OpenClawChatSQLiteTranscriptCache.outboxChangedTargetError:
             .failed(reason: "Gateway session routing changed; review and retry this message.")
+        case .failed
+            where command.lastError == OpenClawChatSQLiteTranscriptCache.outboxClientUpgradeRequiredError ||
+            command.lastError == OpenClawChatSQLiteTranscriptCache.outboxSettingsGatewayUpgradeRequiredError ||
+            command.lastError == OpenClawChatSQLiteTranscriptCache.outboxStructuredGatewayUpgradeRequiredError:
+            // Typed upgrade reasons own retry policy and recovery labels across a cold restore.
+            .failed(reason: command.lastError)
         case .failed:
             .failed(reason: OpenClawChatSQLiteTranscriptCache.outboxDisplayError(command.lastError))
         }
