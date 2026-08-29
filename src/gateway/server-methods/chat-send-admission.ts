@@ -268,6 +268,16 @@ export async function admitChatSend(params: {
     if (entry && !latestEntry) {
       throw new Error(`Session "${sessionKey}" was deleted while starting work. Retry.`);
     }
+    // A supplied session id fences the exact transcript generation for every
+    // queue mode. Without this check, stale steer input can target a successor.
+    if (
+      commitOutcome &&
+      requestedSessionId !== undefined &&
+      latestEntry?.sessionId !== undefined &&
+      requestedSessionId !== latestEntry?.sessionId
+    ) {
+      throw new Error(ACTIVE_LEAF_CHANGED_ERROR_REASON);
+    }
     // Capture the exact direct owner under the writer barrier. If it clears
     // later, the opaque target rejects instead of resolving a successor.
     const resolvedInjectionTarget =
