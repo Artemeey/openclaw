@@ -5414,6 +5414,21 @@ source "$ROOT_DIR/scripts/lib/docker-e2e-logs.sh"
     );
   });
 
+  it("proves fs-safe native and fallback behavior across packaged Docker installs", () => {
+    const dockerfile = readFileSync("scripts/e2e/Dockerfile", "utf8");
+    const packageRunner = readFileSync(DOCKER_PACKAGE_INSTALL_E2E_PATH, "utf8");
+    const updateRunner = readFileSync(UPDATE_CHANNEL_SWITCH_DOCKER_E2E_PATH, "utf8");
+
+    expect(dockerfile).toContain("AS musl");
+    expect(dockerfile).toContain(
+      "node /tmp/verify-fs-safe-native.mjs --package-root /app --mode require",
+    );
+    expect(packageRunner).toContain('MUSL_IMAGE_NAME="openclaw-docker-e2e-musl:local"');
+    expect(packageRunner.match(/verify-fs-safe-native\.mjs[^\n]+--mode require/gu)).toHaveLength(3);
+    expect(packageRunner).toContain("bash scripts/e2e/bun-global-install-smoke.sh");
+    expect(updateRunner).toContain("--mode fallback");
+  });
+
   it("keeps private bundled plugins discoverable without persisting a curated registry", () => {
     const dockerfile = readFileSync("scripts/e2e/Dockerfile", "utf8");
     expect(dockerfile).toContain("runBundledPluginPostinstall");
