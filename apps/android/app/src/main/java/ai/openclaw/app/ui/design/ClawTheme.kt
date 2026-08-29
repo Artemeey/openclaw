@@ -1,6 +1,7 @@
 package ai.openclaw.app.ui.design
 
 import ai.openclaw.app.R
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -62,7 +63,7 @@ internal data class ClawColors(
 )
 
 /**
- * App spacing scale for Compose screens and shared controls.
+ * App spacing and control-size scale for Compose screens and shared controls.
  */
 @Immutable
 internal data class ClawSpacing(
@@ -74,7 +75,14 @@ internal data class ClawSpacing(
   val lg: Dp = 24.dp,
   val xl: Dp = 32.dp,
   val xxl: Dp = 40.dp,
+  // Touch target and visible shape are separate: `touchTarget` is the minimum
+  // hit area every control keeps, while `control`, `row`, `iconSlot`, and `icon`
+  // describe the smaller painted geometry that sits inside it.
   val touchTarget: Dp = 48.dp,
+  val control: Dp = 36.dp,
+  val row: Dp = 48.dp,
+  val iconSlot: Dp = 32.dp,
+  val icon: Dp = 18.dp,
 )
 
 /**
@@ -85,9 +93,10 @@ internal data class ClawRadii(
   val row: Dp = 6.dp,
   val control: Dp = 10.dp,
   val button: Dp = 10.dp,
-  val panel: Dp = 14.dp,
-  val sheet: Dp = 20.dp,
-  val pill: Dp = 20.dp,
+  val panel: Dp = 12.dp,
+  val sheet: Dp = 16.dp,
+  // Full-round for a `control`-height capsule; larger surfaces use `panel`.
+  val pill: Dp = 18.dp,
 )
 
 /**
@@ -220,11 +229,16 @@ internal fun ClawDesignTheme(
   val colors = clawColorsForTheme(dark = dark, accentArgb = accentArgb)
   val typography = clawTypography(clawFontFamily)
 
+  val spacing = ClawSpacing()
+
   CompositionLocalProvider(
     LocalClawColors provides colors,
-    LocalClawSpacing provides ClawSpacing(),
+    LocalClawSpacing provides spacing,
     LocalClawRadii provides ClawRadii(),
     LocalClawTypography provides typography,
+    // Keep Material controls on the same accessibility floor as Claw controls while
+    // their smaller painted geometry stays independent from the hit area.
+    LocalMinimumInteractiveComponentSize provides spacing.touchTarget,
   ) {
     MaterialTheme(
       colorScheme = clawMaterialColorScheme(colors, dark),
@@ -241,24 +255,24 @@ private fun clawTypography(fontFamily: FontFamily) =
       TextStyle(
         fontFamily = fontFamily,
         fontWeight = FontWeight.Bold,
-        fontSize = 26.sp,
-        lineHeight = 32.sp,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
         letterSpacing = 0.sp,
       ),
     title =
       TextStyle(
         fontFamily = fontFamily,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 20.sp,
-        lineHeight = 25.sp,
+        fontSize = 17.sp,
+        lineHeight = 22.sp,
         letterSpacing = 0.sp,
       ),
     section =
       TextStyle(
         fontFamily = fontFamily,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 15.sp,
-        lineHeight = 20.sp,
+        fontSize = 14.sp,
+        lineHeight = 18.sp,
         letterSpacing = 0.sp,
       ),
     body =
@@ -281,7 +295,7 @@ private fun clawTypography(fontFamily: FontFamily) =
       TextStyle(
         fontFamily = fontFamily,
         fontWeight = FontWeight.Medium,
-        fontSize = 12.5.sp,
+        fontSize = 12.sp,
         lineHeight = 16.sp,
         letterSpacing = 0.sp,
       ),

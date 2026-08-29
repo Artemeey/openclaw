@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -53,7 +54,6 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 internal enum class SidebarDestination(
   val icon: ImageVector,
@@ -210,38 +210,45 @@ internal fun OpenClawSidebar(
         .fillMaxSize()
         .background(palette.background)
         .windowInsetsPadding(WindowInsets.safeDrawing)
-        .padding(horizontal = 14.dp, vertical = 10.dp),
+        .padding(horizontal = ClawTheme.spacing.xs, vertical = ClawTheme.spacing.xxs),
   ) {
     // Header and search stay pinned above the scrolling sections so search is
     // always reachable no matter how far the section list scrolls.
+    // Toolbar glyphs are centred in a full touch target, so the trailing pair is nudged
+    // outward by that inset to sit on the drawer gutter, and the mascot is nudged inward
+    // to share the row-label margin.
+    val glyphInset = (ClawTheme.spacing.touchTarget - ClawTheme.spacing.icon) / 2
     Row(
-      modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+      modifier = Modifier.fillMaxWidth().heightIn(min = ClawTheme.spacing.touchTarget),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs),
     ) {
-      OpenClawMascot(modifier = Modifier.size(28.dp))
+      OpenClawMascot(modifier = Modifier.padding(start = 10.dp).size(24.dp))
       Text(
         text = "OpenClaw",
-        style = ClawTheme.type.title.copy(fontSize = 18.sp, lineHeight = 22.sp),
+        style = ClawTheme.type.title,
         color = palette.text,
         modifier = Modifier.weight(1f),
         maxLines = 1,
       )
-      IconButton(onClick = onOpenSettings, modifier = Modifier.size(48.dp)) {
+      IconButton(onClick = onOpenSettings, modifier = Modifier.size(ClawTheme.spacing.touchTarget)) {
         Icon(
           imageVector = Icons.Default.Settings,
           contentDescription = nativeString("Open Settings"),
           tint = palette.text,
-          modifier = Modifier.size(20.dp),
+          modifier = Modifier.size(ClawTheme.spacing.icon),
         )
       }
       if (showCloseButton) {
-        IconButton(onClick = onClose, modifier = Modifier.size(48.dp).testTag("sidebar-close")) {
+        IconButton(
+          onClick = onClose,
+          modifier = Modifier.offset(x = glyphInset).size(ClawTheme.spacing.touchTarget).testTag("sidebar-close"),
+        ) {
           Icon(
             imageVector = Icons.Default.Close,
             contentDescription = nativeString("Hide Sidebar"),
             tint = palette.text,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(ClawTheme.spacing.icon),
           )
         }
       }
@@ -250,7 +257,7 @@ internal fun OpenClawSidebar(
       query = query,
       onQueryChange = { query = it },
       palette = palette,
-      modifier = Modifier.padding(top = 4.dp, bottom = 10.dp),
+      modifier = Modifier.padding(vertical = ClawTheme.spacing.xxs),
     )
 
     Column(
@@ -268,7 +275,7 @@ internal fun OpenClawSidebar(
               text = nativeString("Searching threads"),
               style = ClawTheme.type.caption,
               color = palette.muted,
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+              modifier = Modifier.padding(horizontal = 10.dp, vertical = ClawTheme.spacing.xxs),
             )
           else ->
             if (searchResults.isEmpty()) {
@@ -276,7 +283,7 @@ internal fun OpenClawSidebar(
                 text = nativeString("No matching threads"),
                 style = ClawTheme.type.caption,
                 color = palette.muted,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = ClawTheme.spacing.xxs),
               )
             } else {
               Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -301,7 +308,7 @@ internal fun OpenClawSidebar(
           )
         }
 
-        SidebarSectionTitle(nativeString("Pages"), palette, modifier = Modifier.padding(top = 12.dp))
+        SidebarSectionTitle(nativeString("Pages"), palette, modifier = Modifier.padding(top = ClawTheme.spacing.xxs))
         SidebarDestination.entries.forEach { destination ->
           SidebarNavigationRow(
             destination = destination,
@@ -311,13 +318,13 @@ internal fun OpenClawSidebar(
           )
         }
 
-        SidebarSectionTitle(nativeString("Recent sessions"), palette, modifier = Modifier.padding(top = 12.dp))
+        SidebarSectionTitle(nativeString("Recent sessions"), palette, modifier = Modifier.padding(top = ClawTheme.spacing.xxs))
         if (recentPresentation.sections.isEmpty()) {
           Text(
             text = nativeString("No recent sessions"),
             style = ClawTheme.type.caption,
             color = palette.muted,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = ClawTheme.spacing.xxs),
           )
         } else {
           recentPresentation.sections.forEach { section ->
@@ -355,17 +362,17 @@ internal fun OpenClawSidebar(
       modifier =
         Modifier
           .fillMaxWidth()
-          .heightIn(min = 48.dp)
+          .heightIn(min = ClawTheme.spacing.touchTarget)
           .semantics(mergeDescendants = true) {
             stateDescription = connectionLabel
-          }.padding(horizontal = 12.dp),
+          }.padding(horizontal = 10.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(9.dp),
+      horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs),
     ) {
       Box(
         modifier =
           Modifier
-            .size(8.dp)
+            .size(6.dp)
             .clip(CircleShape)
             .background(if (connection.isConnected) ClawTheme.colors.success else palette.muted)
             .clearAndSetSemantics {},

@@ -132,7 +132,7 @@ class ChatComposerLayoutTest {
     val editor = editorNode.getUnclippedBoundsInRoot()
     val stop = stopNode.getUnclippedBoundsInRoot()
     assertTrue("Editor must retain a visible line: $editor inside $viewport", editor.bottom > editor.top)
-    assertTrue("Stop must retain its touch target: $stop inside $viewport", stop.bottom - stop.top >= 48.dp)
+    assertTrue("Stop must retain its 48dp touch target: $stop inside $viewport", stop.bottom - stop.top >= 48.dp)
     for (bounds in listOf(editor, stop)) {
       assertTrue("Composer control must stay below the viewport top", bounds.top >= viewport.top)
       assertTrue("Composer control must stay above the viewport bottom", bounds.bottom <= viewport.bottom)

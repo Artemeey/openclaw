@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun ClawPanel(
   modifier: Modifier = Modifier,
-  contentPadding: PaddingValues = PaddingValues(12.dp),
+  contentPadding: PaddingValues = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
   elevated: Boolean = false,
   content: @Composable () -> Unit,
 ) {
@@ -53,9 +53,9 @@ internal fun ClawEmptyState(
 ) {
   ClawPanel(modifier = modifier) {
     Column(
-      modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+      modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.spacedBy(8.dp),
+      verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
       Text(text = title, style = ClawTheme.type.section, color = ClawTheme.colors.text)
       Text(text = body, style = ClawTheme.type.body, color = ClawTheme.colors.textMuted)
@@ -74,9 +74,9 @@ internal fun ClawLoadingState(
 ) {
   ClawPanel(modifier = modifier) {
     Column(
-      modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
+      modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.spacedBy(10.dp),
+      verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
       CircularProgressIndicator(color = ClawTheme.colors.primary, strokeWidth = 2.dp)
       Text(text = title, style = ClawTheme.type.body, color = ClawTheme.colors.textMuted)

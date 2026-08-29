@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -56,7 +57,7 @@ internal fun ClawTopBar(
     modifier =
       modifier
         .fillMaxWidth()
-        .padding(horizontal = ClawTheme.spacing.lg, vertical = ClawTheme.spacing.sm),
+        .padding(horizontal = ClawTheme.spacing.sm, vertical = ClawTheme.spacing.xs),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(12.dp),
   ) {
@@ -97,19 +98,31 @@ internal fun ClawPageHeader(
   navigation: (@Composable () -> Unit)? = null,
   actions: (@Composable RowScope.() -> Unit)? = null,
 ) {
+  // Icon glyphs are centred in a full touch target, so the toolbar row is nudged
+  // outward by that inset to keep glyph edges on the same gutter as the page title.
+  val glyphInset = (ClawTheme.spacing.touchTarget - ClawTheme.spacing.icon) / 2
   Column(
     modifier = modifier.fillMaxWidth(),
-    verticalArrangement = Arrangement.spacedBy(6.dp),
+    verticalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxxs),
   ) {
     if (navigation != null || actions != null) {
       Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs),
       ) {
-        navigation?.invoke()
+        if (navigation != null) {
+          Box(modifier = Modifier.offset(x = -glyphInset)) { navigation() }
+        }
         Spacer(modifier = Modifier.weight(1f))
-        actions?.invoke(this)
+        if (actions != null) {
+          Row(
+            modifier = Modifier.offset(x = glyphInset),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxxs),
+            content = actions,
+          )
+        }
       }
     }
     if (eyebrow != null) {
@@ -183,17 +196,17 @@ private fun ClawBottomNavItem(
 ) {
   Surface(
     onClick = onClick,
-    modifier = modifier.heightIn(min = 52.dp),
+    modifier = modifier.heightIn(min = ClawTheme.spacing.row),
     shape = RoundedCornerShape(ClawTheme.radii.control),
     color = if (selected) ClawTheme.colors.accentSoft else Color.Transparent,
     contentColor = if (selected) ClawTheme.colors.accent else ClawTheme.colors.textMuted,
   ) {
     Column(
-      modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 5.dp),
+      modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-      Icon(imageVector = item.icon, contentDescription = item.label, modifier = Modifier.size(20.dp))
+      Icon(imageVector = item.icon, contentDescription = item.label, modifier = Modifier.size(ClawTheme.spacing.icon))
       Text(
         modifier = Modifier.fillMaxWidth(),
         text = item.label,
@@ -215,7 +228,7 @@ internal fun ClawAvatarMark(
   modifier: Modifier = Modifier,
 ) {
   Surface(
-    modifier = modifier.size(38.dp),
+    modifier = modifier.size(34.dp),
     shape = CircleShape,
     color = ClawTheme.colors.surfaceRaised,
     contentColor = ClawTheme.colors.text,

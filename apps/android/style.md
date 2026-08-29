@@ -68,37 +68,54 @@ Rules:
 
 Primary type family: Manrope (`400/500/600/700`).
 
-Recommended scale:
+Scale (`ClawTheme.type`):
 
-- Display: `34sp / 40sp`, bold
-- Section title: `24sp / 30sp`, semibold
-- Headline/action: `16sp / 22sp`, semibold
-- Body: `15sp / 22sp`, medium
-- Callout/helper: `14sp / 20sp`, medium
-- Caption 1: `12sp / 16sp`, medium
-- Caption 2: `11sp / 14sp`, medium
+- `display`: `22sp / 28sp`, bold — the page name, once per screen
+- `title`: `17sp / 22sp`, semibold — panel and sheet titles
+- `section`: `14sp / 18sp`, semibold — group headings and row titles
+- `body`: `14sp / 19sp`, medium
+- `label`: `14sp / 18sp`, semibold — buttons and chips
+- `caption`: `12sp / 16sp`, medium — secondary and helper copy
+- `captionSmall`: `11sp / 14sp`, medium, `0.4sp` tracking — eyebrows and status text
+- `mono`: `13sp / 18sp` — commands, setup codes, endpoint-like values
 
-Use monospace only for commands, setup codes, endpoint-like values.
+Use the token, never `style.copy(fontSize = ...)`. A screen that needs a size the scale
+does not have is a signal to change the scale, not to patch the call site.
 Hard rule: avoid ultra-thin weights on light backgrounds.
 
 ## 5. Layout And Spacing
 
 - Respect safe drawing insets.
 - Keep content hierarchy mostly via spacing + dividers.
-- Prefer vertical rhythm from `8/10/12/14/20dp`.
-- Radius scale: `6dp` rows and chips, `10dp` controls and buttons, `14dp` panels,
-  `20dp` sheets and pills.
+- Spacing scale (`ClawTheme.spacing`), all multiples of 4:
+  `xxxs 4`, `xxs 8`, `xs 12`, `sm 16`, `md 20`, `lg 24`, `xl 32`, `xxl 40`.
+- Page gutter on phones is `sm` (16dp) horizontally and `xxs` (8dp) vertically. Use a
+  wider gutter only when a screen has a stronger local constraint.
+- Touch target and visible shape are separate sizes. Every control keeps a `touchTarget`
+  (48dp) hit area and ripple; what it paints inside is smaller: `control` 36dp for
+  capsules and segments, `iconSlot` 32dp for a bordered icon circle, `icon` 18dp for a
+  bare glyph. Never grow the painted shape to reach the target.
+- `row` (48dp) is the minimum height for a full-width list or detail row.
+- Radius scale (`ClawTheme.radii`): `row 6`, `control 10`, `button 10`, `panel 12`,
+  `sheet 16`, `pill 18`. `pill` is full-round for a `control`-height capsule only;
+  taller surfaces use `panel`.
 - Panels are a flat surface plus a 1dp border. Do not add tonal or shadow elevation,
   and do not nest a panel inside a panel.
-- Shell pages open with a page header: an action row, then the page name in the accent
-  color on its own full-width line. Product branding does not repeat per page.
+- Shell pages open with `ClawPageHeader`: an action row, an optional context eyebrow,
+  then the page name in the accent color on its own full-width line. Product branding
+  does not repeat per page. Header glyphs are offset outward so their edges sit on the
+  page gutter, not the edge of their touch target.
+- One emphasis zone per screen. Prefer a divider or whitespace over another card.
 - Prefer one bordered list over a grid of cards for status and reference data.
 
 ## 6. Buttons And Actions
 
 - Primary action: filled accent button, visually dominant.
 - Secondary action: lower emphasis (outlined/text/surface button).
-- Icon-only buttons must remain legible and >=44dp target.
+- Icon-only buttons must remain legible and keep a 48dp target. `ClawIconButton` paints
+  a 32dp bordered circle inside it; `ClawPlainIconButton` paints only the 18dp glyph.
+- `ClawDesignTheme` holds Material's own minimum interactive size at 48dp so Material
+  controls and Claw controls agree on one floor.
 - Back buttons in action rows use rounded-square shape, not circular by default.
 
 ## 7. Inputs And Forms
@@ -117,8 +134,9 @@ Hard rule: avoid ultra-thin weights on light backgrounds.
 
 ## 9. Accessibility
 
-- Minimum practical touch target: `44dp`.
-- Bottom navigation shows every destination label, always, not only the selected one.
+- Minimum practical touch target: `48dp`, even where the painted shape is smaller.
+- Bottom navigation is Material's compact short bar and shows every destination label,
+  always, not only the selected one.
 - Do not rely on color alone for status.
 - Preserve high contrast for all text tiers.
 - Add meaningful `contentDescription` for icon-only controls.

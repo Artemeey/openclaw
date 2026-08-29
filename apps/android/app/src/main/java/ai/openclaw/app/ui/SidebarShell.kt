@@ -1,7 +1,13 @@
 package ai.openclaw.app.ui
 
 import ai.openclaw.app.ui.design.ClawTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.Icon
@@ -63,7 +69,10 @@ private fun adaptiveNavigationMode(
 
 private fun AdaptiveNavigationMode.toNavigationSuiteType(): NavigationSuiteType =
   when (this) {
-    AdaptiveNavigationMode.Bar -> NavigationSuiteType.NavigationBar
+    // The compact short bar keeps the same destinations and labels as the legacy
+    // navigation bar in a shorter container, so the phone shell spends its vertical
+    // space on content instead of chrome.
+    AdaptiveNavigationMode.Bar -> NavigationSuiteType.ShortNavigationBarCompact
     AdaptiveNavigationMode.Rail -> NavigationSuiteType.NavigationRail
     AdaptiveNavigationMode.Drawer -> NavigationSuiteType.NavigationDrawer
   }
@@ -134,6 +143,12 @@ internal fun AdaptiveNavigationShell(
         ),
     )
 
+  val layoutType =
+    adaptiveNavigationSuiteType(
+      navigationMode = navigationMode,
+      compactNavigationVisible = compactNavigationVisible,
+    )
+
   ModalNavigationDrawer(
     drawerState = drawerState,
     gesturesEnabled = true,
@@ -163,10 +178,17 @@ internal fun AdaptiveNavigationShell(
             onClick = { onSelectDestination(destination) },
             // The label carries the accessible name in every layout, so a duplicate icon
             // description would make TalkBack announce each destination twice.
-            icon = { Icon(imageVector = destination.icon, contentDescription = null) },
+            icon = {
+              Icon(
+                imageVector = destination.icon,
+                contentDescription = null,
+                tint = if (destination == activeDestination) ClawTheme.colors.accent else ClawTheme.colors.textMuted,
+              )
+            },
             label = {
               Text(
                 text = displayLabel,
+                color = if (destination == activeDestination) ClawTheme.colors.accent else ClawTheme.colors.textMuted,
                 modifier =
                   Modifier.clearAndSetSemantics {
                     contentDescription = fullLabel
@@ -183,14 +205,35 @@ internal fun AdaptiveNavigationShell(
         }
       },
       modifier = Modifier.fillMaxSize().testTag("adaptive-navigation-suite"),
-      layoutType =
-        adaptiveNavigationSuiteType(
-          navigationMode = navigationMode,
-          compactNavigationVisible = compactNavigationVisible,
-        ),
+      layoutType = layoutType,
       containerColor = ClawTheme.colors.canvas,
       contentColor = ClawTheme.colors.text,
-      content = content,
-    )
+    ) {
+      // Material 1.4.0 marks the bottom inset as consumed for the legacy navigation
+      // bar but not for the short bars, so destinations would pad themselves below a
+      // bar that already sits on the system navigation. Consume it here instead.
+      Box(
+        modifier =
+          Modifier
+            .fillMaxSize()
+            .consumeWindowInsets(shortNavigationBarConsumedInsets(layoutType)),
+      ) {
+        content()
+      }
+    }
   }
 }
+
+/**
+ * Bottom inset the compact short navigation bar already covers.
+ *
+ * Empty for every other layout type so rails, drawers, and the hidden bar leave the
+ * system navigation inset to the destination content.
+ */
+@Composable
+internal fun shortNavigationBarConsumedInsets(layoutType: NavigationSuiteType): WindowInsets =
+  if (layoutType == NavigationSuiteType.ShortNavigationBarCompact) {
+    WindowInsets.systemBars.only(WindowInsetsSides.Bottom)
+  } else {
+    WindowInsets(0)
+  }

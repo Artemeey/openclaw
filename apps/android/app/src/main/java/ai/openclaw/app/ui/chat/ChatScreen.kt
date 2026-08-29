@@ -53,7 +53,9 @@ import ai.openclaw.app.ui.agentPickerState
 import ai.openclaw.app.ui.copyGatewayDiagnosticsReport
 import ai.openclaw.app.ui.design.ClawListItem
 import ai.openclaw.app.ui.design.ClawLoadingState
+import ai.openclaw.app.ui.design.ClawPageHeader
 import ai.openclaw.app.ui.design.ClawPanel
+import ai.openclaw.app.ui.design.ClawPlainIconButton
 import ai.openclaw.app.ui.design.ClawPrimaryButton
 import ai.openclaw.app.ui.design.ClawSecondaryButton
 import ai.openclaw.app.ui.design.ClawSegmentedControl
@@ -174,7 +176,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.CancellationException
@@ -663,8 +664,8 @@ fun ChatScreen(
     modifier =
       Modifier
         .fillMaxSize()
-        .padding(horizontal = 16.dp, vertical = 10.dp),
-    verticalArrangement = Arrangement.spacedBy(8.dp),
+        .padding(horizontal = ClawTheme.spacing.sm, vertical = ClawTheme.spacing.xxs),
+    verticalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs),
   ) {
     ChatHeader(
       sessionTitle = currentSessionTitle(sessionKey = sessionKey, mainSessionKey = mainSessionKey, sessions = sessions),
@@ -697,7 +698,7 @@ fun ChatScreen(
     Row(
       modifier = Modifier.fillMaxWidth(),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs),
     ) {
       ChatAgentSelector(
         activeAgentId = activeAgentId,
@@ -1060,15 +1061,15 @@ private fun ChatSessionSwitcher(
     Surface(
       onClick = { expanded = true },
       modifier = Modifier.fillMaxWidth().heightIn(min = ClawTheme.spacing.touchTarget),
-      shape = RoundedCornerShape(ClawTheme.radii.pill),
+      shape = RoundedCornerShape(ClawTheme.radii.control),
       color = ClawTheme.colors.surfaceRaised.copy(alpha = 0.72f),
       contentColor = ClawTheme.colors.text,
       border = BorderStroke(1.dp, ClawTheme.colors.border.copy(alpha = 0.7f)),
     ) {
       Row(
-        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+        modifier = Modifier.padding(horizontal = ClawTheme.spacing.xxs, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxxs),
       ) {
         Text(
           text = chatSessionChipText(entry = selected, mainSessionKey = mainSessionKey),
@@ -1080,7 +1081,7 @@ private fun ChatSessionSwitcher(
         Icon(
           imageVector = Icons.Default.KeyboardArrowDown,
           contentDescription = null,
-          modifier = Modifier.size(18.dp),
+          modifier = Modifier.size(ClawTheme.spacing.icon),
         )
       }
     }
@@ -1152,27 +1153,24 @@ private fun ChatHeader(
 ) {
   var actionsMenuExpanded by remember { mutableStateOf(false) }
   val newChatInWorktreeLabel = stringResource(R.string.new_chat_in_worktree)
-  Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-    Row(
-      modifier = Modifier.fillMaxWidth(),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
+  // The session name is the context line and "Chat" stays the accent page title, so the
+  // header keeps the same two-line rhythm as every other shell destination.
+  ClawPageHeader(
+    title = nativeString("Chat"),
+    eyebrow = sessionTitle,
+    navigation =
       if (showSidebarButton) {
-        HeaderIcon(
-          icon = Icons.Default.Menu,
-          contentDescription = nativeString("Show Sidebar"),
-          onClick = onOpenSidebar,
-        )
-      }
-      Text(
-        text = sessionTitle,
-        style = ClawTheme.type.title.copy(fontSize = 17.sp, lineHeight = 21.sp),
-        color = ClawTheme.colors.text,
-        modifier = Modifier.weight(1f),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-      )
+        {
+          ClawPlainIconButton(
+            icon = Icons.Default.Menu,
+            contentDescription = nativeString("Show Sidebar"),
+            onClick = onOpenSidebar,
+          )
+        }
+      } else {
+        null
+      },
+    actions = {
       ModelPill(
         text =
           when {
@@ -1187,9 +1185,9 @@ private fun ChatHeader(
             else -> ClawStatus.Danger
           },
       )
-      HeaderIcon(icon = Icons.Default.Add, contentDescription = nativeString("New chat"), enabled = newChatEnabled, onClick = onNewChat)
+      ClawPlainIconButton(icon = Icons.Default.Add, contentDescription = nativeString("New chat"), enabled = newChatEnabled, onClick = onNewChat)
       Box {
-        HeaderIcon(
+        ClawPlainIconButton(
           icon = Icons.Default.MoreVert,
           contentDescription = nativeString("Chat actions"),
           onClick = { actionsMenuExpanded = true },
@@ -1242,9 +1240,8 @@ private fun ChatHeader(
           }
         }
       }
-    }
-    Text(text = nativeString("Chat"), style = ClawTheme.type.display.copy(fontSize = 24.sp, lineHeight = 28.sp), color = ClawTheme.colors.accent, maxLines = 1)
-  }
+    },
+  )
 }
 
 @Composable
@@ -1272,32 +1269,10 @@ private fun ModelPill(
   ) {
     Text(
       text = text,
-      modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.5.dp),
-      style = ClawTheme.type.caption.copy(fontSize = 12.5.sp, lineHeight = 16.sp),
+      modifier = Modifier.padding(horizontal = ClawTheme.spacing.xxs, vertical = 2.dp),
+      style = ClawTheme.type.captionSmall,
       maxLines = 1,
     )
-  }
-}
-
-@Composable
-private fun HeaderIcon(
-  icon: androidx.compose.ui.graphics.vector.ImageVector,
-  contentDescription: String,
-  enabled: Boolean = true,
-  onClick: () -> Unit,
-) {
-  val contentColor = if (enabled) ClawTheme.colors.text else ClawTheme.colors.textMuted
-  Surface(
-    onClick = onClick,
-    enabled = enabled,
-    modifier = Modifier.size(ClawTheme.spacing.touchTarget),
-    shape = CircleShape,
-    color = Color.Transparent,
-    contentColor = contentColor,
-  ) {
-    Box(contentAlignment = Alignment.Center) {
-      Icon(imageVector = icon, contentDescription = contentDescription, modifier = Modifier.size(20.dp))
-    }
   }
 }
 
@@ -1612,7 +1587,7 @@ private fun EmptyChatHint(
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-      Text(text = if (healthOk) nativeString("Ready when you are") else nativeString("Gateway offline"), style = ClawTheme.type.title.copy(fontSize = 18.sp, lineHeight = 23.sp), color = ClawTheme.colors.text)
+      Text(text = if (healthOk) nativeString("Ready when you are") else nativeString("Gateway offline"), style = ClawTheme.type.title, color = ClawTheme.colors.text)
       Text(
         text =
           if (healthOk) {
@@ -1827,7 +1802,7 @@ internal fun ChatBubble(
           caption?.let {
             Text(
               text = it,
-              style = ClawTheme.type.caption.copy(fontSize = 12.5.sp, lineHeight = 16.sp, fontWeight = FontWeight.SemiBold),
+              style = ClawTheme.type.caption.copy(fontWeight = FontWeight.SemiBold),
               color = ClawTheme.colors.text,
             )
           }
@@ -1894,7 +1869,7 @@ internal fun ChatBubble(
           timestampMs?.let {
             Text(
               text = formatChatTimestamp(it),
-              style = ClawTheme.type.caption.copy(fontSize = 12.5.sp, lineHeight = 16.sp),
+              style = ClawTheme.type.caption,
               color = ClawTheme.colors.textMuted,
               modifier = Modifier.align(Alignment.End),
             )
@@ -2663,16 +2638,16 @@ private fun SlashCommandRow(
       modifier =
         Modifier
           .fillMaxWidth()
-          .heightIn(min = 48.dp)
-          .padding(horizontal = 10.dp, vertical = 6.dp),
+          .heightIn(min = ClawTheme.spacing.touchTarget)
+          .padding(horizontal = ClawTheme.spacing.xxs, vertical = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(10.dp),
+      horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs),
     ) {
       Text(
         text = slashCommandText(command),
         style = ClawTheme.type.label,
         color = ClawTheme.colors.text,
-        modifier = Modifier.width(82.dp),
+        modifier = Modifier.width(80.dp),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
@@ -2695,16 +2670,16 @@ private fun ChatOfflineNotice(
   onFixConnection: () -> Unit,
   onCopyDiagnostics: () -> Unit,
 ) {
-  ClawPanel(contentPadding = PaddingValues(horizontal = 10.dp, vertical = 9.dp)) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+  ClawPanel {
+    Column(verticalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs)) {
       Text(
         text = nativeString("Gateway offline"),
-        style = ClawTheme.type.caption.copy(fontSize = 12.5.sp, lineHeight = 16.sp),
+        style = ClawTheme.type.caption,
         color = ClawTheme.colors.warning,
       )
       Text(
         text = status,
-        style = ClawTheme.type.caption.copy(fontSize = 12.5.sp, lineHeight = 16.sp),
+        style = ClawTheme.type.caption,
         color = ClawTheme.colors.textMuted,
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
@@ -2753,16 +2728,16 @@ private fun ChatInputPill(
   ) {
     Column {
       Row(
-        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+        modifier = Modifier.padding(horizontal = 6.dp, vertical = ClawTheme.spacing.xxxs),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxxs),
       ) {
         Box {
-          Surface(onClick = { attachmentMenuExpanded = true }, modifier = Modifier.size(ClawTheme.spacing.touchTarget), shape = CircleShape, color = ClawTheme.colors.surfaceRaised, contentColor = ClawTheme.colors.text) {
-            Box(contentAlignment = Alignment.Center) {
-              Icon(imageVector = Icons.Default.Add, contentDescription = nativeString("Add attachment"), modifier = Modifier.size(20.dp))
-            }
-          }
+          ClawPlainIconButton(
+            icon = Icons.Default.Add,
+            contentDescription = nativeString("Add attachment"),
+            onClick = { attachmentMenuExpanded = true },
+          )
           DropdownMenu(expanded = attachmentMenuExpanded, onDismissRequest = { attachmentMenuExpanded = false }) {
             DropdownMenuItem(text = { Text(nativeString("Photos")) }, leadingIcon = { Icon(Icons.Default.Photo, contentDescription = null) }, onClick = {
               attachmentMenuExpanded = false
@@ -2858,7 +2833,7 @@ private fun ChatComposerFooter(
   val contextFraction = contextMeterWidth(contextUsage)
   val contextPercent = contextFraction?.let { (it * 100).roundToInt() }
   Row(
-    modifier = Modifier.fillMaxWidth().padding(start = 9.dp, end = 9.dp, bottom = 2.dp),
+    modifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, bottom = 2.dp),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(2.dp),
   ) {
@@ -2906,8 +2881,8 @@ private fun ChatComposerFooterChip(
   Surface(
     onClick = onClick,
     enabled = enabled,
-    modifier = modifier.heightIn(min = ClawTheme.spacing.touchTarget),
-    shape = RoundedCornerShape(ClawTheme.radii.pill),
+    modifier = modifier,
+    shape = RoundedCornerShape(ClawTheme.radii.control),
     color = Color.Transparent,
     contentColor = if (enabled) ClawTheme.colors.textMuted else ClawTheme.colors.textSubtle,
   ) {

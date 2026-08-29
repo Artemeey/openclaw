@@ -48,11 +48,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 internal enum class ClawStatus {
   Neutral,
@@ -65,7 +65,7 @@ internal enum class ClawStatus {
 @Composable
 internal fun ClawScaffold(
   modifier: Modifier = Modifier,
-  contentPadding: PaddingValues = PaddingValues(horizontal = ClawTheme.spacing.lg, vertical = ClawTheme.spacing.lg),
+  contentPadding: PaddingValues = PaddingValues(horizontal = ClawTheme.spacing.sm, vertical = ClawTheme.spacing.xxs),
   contentWindowInsets: WindowInsets = WindowInsets.safeDrawing,
   content: @Composable () -> Unit,
 ) {
@@ -123,12 +123,12 @@ internal fun ClawPrimaryButton(
         disabledContainerColor = ClawTheme.colors.surfacePressed,
         disabledContentColor = ClawTheme.colors.textSubtle,
       ),
-    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
     elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 0.dp),
   ) {
     if (icon != null) {
       Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(16.dp))
-      Spacer(modifier = Modifier.width(8.dp))
+      Spacer(modifier = Modifier.width(6.dp))
     }
     Text(text = text, style = ClawTheme.type.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
   }
@@ -153,13 +153,13 @@ internal fun ClawSecondaryButton(
     border = BorderStroke(1.dp, if (enabled) ClawTheme.colors.borderStrong else ClawTheme.colors.border),
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+      modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.Center,
     ) {
       if (icon != null) {
         Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(16.dp))
-        Spacer(modifier = Modifier.width(7.dp))
+        Spacer(modifier = Modifier.width(6.dp))
       }
       Text(text = text, style = ClawTheme.type.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
@@ -175,17 +175,23 @@ internal fun ClawIconButton(
   modifier: Modifier = Modifier,
   enabled: Boolean = true,
 ) {
-  Surface(
-    onClick = onClick,
-    enabled = enabled,
-    modifier = modifier.size(ClawTheme.spacing.touchTarget),
-    shape = CircleShape,
-    color = if (enabled) ClawTheme.colors.surfaceRaised else ClawTheme.colors.surface,
-    contentColor = if (enabled) ClawTheme.colors.text else ClawTheme.colors.textSubtle,
-    border = BorderStroke(1.dp, ClawTheme.colors.border),
-  ) {
-    Box(contentAlignment = Alignment.Center) {
-      Icon(imageVector = icon, contentDescription = contentDescription, modifier = Modifier.size(18.dp))
+  ClawIconTouchTarget(onClick = onClick, enabled = enabled, modifier = modifier) {
+    Box(
+      modifier =
+        Modifier
+          .size(ClawTheme.spacing.iconSlot)
+          .background(
+            color = if (enabled) ClawTheme.colors.surfaceRaised else ClawTheme.colors.surface,
+            shape = CircleShape,
+          ).border(width = 1.dp, color = ClawTheme.colors.border, shape = CircleShape),
+      contentAlignment = Alignment.Center,
+    ) {
+      Icon(
+        imageVector = icon,
+        contentDescription = contentDescription,
+        modifier = Modifier.size(ClawTheme.spacing.icon),
+        tint = if (enabled) ClawTheme.colors.text else ClawTheme.colors.textSubtle,
+      )
     }
   }
 }
@@ -199,18 +205,36 @@ internal fun ClawPlainIconButton(
   modifier: Modifier = Modifier,
   enabled: Boolean = true,
 ) {
-  Surface(
-    onClick = onClick,
-    enabled = enabled,
-    modifier = modifier.size(ClawTheme.spacing.touchTarget),
-    shape = CircleShape,
-    color = Color.Transparent,
-    contentColor = if (enabled) ClawTheme.colors.text else ClawTheme.colors.textSubtle,
-  ) {
-    Box(contentAlignment = Alignment.Center) {
-      Icon(imageVector = icon, contentDescription = contentDescription, modifier = Modifier.size(18.dp))
-    }
+  ClawIconTouchTarget(onClick = onClick, enabled = enabled, modifier = modifier) {
+    Icon(
+      imageVector = icon,
+      contentDescription = contentDescription,
+      modifier = Modifier.size(ClawTheme.spacing.icon),
+      tint = if (enabled) ClawTheme.colors.text else ClawTheme.colors.textSubtle,
+    )
   }
+}
+
+/**
+ * Keeps the full touch target while the painted shape stays small: the hit area
+ * and ripple fill [ClawSpacing.touchTarget], the content draws at icon scale.
+ */
+@Composable
+private fun ClawIconTouchTarget(
+  onClick: () -> Unit,
+  enabled: Boolean,
+  modifier: Modifier = Modifier,
+  content: @Composable () -> Unit,
+) {
+  Box(
+    modifier =
+      modifier
+        .size(ClawTheme.spacing.touchTarget)
+        .clip(CircleShape)
+        .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+    contentAlignment = Alignment.Center,
+    content = { content() },
+  )
 }
 
 /** Compact label/value row for health and readiness summaries. */
@@ -222,9 +246,9 @@ internal fun ClawStatusRow(
   modifier: Modifier = Modifier,
 ) {
   Row(
-    modifier = modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+    modifier = modifier.fillMaxWidth().heightIn(min = ClawTheme.spacing.touchTarget).padding(vertical = 6.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(9.dp),
+    horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs),
   ) {
     Text(
       text = title,
@@ -265,9 +289,9 @@ internal fun ClawStatusPill(
     border = BorderStroke(1.dp, if (status == ClawStatus.Neutral) colors.border else accentColor.copy(alpha = 0.35f)),
   ) {
     Row(
-      modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+      modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(7.dp),
+      horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
       Box(
         modifier =
@@ -276,7 +300,7 @@ internal fun ClawStatusPill(
             .clip(CircleShape)
             .background(accentColor),
       )
-      Text(text = text, style = ClawTheme.type.caption.copy(fontSize = 13.sp, lineHeight = 17.sp), color = accentColor, maxLines = 1)
+      Text(text = text, style = ClawTheme.type.caption, color = accentColor, maxLines = 1)
     }
   }
 }
@@ -305,7 +329,7 @@ internal fun ClawPill(
   ) {
     Text(
       text = text,
-      modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
       style = ClawTheme.type.caption,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
@@ -320,7 +344,7 @@ internal fun <T> ClawListPanel(
   modifier: Modifier = Modifier,
   row: @Composable (T) -> Unit,
 ) {
-  ClawPanel(modifier = modifier, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)) {
+  ClawPanel(modifier = modifier, contentPadding = PaddingValues(horizontal = ClawTheme.spacing.xs, vertical = 4.dp)) {
     ClawSeparatedColumn(items = items, row = row)
   }
 }
@@ -355,13 +379,13 @@ internal fun ClawDetailRow(
     modifier =
       modifier
         .fillMaxWidth()
-        .heightIn(min = 54.dp)
-        .padding(horizontal = 0.dp, vertical = 7.dp),
+        .heightIn(min = ClawTheme.spacing.row)
+        .padding(vertical = 6.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(9.dp),
+    horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs),
   ) {
     leading()
-    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
       Text(text = title, style = ClawTheme.type.body, color = ClawTheme.colors.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
       Text(text = subtitle, style = ClawTheme.type.caption, color = ClawTheme.colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
@@ -376,7 +400,7 @@ internal fun ClawTextBadge(
   modifier: Modifier = Modifier,
 ) {
   Surface(
-    modifier = modifier.size(30.dp),
+    modifier = modifier.size(28.dp),
     shape = CircleShape,
     color = ClawTheme.colors.surfacePressed,
     border = BorderStroke(1.dp, ClawTheme.colors.border),
@@ -395,7 +419,7 @@ internal fun ClawIconBadge(
   modifier: Modifier = Modifier,
 ) {
   Surface(
-    modifier = modifier.size(30.dp),
+    modifier = modifier.size(28.dp),
     shape = CircleShape,
     color = ClawTheme.colors.surfacePressed,
     border = BorderStroke(1.dp, ClawTheme.colors.border),
@@ -431,9 +455,9 @@ internal fun ClawListItem(
         .fillMaxWidth()
         .heightIn(min = ClawTheme.spacing.touchTarget)
         .clip(RoundedCornerShape(ClawTheme.radii.row))
-        .padding(horizontal = 2.dp, vertical = 5.dp),
+        .padding(vertical = 6.dp),
     verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(9.dp),
+    horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs),
   ) {
     leading?.invoke()
     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -513,11 +537,11 @@ internal fun ClawSegmentedControl(
             modifier =
               Modifier
                 .weight(1f)
-                .heightIn(min = 40.dp)
+                .heightIn(min = ClawTheme.spacing.control)
                 .clip(RoundedCornerShape(ClawTheme.radii.row))
                 .background(if (active) ClawTheme.colors.surfacePressed else Color.Transparent)
                 .clickable(enabled = enabled) { onSelect(option) }
-                .padding(horizontal = 9.dp, vertical = 7.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center,
           ) {
             Text(
@@ -569,7 +593,7 @@ internal fun ClawTextField(
           1.dp,
           if (focused) ClawTheme.colors.accent else ClawTheme.colors.border,
           RoundedCornerShape(ClawTheme.radii.control),
-        ).padding(horizontal = 11.dp, vertical = 8.dp),
+        ).padding(horizontal = ClawTheme.spacing.xs, vertical = ClawTheme.spacing.xxs),
     textStyle =
       ClawTheme.type.body.copy(
         color = if (enabled) ClawTheme.colors.text else ClawTheme.colors.textSubtle,
@@ -599,7 +623,7 @@ internal fun ClawComponentShowcase(modifier: Modifier = Modifier) {
   var prompt by rememberSaveable { mutableStateOf("") }
 
   ClawScaffold(modifier = modifier) {
-    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(ClawTheme.spacing.sm)) {
       ClawTopBar(
         title = "OpenClaw",
         subtitle = "Local command center",
@@ -644,7 +668,7 @@ internal fun ClawComponentShowcase(modifier: Modifier = Modifier) {
 
       ClawTextField(value = prompt, onValueChange = { prompt = it }, placeholder = "Ask OpenClaw anything", minLines = 3)
 
-      Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+      Row(horizontalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xxs)) {
         ClawPrimaryButton(text = "Start Chat", onClick = {}, modifier = Modifier.weight(1f))
         ClawSecondaryButton(text = "Voice", onClick = {}, modifier = Modifier.weight(1f))
       }

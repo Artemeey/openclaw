@@ -7,6 +7,7 @@ import android.view.View
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.safeDrawing
@@ -44,11 +45,14 @@ class SettingsDetailInsetsTest {
   @get:Rule
   val composeRule = createComposeRule()
 
+  // Mirrors the bottom inset SettingsDetailFrame reserves below its scroll viewport.
+  private val settingsFrameBottomPadding = 4.dp
+
   @Test
   fun keyboardInsetsResizeSettingsWithoutNavigation() = verifyInsets(NavigationSuiteType.None)
 
   @Test
-  fun navigationBarInsetsAreNotAppliedTwice() = verifyInsets(NavigationSuiteType.NavigationBar)
+  fun navigationBarInsetsAreNotAppliedTwice() = verifyInsets(NavigationSuiteType.ShortNavigationBarCompact)
 
   @Test
   fun navigationRailLeavesBottomInsetsToSettings() = verifyInsets(NavigationSuiteType.NavigationRail)
@@ -69,7 +73,14 @@ class SettingsDetailInsetsTest {
       }
       ClawDesignTheme {
         NavigationSuiteScaffold(navigationSuiteItems = {}, layoutType = navigationType) {
-          Box(Modifier.fillMaxSize().testTag("settings-host")) {
+          // The shell consumes the inset the compact bar already covers, so the test
+          // measures the same geometry destinations see.
+          Box(
+            Modifier
+              .fillMaxSize()
+              .consumeWindowInsets(shortNavigationBarConsumedInsets(navigationType))
+              .testTag("settings-host"),
+          ) {
             SettingsDetailFrame(title = "Gateway", subtitle = "", icon = Icons.Default.Settings, onBack = {}) {
               repeat(20) { index -> ClawTextField("Field $index", {}, "") }
               ClawTextField("Unsubmitted draft", {}, "Password", modifier = Modifier.testTag("last-field"))
@@ -103,11 +114,11 @@ class SettingsDetailInsetsTest {
       composeRule.onNodeWithText("Save").performScrollTo()
       val host = composeRule.onNodeWithTag("settings-host").getUnclippedBoundsInRoot()
       val viewport = composeRule.onNode(hasScrollAction()).getUnclippedBoundsInRoot()
-      val ancestorBottom = if (navigationType == NavigationSuiteType.NavigationBar) navigationBottom else 0
+      val ancestorBottom = if (navigationType == NavigationSuiteType.ShortNavigationBarCompact) navigationBottom else 0
       val remainingBottom = (maxOf(navigationBottom, imeBottom) - ancestorBottom) / density
       assertEquals(
         "$navigationType must consume the remaining bottom inset (IME=$imeBottom)",
-        host.bottom.value - remainingBottom - 6.dp.value,
+        host.bottom.value - remainingBottom - settingsFrameBottomPadding.value,
         viewport.bottom.value,
         1f / density,
       )

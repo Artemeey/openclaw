@@ -52,7 +52,7 @@ class SidebarShellLogicTest {
       adaptiveNavigationSuiteType(AdaptiveNavigationMode.Bar, compactNavigationVisible = false),
     )
     assertEquals(
-      NavigationSuiteType.NavigationBar,
+      NavigationSuiteType.ShortNavigationBarCompact,
       adaptiveNavigationSuiteType(AdaptiveNavigationMode.Bar, compactNavigationVisible = true),
     )
     assertEquals(
