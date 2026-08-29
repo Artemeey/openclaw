@@ -198,6 +198,11 @@ describe("SQLite session entry cache", () => {
       expect(parsedEntryJson.some((json) => json.includes("skillsSnapshot"))).toBe(true);
       expect(parsedEntryJson.some((json) => json.includes("systemPromptReport"))).toBe(true);
 
+      // Warm the list cache with a normal read first. A "latest" read returns its
+      // snapshot without storing it, so without this the next read would be
+      // another cold load rather than an incremental revalidation.
+      listSessionEntriesCore({ ...scope, clone: false, projection: "list" });
+
       // Incremental revalidation: an untracked same-connection insert forces the
       // changed row to be re-read rather than served from the cached snapshot.
       const database = openOpenClawAgentDatabase(scope);
@@ -218,8 +223,12 @@ describe("SQLite session entry cache", () => {
           2,
         );
       parsedEntryJson.length = 0;
+      parseSessionEntryCalls.mockClear();
       const revalidated = listSessionEntriesCore({ ...scope, clone: false, projection: "list" });
       expectStripped("incremental list revalidation");
+      // Only the inserted row is re-read; the untouched sibling stays parsed in
+      // the warm snapshot, which is what makes this the incremental path.
+      expect(parseSessionEntryCalls).toHaveBeenCalledTimes(1);
       expect(
         revalidated.find((row) => row.sessionKey === "agent:main:list-projection-inserted")?.entry
           .skillsSnapshot,
