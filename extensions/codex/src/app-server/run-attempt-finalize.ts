@@ -95,6 +95,7 @@ export async function finalizeCodexAttempt(
   await completion;
   // Include projection work already queued when timeout completion wins.
   await drainNotificationQueue();
+  activeProjector.closeActiveCompactions();
   const hasQuiescentCompletedAssistant =
     activeProjector.hasCompletedTerminalAssistantText() &&
     state.activeAppServerTurnRequests === 0 &&
