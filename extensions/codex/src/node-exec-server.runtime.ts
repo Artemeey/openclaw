@@ -207,9 +207,8 @@ export async function runCodexNodeExecServer(params: {
         if (io.signal.aborted) {
           throw nodeExecServerAbortError(io.signal);
         }
-        // Awaited setup is complete; policy and invocation closure win at spawn.
         params.assertExecAuthorized();
-        const child = createStdioTransport(
+        const child = await createStdioTransport(
           {
             transport: "stdio",
             command: native,
@@ -225,6 +224,14 @@ export async function runCodexNodeExecServer(params: {
             clearEnv: ["NODE_OPTIONS"],
           },
           baseEnv,
+          {
+            ownerEnv: process.env,
+            assertCurrent: () => {
+              // Reaping can await; policy and invocation closure still win at spawn.
+              params.assertExecAuthorized();
+              if (io.signal.aborted) throw nodeExecServerAbortError(io.signal);
+            },
+          },
         );
         child.stdin.on("error", (error) => {
           rejectDisconnected(error);

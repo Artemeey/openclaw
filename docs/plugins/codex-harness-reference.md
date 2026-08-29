@@ -209,6 +209,24 @@ Executable handoff and native-config fencing coordinate clients inside one
 running Gateway process. Restart the Gateway after another process changes the
 native Codex plugin config.
 
+On macOS and Linux, each locally spawned stdio process is registered in the
+OpenClaw state database before it receives a request. Before a new connection
+spawns, OpenClaw checks registrations from the same host and state directory
+and terminates surviving children whose original owner has exited. It verifies
+process start identities before signaling, leaving live owners and unrelated
+processes alone. Recovery also contains descendants still attached to the
+registered child, including descendants in separate process groups.
+
+If process inspection or containment fails, the connection reports an error
+instead of starting beside a known orphan. Check local process permissions and
+retry. A stopped orphan stays stopped for the next recovery attempt. This
+recovery does not control externally managed WebSocket or Unix-socket servers,
+does not apply on Windows, and cannot discover unregistered children from older
+OpenClaw versions. A hard kill during the brief spawn-to-registration window can
+leave an uninitialized child, but that child has not received an OpenClaw turn.
+If the registered child has already exited, its former process group alone does
+not authorize killing reparented descendants.
+
 Supervision resolves a separate connection. With no explicit
 `appServer` connection settings, it uses managed stdio with `homeScope: "user"`;
 the ordinary harness remains managed stdio with `homeScope: "agent"`. Explicit

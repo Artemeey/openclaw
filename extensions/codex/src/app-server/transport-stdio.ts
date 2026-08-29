@@ -9,6 +9,7 @@ import {
 } from "openclaw/plugin-sdk/windows-spawn";
 import type { CodexAppServerStartOptions } from "./config.js";
 import { normalizeCodexAppServerArgs } from "./launch-args.js";
+import { closeCodexAppServerTransportAndWait } from "./transport.js";
 
 const UNSAFE_ENVIRONMENT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 const RUNTIME_INJECTION_ENVIRONMENT_KEYS = new Set([
@@ -125,17 +126,29 @@ function copySafeEnvironmentEntries(
 }
 
 /** Spawns the Codex app-server process and returns the shared transport interface. */
-export function createStdioTransport(
+export async function createStdioTransport(
   options: CodexAppServerStartOptions,
   baseEnv: NodeJS.ProcessEnv = process.env,
-): ChildProcessWithoutNullStreams {
+  lifecycle: { assertCurrent?: () => void; ownerEnv?: NodeJS.ProcessEnv } = {},
+): Promise<ChildProcessWithoutNullStreams> {
   const env = resolveCodexAppServerSpawnEnv(options, baseEnv);
   const invocation = resolveCodexAppServerSpawnInvocation(options, {
     platform: process.platform,
     env,
     execPath: process.execPath,
   });
-  return spawn(invocation.command, invocation.args, {
+  const assertCurrent = lifecycle.assertCurrent ?? (() => {});
+  assertCurrent();
+  const registry =
+    process.platform === "win32"
+      ? undefined
+      : await import("./transport-process-registry.runtime.js");
+  const register = await registry?.prepareCodexAppServerProcessRegistration(
+    lifecycle.ownerEnv ?? baseEnv,
+    assertCurrent,
+  );
+  assertCurrent();
+  const child = spawn(invocation.command, invocation.args, {
     // Preserve the shipped Supervisor endpoint contract: relative commands and
     // config discovery may depend on the endpoint's process working directory.
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
@@ -145,4 +158,17 @@ export function createStdioTransport(
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: invocation.windowsHide,
   });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      child.once("spawn", resolve);
+      child.once("error", reject);
+    });
+    await register?.(child);
+    assertCurrent();
+    return child;
+  } catch (error) {
+    // No initialize/request can reach a child whose custody was not persisted.
+    if (child.pid) await closeCodexAppServerTransportAndWait(child);
+    throw error;
+  }
 }

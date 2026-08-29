@@ -3,12 +3,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CodexAppServerStartOptions } from "./config.js";
 import { createStdioTransport, resolveCodexAppServerSpawnEnv } from "./transport-stdio.js";
 
-const spawnMock = vi.hoisted(() => vi.fn(() => ({ pid: 1234 })));
+const spawnMock = vi.hoisted(() => vi.fn());
+const prepareRegistration = vi.hoisted(() => vi.fn(async () => async () => {}));
 
-vi.mock("node:child_process", () => ({ spawn: spawnMock }));
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawn: spawnMock,
+}));
+vi.mock("./transport-process-registry.runtime.js", () => ({
+  prepareCodexAppServerProcessRegistration: prepareRegistration,
+}));
 
-beforeEach(() => {
+beforeEach(async () => {
   spawnMock.mockClear();
+  prepareRegistration.mockReset();
+  prepareRegistration.mockResolvedValue(async () => {});
+  const { EventEmitter } = await import("node:events");
+  spawnMock.mockImplementation(() => {
+    const child = new EventEmitter();
+    queueMicrotask(() => child.emit("spawn"));
+    return child;
+  });
 });
 
 function startOptions(command: string): CodexAppServerStartOptions {
@@ -21,8 +36,31 @@ function startOptions(command: string): CodexAppServerStartOptions {
 }
 
 describe("createStdioTransport", () => {
-  it("spawns a compatibility endpoint in its configured working directory", () => {
-    createStdioTransport({
+  it.skipIf(process.platform === "win32")(
+    "rechecks authority after awaited recovery before spawning",
+    async () => {
+      let current = true;
+      prepareRegistration.mockImplementationOnce(async () => {
+        current = false;
+        return async () => {};
+      });
+      await expect(
+        createStdioTransport(
+          startOptions("codex"),
+          {},
+          {
+            assertCurrent: () => {
+              if (!current) throw new Error("connection revoked");
+            },
+          },
+        ),
+      ).rejects.toThrow("connection revoked");
+      expect(spawnMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("spawns a compatibility endpoint in its configured working directory", async () => {
+    await createStdioTransport({
       ...startOptions("codex"),
       cwd: "/srv/codex-project",
     });
@@ -34,7 +72,7 @@ describe("createStdioTransport", () => {
     );
   });
 
-  it("preserves wrapper prefixes, root option values, and raw override ordering", () => {
+  it("preserves wrapper prefixes, root option values, and raw override ordering", async () => {
     const overrides = ["-c", 'developer_instructions="app-server = literal"'];
     const args = [
       "/wrapper.js",
@@ -46,7 +84,7 @@ describe("createStdioTransport", () => {
       "stdio://",
       "--config=model_reasoning_effort=high",
     ];
-    createStdioTransport({ ...startOptions("node"), args });
+    await createStdioTransport({ ...startOptions("node"), args });
 
     expect(spawnMock).toHaveBeenCalledWith(
       "node",
@@ -65,23 +103,26 @@ describe("createStdioTransport", () => {
     expect(args[1]).toBe("-c");
   });
 
-  it("does not reinterpret a wrapper's positional arguments after --", () => {
+  it("does not reinterpret a wrapper's positional arguments after --", async () => {
     const args = ["/wrapper.js", "--", "-c", "opaque", "app-server"];
-    createStdioTransport({ ...startOptions("node"), args });
+    await createStdioTransport({ ...startOptions("node"), args });
     expect(spawnMock).toHaveBeenCalledWith("node", args, expect.any(Object));
   });
 
-  it.each(["--ws-issuer", "--ws-audience"])("preserves a subcommand-shaped %s value", (flag) => {
-    createStdioTransport({
-      ...startOptions("codex"),
-      args: ["app-server", flag, "app-server", "-c", "model_reasoning_effort=high"],
-    });
-    expect(spawnMock).toHaveBeenCalledWith(
-      "codex",
-      ["-c", "model_reasoning_effort=high", "app-server", flag, "app-server"],
-      expect.any(Object),
-    );
-  });
+  it.each(["--ws-issuer", "--ws-audience"])(
+    "preserves a subcommand-shaped %s value",
+    async (flag) => {
+      await createStdioTransport({
+        ...startOptions("codex"),
+        args: ["app-server", flag, "app-server", "-c", "model_reasoning_effort=high"],
+      });
+      expect(spawnMock).toHaveBeenCalledWith(
+        "codex",
+        ["-c", "model_reasoning_effort=high", "app-server", flag, "app-server"],
+        expect.any(Object),
+      );
+    },
+  );
 });
 
 describe("resolveCodexAppServerSpawnEnv", () => {

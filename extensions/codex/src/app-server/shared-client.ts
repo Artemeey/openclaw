@@ -1101,7 +1101,10 @@ async function startInitializedCodexAppServerClient(params: {
       throw new Error("Codex app-server runtime artifact does not match verified inference");
     }
     assertDesktopGenerationCurrent();
-    const client = CodexAppServerClient.start(startOptions);
+    const client = await CodexAppServerClient.start(startOptions, () => {
+      assertDesktopGenerationCurrent();
+      resolveRemainingAcquireTimeout(timeoutMs, acquireStartedAt);
+    });
     const nativeCommandAtStart =
       startOptions.commandSource === "resolved-managed"
         ? resolveManagedCodexNativeCommand(startOptions.command)
