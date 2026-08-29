@@ -15,6 +15,7 @@ import {
   stableChromeExtensionDir,
 } from "../src/browser/extension-install-layout.js";
 import { installChromeExtensionBootstrap } from "../src/browser/extension-install.js";
+import { prepareExtensionNativeHostFixture } from "../src/browser/extension-install.test-support.js";
 import { handleGatewayExtensionUpgrade } from "../src/browser/extension-relay/gateway-relay-route.js";
 import { getPageForTargetId } from "../src/browser/pw-session.js";
 import { createBrowserRouteDispatcher } from "../src/browser/routes/dispatcher.js";
@@ -199,11 +200,7 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
       },
       async () => {
         const extensionSource = path.dirname(fileURLToPath(import.meta.url));
-        // Match installation: Chrome launches the built host, not a fresh tsx
-        // compilation of the source graph inside each bounded native request.
-        const nativeHostPath = await fs.realpath(
-          path.resolve("dist/extensions/browser/native-host-entry.js"),
-        );
+        const { nodePath, nativeHostPath } = await prepareExtensionNativeHostFixture(root);
         const deps = {
           platform: process.platform,
           homeDir,
@@ -215,11 +212,12 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
             OPENCLAW_CONFIG_PATH: configPath,
             OPENCLAW_GATEWAY_PORT: String(gatewayPort),
           },
-          nodePath: process.execPath,
+          nodePath,
           nativeHostPath,
         };
         for (const [target, requestedPath] of Object.entries({
-          node: deps.nodePath,
+          node: process.execPath,
+          launcherNode: deps.nodePath,
           nativeHost: deps.nativeHostPath,
         })) {
           const canonicalPath = await fs.realpath(requestedPath);

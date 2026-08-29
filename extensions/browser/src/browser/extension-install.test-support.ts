@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { useAutoCleanupTempDirTracker } from "openclaw/plugin-sdk/test-env";
-import { afterEach } from "vitest";
+import { afterEach, onTestFinished } from "vitest";
 import { generateChromeExtensionIdForPath } from "./extension-install-layout.js";
 
 export const FOUNDATION_STORE_ID = "kcdjddhmeafeomebliikmbpblkmkfoig";
@@ -22,6 +22,24 @@ export async function writeSecurePreferences(params: {
     mode: 0o600,
   });
   return file;
+}
+
+export async function prepareExtensionNativeHostFixture(root: string) {
+  const nodePath = path.join(root, "bin", "node");
+  await fs.mkdir(path.dirname(nodePath), { recursive: true, mode: 0o700 });
+  // Keep shared-library Node installs in place without changing a hosted
+  // interpreter's permissions. The installed launcher targets this private file.
+  const nodeExecutable = `'${process.execPath.replaceAll("'", `'"'"'`)}'`;
+  await fs.writeFile(nodePath, `#!/bin/sh\nexec ${nodeExecutable} "$@"\n`, { mode: 0o700 });
+  // Chrome launches the built host, not a source compilation per native request.
+  const nativeHostPath = await fs.realpath(
+    path.resolve("dist/extensions/browser/native-host-entry.js"),
+  );
+  const mode = (await fs.stat(nativeHostPath)).mode & 0o777;
+  // Restore only the checkout build artifact, after caller teardown closes native children.
+  onTestFinished(async () => await fs.chmod(nativeHostPath, mode));
+  await fs.chmod(nativeHostPath, mode & ~0o022);
+  return { nodePath, nativeHostPath };
 }
 
 export function useExtensionInstallFixture() {
