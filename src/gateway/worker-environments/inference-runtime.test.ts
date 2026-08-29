@@ -230,6 +230,7 @@ function setup(
     prepareWorkspace?: string;
   } = {};
   const preparedModelRuntime = {
+    catalogOwner: undefined,
     agentDir: "/gateway-agent",
     activeProjectKeys: [],
     allowGatewaySubagentBinding: true,

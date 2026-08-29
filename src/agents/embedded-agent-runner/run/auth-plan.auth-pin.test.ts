@@ -65,6 +65,7 @@ function createFixture(state: OpenClawTestState, config: OpenClawConfig, provide
     maxTokens: 1_024,
   };
   const preparedModelRuntime: PreparedModelRuntimeSnapshot = {
+    catalogOwner: undefined,
     config,
     agentDir,
     workspaceDir,

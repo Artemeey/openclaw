@@ -40,6 +40,7 @@ vi.mock("../agents/prepared-model-catalog.js", async () => {
         const agentId = params.agentId ?? resolveDefaultAgentId(config);
         const workspaceDir = params.workspaceDir ?? resolveAgentWorkspaceDir(config, agentId);
         return {
+          catalogOwner: { agentId, workspaceDir },
           agentId,
           agentDir: params.agentDir ?? resolveAgentDir(config, agentId),
           workspaceDir,

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { withEnvAsync } from "../../test-utils/env.js";
+import { createNamespacedModelConfig } from "../../test-utils/model-namespace-fixture.js";
 import {
   catalogEntry,
   listModels,
@@ -178,30 +179,13 @@ describe("models.list configured static entries", () => {
 
   it("keeps exact model namespaces distinct in configured aliases and role tags", async () => {
     const ids = ["model", "custom/model"];
+    const namespaceConfig = createNamespacedModelConfig();
     const cfg: OpenClawConfig = {
-      models: {
-        providers: {
-          custom: {
-            api: "openai-completions",
-            baseUrl: "https://custom.example/v1",
-            models: ids.map((id) => ({
-              id,
-              name: id,
-              reasoning: false,
-              input: ["text"],
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              maxTokens: 1_024,
-            })),
-          },
-        },
-      },
+      ...namespaceConfig,
       agents: {
         defaults: {
+          ...namespaceConfig.agents?.defaults,
           model: { primary: "custom/model", fallbacks: ["custom/custom/model"] },
-          models: {
-            "custom/model": { alias: "plain" },
-            "custom/custom/model": { alias: "nested" },
-          },
         },
       },
     };

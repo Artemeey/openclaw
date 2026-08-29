@@ -419,6 +419,7 @@ it.each([
       },
     });
     const runtimeSnapshot: PreparedModelRuntimeSnapshot = {
+      catalogOwner: undefined,
       config: cfg,
       agentId: SESSION.agentId,
       agentDir: path.join(root, "agent"),

@@ -1,6 +1,7 @@
 /**
  * Test harness mocks for embedded-agent compaction hook coverage.
  */
+import { join } from "node:path";
 import { vi, type Mock } from "vitest";
 import { createPluginMetadataSnapshot } from "../../config/plugin-auto-enable.test-helpers.js";
 import type { CompactResult } from "../../context-engine/types.js";
@@ -109,7 +110,8 @@ export const resolveSessionAgentIdsMock = vi.fn(() => ({
 export const resolveAgentConfigMock = vi.fn(
   (_config?: unknown, _agentId?: string): unknown => undefined,
 );
-export const resolveDefaultAgentDirMock = vi.fn(() => "/tmp/agents/main/agent");
+let fixtureWorkspaceDir: string;
+export const resolveDefaultAgentDirMock = vi.fn<() => string>();
 export const estimateTokensMock = vi.fn((_message?: unknown) => 10);
 export const resolveAgentHarnessPolicyMock = vi.fn(() => ({ runtime: "openclaw" }));
 function createSelectedAgentHarnessMock(params: {
@@ -541,7 +543,8 @@ export function resetCompactSessionStateMocks(): void {
   resolveSkillsPromptMock.mockReturnValue(undefined);
 }
 
-export function resetCompactHooksHarnessMocks(): void {
+export function resetCompactHooksHarnessMocks(workspaceDir: string): void {
+  fixtureWorkspaceDir = workspaceDir;
   runCliAgentMock.mockClear();
   resolveCliBackendConfigMock.mockReset();
   resolveCliBackendConfigMock.mockReturnValue(null);
@@ -555,7 +558,7 @@ export function resetCompactHooksHarnessMocks(): void {
 
   acquireAgentRunPreparedModelRuntimeMock.mockClear();
   resolveDefaultAgentDirMock.mockReset();
-  resolveDefaultAgentDirMock.mockReturnValue("/tmp/agents/main/agent");
+  resolveDefaultAgentDirMock.mockReturnValue(join(workspaceDir, "agents/main/agent"));
 
   resolveContextEngineMock.mockReset();
   resolveContextEngineMock.mockResolvedValue({
@@ -630,7 +633,6 @@ export async function loadCompactHooksHarness(): Promise<{
   onSessionTranscriptUpdate: typeof import("../../sessions/transcript-events.js").onSessionTranscriptUpdate;
   onInternalSessionTranscriptUpdate: typeof import("../../sessions/transcript-events.js").onInternalSessionTranscriptUpdate;
 }> {
-  resetCompactHooksHarnessMocks();
   vi.resetModules();
 
   vi.doMock("./server-endpoint-compaction.js", () => ({
@@ -971,9 +973,11 @@ export async function loadCompactHooksHarness(): Promise<{
   vi.doMock("../agent-scope.js", () => ({
     listAgentEntries: vi.fn(() => []),
     resolveAgentConfig: resolveAgentConfigMock,
-    resolveAgentDir: vi.fn((_cfg: unknown, agentId: string) => `/tmp/agents/${agentId}/agent`),
+    resolveAgentDir: vi.fn((_cfg: unknown, agentId: string) =>
+      join(fixtureWorkspaceDir, "agents", agentId, "agent"),
+    ),
     resolveAgentModelFallbacksOverride: vi.fn(() => undefined),
-    resolveAgentWorkspaceDir: vi.fn(() => "/tmp"),
+    resolveAgentWorkspaceDir: vi.fn(() => fixtureWorkspaceDir),
     resolveDefaultAgentDir: resolveDefaultAgentDirMock,
     resolveDefaultAgentId: vi.fn(() => "main"),
     resolveAgentIdFromSessionKey: vi.fn(

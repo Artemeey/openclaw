@@ -90,7 +90,7 @@ function invalid(message: string): { ok: false; error: ErrorShape } {
 
 export function resolveSessionPatchModelSelection(params: {
   cfg: OpenClawConfig;
-  agentId?: string;
+  agentId: string;
   catalog: ModelCatalogEntry[];
   raw: string;
   defaultProvider: string;

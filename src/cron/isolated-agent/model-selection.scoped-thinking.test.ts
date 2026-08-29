@@ -35,6 +35,7 @@ vi.mock("./run-model-selection.runtime.js", async (importOriginal) => {
 
 const thinkingConfig: OpenClawConfig = {};
 const owner: ResolvedPublishedModelCatalogOwner = {
+  catalogOwner: { agentId: "main", workspaceDir: "/tmp/cron-workspace" },
   agentId: "main",
   agentDir: "/tmp/cron-agent",
   workspaceDir: "/tmp/cron-workspace",
@@ -224,6 +225,7 @@ describe("resolveCronModelSelection prepared metadata", () => {
           const metadata = metadataOwner.prepare({ config: captured.config });
           metadataOwner.publish(metadata, { config: captured.config });
           const capturedOwner: ResolvedPublishedModelCatalogOwner = {
+            catalogOwner: { agentId: "work", workspaceDir: captured.workWorkspace },
             agentId: "work",
             agentDir: state.agentDir("work"),
             workspaceDir: captured.workWorkspace,

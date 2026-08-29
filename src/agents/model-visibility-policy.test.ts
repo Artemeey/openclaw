@@ -1,6 +1,7 @@
 // Explicit model policy tests keep catalog metadata separate from override restrictions.
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/types.js";
+import { createNamespacedModelConfig } from "../test-utils/model-namespace-fixture.js";
 import { createModelVisibilityPolicy } from "./model-visibility-policy.js";
 
 function createPolicy(cfg: OpenClawConfig, agentId?: string) {
@@ -154,35 +155,14 @@ describe("explicit model visibility policy", () => {
   ])(
     "keeps exact configured model namespaces distinct: $name",
     ({ allow, liveCatalog, expected }) => {
+      const namespaceConfig = createNamespacedModelConfig([
+        { id: "model", name: "Plain", contextWindow: 8_000 },
+        { id: "custom/model", name: "Nested", contextWindow: 16_000 },
+      ]);
       const cfg: OpenClawConfig = {
-        models: {
-          providers: {
-            custom: {
-              api: "openai-completions",
-              baseUrl: "https://custom.example/v1",
-              models: [
-                { id: "model", name: "Plain", contextWindow: 8_000 },
-                { id: "custom/model", name: "Nested", contextWindow: 16_000 },
-              ].map(({ id, name, contextWindow }) => ({
-                id,
-                name,
-                contextWindow,
-                reasoning: false,
-                input: ["text"],
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                maxTokens: 1_024,
-              })),
-            },
-          },
-        },
+        ...namespaceConfig,
         agents: {
-          defaults: {
-            models: {
-              "custom/model": { alias: "plain" },
-              "custom/custom/model": { alias: "nested" },
-            },
-            modelPolicy: { allow },
-          },
+          defaults: { ...namespaceConfig.agents?.defaults, modelPolicy: { allow } },
         },
       };
       const policy = createModelVisibilityPolicy({

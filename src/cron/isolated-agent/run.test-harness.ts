@@ -594,6 +594,7 @@ function resetRunConfigMocks(): void {
     const workspaceDir =
       params.workspaceDir ?? resolveAgentWorkspaceDirMock(params.config, agentId);
     return {
+      catalogOwner: { agentId, workspaceDir },
       agentId,
       agentDir: params.agentDir ?? "/tmp/agent-dir",
       workspaceDir,

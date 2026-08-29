@@ -720,11 +720,8 @@ export function createReasoningDefaultContext(): TelegramMessageContext {
 }
 
 export function createReasoningForumTopicContext(): TelegramMessageContext {
-  loadSessionStore.mockReturnValue({
-    s1: { reasoningLevel: "stream" },
-  });
-  return createContext({
-    ctxPayload: { SessionKey: "s1" } as unknown as TelegramMessageContext["ctxPayload"],
+  return {
+    ...createReasoningStreamContext(),
     msg: {
       chat: { id: -100123, type: "supergroup", is_forum: true },
       message_id: 456,
@@ -733,7 +730,7 @@ export function createReasoningForumTopicContext(): TelegramMessageContext {
     chatId: -100123,
     isGroup: true,
     threadSpec: { id: 88, scope: "forum" },
-  });
+  };
 }
 
 export function describeTelegramDispatch(name: string, registerTests: () => void): void {

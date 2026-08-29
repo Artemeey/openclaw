@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { createNamespacedModelConfig } from "../test-utils/model-namespace-fixture.js";
 
 const mocks = vi.hoisted(() => ({
   getSnapshot: vi.fn(),
@@ -18,35 +18,6 @@ import {
   resolveAllowedModelRef,
   resolveModelRefFromString,
 } from "./agent-runtime.js";
-
-function createNamespacedModelConfig(): OpenClawConfig {
-  return {
-    models: {
-      providers: {
-        custom: {
-          api: "openai-completions",
-          baseUrl: "https://custom.example/v1",
-          models: ["model", "custom/model"].map((id) => ({
-            id,
-            name: id,
-            reasoning: false,
-            input: ["text"],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            maxTokens: 1_024,
-          })),
-        },
-      },
-    },
-    agents: {
-      defaults: {
-        models: {
-          "custom/model": { alias: "plain" },
-          "custom/custom/model": { alias: "nested" },
-        },
-      },
-    },
-  };
-}
 
 describe("agent-runtime model catalog compatibility", () => {
   beforeEach(() => {

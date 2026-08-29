@@ -140,6 +140,60 @@ describe("getReplyFromConfig fast test bootstrap", () => {
   const tempDirs = createTempDirTracker();
   let tempRoot: string;
 
+  function prepareNativeStatusConfig(
+    agents: NonNullable<OpenClawConfig["agents"]> = {},
+    storePath = path.join(tempRoot, "sessions.json"),
+  ) {
+    const cfg = markCompleteReplyConfig({
+      agents: {
+        ...agents,
+        defaults: {
+          model: "openai/gpt-5.5",
+          workspace: path.join(tempRoot, "workspace"),
+          ...agents.defaults,
+        },
+      },
+      session: { store: storePath },
+    });
+    vi.mocked(resolveDefaultModelMock).mockReturnValueOnce({
+      defaultProvider: "openai",
+      defaultModel: "gpt-5.5",
+      aliasIndex: emptyAliasIndex(),
+    });
+    return cfg;
+  }
+
+  function createHeartbeatConfig(storePath: string) {
+    return withFastReplyConfig({
+      agents: {
+        defaults: {
+          model: "openai/gpt-5.5",
+          workspace: tempRoot,
+          heartbeat: {},
+        },
+      },
+      session: { store: storePath },
+    } as OpenClawConfig);
+  }
+
+  function buildNativeCommandCtx(
+    body: string,
+    targetSessionKey: string,
+    overrides: Parameters<typeof buildGetReplyCtx>[0] = {},
+  ) {
+    return buildGetReplyCtx({
+      Body: body,
+      BodyForAgent: body,
+      RawBody: body,
+      CommandBody: body,
+      CommandSource: "native",
+      CommandAuthorized: true,
+      SessionKey: "telegram:slash:123",
+      CommandTargetSessionKey: targetSessionKey,
+      ...overrides,
+    });
+  }
+
   beforeAll(async () => {
     await loadGetReplyRuntimeForTest();
   });
@@ -360,16 +414,7 @@ describe("getReplyFromConfig fast test bootstrap", () => {
         },
       },
     });
-    const cfg = withFastReplyConfig({
-      agents: {
-        defaults: {
-          model: "openai/gpt-5.5",
-          workspace: tempRoot,
-          heartbeat: {},
-        },
-      },
-      session: { store: storePath },
-    } as OpenClawConfig);
+    const cfg = createHeartbeatConfig(storePath);
 
     await expect(
       getReplyFromConfig(buildGetReplyCtx(), { isHeartbeat: true }, cfg),
@@ -393,16 +438,7 @@ describe("getReplyFromConfig fast test bootstrap", () => {
         },
       },
     });
-    const cfg = withFastReplyConfig({
-      agents: {
-        defaults: {
-          model: "openai/gpt-5.5",
-          workspace: tempRoot,
-          heartbeat: {},
-        },
-      },
-      session: { store: storePath },
-    } as OpenClawConfig);
+    const cfg = createHeartbeatConfig(storePath);
 
     await expect(
       getReplyFromConfig(buildGetReplyCtx(), { isHeartbeat: true }, cfg),
@@ -426,16 +462,7 @@ describe("getReplyFromConfig fast test bootstrap", () => {
         },
       },
     });
-    const cfg = withFastReplyConfig({
-      agents: {
-        defaults: {
-          model: "openai/gpt-5.5",
-          workspace: tempRoot,
-          heartbeat: {},
-        },
-      },
-      session: { store: storePath },
-    } as OpenClawConfig);
+    const cfg = createHeartbeatConfig(storePath);
 
     await expect(
       getReplyFromConfig(buildGetReplyCtx(), { isHeartbeat: true }, cfg),
@@ -529,32 +556,10 @@ describe("getReplyFromConfig fast test bootstrap", () => {
 
   it("handles native /status before workspace bootstrap", async () => {
     const targetSessionKey = "agent:main:telegram:123";
-    const cfg = markCompleteReplyConfig({
-      agents: {
-        defaults: {
-          model: "openai/gpt-5.5",
-          workspace: path.join(tempRoot, "workspace"),
-        },
-      },
-      session: { store: path.join(tempRoot, "sessions.json") },
-    } as OpenClawConfig);
-    vi.mocked(resolveDefaultModelMock).mockReturnValueOnce({
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
-      aliasIndex: emptyAliasIndex(),
-    });
+    const cfg = prepareNativeStatusConfig();
 
     const reply = await getReplyFromConfig(
-      buildGetReplyCtx({
-        Body: "/status",
-        BodyForAgent: "/status",
-        RawBody: "/status",
-        CommandBody: "/status",
-        CommandSource: "native",
-        CommandAuthorized: true,
-        SessionKey: "telegram:slash:123",
-        CommandTargetSessionKey: targetSessionKey,
-      }),
+      buildNativeCommandCtx("/status", targetSessionKey),
       undefined,
       cfg,
     );
@@ -582,39 +587,13 @@ describe("getReplyFromConfig fast test bootstrap", () => {
 
   it("uses configured agent thinking defaults for native /status", async () => {
     const targetSessionKey = "agent:main:telegram:123";
-    const cfg = markCompleteReplyConfig({
-      agents: {
-        defaults: {
-          model: "openai/gpt-5.5",
-          workspace: path.join(tempRoot, "workspace"),
-          thinkingDefault: "low",
-        },
-        list: [
-          {
-            id: "main",
-            thinkingDefault: "high",
-          },
-        ],
-      },
-      session: { store: path.join(tempRoot, "sessions.json") },
-    } as OpenClawConfig);
-    vi.mocked(resolveDefaultModelMock).mockReturnValueOnce({
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
-      aliasIndex: emptyAliasIndex(),
+    const cfg = prepareNativeStatusConfig({
+      defaults: { thinkingDefault: "low" },
+      list: [{ id: "main", thinkingDefault: "high" }],
     });
 
     const reply = await getReplyFromConfig(
-      buildGetReplyCtx({
-        Body: "/status",
-        BodyForAgent: "/status",
-        RawBody: "/status",
-        CommandBody: "/status",
-        CommandSource: "native",
-        CommandAuthorized: true,
-        SessionKey: "telegram:slash:123",
-        CommandTargetSessionKey: targetSessionKey,
-      }),
+      buildNativeCommandCtx("/status", targetSessionKey),
       undefined,
       cfg,
     );
@@ -647,32 +626,10 @@ describe("getReplyFromConfig fast test bootstrap", () => {
         updatedAt: 1,
       },
     });
-    const cfg = markCompleteReplyConfig({
-      agents: {
-        defaults: {
-          model: "openai/gpt-5.5",
-          workspace: path.join(tempRoot, "workspace"),
-        },
-      },
-      session: { store: storePath },
-    } as OpenClawConfig);
-    vi.mocked(resolveDefaultModelMock).mockReturnValueOnce({
-      defaultProvider: "openai",
-      defaultModel: "gpt-5.5",
-      aliasIndex: emptyAliasIndex(),
-    });
+    const cfg = prepareNativeStatusConfig({}, storePath);
 
     const reply = await getReplyFromConfig(
-      buildGetReplyCtx({
-        Body: "/status",
-        BodyForAgent: "/status",
-        RawBody: "/status",
-        CommandBody: "/status",
-        CommandSource: "native",
-        CommandAuthorized: true,
-        SessionKey: "telegram:slash:123",
-        CommandTargetSessionKey: targetSessionKey,
-      }),
+      buildNativeCommandCtx("/status", targetSessionKey),
       undefined,
       cfg,
     );
@@ -714,15 +671,7 @@ describe("getReplyFromConfig fast test bootstrap", () => {
     });
 
     const reply = await getReplyFromConfig(
-      buildGetReplyCtx({
-        Body: "/model status",
-        BodyForAgent: "/model status",
-        RawBody: "/model status",
-        CommandBody: "/model status",
-        CommandSource: "native",
-        CommandAuthorized: true,
-        SessionKey: "telegram:slash:123",
-        CommandTargetSessionKey: targetSessionKey,
+      buildNativeCommandCtx("/model status", targetSessionKey, {
         SessionCreation: {
           via: "operator",
           actor: { type: "human", id: "profile-native-slash" },
@@ -806,16 +755,7 @@ describe("getReplyFromConfig fast test bootstrap", () => {
 
     await expect(
       getReplyFromConfig(
-        buildGetReplyCtx({
-          Body: "/goal start /status",
-          BodyForAgent: "/goal start /status",
-          RawBody: "/goal start /status",
-          CommandBody: "/goal start /status",
-          CommandSource: "native",
-          CommandAuthorized: true,
-          SessionKey: "telegram:slash:123",
-          CommandTargetSessionKey: targetSessionKey,
-        }),
+        buildNativeCommandCtx("/goal start /status", targetSessionKey),
         { onSessionMetadataChanges } as never,
         cfg,
       ),
@@ -1098,21 +1038,29 @@ describe("getReplyFromConfig fast test bootstrap", () => {
     expect(command.commandBodyNormalized).toBe("/skill demo_skill first line\nsecond line");
   });
 
-  it("keeps the existing session for /reset newline soft during fast bootstrap", async () => {
+  it.each([
+    {
+      name: "/reset newline soft",
+      body: "/reset \nsoft",
+      sessionId: "existing-fast-reset-newline-soft",
+    },
+    {
+      name: "/reset: soft",
+      body: "/reset: soft",
+      sessionId: "existing-fast-reset-colon-soft",
+    },
+  ])("keeps the existing session for $name during fast bootstrap", async ({ body, sessionId }) => {
     const storePath = path.join(tempRoot, "sessions.json");
     const sessionKey = "agent:main:telegram:123";
     await seedFastPathSessionStore(storePath, {
-      [sessionKey]: {
-        sessionId: "existing-fast-reset-newline-soft",
-        updatedAt: Date.now(),
-      },
+      [sessionKey]: { sessionId, updatedAt: Date.now() },
     });
 
     const result = initFastReplySessionState({
       ctx: buildGetReplyCtx({
-        Body: "/reset \nsoft",
-        RawBody: "/reset \nsoft",
-        CommandBody: "/reset \nsoft",
+        Body: body,
+        RawBody: body,
+        CommandBody: body,
         SessionKey: sessionKey,
       }),
       cfg: { session: { store: storePath } } as OpenClawConfig,
@@ -1123,34 +1071,6 @@ describe("getReplyFromConfig fast test bootstrap", () => {
 
     expect(result.resetTriggered).toBe(false);
     expect(result.isNewSession).toBe(false);
-    expect(result.sessionId).toBe("existing-fast-reset-newline-soft");
-  });
-
-  it("keeps the existing session for /reset: soft during fast bootstrap", async () => {
-    const storePath = path.join(tempRoot, "sessions.json");
-    const sessionKey = "agent:main:telegram:123";
-    await seedFastPathSessionStore(storePath, {
-      [sessionKey]: {
-        sessionId: "existing-fast-reset-colon-soft",
-        updatedAt: Date.now(),
-      },
-    });
-
-    const result = initFastReplySessionState({
-      ctx: buildGetReplyCtx({
-        Body: "/reset: soft",
-        RawBody: "/reset: soft",
-        CommandBody: "/reset: soft",
-        SessionKey: sessionKey,
-      }),
-      cfg: { session: { store: storePath } } as OpenClawConfig,
-      agentId: "main",
-      commandAuthorized: true,
-      workspaceDir: tempRoot,
-    });
-
-    expect(result.resetTriggered).toBe(false);
-    expect(result.isNewSession).toBe(false);
-    expect(result.sessionId).toBe("existing-fast-reset-colon-soft");
+    expect(result.sessionId).toBe(sessionId);
   });
 });

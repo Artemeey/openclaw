@@ -195,11 +195,11 @@ describe("resolveModelDirectiveSelection", () => {
   it.each([undefined, {}, { allow: [] }, { allow: ["openai/*"] }])(
     "permits an explicit uncataloged model with policy %j",
     async (modelPolicy) => {
-      const cfg: OpenClawConfig = {
+      const config: OpenClawConfig = {
         agents: { defaults: { model: "anthropic/claude-sonnet-4-6", modelPolicy } },
       };
       const entries = [{ provider: "anthropic", id: "claude-sonnet-4-6", name: "Sonnet" }];
-      await withDirectiveMetadata(cfg, async (cfg) => {
+      await withDirectiveMetadata(config, async (cfg) => {
         const state = await createModelSelectionState(
           prepareRawModelSelectionFixture({
             cfg,

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createWarnLogCapture } from "../logging/test-helpers/warn-log-capture.js";
+import { createNamespacedModelConfig } from "../test-utils/model-namespace-fixture.js";
 import {
   resolveImageFallbackCandidates,
   resolveModelCandidateChain,
@@ -116,22 +117,7 @@ it.each(["text", "image"] as const)(
   (surface) => {
     const selection = { primary: "custom/model", fallbacks: ["custom/custom/model"] };
     const cfg: OpenClawConfig = {
-      models: {
-        providers: {
-          custom: {
-            api: "openai-completions",
-            baseUrl: "https://custom.example/v1",
-            models: ["model", "custom/model"].map((id) => ({
-              id,
-              name: id,
-              reasoning: false,
-              input: ["text"],
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              maxTokens: 1_024,
-            })),
-          },
-        },
-      },
+      ...createNamespacedModelConfig(),
       agents: { defaults: { model: selection, imageModel: selection } },
     };
     const params = { cfg, manifestPlugins: [] };

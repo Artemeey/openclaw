@@ -9,6 +9,7 @@ import { createDeferred } from "../../test/helpers/promise.js";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import type { PreparedPluginMetadata } from "../plugins/plugin-metadata-collection.js";
 import { createPreparedPluginMetadataFixture } from "../plugins/plugin-metadata.test-support.js";
+import { resolvePublishedModelCatalogOwner } from "./prepared-model-catalog-owner.js";
 import {
   getPreparedModelRuntimeAuthMaterializations,
   getPreparedModelRuntimeAuthStore,
@@ -55,6 +56,7 @@ describe("prepared model runtime config stamps", () => {
     setPreparedModelRuntimeAuthMaterializations(existingReader, materializations);
     const authStore = getPreparedModelRuntimeAuthStore(existingReader);
     const loadedAuth = await loadPreparedModelRuntimeAuth(existingReader, { providerIds: [] });
+    mocks.configuredAgentDirs.set("default", "/tmp/later-agent");
 
     advancePreparedModelRuntimeConfig(nextConfig);
 
@@ -62,6 +64,11 @@ describe("prepared model runtime config stamps", () => {
     expect(advanced).not.toBe(existingReader);
     expect(advanced.config).toBe(nextConfig);
     expect(existingReader.config).toBe(initialConfig);
+    expect(resolvePublishedModelCatalogOwner(advanced)).toMatchObject({
+      agentId: "default",
+      workspaceDir: "/tmp/unused-workspace",
+      config: nextConfig,
+    });
     expect(getPreparedModelRuntimeAuthStore(advanced)).toBe(authStore);
     expect(getPreparedModelRuntimeAuthMaterializations(advanced)).toBe(materializations);
     await expect(loadPreparedModelRuntimeAuth(advanced, { providerIds: [] })).resolves.toEqual(
@@ -203,17 +210,21 @@ describe("prepared model runtime config stamps", () => {
 
     mocks.mutationListener?.({ affectsInheritedStores: true });
     await vi.waitFor(() => expect(finishAuthRefresh).toBeDefined());
+    mocks.configuredAgentDirs.set("default", "/tmp/later-agent");
     advancePreparedModelRuntimeConfig(nextConfig);
     finishAuthRefresh?.();
 
-    await expect(
-      prepareModelRuntimeSnapshot({
-        agentId: "default",
-        agentDir: "/tmp/unused-agent",
-        inheritedAuthDir: "/tmp/unused-agent",
-        config: nextConfig,
-      }),
-    ).resolves.toMatchObject({ config: nextConfig });
+    const snapshot = await prepareModelRuntimeSnapshot({
+      agentId: "default",
+      agentDir: "/tmp/unused-agent",
+      inheritedAuthDir: "/tmp/unused-agent",
+      config: nextConfig,
+    });
+    expect(resolvePublishedModelCatalogOwner(snapshot)).toMatchObject({
+      agentId: "default",
+      workspaceDir: "/tmp/unused-workspace",
+      config: nextConfig,
+    });
     expect(mocks.ensureOpenClawModelsJson).toHaveBeenCalledTimes(2);
   });
 });

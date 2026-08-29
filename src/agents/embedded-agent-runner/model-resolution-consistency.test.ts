@@ -171,6 +171,7 @@ const { prepareDirectCompactionAttempt } = await import("./direct-compaction-pre
 function createPreparedModelRuntime(config: OpenClawConfig) {
   const workspaceDir = "/tmp/openclaw-model-resolution";
   return {
+    catalogOwner: undefined,
     agentDir: "/tmp/agents/main/agent",
     config,
     workspaceDir,

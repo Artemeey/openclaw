@@ -16,9 +16,11 @@ import { loadSessionEntry, replaceSessionEntry } from "../config/sessions/sessio
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveCronSession } from "../cron/isolated-agent/session.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
-import { setCurrentPluginMetadataSnapshot } from "./current-plugin-metadata.test-support.js";
+import {
+  makePluginMetadataIndex,
+  setCurrentPluginMetadataSnapshot,
+} from "./current-plugin-metadata.test-support.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
-import type { InstalledPluginIndex } from "./installed-plugin-index.js";
 import * as pluginLoader from "./loader.js";
 import type { PluginManifestRecord, PluginManifestRegistry } from "./manifest-registry.js";
 import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
@@ -60,36 +62,6 @@ import { isPluginProvidersLoadInFlight, resolvePluginProvidersCore } from "./pro
 
 const WORKSPACE = "/workspace/a";
 
-function makeIndex(pluginId = "demo"): InstalledPluginIndex {
-  const rootDir = `/plugins/${pluginId}`;
-  return {
-    version: 1,
-    hostContractVersion: "test",
-    compatRegistryVersion: "test",
-    migrationVersion: 1,
-    policyHash: "test",
-    generatedAtMs: 1,
-    installRecords: {},
-    diagnostics: [],
-    plugins: [
-      {
-        pluginId,
-        manifestPath: `${rootDir}/openclaw.plugin.json`,
-        manifestHash: `${pluginId}-manifest`,
-        rootDir,
-        origin: "global",
-        enabled: true,
-        startup: {
-          sidecar: false,
-          memory: false,
-          agentHarnesses: [],
-        },
-        compat: [],
-      },
-    ],
-  };
-}
-
 function makeManifestRegistry(pluginId = "demo"): PluginManifestRegistry {
   const plugin: PluginManifestRecord = {
     id: pluginId,
@@ -117,7 +89,7 @@ function registerCurrentSnapshot(
   pluginId = "demo",
   env: NodeJS.ProcessEnv = {},
 ) {
-  const index = makeIndex(pluginId);
+  const index = makePluginMetadataIndex(pluginId);
   index.policyHash = resolveInstalledPluginIndexPolicyHash(config);
   loadPluginRegistrySnapshotWithMetadata.mockReturnValue({
     source: "runtime",
@@ -135,7 +107,7 @@ function registerCurrentSnapshot(
 function armFallbackLoad() {
   loadPluginRegistrySnapshotWithMetadata.mockReturnValue({
     source: "runtime",
-    snapshot: makeIndex(),
+    snapshot: makePluginMetadataIndex(),
     diagnostics: [],
   });
 }

@@ -6,12 +6,15 @@ import { resolveAgentConfig, resolveAgentDir } from "../../agents/agent-scope.js
 import { resolveLegacyInheritedAuthDir } from "../../agents/legacy-inherited-auth-dir.js";
 import { resolveModelCandidateChain } from "../../agents/model-fallback-candidates.js";
 import { isCliProvider as classifyCliProvider } from "../../agents/model-selection-cli.js";
-import { resolvePublishedModelCatalogOwner } from "../../agents/prepared-model-catalog-owner.js";
+import {
+  preparePublishedModelCatalogOwnerIdentity,
+  resolvePublishedModelCatalogOwner,
+} from "../../agents/prepared-model-catalog-owner.js";
 import { setPreparedModelRuntimeAuthStore } from "../../agents/prepared-model-runtime-auth.js";
 import { getPreparedModelRuntimePluginGeneration } from "../../agents/prepared-model-runtime-generation-scope.js";
 import { acquirePreparedModelRuntimeLeaseFromOwners } from "../../agents/prepared-model-runtime-lease.js";
 import {
-  createPreparedModelRuntimeOwner,
+  prepareModelRuntimeOwner,
   normalizePreparedModelRuntimeInput,
   ownerKey,
   PreparedModelRuntimeOwnerRetention,
@@ -91,12 +94,16 @@ function makePublishedFixture(
   }),
 ) {
   const pluginRegistry = createEmptyPluginRegistry();
-  const snapshot: PreparedModelRuntimeSnapshot = {
+  const input = {
     config,
     agentId: "default",
     agentDir: resolveAgentDir(config, "default"),
     inheritedAuthDir: resolveLegacyInheritedAuthDir(config),
     workspaceDir,
+  };
+  const snapshot: PreparedModelRuntimeSnapshot = {
+    ...input,
+    catalogOwner: preparePublishedModelCatalogOwnerIdentity(input),
     authModes: {},
     activeProjectKeys: [],
     allowGatewaySubagentBinding: true,
@@ -287,7 +294,7 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
           workspaceDir: next.snapshot.workspaceDir,
           allowGatewaySubagentBinding: true,
         });
-        const nextOwner = createPreparedModelRuntimeOwner(nextInput, "configured", "static");
+        const nextOwner = prepareModelRuntimeOwner(nextInput, "configured", "static");
         Object.assign(nextOwner, {
           snapshot: next.snapshot,
           pluginGeneration: next.dispatch.pluginGeneration,

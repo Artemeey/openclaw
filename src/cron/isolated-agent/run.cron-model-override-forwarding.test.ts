@@ -174,6 +174,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
     };
     const ownerCatalog = [{ provider: "google", id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" }];
     loadModelCatalogOwnerMock.mockResolvedValueOnce({
+      catalogOwner: { agentId: "main", workspaceDir: "/tmp/replacement-workspace" },
       agentId: "main",
       agentDir: "/tmp/owner-agent",
       workspaceDir: "/tmp/replacement-workspace",
@@ -212,6 +213,7 @@ describe("runCronIsolatedAgentTurn — cron model override forwarding (#58065)",
       agents: { list: [{ id: "main", default: true }, { id: "worker" }] },
     };
     loadModelCatalogOwnerMock.mockResolvedValueOnce({
+      catalogOwner: { agentId: "main", workspaceDir: "/tmp/main-workspace" },
       agentId: "main",
       agentDir: "/tmp/main-agent",
       workspaceDir: "/tmp/main-workspace",

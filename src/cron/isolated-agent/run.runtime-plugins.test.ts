@@ -76,6 +76,7 @@ describe("runCronIsolatedAgentTurn runtime plugin owner", () => {
     });
     ensureAgentWorkspaceMock.mockResolvedValue({ dir: workspaceDir });
     loadModelCatalogOwnerMock.mockImplementation(async (ownerParams) => ({
+      catalogOwner: { agentId: ownerParams.agentId ?? "default", workspaceDir },
       agentId: ownerParams.agentId ?? "default",
       agentDir: "/tmp/agent-dir",
       workspaceDir,
