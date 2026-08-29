@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
       typeof import("../gateway-startup-plugin-ids.js").collectConfiguredMemoryEmbeddingProviderIds
     >(),
   resolvePluginRuntimeLoadContext:
-    vi.fn<typeof import("./load-context.js").resolvePluginRuntimeLoadContext>(),
+    vi.fn<typeof import("./load-context.resolve.js").resolvePluginRuntimeLoadContext>(),
 }));
 
 vi.mock("../loader.js", () => ({
@@ -47,14 +47,9 @@ vi.mock("../gateway-startup-plugin-ids.js", () => ({
   ) => mocks.collectConfiguredMemoryEmbeddingProviderIds(...args),
 }));
 
-vi.mock("./load-context.js", async (importOriginal) => {
-  const { buildPluginRuntimeLoadOptionsFromValues } =
-    await importOriginal<typeof import("./load-context.js")>();
-  return {
-    buildPluginRuntimeLoadOptionsFromValues,
-    resolvePluginRuntimeLoadContext: mocks.resolvePluginRuntimeLoadContext,
-  };
-});
+vi.mock("./load-context.resolve.js", () => ({
+  resolvePluginRuntimeLoadContext: mocks.resolvePluginRuntimeLoadContext,
+}));
 
 import { ensurePluginRegistryLoaded } from "./runtime-registry-loader.js";
 

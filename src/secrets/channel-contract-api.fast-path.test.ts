@@ -7,10 +7,10 @@ const { resolveConfigWidePluginManifestRegistryMock } = vi.hoisted(() => ({
     diagnostics: [],
   })),
 }));
-const { loadBundledPluginPublicArtifactModuleSyncMock } = vi.hoisted(() => ({
-  loadBundledPluginPublicArtifactModuleSyncMock: vi.fn(
-    ({ artifactBasename, dirName }: { artifactBasename: string; dirName: string }) => {
-      if (dirName === "discord" && artifactBasename === "secret-contract-api.js") {
+const { loadBundledPublicArtifactMock } = vi.hoisted(() => ({
+  loadBundledPublicArtifactMock: vi.fn(
+    ({ artifactCandidates, dirName }: { artifactCandidates: string[]; dirName: string }) => {
+      if (dirName === "discord" && artifactCandidates[0] === "secret-contract-api.js") {
         return {
           collectRuntimeConfigAssignments: () => undefined,
           secretTargetRegistryEntries: [
@@ -22,9 +22,7 @@ const { loadBundledPluginPublicArtifactModuleSyncMock } = vi.hoisted(() => ({
           ],
         };
       }
-      throw new Error(
-        `Unable to resolve bundled plugin public surface ${dirName}/${artifactBasename}`,
-      );
+      return null;
     },
   ),
 }));
@@ -34,7 +32,7 @@ vi.mock("../config/io.plugin-metadata.js", () => ({
 }));
 
 vi.mock("../plugins/public-surface-loader.js", () => ({
-  loadBundledPluginPublicArtifactModuleSync: loadBundledPluginPublicArtifactModuleSyncMock,
+  loadBundledPluginPublicArtifactModuleFromCandidatesSync: loadBundledPublicArtifactMock,
 }));
 
 import { loadChannelSecretContractApi } from "./channel-contract-api.js";
@@ -48,9 +46,9 @@ describe("channel contract api explicit fast path", () => {
     const api = loadChannelSecretContractApi({ channelId: "discord", config: {} });
 
     expect(api?.collectRuntimeConfigAssignments).toBeTypeOf("function");
-    expect(loadBundledPluginPublicArtifactModuleSyncMock).toHaveBeenCalledWith({
+    expect(loadBundledPublicArtifactMock).toHaveBeenCalledWith({
       dirName: "discord",
-      artifactBasename: "secret-contract-api.js",
+      artifactCandidates: ["secret-contract-api.js"],
     });
     const tokenEntry = api?.secretTargetRegistryEntries?.find(
       (entry) => entry.id === "channels.discord.accounts.*.token",
@@ -63,13 +61,13 @@ describe("channel contract api explicit fast path", () => {
     const api = loadChannelSecretContractApi({ channelId: "missing", config: {} });
 
     expect(api).toBeUndefined();
-    expect(loadBundledPluginPublicArtifactModuleSyncMock).toHaveBeenCalledWith({
+    expect(loadBundledPublicArtifactMock).toHaveBeenCalledWith({
       dirName: "missing",
-      artifactBasename: "secret-contract-api.js",
+      artifactCandidates: ["secret-contract-api.js"],
     });
-    expect(loadBundledPluginPublicArtifactModuleSyncMock).not.toHaveBeenCalledWith({
+    expect(loadBundledPublicArtifactMock).not.toHaveBeenCalledWith({
       dirName: "missing",
-      artifactBasename: "contract-api.js",
+      artifactCandidates: ["contract-api.js"],
     });
     expect(resolveConfigWidePluginManifestRegistryMock).toHaveBeenCalledExactlyOnceWith({
       config: {},

@@ -1,7 +1,7 @@
 /** Tests target-registry data built from the current runtime snapshot. */
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   createPluginMetadataSnapshot,
   makeRegistry,
@@ -9,13 +9,18 @@ import {
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withPluginMetadataSnapshotScope } from "../plugins/current-plugin-metadata-snapshot.js";
 import { installPluginMetadataOwner } from "../plugins/current-plugin-metadata.test-support.js";
-import { createPluginCache } from "../plugins/plugin-cache.js";
+import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
+import { createPluginCache, resetPluginCache } from "../plugins/plugin-cache.js";
 import {
   createPluginMetadataOwner,
   getPluginMetadataWorkspaceSnapshot,
 } from "../plugins/plugin-metadata-collection.js";
 import { freezePluginMetadataValue } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
+import {
+  createPluginManifestRecordFixture,
+  createPluginMetadataSnapshotFixture,
+} from "../plugins/plugin-metadata.test-support.js";
 import { createColdPluginFixture } from "../plugins/test-helpers/cold-plugin-fixtures.js";
 import { cleanupTrackedTempDirs, makeTrackedTempDir } from "../plugins/test-helpers/fs-fixtures.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
@@ -64,13 +69,29 @@ function writeChannelContract(params: {
     })}] };`,
     "utf8",
   );
-  return {
+  return createPluginManifestRecordFixture({
     id: params.pluginId,
     origin: "config",
     channels: params.ownership === "channels" ? [params.channelId] : [],
-    channelConfigs: params.ownership === "channelConfigs" ? { [params.channelId]: {} } : {},
+    channelConfigs:
+      params.ownership === "channelConfigs"
+        ? { [params.channelId]: { schema: { type: "object" } } }
+        : {},
     rootDir,
-  };
+  });
+}
+
+async function mockSourceGenerationSnapshot(plugins: PluginManifestRecord[]) {
+  const snapshot = createPluginMetadataSnapshotFixture({ plugins });
+  const metadata = await import("../plugins/plugin-metadata-snapshot.js");
+  const sourceSnapshot = vi
+    .spyOn(metadata, "resolvePluginMetadataSnapshot")
+    .mockReturnValue(snapshot);
+  onTestFinished(() => {
+    sourceSnapshot.mockRestore();
+  });
+  metadataMocks.resolveConfigWidePluginManifestRegistry.mockReturnValue(snapshot);
+  return sourceSnapshot;
 }
 
 describe("getSecretTargetRegistry metadata reuse", () => {
@@ -85,8 +106,89 @@ describe("getSecretTargetRegistry metadata reuse", () => {
   });
 
   afterEach(() => {
+    resetPluginCache();
+    vi.unstubAllEnvs();
     cleanupTrackedTempDirs(tempDirs);
   });
+
+  it.each(["bundled", "config"] as const)(
+    "rejects a broken %s contract during source docs generation without changing runtime tolerance",
+    async (origin) => {
+      const healthy = writeChannelContract({
+        channelId: "healthy",
+        pluginId: "healthy",
+        targetId: "channels.healthy.token",
+        ownership: "channels",
+      });
+      const broken = writeChannelContract({
+        channelId: "broken",
+        pluginId: "broken",
+        targetId: "channels.broken.token",
+        ownership: "channels",
+      });
+      const missing = {
+        ...broken,
+        id: "missing",
+        rootDir: makeTrackedTempDir("openclaw-target-registry-missing", tempDirs),
+      };
+      // A dependency failure can resemble the old missing-artifact message; it is not absence.
+      const failure = "Unable to resolve bundled plugin public surface fixture dependency failed";
+      fs.writeFileSync(
+        path.join(broken.rootDir, "secret-contract-api.cjs"),
+        `throw new Error(${JSON.stringify(failure)});`,
+      );
+      const records = [healthy, broken, missing].map((record) =>
+        Object.assign({}, record, {
+          origin,
+          id: origin === "bundled" ? path.basename(record.rootDir) : record.id,
+        }),
+      );
+      vi.stubEnv("OPENCLAW_BUNDLED_PLUGINS_DIR", path.dirname(healthy.rootDir));
+      vi.stubEnv("OPENCLAW_TEST_TRUST_BUNDLED_PLUGINS_DIR", "1");
+      const sourceSnapshot = await mockSourceGenerationSnapshot(records);
+      const { getSecretTargetRegistry } = await import("./target-registry-data.js");
+      const { buildSecretRefCredentialMatrix } =
+        await import("./credential-matrix.test-support.js");
+
+      const runtimeIds = getSecretTargetRegistry({ config: {}, env: {} }).map((entry) => entry.id);
+      expect(runtimeIds).toContain("channels.healthy.token");
+      expect(runtimeIds).toContain("gateway.auth.token");
+      expect(runtimeIds).not.toContain("channels.broken.token");
+      expect(() => buildSecretRefCredentialMatrix()).toThrow(failure);
+
+      sourceSnapshot.mockReturnValue(
+        createPluginMetadataSnapshotFixture({ plugins: [records[0]!, records[2]!] }),
+      );
+      const matrixIds = buildSecretRefCredentialMatrix().entries.map((entry) => entry.id);
+      expect(matrixIds).toContain("channels.healthy.token");
+      expect(matrixIds).toContain("gateway.auth.token");
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "reports a rejected contract boundary during source generation after runtime cached the rejection",
+    async () => {
+      const record = writeChannelContract({
+        channelId: "blocked",
+        pluginId: "blocked",
+        targetId: "channels.blocked.token",
+        ownership: "channels",
+      });
+      const outsideDir = makeTrackedTempDir("openclaw-contract-outside", tempDirs);
+      fs.linkSync(
+        path.join(record.rootDir, "secret-contract-api.cjs"),
+        path.join(outsideDir, "linked-contract.cjs"),
+      );
+      await mockSourceGenerationSnapshot([record]);
+      const { getSecretTargetRegistry } = await import("./target-registry-data.js");
+      expect(
+        getSecretTargetRegistry({ config: {}, env: {} }).map((entry) => entry.id),
+      ).not.toContain("channels.blocked.token");
+      expect(() => getSecretTargetRegistry({ sourceTree: true })).toThrow(
+        "Unable to open channel secret contract for blocked",
+      );
+    },
+  );
 
   it("registers secret targets for installed-origin plugins (#104320)", async () => {
     // The Exa web providers moved from bundled origin to an installed plugin

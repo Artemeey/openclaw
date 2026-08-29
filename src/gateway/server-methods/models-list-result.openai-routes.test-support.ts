@@ -5,6 +5,7 @@ import type { createOpenAIModelRoutesResolver } from "../../agents/openai-model-
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { loadManifestMetadataSnapshot } from "../../plugins/manifest-contract-eligibility.js";
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
+import type { PluginRegistry } from "../../plugins/registry-types.js";
 import {
   type PreparedGatewayModelCatalogSnapshot,
   registerGatewayModelCatalogPrivateAccess,
@@ -44,6 +45,9 @@ export function registerTestCatalogAccess(
 
 export async function listModels(params: {
   agentId?: string;
+  agentDir?: string;
+  workspaceDir?: string;
+  preparedOnly?: boolean;
   catalog: ModelCatalogEntry[];
   catalogLoadDelayMs?: number;
   preparedCatalog?: ModelCatalogEntry[];
@@ -54,6 +58,7 @@ export async function listModels(params: {
   discoveryModes?: Record<string, "refreshable" | "runtime" | "static">;
   preparedAuthModes?: PreparedAgentCredentialModes;
   metadataSnapshot?: PluginMetadataSnapshot;
+  pluginRegistry?: PluginRegistry;
   routeResolverFactory?: typeof createOpenAIModelRoutesResolver;
   view?: "all" | "configured" | "provider-config" | "default";
 }) {
@@ -62,15 +67,18 @@ export async function listModels(params: {
   const createCatalogSnapshot = (entries: ModelCatalogEntry[]) =>
     ({
       agentId,
-      agentDir: "/tmp/models-list-openai-agent",
+      agentDir: params.agentDir ?? "/tmp/models-list-openai-agent",
       catalogComplete: false,
-      workspaceDir: "/tmp/models-list-openai-workspace",
+      workspaceDir: params.workspaceDir ?? "/tmp/models-list-openai-workspace",
       config,
       authModes: params.preparedAuthModes ?? {},
-      pluginRegistry: undefined,
-      authStore: loadAuthProfileStoreWithoutExternalProfiles("/tmp/models-list-openai-agent", {
-        allowKeychainPrompt: false,
-      }),
+      pluginRegistry: params.pluginRegistry,
+      authStore: loadAuthProfileStoreWithoutExternalProfiles(
+        params.agentDir ?? "/tmp/models-list-openai-agent",
+        {
+          allowKeychainPrompt: false,
+        },
+      ),
       metadataSnapshot:
         params.metadataSnapshot ?? loadManifestMetadataSnapshot({ config, env: process.env }),
       entries,
@@ -103,7 +111,11 @@ export async function listModels(params: {
   return await buildModelsListResult({
     context,
     agentId,
-    params: { view: params.view ?? "all", ...(params.refresh ? { refresh: true } : {}) },
+    params: {
+      view: params.view ?? "all",
+      ...(params.refresh ? { refresh: true } : {}),
+      ...(params.preparedOnly ? { preparedOnly: true } : {}),
+    },
     ...(params.discoveryModes
       ? {
           preloadedCatalog: {
@@ -112,7 +124,6 @@ export async function listModels(params: {
             snapshot: { entries: params.catalog, routeVariants: params.catalog },
           },
           catalogProjector: {
-            pluginRegistry: undefined,
             metadataSnapshot: {
               index: { plugins: [] },
               manifestRegistry: { plugins: [] },

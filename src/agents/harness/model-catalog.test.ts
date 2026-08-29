@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import {
+  captureActivePluginRegistrySnapshot,
+  restoreActivePluginRegistrySnapshot,
+  setActivePluginRegistry,
+} from "../../plugins/runtime.js";
+import { withPluginRuntimeRegistryScope } from "../../plugins/runtime/gateway-request-scope.js";
 import type { ModelCatalogSnapshot } from "../model-catalog.types.js";
 import { augmentModelCatalogWithAgentHarness } from "./model-catalog.js";
 
@@ -94,6 +101,26 @@ function registryWithCatalog(loadModelCatalog: () => Promise<readonly never[]>) 
 }
 
 describe("agent harness model catalog", () => {
+  it("does not donate host transport or capabilities to native-owned rows", async () => {
+    const native = {
+      provider: "openai",
+      id: "gpt-5.6-sol",
+      name: "Native model",
+      nativeRuntime: "codex",
+      reasoning: true,
+    };
+    const result = await augmentModelCatalogWithAgentHarness({
+      cfg,
+      agentId: "main",
+      agentDir: "/tmp/main-agent",
+      workspaceDir: "/tmp/workspace",
+      modelRef: { provider: "openai", model: "gpt-5.6-sol" },
+      snapshot,
+      pluginRegistry: registryWithCatalog(async () => [native] as never),
+    });
+    expect(result.entries[0]).toEqual(native);
+    expect(result.routeVariants[0]).toEqual(native);
+  });
   it("merges account-scoped harness models into the prepared generation", async () => {
     const loadModelCatalog = vi.fn(async () => [
       {
@@ -177,6 +204,52 @@ describe("agent harness model catalog", () => {
       workspaceDir: "/tmp/workspace",
     });
   });
+
+  it.each(["global", "scoped"] as const)(
+    "revalidates %s catalog ownership after a global registry replacement",
+    async (source) => {
+      const resume = createDeferred();
+      const native = {
+        provider: "openai",
+        id: "owned-model",
+        name: "Owned model",
+        nativeRuntime: "codex",
+      };
+      const loadModelCatalog = vi.fn(async () => {
+        await resume.promise;
+        return [native] as never;
+      });
+      const registry = registryWithCatalog(loadModelCatalog);
+      const previous = captureActivePluginRegistrySnapshot();
+      let pending: Promise<ModelCatalogSnapshot> | undefined;
+      try {
+        setActivePluginRegistry(source === "global" ? registry : createEmptyPluginRegistry());
+        const load = () =>
+          augmentModelCatalogWithAgentHarness({
+            cfg,
+            agentId: "main",
+            agentDir: "/tmp/main-agent",
+            workspaceDir: "/tmp/workspace",
+            modelRef: { provider: "openai", model: "gpt-5.6-sol" },
+            snapshot,
+          });
+        pending = source === "scoped" ? withPluginRuntimeRegistryScope(registry, load) : load();
+        expect(loadModelCatalog).toHaveBeenCalledOnce();
+        setActivePluginRegistry(createEmptyPluginRegistry());
+        resume.resolve();
+        const result = await pending;
+        if (source === "global") {
+          expect(result).toBe(snapshot);
+        } else {
+          expect(result.entries).toEqual([native, ...snapshot.entries]);
+        }
+      } finally {
+        resume.resolve();
+        await Promise.allSettled(pending ? [pending] : []);
+        restoreActivePluginRegistrySnapshot(previous);
+      }
+    },
+  );
 
   it("keeps prepared rows when harness discovery fails", async () => {
     const onError = vi.fn();

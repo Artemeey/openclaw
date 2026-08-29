@@ -15,7 +15,7 @@ import {
   makeTrackedTempDir,
   mkdirSafeDir,
 } from "../test-helpers/fs-fixtures.js";
-import { resolvePluginRuntimeLoadContext } from "./load-context.js";
+import { resolvePluginRuntimeLoadContext } from "./load-context.resolve.js";
 
 describe("plugin runtime load context current snapshot ownership", () => {
   const tempDirs: string[] = [];

@@ -91,7 +91,7 @@ export async function persistRefreshedPluginIndex(params: {
     loadInstalledPluginIndexStoreWrite,
   );
   // The checkpoint certifies the persisted inventory, not a process-local replacement.
-  // Write the exact derived index first, then prove a fresh reader can reuse it.
+  // Persist the selected workspace index; the validation union cannot pass scoped freshness checks.
   await params.measure("plugin-index-persistence", () =>
     writePersistedInstalledPluginIndexWithLeaseSync(derivedPluginMetadataSnapshot.index, {
       env: params.env,

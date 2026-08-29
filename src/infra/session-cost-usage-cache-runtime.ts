@@ -150,13 +150,15 @@ export async function loadSessionCostSummariesFromCache(params: {
   const pricingFingerprint = resolveUsageCostPricingFingerprint(params.config, agentDir, {
     agentId: params.agentId,
   });
-  const rollups = readUsageCostRollups(params.agentId, pricingFingerprint, databasePath);
   const fileTasks = params.sessions.map(
     (session) => async () => await resolveUsageCostTranscriptFile(session.sessionFile),
   );
   const { results: files } = await runTasksWithConcurrency({
     tasks: fileTasks,
     limit: USAGE_COST_TRANSCRIPT_STAT_CONCURRENCY,
+  });
+  const rollups = readUsageCostRollups(params.agentId, pricingFingerprint, databasePath, {
+    filePaths: files.flatMap((file) => (file ? [file.filePath] : [])),
   });
   const staleFiles = new Set<string>();
   let cachedFiles = 0;

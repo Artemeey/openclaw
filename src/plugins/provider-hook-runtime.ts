@@ -4,7 +4,6 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
-import { resolveModelCatalogScope } from "../agents/model-discovery-context.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   getLoadedRuntimePluginRegistry,
@@ -18,7 +17,10 @@ import {
 } from "./plugin-cache-primitives.js";
 import { resolvePluginControlPlaneFingerprint } from "./plugin-control-plane-context.js";
 import type { PluginMetadataRegistryView } from "./plugin-metadata-snapshot.types.js";
-import { resolveProviderRuntimeOwnerRefs } from "./provider-config-owner.js";
+import {
+  resolveModelCatalogScope,
+  resolveProviderRuntimeOwnerRefs,
+} from "./provider-config-owner.js";
 import {
   findProviderRuntimePluginInRegistry,
   listProviderRuntimePluginsInRegistry,

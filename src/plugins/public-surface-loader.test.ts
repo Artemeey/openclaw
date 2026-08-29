@@ -7,6 +7,7 @@ import { importFreshModule } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { MissingPublicSurfaceError } from "../plugin-sdk/facade-loader.js";
+import { spawnNodeEvalSync } from "../test-utils/node-process.js";
 import { withMockedWindowsPlatform } from "../test-utils/vitest-spies.js";
 import { resetPluginCache } from "./plugin-cache.js";
 
@@ -169,6 +170,76 @@ describe("bundled plugin public surface loader", () => {
     });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe("source-sdk");
+  });
+
+  it("loads import-only dependencies under tsx and shares source artifacts for one cache generation", () => {
+    const tempRoot = tempDirs.make("openclaw-public-surface-source-");
+    const bundledPluginsDir = path.join(tempRoot, "extensions");
+    const pluginRoot = path.join(bundledPluginsDir, "demo");
+    const dependencyRoot = path.join(pluginRoot, "node_modules", "import-only-fixture");
+    const modulePath = path.join(pluginRoot, "secret-contract-api.ts");
+    const dependencyPath = path.join(dependencyRoot, "index.js");
+    fs.mkdirSync(dependencyRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(dependencyRoot, "package.json"),
+      JSON.stringify({ type: "module", exports: { node: { import: "./index.js" } } }),
+    );
+    fs.writeFileSync(dependencyPath, 'export const marker = "original";\n');
+    fs.writeFileSync(path.join(tempRoot, "shared.cjs"), "module.exports = {};\n");
+    fs.writeFileSync(
+      modulePath,
+      'export { marker } from "import-only-fixture";\nexport { default as shared } from "../../shared.cjs";\n',
+    );
+
+    const moduleUrl = (relativePath: string) =>
+      JSON.stringify(pathToFileURL(path.join(process.cwd(), relativePath)).href);
+    const result = spawnNodeEvalSync(
+      `
+        import assert from "node:assert/strict";
+        import fs from "node:fs";
+        import { createRequire } from "node:module";
+        import { loadBundledPluginPublicArtifactModuleSync, loadPluginPublicArtifactModuleSync } from ${moduleUrl("src/plugins/public-surface-loader.ts")};
+        import { loadFacadeModuleAtLocationSync } from ${moduleUrl("src/plugin-sdk/facade-loader.ts")};
+        import { clearPluginMetadataLifecycleCaches } from ${moduleUrl("src/plugins/plugin-metadata-lifecycle.ts")};
+        assert.equal(typeof createRequire(import.meta.url).extensions[".ts"], "function");
+        const load = () => loadBundledPluginPublicArtifactModuleSync({ dirName: "demo", artifactBasename: "secret-contract-api.js" });
+        const first = load();
+        assert.equal(first.marker, "original");
+        assert.equal(load(), first);
+        assert.equal(loadPluginPublicArtifactModuleSync({ pluginRoot: ${JSON.stringify(pluginRoot)}, artifactBasename: "secret-contract-api.js" }), first);
+        assert.equal(loadFacadeModuleAtLocationSync({ location: { modulePath: ${JSON.stringify(modulePath)}, boundaryRoot: ${JSON.stringify(pluginRoot)} }, trackedPluginId: "demo" }), first);
+        fs.writeFileSync(${JSON.stringify(dependencyPath)}, 'export const marker = "replacement";\\n');
+        assert.equal(load(), first);
+        clearPluginMetadataLifecycleCaches();
+        const replacement = load();
+        assert.notEqual(replacement, first);
+        assert.equal(replacement.marker, "replacement");
+        assert.equal(replacement.shared, first.shared);
+        console.log("source artifact import, identity, and lifecycle verified");
+      `,
+      {
+        imports: [pathToFileURL(path.join(process.cwd(), "scripts/tsx.mjs")).href],
+        timeout: 30_000,
+        env: {
+          PATH: process.env.PATH,
+          SystemRoot: process.env.SystemRoot,
+          HOME: tempRoot,
+          USERPROFILE: tempRoot,
+          TMPDIR: tempRoot,
+          TMP: tempRoot,
+          TEMP: tempRoot,
+          VITEST: "true",
+          OPENCLAW_STATE_DIR: path.join(tempRoot, "state"),
+          OPENCLAW_BUNDLED_PLUGINS_DIR: bundledPluginsDir,
+          OPENCLAW_TEST_TRUST_BUNDLED_PLUGINS_DIR: "1",
+          JITI_FS_CACHE: "0",
+        },
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe("source artifact import, identity, and lifecycle verified");
   });
 
   it("keeps bundled dist public artifacts on the native path", async () => {

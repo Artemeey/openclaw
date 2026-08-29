@@ -69,14 +69,15 @@ function resolvePublicSurfaceLocation(params: {
 }
 
 function loadPublicSurfaceModule(modulePath: string): unknown {
-  // Ambient TypeScript hooks may be namespaced; only the plugin loader owns
-  // both source transformation and the SDK aliases required by public surfaces.
-  return getCachedPluginModuleLoader({
+  // A TS require hook can force import-only dependencies through CommonJS resolution.
+  // Keep source transforms and built-artifact native loading on the same canonical owner.
+  const load = getCachedPluginModuleLoader({
     modulePath,
     importerUrl: import.meta.url,
     preferBuiltDist: true,
     loaderFilename: import.meta.url,
-  })(modulePath);
+  });
+  return load(modulePath);
 }
 
 function loadValidatedPublicSurfaceModule(params: {

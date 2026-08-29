@@ -9,15 +9,11 @@ const tempDirs: string[] = [];
 
 const {
   loadPluginMetadataSnapshotMock,
-  loadBundledPluginPublicArtifactModuleSyncMock,
+  loadBundledPublicArtifactMock,
   shouldRejectHardlinkedPluginFilesMock,
 } = vi.hoisted(() => ({
   loadPluginMetadataSnapshotMock: vi.fn(),
-  loadBundledPluginPublicArtifactModuleSyncMock: vi.fn(() => {
-    throw new Error(
-      "Unable to resolve bundled plugin public surface discord/secret-contract-api.js",
-    );
-  }),
+  loadBundledPublicArtifactMock: vi.fn(() => null),
   shouldRejectHardlinkedPluginFilesMock: vi.fn<
     typeof import("../plugins/hardlink-policy.js").shouldRejectHardlinkedPluginFiles
   >(() => true),
@@ -35,7 +31,7 @@ vi.mock("../config/io.plugin-metadata.js", () => ({
 }));
 
 vi.mock("../plugins/public-surface-loader.js", () => ({
-  loadBundledPluginPublicArtifactModuleSync: loadBundledPluginPublicArtifactModuleSyncMock,
+  loadBundledPluginPublicArtifactModuleFromCandidatesSync: loadBundledPublicArtifactMock,
 }));
 
 vi.mock("../plugins/hardlink-policy.js", () => ({
@@ -108,7 +104,7 @@ function writeExternalChannelPlugin(params: { pluginId: string; channelId: strin
 describe("external channel secret contract api", () => {
   beforeEach(() => {
     loadPluginMetadataSnapshotMock.mockReset();
-    loadBundledPluginPublicArtifactModuleSyncMock.mockClear();
+    loadBundledPublicArtifactMock.mockClear();
     shouldRejectHardlinkedPluginFilesMock.mockReset();
     shouldRejectHardlinkedPluginFilesMock.mockReturnValue(true);
   });
@@ -154,6 +150,22 @@ describe("external channel secret contract api", () => {
       exists.mockRestore();
       open.mockRestore();
     }
+  });
+
+  it("keeps a healthy external contract available when another artifact fails to load", () => {
+    const broken = writeExternalChannelPlugin({ pluginId: "custom", channelId: "custom" });
+    const healthy = writeExternalChannelPlugin({ pluginId: "custom-alt", channelId: "custom" });
+    fs.writeFileSync(
+      path.join(broken.rootDir, "secret-contract-api.cjs"),
+      'throw new Error("contract dependency unavailable");\n',
+    );
+    loadPluginMetadataSnapshotMock.mockReturnValue({ plugins: [broken, healthy] });
+
+    const api = loadChannelSecretContractApi({ channelId: "custom", config: {}, env: {} });
+
+    expect(api?.secretTargetRegistryEntries?.map((entry) => entry.id)).toEqual([
+      "channels.custom.token",
+    ]);
   });
 
   it("keeps missing external contract artifacts absent until a new cache generation", () => {

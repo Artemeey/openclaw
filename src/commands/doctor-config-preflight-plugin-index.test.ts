@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import type { ConfigFileSnapshot } from "../config/types.js";
 import type { StartupMigrationLease } from "../infra/startup-migration-checkpoint.js";
-import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "../plugins/installed-plugin-index-record-cache.js";
-import { resolvePluginMetadataEnvFingerprint } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
+import {
+  createPluginMetadataSnapshotFixture,
+  createPreparedPluginMetadataFixture,
+} from "../plugins/plugin-metadata.test-support.js";
 import type { DoctorConfigPreflightPluginSnapshotRead } from "./doctor-config-preflight-plugin-index.js";
 
 const writePersistedInstalledPluginIndexWithLeaseSync = vi.hoisted(() => vi.fn());
@@ -15,30 +16,6 @@ vi.mock("../plugins/installed-plugin-index-store-write.js", () => ({
 
 const { persistRefreshedPluginIndex } = await import("./doctor-config-preflight-plugin-index.js");
 
-function snapshotRead(
-  metadata: Pick<PluginMetadataSnapshot, "index" | "registryDiagnostics" | "registrySource">,
-): DoctorConfigPreflightPluginSnapshotRead {
-  const snapshot = {
-    ...createPluginMetadataSnapshot({ manifestRegistry: { plugins: [], diagnostics: [] } }),
-    ...metadata,
-  };
-  return {
-    snapshot: {} as ConfigFileSnapshot,
-    pluginMigrationFingerprint: "plugin-migrations",
-    pluginMetadata: {
-      ...snapshot,
-      unionSnapshot: snapshot,
-      selectedSnapshot: snapshot,
-      workspaces: new Map([[undefined, snapshot]]),
-      configWorkspaceDirs: [undefined],
-      agentWorkspaceDirs: new Map(),
-      installRecordsGeneration: getInstalledPluginIndexInstallRecordsCacheGeneration(),
-      envFingerprint: resolvePluginMetadataEnvFingerprint(),
-      channelCatalog: { read: () => [] },
-    },
-  };
-}
-
 const measure = async <T>(_name: string, run: () => T | Promise<T>): Promise<T> => await run();
 
 describe("persistRefreshedPluginIndex", () => {
@@ -47,7 +24,32 @@ describe("persistRefreshedPluginIndex", () => {
   });
 
   it("reports selector diagnostics when the durable reread is rejected", async () => {
-    const index = {} as PluginMetadataSnapshot["index"];
+    const selected = createPluginMetadataSnapshotFixture();
+    const secondary = createPluginMetadataSnapshotFixture({ plugins: [{ id: "secondary" }] });
+    secondary.workspaceDir = "/workspace/secondary";
+    secondary.index.workspaceDir = secondary.workspaceDir;
+    const unionSnapshot = createPluginMetadataSnapshotFixture({ plugins: [...secondary.plugins] });
+    const snapshotRead = (
+      registryDiagnostics: PluginMetadataSnapshot["registryDiagnostics"] = [],
+    ): DoctorConfigPreflightPluginSnapshotRead => {
+      const selectedSnapshot: PluginMetadataSnapshot = {
+        ...selected,
+        registryDiagnostics,
+        registrySource: "derived",
+      };
+      return {
+        snapshot: {} as ConfigFileSnapshot,
+        pluginMigrationFingerprint: "plugin-migrations",
+        pluginMetadata: createPreparedPluginMetadataFixture({
+          unionSnapshot,
+          selectedSnapshot,
+          workspaces: new Map([
+            [undefined, selectedSnapshot],
+            [secondary.workspaceDir, secondary],
+          ]),
+        }),
+      };
+    };
     const lease = {} as StartupMigrationLease;
     const env = { OPENCLAW_STATE_DIR: "test-state" };
 
@@ -57,26 +59,18 @@ describe("persistRefreshedPluginIndex", () => {
         lease,
         measure,
         readPersistedSnapshot: async () =>
-          snapshotRead({
-            index,
-            registryDiagnostics: [
-              {
-                level: "warn",
-                code: "persisted-registry-stale-source",
-                message: "stale",
-              },
-            ],
-            registrySource: "derived",
-          }),
-        snapshotRead: snapshotRead({
-          index,
-          registryDiagnostics: [],
-          registrySource: "derived",
-        }),
+          snapshotRead([
+            {
+              level: "warn",
+              code: "persisted-registry-stale-source",
+              message: "stale",
+            },
+          ]),
+        snapshotRead: snapshotRead(),
       }),
     ).rejects.toThrow("reread source was derived; diagnostics: persisted-registry-stale-source");
 
-    expect(writePersistedInstalledPluginIndexWithLeaseSync).toHaveBeenCalledWith(index, {
+    expect(writePersistedInstalledPluginIndexWithLeaseSync).toHaveBeenCalledWith(selected.index, {
       env,
       lease,
     });

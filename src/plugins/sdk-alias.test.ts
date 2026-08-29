@@ -10,6 +10,7 @@ import {
 } from "openclaw/plugin-sdk/test-fixtures";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { withEnv, withEnvAsync } from "../test-utils/env.js";
+import { createPluginCache, withPluginCache } from "./plugin-cache.js";
 import {
   buildPluginLoaderAliasMap,
   createPluginLoaderModuleCacheKey,
@@ -1613,85 +1614,44 @@ describe("plugin sdk alias helpers", () => {
   });
 
   it.each([
-    {
-      name: "uses transpiled module loads for source TypeScript plugin entries",
-      bun: false,
-      windows: false,
-      preferBuiltDist: false,
-      entries: [
-        { file: "dist/plugins/runtime/index.js", native: true },
-        { file: bundledPluginFile("discord", "src/channel.runtime.ts"), native: false },
-      ],
-    },
-    {
-      name: "disables native module loads under Bun even for built JavaScript entries",
-      bun: true,
-      windows: false,
-      preferBuiltDist: false,
-      entries: [
-        { file: "dist/plugins/runtime/index.js", native: false },
-        { file: bundledDistPluginFile("browser", "index.js"), native: false },
-      ],
-    },
-    {
-      name: "enables native module loads on Windows for built JavaScript entries",
-      bun: false,
-      windows: true,
-      preferBuiltDist: false,
-      entries: [
-        { file: "dist/plugins/runtime/index.js", native: true },
-        { file: bundledDistPluginFile("browser", "index.js"), native: true },
-      ],
-    },
-    {
-      name: "keeps plugin loader dist shortcuts on native module loading on Windows for JS entries",
-      bun: false,
-      windows: true,
-      preferBuiltDist: true,
-      entries: [
-        { file: bundledDistPluginFile("browser", "index.js"), native: true },
-        { file: bundledDistPluginFile("browser", "helper.ts"), native: false },
-      ],
-    },
-    {
-      name: "prefers native module loading for bundled plugin dist .js modules, keeps .ts on aliased path",
-      bun: false,
-      windows: false,
-      preferBuiltDist: true,
-      entries: [
-        { file: bundledDistPluginFile("browser", "index.js"), native: true },
-        { file: bundledDistPluginFile("browser", "helper.ts"), native: false },
-        { file: "dist/plugins/runtime/index.js", native: true },
-      ],
-    },
-  ])("$name", ({ bun, windows, preferBuiltDist, entries }) => {
-    const fixture = createPluginSdkAliasFixture();
-    const originalVersions = process.versions;
-    const originalPlatform = process.platform;
-    Object.defineProperty(process, "versions", {
-      configurable: true,
-      value: bun ? { ...originalVersions, bun: "1.2.0" } : originalVersions,
-    });
-    Object.defineProperty(process, "platform", {
-      configurable: true,
-      value: windows ? "win32" : originalPlatform,
-    });
-    try {
-      for (const entry of entries) {
-        expect(
+    ["node", "linux", "dist/plugins/runtime/index.js", false, true],
+    ["node", "linux", "dist/plugins/runtime/index.js", true, true],
+    ["node", "linux", "extensions/demo/index.ts", false, false],
+    ["bun", "linux", "dist/plugins/runtime/index.js", false, false],
+    ["bun", "linux", "dist/extensions/demo/index.js", false, false],
+    ["bun", "linux", "dist/extensions/demo/index.js", true, false],
+    ["node", "win32", "dist/plugins/runtime/index.js", false, true],
+    ["node", "win32", "dist/extensions/demo/index.js", false, true],
+    ["node", "win32", "dist/extensions/demo/index.js", true, true],
+    ["node", "win32", "dist/extensions/demo/helper.ts", true, false],
+    ["node", "linux", "dist/extensions/demo/index.js", true, true],
+    ["node", "linux", "dist/extensions/demo/helper.ts", true, false],
+  ] as const)(
+    "selects native loading for %s on %s with %s (prefer dist=%s): %s",
+    (runtime, platform, entry, preferBuiltDist, expected) => {
+      const fixture = createPluginSdkAliasFixture();
+      const originalPlatform = process.platform;
+      const originalVersions = process.versions;
+      Object.defineProperty(process, "platform", { configurable: true, value: platform });
+      Object.defineProperty(process, "versions", {
+        configurable: true,
+        value: { ...originalVersions, bun: runtime === "bun" ? "1.2.0" : undefined },
+      });
+      try {
+        const config = withPluginCache(createPluginCache(), () =>
           resolvePluginLoaderModuleConfig({
-            modulePath: path.join(fixture.root, entry.file),
-            argv1: path.join(fixture.root, "openclaw.mjs"),
-            moduleUrl: pathToFileURL(path.join(fixture.root, "src/plugins/loader.ts")).href,
+            modulePath: path.join(fixture.root, entry),
+            moduleUrl: pathToFileURL(path.join(fixture.root, "dist", "entry.js")).href,
             preferBuiltDist,
-          }).tryNative,
-        ).toBe(entry.native);
+          }),
+        );
+        expect(config.tryNative).toBe(expected);
+      } finally {
+        Object.defineProperty(process, "platform", { configurable: true, value: originalPlatform });
+        Object.defineProperty(process, "versions", { configurable: true, value: originalVersions });
       }
-    } finally {
-      Object.defineProperty(process, "versions", { configurable: true, value: originalVersions });
-      Object.defineProperty(process, "platform", { configurable: true, value: originalPlatform });
-    }
-  });
+    },
+  );
 
   it("keeps plugin loader module cache keys stable across alias insertion order", () => {
     expect(

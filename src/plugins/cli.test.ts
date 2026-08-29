@@ -37,8 +37,8 @@ vi.mock("../config/plugin-auto-enable.js", () => ({
   applyPluginAutoEnable: (...args: unknown[]) => mocks.applyPluginAutoEnable(...args),
 }));
 
-vi.mock("./runtime/load-context.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./runtime/load-context.js")>();
+vi.mock("./runtime/load-context.resolve.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./runtime/load-context.resolve.js")>();
   return {
     ...actual,
     // Supply operation-owned metadata while retaining real auto-enable and load options.

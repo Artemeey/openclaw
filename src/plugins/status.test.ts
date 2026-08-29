@@ -31,7 +31,7 @@ const loadPluginMetadataSnapshotMock = vi.fn<
   }),
 );
 const resolvePluginRuntimeLoadContextMock =
-  vi.fn<typeof import("./runtime/load-context.js").resolvePluginRuntimeLoadContext>();
+  vi.fn<typeof import("./runtime/load-context.resolve.js").resolvePluginRuntimeLoadContext>();
 const resolveBundledProviderCompatPluginIdsMock = vi.fn();
 const withBundledPluginEnablementCompatMock = vi.fn();
 const listImportedBundledPluginFacadeIdsMock = vi.fn();
@@ -69,14 +69,9 @@ vi.mock("./plugin-metadata-snapshot.js", async (importOriginal) => ({
   loadPluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
 }));
 
-vi.mock("./runtime/load-context.js", async (importOriginal) => {
-  const { buildPluginRuntimeLoadOptions } =
-    await importOriginal<typeof import("./runtime/load-context.js")>();
-  return {
-    buildPluginRuntimeLoadOptions,
-    resolvePluginRuntimeLoadContext: resolvePluginRuntimeLoadContextMock,
-  };
-});
+vi.mock("./runtime/load-context.resolve.js", () => ({
+  resolvePluginRuntimeLoadContext: resolvePluginRuntimeLoadContextMock,
+}));
 
 vi.mock("./providers.js", () => ({
   resolveBundledProviderCompatPluginIds: (...args: unknown[]) =>

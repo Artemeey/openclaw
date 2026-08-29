@@ -327,6 +327,9 @@ describe("config IO plugin metadata snapshots", () => {
         expect(prepared?.unionSnapshot.index.plugins.map((plugin) => plugin.pluginId)).toEqual(
           expectedPluginIds,
         );
+        expect(prepared?.selectedSnapshot.index.plugins.map((plugin) => plugin.pluginId)).toEqual([
+          "shared-plugin",
+        ]);
         for (const [workspaceDir, snapshot] of prepared?.workspaces ?? []) {
           const workspaceCandidates = snapshot.discovery?.candidates.filter(
             (candidate) => candidate.origin === "workspace",

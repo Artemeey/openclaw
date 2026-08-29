@@ -93,15 +93,19 @@ function listPluginConfigSecretTargetRegistryEntries(
 
 function listChannelSecretTargetRegistryEntries(
   channelPlugins: readonly PluginManifestRecord[],
+  throwOnLoadError = false,
 ): SecretTargetRegistryEntry[] {
   const entries: SecretTargetRegistryEntry[] = [];
 
   for (const record of channelPlugins) {
     try {
-      const contractApi = loadChannelSecretContractApiForRecord(record);
+      const contractApi = loadChannelSecretContractApiForRecord(record, { throwOnLoadError });
       entries.push(...(contractApi?.secretTargetRegistryEntries ?? []));
-    } catch {
-      // Ignore channels that do not expose a usable secret contract artifact.
+    } catch (error) {
+      // Runtime can isolate unavailable owners; generated docs must never silently lose targets.
+      if (throwOnLoadError) {
+        throw error;
+      }
     }
   }
   return entries;
@@ -453,9 +457,11 @@ const secretTargetRegistriesByPlugins = new WeakMap<
 /** Builds secret targets from one exact manifest-registry plugin set. */
 export function buildSecretTargetRegistryFromPlugins(
   plugins: readonly PluginManifestRecord[],
+  options?: { throwOnLoadError?: boolean },
 ): SecretTargetRegistryEntry[] {
   const cached = secretTargetRegistriesByPlugins.get(plugins);
-  if (cached) {
+  // Runtime results may omit broken artifacts; source generation must still validate them.
+  if (cached && !options?.throwOnLoadError) {
     return cached;
   }
   const channelPlugins = plugins.filter(
@@ -475,7 +481,7 @@ export function buildSecretTargetRegistryFromPlugins(
     ...CORE_SECRET_TARGET_REGISTRY,
     ...listPluginWebProviderSecretTargetRegistryEntries(plugins),
     ...listPluginConfigSecretTargetRegistryEntries(plugins),
-    ...listChannelSecretTargetRegistryEntries(channelPlugins),
+    ...listChannelSecretTargetRegistryEntries(channelPlugins, options?.throwOnLoadError),
     ...listOfficialExternalChannelSecretTargetRegistryEntries(),
   ];
   const seen = new Set<string>();
@@ -491,7 +497,6 @@ export function buildSecretTargetRegistryFromPlugins(
   return registry;
 }
 
-/** Returns only core-owned secret target registry entries. */
 /** Returns static core secret target registry entries without plugin-derived targets. */
 export function getCoreSecretTargetRegistry(): SecretTargetRegistryEntry[] {
   return CORE_SECRET_TARGET_REGISTRY;
@@ -512,7 +517,7 @@ export function getSecretTargetRegistry(params?: {
       },
       preferPersisted: false,
     });
-    return buildSecretTargetRegistryFromPlugins(snapshot.plugins);
+    return buildSecretTargetRegistryFromPlugins(snapshot.plugins, { throwOnLoadError: true });
   }
   const registry = resolveConfigWidePluginManifestRegistry({
     config: params?.config,

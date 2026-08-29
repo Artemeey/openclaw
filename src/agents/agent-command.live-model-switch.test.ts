@@ -1183,7 +1183,15 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       resolvedSkills: [],
       version: 0,
     });
-    state.deliverAgentCommandResultMock.mockResolvedValue(undefined);
+    state.deliverAgentCommandResultMock.mockImplementation(
+      async ({
+        result,
+        payloads,
+      }: Parameters<typeof import("./command/delivery.js").deliverAgentCommandResult>[0]) => ({
+        payloads: payloads ?? [],
+        meta: result.meta,
+      }),
+    );
     state.resolveAgentOutboundTargetMock.mockImplementation(
       (params: { plan?: { resolvedTo?: string }; targetMode?: string }) => ({
         resolvedTarget: null,
@@ -3706,7 +3714,7 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
         deliver: true,
         bestEffortDeliver: true,
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ payloads: [{ text: "ok" }] });
 
     expect(state.runAgentAttemptMock).toHaveBeenCalled();
     expect(state.deliverAgentCommandResultMock).toHaveBeenCalledWith(
@@ -3729,8 +3737,6 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
         intentId: "intent-1",
       },
     });
-    state.deliverAgentCommandResultMock.mockResolvedValue(undefined);
-
     await agentCommand({
       message: "hello",
       channel: "whatsapp",
@@ -3997,7 +4003,9 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       new Error("database is locked"),
     );
 
-    await expect(runInternalModelCommand("model-run-cleanup-failure")).resolves.toBeUndefined();
+    await expect(runInternalModelCommand("model-run-cleanup-failure")).resolves.toMatchObject({
+      payloads: [{ text: "ok" }],
+    });
 
     expect(state.removeInternalSessionEffectsSessionMock).toHaveBeenCalled();
   });

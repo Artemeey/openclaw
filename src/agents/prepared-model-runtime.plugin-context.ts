@@ -10,10 +10,8 @@ import {
 import { projectPluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import type { PluginRegistry } from "../plugins/registry-types.js";
-import {
-  resolvePluginRuntimeLoadContext,
-  setPluginRuntimeLoadContext,
-} from "../plugins/runtime/load-context.js";
+import { setPluginRuntimeLoadContext } from "../plugins/runtime/load-context.js";
+import { resolvePluginRuntimeLoadContext } from "../plugins/runtime/load-context.resolve.js";
 import { createAgentRuntimeMetadataPluginIdScope } from "./harness/runtime-plugin-load-plan.js";
 import type { PreparedModelRuntimeInput } from "./prepared-model-runtime.types.js";
 

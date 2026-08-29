@@ -29,7 +29,7 @@ const resolveConfigWidePluginManifestRegistryMock = vi.fn<
   typeof import("../../config/io.plugin-metadata.js").resolveConfigWidePluginManifestRegistry
 >(() => manifestRegistry);
 
-let resolvePluginRuntimeLoadContext: typeof import("./load-context.js").resolvePluginRuntimeLoadContext;
+let resolvePluginRuntimeLoadContext: typeof import("./load-context.resolve.js").resolvePluginRuntimeLoadContext;
 let buildPluginRuntimeLoadOptions: typeof import("./load-context.js").buildPluginRuntimeLoadOptions;
 let clearRuntimeConfigSnapshot: typeof import("../../config/runtime-snapshot.js").clearRuntimeConfigSnapshot;
 let setRuntimeConfigSnapshot: typeof import("../../config/runtime-snapshot.js").setRuntimeConfigSnapshot;
@@ -79,8 +79,8 @@ describe("resolvePluginRuntimeLoadContext", () => {
     ({ clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } =
       await import("../../config/runtime-snapshot.js"));
     ({ clearPluginMetadataLifecycleCaches } = await import("../plugin-metadata-lifecycle.js"));
-    ({ resolvePluginRuntimeLoadContext, buildPluginRuntimeLoadOptions } =
-      await import("./load-context.js"));
+    ({ resolvePluginRuntimeLoadContext } = await import("./load-context.resolve.js"));
+    ({ buildPluginRuntimeLoadOptions } = await import("./load-context.js"));
   });
 
   beforeEach(() => {

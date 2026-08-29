@@ -1,8 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { hashRuntimeConfigValue } from "../config/runtime-snapshot.js";
 import {
+  persistRefreshedPluginIndex,
+  type DoctorConfigPreflightPluginSnapshotRead,
+} from "../commands/doctor-config-preflight-plugin-index.js";
+import { createConfigFileSnapshot } from "../config/io.snapshot-shared.js";
+import { hashRuntimeConfigValue } from "../config/runtime-snapshot.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  acquireStartupMigrationLease,
   needsStateMigrationCheckpoint,
   recordSuccessfulStateMigrations,
   type MigrationCheckpointIdentity,
@@ -15,12 +22,19 @@ import { resetAutoMigrateLegacyStateDirForTest } from "../infra/state-migrations
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { clearPluginDoctorContractRegistryCache } from "./doctor-contract-registry.test-fixtures.js";
 import { writePersistedInstalledPluginIndexSync } from "./installed-plugin-index-store-write.js";
+import { readPersistedInstalledPluginIndexSync } from "./installed-plugin-index-store.js";
+import { createPluginMetadataOwner } from "./plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
 import {
   loadPluginMetadataSnapshot,
   type PluginMetadataSnapshot,
 } from "./plugin-metadata-snapshot.js";
-import { cleanupTrackedTempDirs, makeTrackedTempDir } from "./test-helpers/fs-fixtures.js";
+import { createColdPluginFixture } from "./test-helpers/cold-plugin-fixtures.js";
+import {
+  cleanupTrackedTempDirs,
+  makeTrackedTempDir,
+  mkdirSafeDir,
+} from "./test-helpers/fs-fixtures.js";
 import { writeManagedNpmPlugin } from "./test-helpers/managed-npm-plugin.js";
 
 const tempDirs: string[] = [];
@@ -63,6 +77,112 @@ function requirePlugin(snapshot: PluginMetadataSnapshot, pluginId: string) {
 }
 
 describe("persisted plugin registry Doctor contract freshness", () => {
+  it("persists a workspace registry without losing config-wide plugins or diagnostics", async () => {
+    const rootDir = fs.realpathSync(makeTempDir());
+    const stateDir = path.join(rootDir, "state");
+    const primaryWorkspace = path.join(rootDir, "primary");
+    const secondaryWorkspace = path.join(rootDir, "secondary");
+    const configuredPluginDir = path.join(rootDir, "configured-plugin");
+    for (const [pluginId, pluginRoot] of [
+      ["shared-plugin", path.join(stateDir, "extensions", "shared-plugin")],
+      ["shared-plugin", configuredPluginDir],
+      [
+        "secondary-plugin",
+        path.join(secondaryWorkspace, ".openclaw", "extensions", "secondary-plugin"),
+      ],
+    ] as const) {
+      mkdirSafeDir(pluginRoot);
+      createColdPluginFixture({
+        rootDir: pluginRoot,
+        pluginId,
+        manifest: { channels: [], channelConfigs: {}, providers: [], providerAuthChoices: [] },
+      });
+    }
+    const env = {
+      HOME: rootDir,
+      OPENCLAW_HOME: rootDir,
+      OPENCLAW_DISABLE_BUNDLED_PLUGINS: "1",
+      OPENCLAW_STATE_DIR: stateDir,
+      OPENCLAW_VERSION: "2026.7.1",
+      VITEST: "true",
+    };
+    const config: OpenClawConfig = {
+      agents: {
+        ownership: "explicit",
+        entries: {
+          primary: { workspace: primaryWorkspace },
+          secondary: { workspace: secondaryWorkspace },
+        },
+      },
+      plugins: {
+        // A configured load path forces comparison with fresh workspace discovery.
+        load: { paths: [configuredPluginDir] },
+        entries: { "shared-plugin": { enabled: true }, "secondary-plugin": { enabled: true } },
+      },
+    };
+    const snapshot = createConfigFileSnapshot({
+      path: path.join(stateDir, "openclaw.json"),
+      exists: true,
+      raw: JSON.stringify(config),
+      parsed: config,
+      sourceConfig: config,
+      runtimeConfig: config,
+      valid: true,
+      issues: [],
+      warnings: [],
+      legacyIssues: [],
+    });
+    const readSnapshot = async (): Promise<DoctorConfigPreflightPluginSnapshotRead> => {
+      clearPluginMetadataLifecycleCaches();
+      const pluginMetadata = createPluginMetadataOwner().prepare({
+        config,
+        env,
+        stateDir,
+        // The write owns primary; validation still covers both configured workspaces.
+        workspaceDir: primaryWorkspace,
+        allowCurrent: false,
+      });
+      return {
+        snapshot,
+        pluginMetadata,
+        pluginMigrationFingerprint: pluginMetadata.selectedSnapshot.configFingerprint ?? null,
+      };
+    };
+    const derived = await readSnapshot();
+    expect(derived.pluginMetadata?.selectedSnapshot.registrySource).toBe("derived");
+    expect(
+      derived.pluginMetadata?.unionSnapshot.index.plugins.map((plugin) => plugin.pluginId),
+    ).toEqual(["shared-plugin", "secondary-plugin"]);
+    expect(derived.pluginMetadata?.unionSnapshot.diagnostics).toHaveLength(2);
+
+    const lease = acquireStartupMigrationLease({ env });
+    try {
+      const persisted = await persistRefreshedPluginIndex({
+        env,
+        lease,
+        measure: async (_name, run) => await run(),
+        snapshotRead: derived,
+        readPersistedSnapshot: readSnapshot,
+      });
+      expect(persisted.pluginMetadata?.selectedSnapshot.registrySource).toBe("persisted");
+      expect(persisted.pluginMetadata?.unionSnapshot.index.plugins).toEqual(
+        derived.pluginMetadata?.unionSnapshot.index.plugins,
+      );
+      expect(persisted.pluginMetadata?.unionSnapshot.diagnostics).toEqual(
+        derived.pluginMetadata?.unionSnapshot.diagnostics,
+      );
+      const durable = readPersistedInstalledPluginIndexSync({ env });
+      expect(durable?.workspaceDir).toBe(primaryWorkspace);
+      expect(durable?.plugins.map((plugin) => plugin.pluginId)).toEqual(["shared-plugin"]);
+      expect(durable?.diagnostics).toHaveLength(1);
+      expect((await readSnapshot()).pluginMetadata?.selectedSnapshot.registrySource).toBe(
+        "persisted",
+      );
+    } finally {
+      lease.release();
+    }
+  });
+
   it("replays state migrations after a Doctor-only contract change", async () => {
     const rootDir = makeTempDir();
     const stateDir = path.join(rootDir, "state");
