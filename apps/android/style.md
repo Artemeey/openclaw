@@ -13,34 +13,56 @@ Goal: one coherent visual system across onboarding, settings, and future screens
 
 ## 2. Style Baseline
 
-The onboarding flow defines the current visual baseline.
-New screens should match that language unless there is a strong product reason not to.
+The Control UI palette is authoritative. The Android app shares its colors with the
+Control UI so one product does not read as two, and keeps its own native geometry:
+compact spacing, phone-sized touch targets, and a bottom navigation bar. Do not copy
+the Control UI web layout.
 
 Baseline traits:
 
-- Light neutral background with subtle depth.
-- Clear blue accent for active/primary states.
-- Strong border hierarchy for structure.
+- Dark canvas with a slight blue cast; panels barely lighter than the canvas.
+- Red accent for the current page, the selected state, and the primary action.
+- Hairline borders and layered surfaces for structure; near-zero shadow.
 - Medium/semibold typography (no thin text).
-- Divider-and-spacing layout over heavy card nesting.
+- Divider-and-spacing layout over card nesting.
 
 ## 3. Core Tokens
 
-Use these as shared design tokens for new Compose UI.
+These are the shared Control UI tokens. Dark is the default theme; light mirrors the
+same hierarchy and the same red accent family on a neutral canvas.
 
-- Background gradient: `#FFFFFF`, `#F7F8FA`, `#EFF1F5`
-- Surface: `#F6F7FA`
-- Border: `#E5E7EC`
-- Border strong: `#D6DAE2`
-- Text primary: `#17181C`
-- Text secondary: `#4D5563`
-- Text tertiary: `#8A92A2`
-- Accent primary: `#1D5DD8`
-- Accent soft: `#ECF3FF`
-- Success: `#2F8C5A`
-- Warning: `#C8841A`
+Dark (default):
 
-Rule: do not introduce random per-screen colors when an existing token fits.
+- Canvas: `#0E1015`
+- Card surface: `#161920`
+- Elevated surface: `#191C24`
+- Pressed/hover surface: `#1F2330`
+- Border: `#1E2028`
+- Border strong: `#2E3040`
+- Text strong: `#F4F4F5`
+- Text body: `#BCBCC0`
+- Text muted: `#8B8B94`
+- Accent: `#FF5C5C`
+- Accent soft: accent at about 10 percent opacity
+- Primary button: `#D13C3C`
+- Secondary accent: `#14B8A6`
+- Success `#22C55E`, warning `#F59E0B`, danger `#F87171`
+
+Light:
+
+- Canvas `#F7F7F9`, surface `#FFFFFF`, pressed `#EFEFF3`
+- Border `#E4E4EA`, border strong `#CFCFD8`
+- Text `#101014` / `#52525B` / `#787885`
+- Accent and primary button `#C23434`, secondary accent `#0F8F81`
+- Success `#15803D`, warning `#B45309`, danger `#B91C1C`
+
+Rules:
+
+- Do not introduce per-screen colors when a token fits; there is no second palette.
+- Soft status and accent fills are alpha-based so one token composites over canvas,
+  card, and row surfaces.
+- Do not rely on the Material default color roles. `ClawTheme.kt` maps every token
+  into `MaterialTheme`, including the container roles Material uses for selection.
 
 ## 4. Typography
 
@@ -64,8 +86,13 @@ Hard rule: avoid ultra-thin weights on light backgrounds.
 - Respect safe drawing insets.
 - Keep content hierarchy mostly via spacing + dividers.
 - Prefer vertical rhythm from `8/10/12/14/20dp`.
-- Use pinned bottom actions for multi-step or high-importance flows.
-- Avoid unnecessary container nesting.
+- Radius scale: `6dp` rows and chips, `10dp` controls and buttons, `14dp` panels,
+  `20dp` sheets and pills.
+- Panels are a flat surface plus a 1dp border. Do not add tonal or shadow elevation,
+  and do not nest a panel inside a panel.
+- Shell pages open with a page header: an action row, then the page name in the accent
+  color on its own full-width line. Product branding does not repeat per page.
+- Prefer one bordered list over a grid of cards for status and reference data.
 
 ## 6. Buttons And Actions
 
@@ -91,6 +118,7 @@ Hard rule: avoid ultra-thin weights on light backgrounds.
 ## 9. Accessibility
 
 - Minimum practical touch target: `44dp`.
+- Bottom navigation shows every destination label, always, not only the selected one.
 - Do not rely on color alone for status.
 - Preserve high contrast for all text tiers.
 - Add meaningful `contentDescription` for icon-only controls.
@@ -104,10 +132,21 @@ Hard rule: avoid ultra-thin weights on light backgrounds.
 
 ## 11. Source Of Truth
 
-- `app/src/main/java/ai/openclaw/app/ui/OpenClawTheme.kt`
+Tokens and shared components:
+
+- `app/src/main/java/ai/openclaw/app/ui/design/ClawTheme.kt` (palette, spacing, radii,
+  type, and the Material color-scheme bridge)
+- `app/src/main/java/ai/openclaw/app/ui/MobileUiTokens.kt` (legacy token set, same palette)
+- `app/src/main/java/ai/openclaw/app/ui/design/ClawSurfaces.kt`
+- `app/src/main/java/ai/openclaw/app/ui/design/ClawComponents.kt`
+- `app/src/main/java/ai/openclaw/app/ui/design/ClawNavigation.kt`
+
+Shell and screens:
+
+- `app/src/main/java/ai/openclaw/app/ui/SidebarShell.kt`
+- `app/src/main/java/ai/openclaw/app/ui/SidebarContent.kt`
+- `app/src/main/java/ai/openclaw/app/ui/ShellScreen.kt`
 - `app/src/main/java/ai/openclaw/app/ui/OnboardingFlow.kt`
-- `app/src/main/java/ai/openclaw/app/ui/RootScreen.kt`
-- `app/src/main/java/ai/openclaw/app/ui/SettingsScreens.kt`
 - `app/src/main/java/ai/openclaw/app/MainViewModel.kt`
 
 If style and implementation diverge, update both in the same change.

@@ -84,10 +84,10 @@ internal fun SidebarSearchField(
         unfocusedTextColor = palette.text,
         focusedContainerColor = palette.elevated,
         unfocusedContainerColor = palette.elevated,
-        cursorColor = ClawTheme.colors.primary,
-        focusedBorderColor = ClawTheme.colors.primary,
+        cursorColor = ClawTheme.colors.accent,
+        focusedBorderColor = ClawTheme.colors.accent,
         unfocusedBorderColor = palette.hairline,
-        focusedLabelColor = ClawTheme.colors.primary,
+        focusedLabelColor = ClawTheme.colors.accent,
         unfocusedLabelColor = palette.muted,
         focusedLeadingIconColor = palette.text,
         unfocusedLeadingIconColor = palette.muted,
@@ -157,14 +157,14 @@ internal fun SidebarNavigationRow(
       )
     },
     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-    shape = RoundedCornerShape(10.dp),
+    shape = RoundedCornerShape(ClawTheme.radii.control),
     colors =
       NavigationDrawerItemDefaults.colors(
         selectedContainerColor = palette.selection,
         unselectedContainerColor = Color.Transparent,
-        selectedIconColor = palette.text,
-        unselectedIconColor = palette.text,
-        selectedTextColor = palette.text,
+        selectedIconColor = ClawTheme.colors.accent,
+        unselectedIconColor = palette.muted,
+        selectedTextColor = ClawTheme.colors.accent,
         unselectedTextColor = palette.text,
       ),
   )
@@ -199,7 +199,7 @@ internal fun SidebarSessionRow(
           .background(
             when {
               session.hasActiveRun == true -> ClawTheme.colors.warning
-              session.unread == true -> ClawTheme.colors.primary
+              session.unread == true -> ClawTheme.colors.accent
               else -> palette.muted.copy(alpha = 0.45f)
             },
           ).clearAndSetSemantics {},
@@ -208,7 +208,7 @@ internal fun SidebarSessionRow(
       Text(
         text = sidebarSessionTitle(session),
         style = ClawTheme.type.body.copy(fontSize = 13.sp),
-        color = palette.text,
+        color = if (selected) ClawTheme.colors.accent else palette.text,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
       )
@@ -244,7 +244,7 @@ private fun SidebarRowSurface(
       Modifier
         .fillMaxWidth()
         .heightIn(min = 48.dp)
-        .clip(RoundedCornerShape(10.dp))
+        .clip(RoundedCornerShape(ClawTheme.radii.control))
         .background(if (selected == true) palette.selection else Color.Transparent)
         .then(
           if (selected == null) {

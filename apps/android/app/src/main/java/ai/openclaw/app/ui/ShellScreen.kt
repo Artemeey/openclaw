@@ -29,6 +29,8 @@ import ai.openclaw.app.ui.design.AgentAvatarSource
 import ai.openclaw.app.ui.design.ClawAgentAvatar
 import ai.openclaw.app.ui.design.ClawDesignTheme
 import ai.openclaw.app.ui.design.ClawEmptyState
+import ai.openclaw.app.ui.design.ClawListPanel
+import ai.openclaw.app.ui.design.ClawPageHeader
 import ai.openclaw.app.ui.design.ClawPanel
 import ai.openclaw.app.ui.design.ClawPlainIconButton
 import ai.openclaw.app.ui.design.ClawPrimaryButton
@@ -36,7 +38,6 @@ import ai.openclaw.app.ui.design.ClawScaffold
 import ai.openclaw.app.ui.design.ClawSecondaryButton
 import ai.openclaw.app.ui.design.ClawStatus
 import ai.openclaw.app.ui.design.ClawTheme
-import ai.openclaw.app.ui.design.OpenClawMascot
 import ai.openclaw.app.ui.design.agentAvatarSource
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
@@ -143,7 +144,7 @@ internal enum class Tab(
 private val shellContentInsets: WindowInsets
   @Composable get() = WindowInsets.safeDrawing
 
-private val overviewMetricTileMinHeight = 96.dp
+private val overviewStatusRowMinHeight = 52.dp
 private val overviewTalkPanelMinHeight = 72.dp
 private val overviewListRowMinHeight = 54.dp
 private const val overviewRecentSessionLimit = 50
@@ -588,14 +589,6 @@ private fun OverviewScreen(
         }
 
         item {
-          Text(
-            text = nativeString("Overview"),
-            style = ClawTheme.type.display.copy(fontSize = 24.sp, lineHeight = 28.sp),
-            color = ClawTheme.colors.text,
-          )
-        }
-
-        item {
           OverviewPrimaryPanel(
             agentName = activeAgentName,
             agentBadge = activeAgentBadge,
@@ -613,7 +606,7 @@ private fun OverviewScreen(
         }
 
         item {
-          OverviewMetricGrid(
+          OverviewStatusList(
             cards = metricCards,
             onOpen = { card ->
               val route = card.settingsRoute
@@ -678,31 +671,26 @@ private fun OverviewHeader(
   onOpenStatus: () -> Unit,
   onOpenCommand: () -> Unit,
 ) {
-  Row(
-    modifier = Modifier.fillMaxWidth(),
-    verticalAlignment = Alignment.CenterVertically,
-    horizontalArrangement = Arrangement.spacedBy(10.dp),
-  ) {
-    if (showSidebarButton) {
-      ClawPlainIconButton(
-        icon = Icons.Default.Menu,
-        contentDescription = nativeString("Show Sidebar"),
-        onClick = onOpenSidebar,
-        modifier = Modifier.testTag("sidebar-open-overview"),
-      )
-    }
-    OpenClawMascot(modifier = Modifier.size(25.dp))
-    Text(
-      text = nativeString("OpenClaw"),
-      style = ClawTheme.type.title.copy(fontSize = 17.sp, lineHeight = 21.sp),
-      color = ClawTheme.colors.text,
-      modifier = Modifier.weight(1f),
-      maxLines = 1,
-      overflow = TextOverflow.Ellipsis,
-    )
-    OverviewStatusPill(status = status, onClick = onOpenStatus)
-    ClawPlainIconButton(icon = Icons.Default.Search, contentDescription = nativeString("Search"), onClick = onOpenCommand)
-  }
+  ClawPageHeader(
+    title = nativeString("Overview"),
+    navigation =
+      if (showSidebarButton) {
+        {
+          ClawPlainIconButton(
+            icon = Icons.Default.Menu,
+            contentDescription = nativeString("Show Sidebar"),
+            onClick = onOpenSidebar,
+            modifier = Modifier.testTag("sidebar-open-overview"),
+          )
+        }
+      } else {
+        null
+      },
+    actions = {
+      OverviewStatusPill(status = status, onClick = onOpenStatus)
+      ClawPlainIconButton(icon = Icons.Default.Search, contentDescription = nativeString("Search"), onClick = onOpenCommand)
+    },
+  )
 }
 
 @Composable
@@ -721,9 +709,9 @@ private fun OverviewStatusPill(
   Surface(
     onClick = onClick,
     modifier = Modifier.heightIn(min = ClawTheme.spacing.touchTarget),
-    shape = RoundedCornerShape(ClawTheme.radii.control),
-    color = backgroundColor.copy(alpha = 0.82f),
-    border = BorderStroke(1.dp, ClawTheme.colors.border.copy(alpha = 0.32f)),
+    shape = RoundedCornerShape(ClawTheme.radii.row),
+    color = backgroundColor,
+    border = BorderStroke(1.dp, dotColor.copy(alpha = 0.35f)),
   ) {
     Row(
       modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
@@ -731,7 +719,7 @@ private fun OverviewStatusPill(
       horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
       Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(dotColor))
-      Text(text = nativeString(status.label), style = ClawTheme.type.caption.copy(fontSize = 13.sp, lineHeight = 17.sp), color = ClawTheme.colors.text, maxLines = 1)
+      Text(text = nativeString(status.label), style = ClawTheme.type.caption.copy(fontSize = 13.sp, lineHeight = 17.sp), color = dotColor, maxLines = 1)
       Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null, modifier = Modifier.size(15.dp), tint = ClawTheme.colors.textMuted)
     }
   }
@@ -752,7 +740,7 @@ private fun OverviewPrimaryPanel(
   onOpenAgent: () -> Unit,
   onOpenGateway: () -> Unit,
 ) {
-  OverviewLayeredPanel(contentPadding = PaddingValues(ClawTheme.spacing.sm), elevated = true) {
+  ClawPanel(contentPadding = PaddingValues(ClawTheme.spacing.sm), elevated = true) {
     Column(verticalArrangement = Arrangement.spacedBy(ClawTheme.spacing.xs)) {
       Text(text = nativeString("ACTIVE AGENT"), style = ClawTheme.type.caption.copy(fontSize = 12.sp, lineHeight = 15.sp), color = ClawTheme.colors.textMuted)
       Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -764,11 +752,6 @@ private fun OverviewPrimaryPanel(
           Text(text = overviewAgentActivityText(isConnected = isConnected, pendingRunCount = pendingRunCount, sessionCount = sessionCount, cronJobCount = cronJobCount, statusText = statusText), style = ClawTheme.type.caption.copy(fontSize = 13.5.sp, lineHeight = 17.sp), color = ClawTheme.colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         ClawSecondaryButton(text = nativeString("View"), onClick = onOpenAgent)
-      }
-      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        OverviewStateChip(label = nativeString("Runs"), value = if (pendingRunCount > 0) nativeString("\$pendingRunCount active", pendingRunCount) else nativeString("Idle"), modifier = Modifier.weight(1f))
-        OverviewStateChip(label = nativeString("Threads"), value = if (sessionCount == 0) nativeString("None") else nativeString("\$sessionCount recent", sessionCount), modifier = Modifier.weight(1f))
-        OverviewStateChip(label = nativeString("Cron"), value = cronJobsSummary(cronJobCount), modifier = Modifier.weight(1f))
       }
       Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         OverviewActionPill(text = nativeString("Chat"), icon = Icons.Outlined.ChatBubbleOutline, emphasized = true, onClick = onOpenChat, modifier = Modifier.weight(1f))
@@ -795,18 +778,17 @@ private fun OverviewActionPill(
     shape = RoundedCornerShape(ClawTheme.radii.control),
     color =
       if (emphasized) {
-        ClawTheme.colors.surfacePressed.copy(alpha = 0.9f)
+        ClawTheme.colors.accentSoft
       } else {
-        ClawTheme.colors.surfaceRaised.copy(alpha = 0.72f)
+        ClawTheme.colors.surfacePressed
       },
-    contentColor = ClawTheme.colors.text,
+    contentColor = if (emphasized) ClawTheme.colors.accent else ClawTheme.colors.text,
     border =
       if (emphasized) {
-        null
+        BorderStroke(1.dp, ClawTheme.colors.accent.copy(alpha = 0.35f))
       } else {
-        BorderStroke(1.dp, ClawTheme.colors.borderStrong.copy(alpha = 0.7f))
+        BorderStroke(1.dp, ClawTheme.colors.border)
       },
-    tonalElevation = if (emphasized) 2.dp else 0.dp,
   ) {
     Row(
       modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
@@ -816,27 +798,6 @@ private fun OverviewActionPill(
       Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(17.dp))
       Spacer(modifier = Modifier.width(8.dp))
       Text(text = text, style = ClawTheme.type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-  }
-}
-
-@Composable
-private fun OverviewLayeredPanel(
-  modifier: Modifier = Modifier,
-  contentPadding: PaddingValues = PaddingValues(14.dp),
-  elevated: Boolean = false,
-  content: @Composable () -> Unit,
-) {
-  Surface(
-    modifier = modifier.fillMaxWidth(),
-    shape = RoundedCornerShape(ClawTheme.radii.button),
-    color = if (elevated) ClawTheme.colors.surfaceRaised.copy(alpha = 0.98f) else ClawTheme.colors.surfaceRaised.copy(alpha = 0.86f),
-    contentColor = ClawTheme.colors.text,
-    tonalElevation = if (elevated) 4.dp else 1.dp,
-    shadowElevation = if (elevated) 9.dp else 2.dp,
-  ) {
-    Column(modifier = Modifier.padding(contentPadding)) {
-      content()
     }
   }
 }
@@ -852,8 +813,7 @@ private fun OverviewAgentBadge(
     shape = CircleShape,
     color = if (active) ClawTheme.colors.successSoft else ClawTheme.colors.surfacePressed,
     contentColor = if (active) ClawTheme.colors.success else ClawTheme.colors.textMuted,
-    tonalElevation = if (active) 3.dp else 1.dp,
-    shadowElevation = if (active) 5.dp else 1.dp,
+    border = BorderStroke(1.dp, if (active) ClawTheme.colors.success.copy(alpha = 0.3f) else ClawTheme.colors.border),
   ) {
     ClawAgentAvatar(source = avatarSource, size = 42.dp) {
       Box(contentAlignment = Alignment.Center) {
@@ -867,73 +827,45 @@ private fun OverviewAgentBadge(
   }
 }
 
+/**
+ * Status metrics read as one bordered list, not five stacked cards. Overview leads with
+ * the active agent, so these stay reference material and must not compete with it.
+ */
 @Composable
-private fun OverviewStateChip(
-  label: String,
-  value: String,
-  modifier: Modifier = Modifier,
-) {
-  Surface(
-    modifier = modifier.heightIn(min = ClawTheme.spacing.touchTarget),
-    shape = RoundedCornerShape(ClawTheme.radii.control),
-    color = ClawTheme.colors.surfacePressed.copy(alpha = 0.58f),
-  ) {
-    Column(
-      modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-      verticalArrangement = Arrangement.spacedBy(1.dp),
-    ) {
-      Text(text = localizedUppercase(label, currentAppLanguage().languageTag), style = ClawTheme.type.caption.copy(fontSize = 10.5.sp, lineHeight = 13.sp), color = ClawTheme.colors.textSubtle, maxLines = 1)
-      Text(text = value, style = ClawTheme.type.caption.copy(fontSize = 14.sp, lineHeight = 17.sp), color = ClawTheme.colors.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-  }
-}
-
-@Composable
-private fun OverviewMetricGrid(
+private fun OverviewStatusList(
   cards: List<OverviewMetricCard>,
   onOpen: (OverviewMetricCard) -> Unit,
 ) {
-  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    cards.chunked(2).forEach { row ->
-      Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        row.forEach { card ->
-          OverviewMetricTile(card = card, onClick = { onOpen(card) }, modifier = Modifier.weight(1f))
-        }
-        if (row.size == 1) {
-          Box(modifier = Modifier.weight(1f))
-        }
-      }
-    }
+  ClawListPanel(items = cards) { card ->
+    OverviewStatusRow(card = card, onClick = { onOpen(card) })
   }
 }
 
 @Composable
-private fun OverviewMetricTile(
+private fun OverviewStatusRow(
   card: OverviewMetricCard,
   onClick: () -> Unit,
-  modifier: Modifier = Modifier,
 ) {
-  Surface(
-    onClick = onClick,
-    modifier = modifier.heightIn(min = overviewMetricTileMinHeight),
-    shape = RoundedCornerShape(ClawTheme.radii.button),
-    color = ClawTheme.colors.surfaceRaised.copy(alpha = 0.84f),
-    contentColor = ClawTheme.colors.text,
-    tonalElevation = 2.dp,
-    shadowElevation = 3.dp,
+  Row(
+    modifier =
+      Modifier
+        .fillMaxWidth()
+        .heightIn(min = overviewStatusRowMinHeight)
+        .clickable(onClick = onClick)
+        .padding(vertical = 9.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(10.dp),
   ) {
-    Column(modifier = Modifier.padding(ClawTheme.spacing.xs), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-      Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Icon(imageVector = card.icon, contentDescription = null, modifier = Modifier.size(17.dp), tint = card.tint)
-        Text(text = localizedUppercase(card.title, currentAppLanguage().languageTag), style = ClawTheme.type.caption.copy(fontSize = 10.5.sp, lineHeight = 13.sp), color = ClawTheme.colors.textMuted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        Icon(imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = nativeString("Open \${card.title}", card.title), modifier = Modifier.size(15.dp), tint = ClawTheme.colors.textMuted)
-      }
-      Text(text = card.value, style = ClawTheme.type.title.copy(fontSize = 22.sp, lineHeight = 25.sp), color = ClawTheme.colors.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-      Text(text = card.subtitle, style = ClawTheme.type.caption.copy(fontSize = 12.5.sp, lineHeight = 16.sp), color = ClawTheme.colors.textSubtle, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    Icon(imageVector = card.icon, contentDescription = null, modifier = Modifier.size(17.dp), tint = card.tint)
+    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+      Text(text = card.title, style = ClawTheme.type.body, color = ClawTheme.colors.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      Text(text = card.subtitle, style = ClawTheme.type.caption, color = ClawTheme.colors.textSubtle, maxLines = 1, overflow = TextOverflow.Ellipsis)
       card.progressFraction?.let { progress ->
         OverviewProgressBar(progress = progress, tint = card.tint)
       }
     }
+    Text(text = card.value, style = ClawTheme.type.label, color = card.tint, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Icon(imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = nativeString("Open \${card.title}", card.title), modifier = Modifier.size(15.dp), tint = ClawTheme.colors.textSubtle)
   }
 }
 
@@ -987,22 +919,19 @@ private fun TalkEntryPanel(
   Surface(
     onClick = onOpenVoice,
     modifier = Modifier.fillMaxWidth().heightIn(min = overviewTalkPanelMinHeight),
-    shape = RoundedCornerShape(ClawTheme.radii.button),
-    color = ClawTheme.colors.surfaceRaised.copy(alpha = 0.9f),
+    shape = RoundedCornerShape(ClawTheme.radii.panel),
+    color = ClawTheme.colors.surface,
     contentColor = ClawTheme.colors.text,
-    tonalElevation = 2.dp,
-    shadowElevation = 3.dp,
+    border = BorderStroke(1.dp, ClawTheme.colors.border),
   ) {
     Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
       Surface(
         modifier = Modifier.size(44.dp),
         shape = CircleShape,
-        color = Color(0xFF1976D2),
-        tonalElevation = 2.dp,
-        shadowElevation = 5.dp,
+        color = ClawTheme.colors.secondary.copy(alpha = 0.16f),
       ) {
         Box(contentAlignment = Alignment.Center) {
-          Icon(imageVector = Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(25.dp), tint = Color.White)
+          Icon(imageVector = Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(25.dp), tint = ClawTheme.colors.secondary)
         }
       }
       Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1394,7 +1323,7 @@ private fun HomeAttentionPanel(
   onSelectTab: (Tab) -> Unit,
   onOpenSettingsRoute: (SettingsRoute) -> Unit,
 ) {
-  OverviewLayeredPanel(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)) {
+  ClawPanel(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
       Text(text = nativeString("Needs attention"), style = ClawTheme.type.caption.copy(fontSize = 12.5.sp, lineHeight = 16.sp), color = ClawTheme.colors.warning)
       rows.forEach { row ->
@@ -1524,7 +1453,7 @@ private fun RecentSessionList(
   rows: List<RecentSessionListItem>,
   onOpen: (String, String?) -> Unit,
 ) {
-  OverviewLayeredPanel(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
+  ClawPanel(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
     Column {
       rows.forEachIndexed { index, row ->
         RecentSessionRowContent(
@@ -1672,26 +1601,29 @@ private fun SettingsShellScreen(
   ) {
     LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(9.dp), contentPadding = PaddingValues(bottom = 4.dp)) {
       item {
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(9.dp),
-        ) {
-          if (showSidebarButton) {
+        ClawPageHeader(
+          title = nativeString("Settings"),
+          navigation =
+            if (showSidebarButton) {
+              {
+                ClawPlainIconButton(
+                  icon = Icons.Default.Menu,
+                  contentDescription = nativeString("Show Sidebar"),
+                  onClick = onOpenSidebar,
+                  modifier = Modifier.testTag("sidebar-open-settings"),
+                )
+              }
+            } else {
+              null
+            },
+          actions = {
             ClawPlainIconButton(
-              icon = Icons.Default.Menu,
-              contentDescription = nativeString("Show Sidebar"),
-              onClick = onOpenSidebar,
-              modifier = Modifier.testTag("sidebar-open-settings"),
+              icon = Icons.Default.Search,
+              contentDescription = nativeString("Search settings"),
+              onClick = onOpenCommand,
             )
-          }
-          Text(text = nativeString("Settings"), style = ClawTheme.type.display.copy(fontSize = 24.sp, lineHeight = 28.sp), color = ClawTheme.colors.text, modifier = Modifier.weight(1f))
-          ClawPlainIconButton(
-            icon = Icons.Default.Search,
-            contentDescription = nativeString("Search settings"),
-            onClick = onOpenCommand,
-          )
-        }
+          },
+        )
       }
 
       item {

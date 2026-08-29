@@ -130,6 +130,7 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
@@ -317,8 +318,21 @@ private fun CronJobsSettingsScreen(
     }
   }
 
-  SettingsDetailFrame(title = nativeString("Automations"), subtitle = nativeString("Scheduled OpenClaw work from your gateway."), icon = Icons.Default.Bolt, onBack = onBack) {
-    SettingsMetricPanel(
+  SettingsDetailFrame(
+    title = nativeString("Automations"),
+    subtitle = nativeString("Scheduled OpenClaw work from your gateway."),
+    icon = Icons.Default.Bolt,
+    onBack = onBack,
+    trailingAction = {
+      ClawPlainIconButton(
+        icon = Icons.Default.Refresh,
+        contentDescription = if (cronRefreshing) nativeString("Refreshing") else nativeString("Refresh"),
+        onClick = viewModel::refreshCronJobs,
+        enabled = isConnected && !cronRefreshing,
+      )
+    },
+  ) {
+    CronSummaryStrip(
       rows =
         listOf(
           SettingsMetric(nativeString("Status"), if (cronStatus.enabled) nativeString("Enabled") else nativeString("Off")),
@@ -326,7 +340,6 @@ private fun CronJobsSettingsScreen(
           SettingsMetric(nativeString("Next Wake"), formatCronWake(cronStatus.nextWakeAtMs)),
         ),
     )
-    ClawSecondaryButton(text = if (cronRefreshing) nativeString("Refreshing") else nativeString("Refresh"), onClick = viewModel::refreshCronJobs, enabled = isConnected && !cronRefreshing, modifier = Modifier.fillMaxWidth())
     ClawTextField(
       value = query,
       onValueChange = { query = it },
@@ -346,9 +359,11 @@ private fun CronJobsSettingsScreen(
       modifier = Modifier.fillMaxWidth(),
       enabledOptions = if (isConnected) filterOptions.toSet() else emptySet(),
     )
-    ClawPanel {
-      Text(text = nativeString("Open an automation to inspect its configuration and run history. Admin-scoped connections can also run, edit, enable, disable, or delete it."), style = ClawTheme.type.body, color = ClawTheme.colors.textMuted)
-    }
+    Text(
+      text = nativeString("Open an automation to inspect its configuration and run history. Admin-scoped connections can also run, edit, enable, disable, or delete it."),
+      style = ClawTheme.type.caption,
+      color = ClawTheme.colors.textSubtle,
+    )
     cronErrorText?.let { errorText ->
       ClawPanel {
         Text(text = errorText, style = ClawTheme.type.body, color = ClawTheme.colors.warning)
@@ -371,6 +386,20 @@ private fun CronJobsSettingsScreen(
           Text(text = nativeString("No matching automations."), style = ClawTheme.type.body, color = ClawTheme.colors.textMuted)
         }
       else -> CronJobsPanel(jobs = visibleJobs, onJobClick = { selectedJobId = it.id })
+    }
+  }
+}
+
+@Composable
+private fun CronSummaryStrip(rows: List<SettingsMetric>) {
+  ClawPanel(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+      rows.forEach { row ->
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+          Text(text = row.title, style = ClawTheme.type.caption, color = ClawTheme.colors.textSubtle, maxLines = 1)
+          Text(text = row.value, style = ClawTheme.type.label, color = ClawTheme.colors.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+      }
     }
   }
 }

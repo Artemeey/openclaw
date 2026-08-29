@@ -4,6 +4,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -194,13 +197,15 @@ internal fun ClawPlainIconButton(
   contentDescription: String,
   onClick: () -> Unit,
   modifier: Modifier = Modifier,
+  enabled: Boolean = true,
 ) {
   Surface(
     onClick = onClick,
+    enabled = enabled,
     modifier = modifier.size(ClawTheme.spacing.touchTarget),
     shape = CircleShape,
     color = Color.Transparent,
-    contentColor = ClawTheme.colors.text,
+    contentColor = if (enabled) ClawTheme.colors.text else ClawTheme.colors.textSubtle,
   ) {
     Box(contentAlignment = Alignment.Center) {
       Icon(imageVector = icon, contentDescription = contentDescription, modifier = Modifier.size(18.dp))
@@ -243,9 +248,11 @@ internal fun ClawStatusPill(
   modifier: Modifier = Modifier,
 ) {
   val colors = ClawTheme.colors
-  val (dotColor, backgroundColor) =
+  // Status must survive a grayscale reading, so the label takes the semantic color too
+  // instead of leaving a 5 dp dot as the only signal.
+  val (accentColor, backgroundColor) =
     when (status) {
-      ClawStatus.Neutral -> colors.textSubtle to colors.surfaceRaised
+      ClawStatus.Neutral -> colors.textMuted to colors.surfaceRaised
       ClawStatus.Success -> colors.success to colors.successSoft
       ClawStatus.Warning -> colors.warning to colors.warningSoft
       ClawStatus.Danger -> colors.danger to colors.dangerSoft
@@ -253,9 +260,9 @@ internal fun ClawStatusPill(
 
   Surface(
     modifier = modifier,
-    shape = RoundedCornerShape(ClawTheme.radii.control),
+    shape = RoundedCornerShape(ClawTheme.radii.row),
     color = backgroundColor,
-    border = BorderStroke(1.dp, ClawTheme.colors.border),
+    border = BorderStroke(1.dp, if (status == ClawStatus.Neutral) colors.border else accentColor.copy(alpha = 0.35f)),
   ) {
     Row(
       modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -267,9 +274,9 @@ internal fun ClawStatusPill(
           Modifier
             .size(5.dp)
             .clip(CircleShape)
-            .background(dotColor),
+            .background(accentColor),
       )
-      Text(text = text, style = ClawTheme.type.caption.copy(fontSize = 13.sp, lineHeight = 17.sp), color = ClawTheme.colors.textMuted, maxLines = 1)
+      Text(text = text, style = ClawTheme.type.caption.copy(fontSize = 13.sp, lineHeight = 17.sp), color = accentColor, maxLines = 1)
     }
   }
 }
@@ -292,9 +299,9 @@ internal fun ClawPill(
   Surface(
     modifier = surfaceModifier,
     shape = RoundedCornerShape(ClawTheme.radii.pill),
-    color = if (selected) ClawTheme.colors.primary else ClawTheme.colors.surfaceRaised,
-    contentColor = if (selected) ClawTheme.colors.primaryText else ClawTheme.colors.textMuted,
-    border = BorderStroke(1.dp, if (selected) ClawTheme.colors.primary else ClawTheme.colors.border),
+    color = if (selected) ClawTheme.colors.accentSoft else ClawTheme.colors.surfaceRaised,
+    contentColor = if (selected) ClawTheme.colors.accent else ClawTheme.colors.textMuted,
+    border = BorderStroke(1.dp, if (selected) ClawTheme.colors.accent.copy(alpha = 0.45f) else ClawTheme.colors.border),
   ) {
     Text(
       text = text,
@@ -489,6 +496,7 @@ internal fun ClawSegmentedControl(
     modifier =
       modifier
         .clip(RoundedCornerShape(ClawTheme.radii.control))
+        .background(ClawTheme.colors.surface)
         .border(1.dp, ClawTheme.colors.border, RoundedCornerShape(ClawTheme.radii.control))
         .padding(2.dp),
     verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -505,8 +513,9 @@ internal fun ClawSegmentedControl(
             modifier =
               Modifier
                 .weight(1f)
-                .clip(RoundedCornerShape(ClawTheme.radii.control))
-                .background(if (active) ClawTheme.colors.primary else Color.Transparent)
+                .heightIn(min = 40.dp)
+                .clip(RoundedCornerShape(ClawTheme.radii.row))
+                .background(if (active) ClawTheme.colors.surfacePressed else Color.Transparent)
                 .clickable(enabled = enabled) { onSelect(option) }
                 .padding(horizontal = 9.dp, vertical = 7.dp),
             contentAlignment = Alignment.Center,
@@ -516,7 +525,7 @@ internal fun ClawSegmentedControl(
               style = ClawTheme.type.caption,
               color =
                 when {
-                  active -> ClawTheme.colors.primaryText
+                  active -> ClawTheme.colors.accent
                   enabled -> ClawTheme.colors.textMuted
                   else -> ClawTheme.colors.textSubtle
                 },
@@ -543,22 +552,29 @@ internal fun ClawTextField(
 ) {
   val fieldModifier =
     if (label == null) modifier else modifier.semantics { contentDescription = label }
+  val interactionSource = remember { MutableInteractionSource() }
+  val focused by interactionSource.collectIsFocusedAsState()
   BasicTextField(
     value = value,
     onValueChange = onValueChange,
     enabled = enabled,
+    interactionSource = interactionSource,
     modifier =
       fieldModifier
         .fillMaxWidth()
+        .heightIn(min = ClawTheme.spacing.touchTarget)
         .clip(RoundedCornerShape(ClawTheme.radii.control))
-        .background(ClawTheme.colors.surfaceRaised)
-        .border(1.dp, ClawTheme.colors.border, RoundedCornerShape(ClawTheme.radii.control))
-        .padding(horizontal = 11.dp, vertical = 8.dp),
+        .background(ClawTheme.colors.surface)
+        .border(
+          1.dp,
+          if (focused) ClawTheme.colors.accent else ClawTheme.colors.border,
+          RoundedCornerShape(ClawTheme.radii.control),
+        ).padding(horizontal = 11.dp, vertical = 8.dp),
     textStyle =
       ClawTheme.type.body.copy(
         color = if (enabled) ClawTheme.colors.text else ClawTheme.colors.textSubtle,
       ),
-    cursorBrush = SolidColor(ClawTheme.colors.primary),
+    cursorBrush = SolidColor(ClawTheme.colors.accent),
     minLines = minLines,
     decorationBox = { innerTextField ->
       Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {

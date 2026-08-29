@@ -1,5 +1,6 @@
 package ai.openclaw.app.ui.design
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -16,21 +17,23 @@ import androidx.compose.ui.unit.dp
 
 /**
  * Standard inset panel for grouped Android app content.
+ *
+ * Structure comes from a hairline border on a flat surface, not from shadow. Nested
+ * panels would otherwise stack elevation and turn a dense screen into a card pile.
  */
 @Composable
 internal fun ClawPanel(
   modifier: Modifier = Modifier,
   contentPadding: PaddingValues = PaddingValues(12.dp),
+  elevated: Boolean = false,
   content: @Composable () -> Unit,
 ) {
   Surface(
     modifier = modifier.fillMaxWidth(),
     shape = RoundedCornerShape(ClawTheme.radii.panel),
-    color = ClawTheme.colors.surfaceRaised.copy(alpha = 0.82f),
+    color = if (elevated) ClawTheme.colors.surfaceRaised else ClawTheme.colors.surface,
     contentColor = ClawTheme.colors.text,
-    border = null,
-    tonalElevation = 2.dp,
-    shadowElevation = 4.dp,
+    border = BorderStroke(1.dp, if (elevated) ClawTheme.colors.borderStrong else ClawTheme.colors.border),
   ) {
     Column(modifier = Modifier.padding(contentPadding)) {
       content()

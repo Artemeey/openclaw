@@ -47,7 +47,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -124,7 +123,8 @@ internal fun sessionPresentationTitle(
   session: ChatSessionEntry,
   unnamedTitle: () -> String,
 ): String =
-  session.label?.trim()?.takeIf(String::isNotEmpty)
+  nativeString("Main session").takeIf { session.key.substringAfterLast(':').startsWith("node-") }
+    ?: session.label?.trim()?.takeIf(String::isNotEmpty)
     ?: session.displayName?.trim()?.takeIf(String::isNotEmpty)
     ?: nativeString("New chat").takeIf { session.isDashboardSession() }
     ?: unnamedTitle()
@@ -148,26 +148,15 @@ internal data class SidebarPalette(
 
 @Composable
 private fun sidebarPalette(): SidebarPalette {
-  val dark = ClawTheme.colors.canvas.luminance() < 0.5f
-  return if (dark) {
-    SidebarPalette(
-      background = Color.Black,
-      elevated = Color(0xFF1A1A1A),
-      selection = Color(0xFF232327),
-      text = Color(0xFFEDEDED),
-      muted = Color(0xFF8F8F8F),
-      hairline = Color.White.copy(alpha = 0.14f),
-    )
-  } else {
-    SidebarPalette(
-      background = Color(0xFFFAFAFA),
-      elevated = Color(0xFFF2F2F2),
-      selection = Color(0xFFEDEDED),
-      text = Color(0xFF171717),
-      muted = Color(0xFF8F8F8F),
-      hairline = Color.Black.copy(alpha = 0.08f),
-    )
-  }
+  val colors = ClawTheme.colors
+  return SidebarPalette(
+    background = colors.surface,
+    elevated = colors.surfaceRaised,
+    selection = colors.accentSoft,
+    text = colors.text,
+    muted = colors.textMuted,
+    hairline = colors.border,
+  )
 }
 
 @Composable

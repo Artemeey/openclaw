@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -82,6 +84,56 @@ internal fun ClawTopBar(
 }
 
 /**
+ * Page header for shell destinations: a toolbar row of actions above a full-width title.
+ *
+ * The title owns its own line so a long product or page name cannot be squeezed by the
+ * status and search actions, which is how the previous single-row header clipped.
+ */
+@Composable
+internal fun ClawPageHeader(
+  title: String,
+  modifier: Modifier = Modifier,
+  eyebrow: String? = null,
+  navigation: (@Composable () -> Unit)? = null,
+  actions: (@Composable RowScope.() -> Unit)? = null,
+) {
+  Column(
+    modifier = modifier.fillMaxWidth(),
+    verticalArrangement = Arrangement.spacedBy(6.dp),
+  ) {
+    if (navigation != null || actions != null) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        navigation?.invoke()
+        Spacer(modifier = Modifier.weight(1f))
+        actions?.invoke(this)
+      }
+    }
+    if (eyebrow != null) {
+      Text(
+        text = eyebrow,
+        style = ClawTheme.type.caption,
+        color = ClawTheme.colors.textSubtle,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
+    }
+    Text(
+      modifier = Modifier.fillMaxWidth(),
+      text = title,
+      style = ClawTheme.type.display,
+      // Control UI marks the current page with the accent, not with repeated branding.
+      color = ClawTheme.colors.accent,
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+    )
+  }
+}
+
+/**
  * Bottom navigation shell that applies navigation-bar insets before laying out destinations.
  */
 @Composable
@@ -96,11 +148,9 @@ internal fun ClawBottomNav(
   Box(modifier = modifier.fillMaxWidth().background(ClawTheme.colors.canvas)) {
     Surface(
       modifier = Modifier.fillMaxWidth(),
-      color = ClawTheme.colors.surface.copy(alpha = 0.92f),
-      border = BorderStroke(1.dp, ClawTheme.colors.border.copy(alpha = 0.42f)),
-      shape = RoundedCornerShape(topStart = ClawTheme.radii.sheet, topEnd = ClawTheme.radii.sheet),
-      tonalElevation = 2.dp,
-      shadowElevation = 8.dp,
+      color = ClawTheme.colors.surface,
+      border = BorderStroke(1.dp, ClawTheme.colors.border),
+      shape = RoundedCornerShape(topStart = ClawTheme.radii.panel, topEnd = ClawTheme.radii.panel),
     ) {
       Row(
         modifier =
@@ -135,8 +185,8 @@ private fun ClawBottomNavItem(
     onClick = onClick,
     modifier = modifier.heightIn(min = 52.dp),
     shape = RoundedCornerShape(ClawTheme.radii.control),
-    color = if (selected) ClawTheme.colors.surfacePressed.copy(alpha = 0.72f) else Color.Transparent,
-    contentColor = if (selected) ClawTheme.colors.text else ClawTheme.colors.textMuted,
+    color = if (selected) ClawTheme.colors.accentSoft else Color.Transparent,
+    contentColor = if (selected) ClawTheme.colors.accent else ClawTheme.colors.textMuted,
   ) {
     Column(
       modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 5.dp),

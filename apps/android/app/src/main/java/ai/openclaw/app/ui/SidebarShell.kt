@@ -7,8 +7,12 @@ import androidx.compose.material3.DrawerState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationDrawerItemDefaults
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
@@ -74,8 +78,6 @@ internal fun adaptiveNavigationSuiteType(
     navigationMode.toNavigationSuiteType()
   }
 
-internal fun alwaysShowAdaptiveNavigationLabel(navigationMode: AdaptiveNavigationMode): Boolean = navigationMode != AdaptiveNavigationMode.Bar
-
 /**
  * Material-owned adaptive navigation for every top-level destination.
  *
@@ -104,6 +106,33 @@ internal fun AdaptiveNavigationShell(
         adaptiveInfo.windowSizeClass.isHeightAtLeastBreakpoint(HEIGHT_DP_MEDIUM_LOWER_BOUND),
       tabletop = adaptiveInfo.windowPosture.isTabletop,
     )
+  val itemColors =
+    NavigationSuiteDefaults.itemColors(
+      navigationBarItemColors =
+        NavigationBarItemDefaults.colors(
+          selectedIconColor = ClawTheme.colors.accent,
+          selectedTextColor = ClawTheme.colors.accent,
+          indicatorColor = ClawTheme.colors.accentSoft,
+          unselectedIconColor = ClawTheme.colors.textMuted,
+          unselectedTextColor = ClawTheme.colors.textMuted,
+        ),
+      navigationRailItemColors =
+        NavigationRailItemDefaults.colors(
+          selectedIconColor = ClawTheme.colors.accent,
+          selectedTextColor = ClawTheme.colors.accent,
+          indicatorColor = ClawTheme.colors.accentSoft,
+          unselectedIconColor = ClawTheme.colors.textMuted,
+          unselectedTextColor = ClawTheme.colors.textMuted,
+        ),
+      navigationDrawerItemColors =
+        NavigationDrawerItemDefaults.colors(
+          selectedContainerColor = ClawTheme.colors.accentSoft,
+          selectedIconColor = ClawTheme.colors.accent,
+          selectedTextColor = ClawTheme.colors.accent,
+          unselectedIconColor = ClawTheme.colors.textMuted,
+          unselectedTextColor = ClawTheme.colors.textMuted,
+        ),
+    )
 
   ModalNavigationDrawer(
     drawerState = drawerState,
@@ -112,6 +141,8 @@ internal fun AdaptiveNavigationShell(
       ModalDrawerSheet(
         drawerState = drawerState,
         modifier = Modifier.widthIn(max = 360.dp).testTag("adaptive-secondary-drawer"),
+        drawerContainerColor = ClawTheme.colors.surface,
+        drawerContentColor = ClawTheme.colors.text,
       ) {
         drawerContent()
       }
@@ -130,17 +161,9 @@ internal fun AdaptiveNavigationShell(
           item(
             selected = destination == activeDestination,
             onClick = { onSelectDestination(destination) },
-            icon = {
-              // Compact bars omit inactive labels, so their icons retain the full accessible name.
-              // Material clears this duplicate icon semantic when the selected label is composed.
-              Icon(
-                imageVector = destination.icon,
-                contentDescription =
-                  fullLabel.takeIf {
-                    navigationMode == AdaptiveNavigationMode.Bar
-                  },
-              )
-            },
+            // The label carries the accessible name in every layout, so a duplicate icon
+            // description would make TalkBack announce each destination twice.
+            icon = { Icon(imageVector = destination.icon, contentDescription = null) },
             label = {
               Text(
                 text = displayLabel,
@@ -152,7 +175,10 @@ internal fun AdaptiveNavigationShell(
                 overflow = TextOverflow.Ellipsis,
               )
             },
-            alwaysShowLabel = alwaysShowAdaptiveNavigationLabel(navigationMode),
+            // Icon-only compact destinations are unreadable, so every bar item keeps its
+            // short label; the semantics above still announce the full destination name.
+            alwaysShowLabel = true,
+            colors = itemColors,
           )
         }
       },

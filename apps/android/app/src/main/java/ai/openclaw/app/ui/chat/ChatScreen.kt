@@ -60,7 +60,6 @@ import ai.openclaw.app.ui.design.ClawSegmentedControl
 import ai.openclaw.app.ui.design.ClawStatus
 import ai.openclaw.app.ui.design.ClawStatusPill
 import ai.openclaw.app.ui.design.ClawTheme
-import ai.openclaw.app.ui.design.OpenClawMascot
 import ai.openclaw.app.ui.gatewayDiagnosticsEndpoint
 import ai.openclaw.app.ui.gatewayStatusForDisplay
 import ai.openclaw.app.ui.localizedUppercase
@@ -668,7 +667,7 @@ fun ChatScreen(
     verticalArrangement = Arrangement.spacedBy(8.dp),
   ) {
     ChatHeader(
-      sessionTitle = currentSessionTitle(sessionKey = sessionKey, sessions = sessions),
+      sessionTitle = currentSessionTitle(sessionKey = sessionKey, mainSessionKey = mainSessionKey, sessions = sessions),
       showSidebarButton = showSidebarButton,
       onOpenSidebar = onOpenSidebar,
       healthOk = healthOk,
@@ -1166,9 +1165,8 @@ private fun ChatHeader(
           onClick = onOpenSidebar,
         )
       }
-      OpenClawMascot(modifier = Modifier.size(25.dp))
       Text(
-        text = nativeString("OpenClaw"),
+        text = sessionTitle,
         style = ClawTheme.type.title.copy(fontSize = 17.sp, lineHeight = 21.sp),
         color = ClawTheme.colors.text,
         modifier = Modifier.weight(1f),
@@ -1245,16 +1243,7 @@ private fun ChatHeader(
         }
       }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-      Text(text = nativeString("Chat"), style = ClawTheme.type.display.copy(fontSize = 24.sp, lineHeight = 28.sp), color = ClawTheme.colors.text, maxLines = 1)
-      Text(
-        text = sessionTitle,
-        style = ClawTheme.type.caption.copy(fontSize = 13.sp, lineHeight = 17.sp),
-        color = ClawTheme.colors.textMuted,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-      )
-    }
+    Text(text = nativeString("Chat"), style = ClawTheme.type.display.copy(fontSize = 24.sp, lineHeight = 28.sp), color = ClawTheme.colors.accent, maxLines = 1)
   }
 }
 
@@ -3071,9 +3060,13 @@ private fun AttachmentChip(
 
 private fun currentSessionTitle(
   sessionKey: String,
+  mainSessionKey: String,
   sessions: List<ChatSessionEntry>,
 ): String {
-  val entry = sessions.firstOrNull { it.key == sessionKey } ?: return nativeString("New chat")
+  val mainKey = mainSessionKey.trim().ifEmpty { "main" }
+  val currentKey = sessionKey.trim().let { if (it == "main" && mainKey != "main") mainKey else it }
+  if (currentKey == mainKey) return nativeString("Main session")
+  val entry = sessions.firstOrNull { it.key == currentKey } ?: return nativeString("New chat")
   val name = sessionPresentationTitle(entry) { nativeString("New chat") }
   return friendlySessionName(name)
 }

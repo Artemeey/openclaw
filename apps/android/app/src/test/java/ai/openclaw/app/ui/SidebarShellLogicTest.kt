@@ -65,20 +65,15 @@ class SidebarShellLogicTest {
     )
   }
 
+  // Every compact bar item keeps its label visible, so all five must stay short,
+  // distinct, and narrow enough to sit side by side without truncation.
   @Test
-  fun compactNavigationUsesShortDistinctLabels() {
+  fun compactNavigationUsesShortDistinctAlwaysVisibleLabels() {
     val labels = SidebarDestination.entries.map(SidebarDestination::compactLabelSource)
 
     assertEquals(listOf("Chat", "Status", "Usage", "Cron", "Threads"), labels)
     assertEquals(labels.size, labels.distinct().size)
     assertTrue(labels.all { it.length <= 7 })
-  }
-
-  @Test
-  fun compactNavigationOnlyShowsTheSelectedLabel() {
-    assertFalse(alwaysShowAdaptiveNavigationLabel(AdaptiveNavigationMode.Bar))
-    assertTrue(alwaysShowAdaptiveNavigationLabel(AdaptiveNavigationMode.Rail))
-    assertTrue(alwaysShowAdaptiveNavigationLabel(AdaptiveNavigationMode.Drawer))
   }
 
   @Test
@@ -174,6 +169,18 @@ class SidebarShellLogicTest {
     assertTrue(expanded.sections.flatMap { it.entries }.any { it.key == "session-1" })
     assertTrue(expanded.canExpand)
     assertEquals(collapsed, sidebarSessionPresentation(sessions, knownGroups = emptyList(), expanded = false))
+  }
+
+  @Test
+  fun nodeMainSessionTitleHidesDeviceIdentity() {
+    val session =
+      ChatSessionEntry(
+        key = "agent:main:node-1234567890ab",
+        updatedAtMs = 1L,
+        displayName = "OpenClaw App · Pixel · 1234567890ab",
+      )
+
+    assertEquals("Main session", sidebarSessionTitle(session))
   }
 
   @Test
