@@ -664,6 +664,7 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/openclaw-npm-resume-run.test.ts",
         "test/scripts/package-acceptance-workflow.test.ts",
         "test/scripts/pr-crabbox-merge-bypass.test.ts",
+        "test/scripts/release-validation-receipt-contract.test.ts",
         "test/scripts/run-additional-boundary-checks.test.ts",
       ],
     );
@@ -690,6 +691,7 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/full-release-validation-continuation-workflow.test.ts",
         "test/scripts/openclaw-performance-workflow.test.ts",
         "test/scripts/release-plan-producer.test.ts",
+        "test/scripts/release-validation-receipt-contract.test.ts",
         "test/scripts/validate-full-release-validation-evidence.test.ts",
       ],
     );
@@ -1014,6 +1016,7 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/package-source-preflight.test.ts",
         "test/scripts/release-ci-summary.test.ts",
         "test/scripts/release-no-push-workflow.test.ts",
+        "test/scripts/release-validation-receipt-contract.test.ts",
       ],
     );
   });
