@@ -229,7 +229,9 @@ export async function runCodexNodeExecServer(params: {
             assertCurrent: () => {
               // Reaping can await; policy and invocation closure still win at spawn.
               params.assertExecAuthorized();
-              if (io.signal.aborted) throw nodeExecServerAbortError(io.signal);
+              if (io.signal.aborted) {
+                throw nodeExecServerAbortError(io.signal);
+              }
             },
           },
         );

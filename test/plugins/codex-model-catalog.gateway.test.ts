@@ -1,5 +1,5 @@
-import { EventEmitter } from "node:events";
-import { PassThrough, Writable } from "node:stream";
+import type { ChildProcess, SpawnOptions } from "node:child_process";
+import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { createTestPluginApi } from "openclaw/plugin-sdk/plugin-test-api";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -27,6 +27,23 @@ import { withEnvAsync } from "../../src/test-utils/env.js";
 import { withOpenClawTestState } from "../../src/test-utils/openclaw-test-state.js";
 
 const transport = vi.hoisted(() => ({ spawn: vi.fn() }));
+const catalogRelay = String.raw`
+const { createInterface } = require("node:readline");
+const lines = createInterface({ input: process.stdin });
+lines.on("line", (line) => process.send(JSON.parse(line)));
+process.on("message", (message) => process.stdout.write(JSON.stringify(message) + "\n"));
+lines.once("close", () => process.exit(0));
+`;
+
+async function stopCatalogChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  const exited = once(child, "exit");
+  child.kill("SIGKILL");
+  await exited;
+}
+
 vi.mock("openclaw/plugin-sdk/simple-completion-runtime", () => ({
   runHostPreparedIsolatedCompletion: vi.fn(),
 }));
@@ -55,15 +72,22 @@ describe("models.list native account catalog", () => {
             SYNTHETIC_ABSENT_KEY: undefined,
           },
           async () => {
-            const stdout = new PassThrough();
+            const { spawn } =
+              await vi.importActual<typeof import("node:child_process")>("node:child_process");
+            const children: ChildProcess[] = [];
             const requests: string[] = [];
             let account: Record<string, unknown> | null = { type: "apiKey" };
-            const child = Object.assign(new EventEmitter(), {
-              stdout,
-              stderr: new PassThrough(),
-              stdin: new Writable({
-                write(chunk, _encoding, callback) {
-                  const request = JSON.parse(chunk.toString()) as { id?: number; method: string };
+            transport.spawn.mockImplementation(
+              (command: string, _args: string[], options: SpawnOptions) => {
+                expect(command).toBe("/synthetic/codex");
+                // Keep real spawn/exit identity while the parent controls catalog responses.
+                const child = spawn(process.execPath, ["-e", catalogRelay], {
+                  ...options,
+                  stdio: ["pipe", "pipe", "pipe", "ipc"],
+                });
+                children.push(child);
+                child.on("message", (message) => {
+                  const request = message as { id?: number; method: string };
                   requests.push(request.method);
                   if (request.id !== undefined) {
                     const result =
@@ -92,21 +116,12 @@ describe("models.list native account catalog", () => {
                                 nextCursor: null,
                               }
                             : {};
-                    queueMicrotask(() =>
-                      stdout.write(`${JSON.stringify({ id: request.id, result })}\n`),
-                    );
+                    child.send({ id: request.id, result });
                   }
-                  callback();
-                },
-              }),
-              kill: vi.fn(),
-              killed: false,
-            });
-            child.stdin.once("finish", () => child.emit("exit", 0, null));
-            transport.spawn.mockImplementation((command: string) => {
-              expect(command).toBe("/synthetic/codex");
-              return child;
-            });
+                });
+                return child;
+              },
+            );
             const config: OpenClawConfig = {
               agents: {
                 defaults: {
@@ -176,6 +191,10 @@ describe("models.list native account catalog", () => {
                 refresh: true,
               });
               expect(discoveryError).toBeUndefined();
+              const child = children[0];
+              if (!child) {
+                throw new Error("Native catalog discovery did not spawn its transport.");
+              }
               expect(result.models).toEqual([
                 expect.objectContaining({
                   id: "synthetic-opaque",
@@ -236,9 +255,8 @@ describe("models.list native account catalog", () => {
               });
               expect(locked.models[0]?.available).toBe(false);
 
-              stdout.write(
-                `${JSON.stringify({ method: "account/updated", params: { authMode: null } })}\n`,
-              );
+              child.send({ method: "account/updated", params: { authMode: null } });
+              await vi.waitFor(() => expect(readiness()).toBeUndefined());
               expect((await configured()).models[0]?.available).toBe(false);
               for (const observed of [
                 {
@@ -313,7 +331,7 @@ describe("models.list native account catalog", () => {
                 expect(host.models[0]?.available, `host route ${routeIndex}`).toBe(false);
               }
               expect(requests).not.toContain("account/login/start");
-              child.emit("exit", 0, null);
+              await stopCatalogChild(child);
               expect((await configured()).models[0]?.available).toBe(false);
               expect(
                 createAgentHarnessCatalogEvaluator(scope)(rows[0]!, {
@@ -338,9 +356,12 @@ describe("models.list native account catalog", () => {
               setActivePluginRegistry(replacement);
               expect((await configured()).models[0]?.available).toBe(false);
             } finally {
-              await harness.dispose?.();
-              child.emit("exit", 0, null);
-              restoreActivePluginRegistrySnapshot(previous);
+              try {
+                await harness.dispose?.();
+              } finally {
+                restoreActivePluginRegistrySnapshot(previous);
+                await Promise.all(children.map(stopCatalogChild));
+              }
             }
           },
         );

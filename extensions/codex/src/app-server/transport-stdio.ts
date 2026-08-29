@@ -140,9 +140,9 @@ export async function createStdioTransport(
   const assertCurrent = lifecycle.assertCurrent ?? (() => {});
   assertCurrent();
   const registry =
-    process.platform === "win32"
-      ? undefined
-      : await import("./transport-process-registry.runtime.js");
+    process.platform === "linux" || process.platform === "darwin"
+      ? await import("./transport-process-registry.runtime.js")
+      : undefined;
   const register = await registry?.prepareCodexAppServerProcessRegistration(
     lifecycle.ownerEnv ?? baseEnv,
     assertCurrent,
@@ -168,7 +168,9 @@ export async function createStdioTransport(
     return child;
   } catch (error) {
     // No initialize/request can reach a child whose custody was not persisted.
-    if (child.pid) await closeCodexAppServerTransportAndWait(child);
+    if (child.pid) {
+      await closeCodexAppServerTransportAndWait(child);
+    }
     throw error;
   }
 }

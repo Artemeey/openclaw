@@ -80,7 +80,9 @@ setInterval(() => {}, 1000);
       return { parent, pids };
     };
     const killParent = async (parent: ChildProcess) => {
-      const exited = new Promise<void>((resolve) => parent.once("exit", () => resolve()));
+      const exited = new Promise<void>((resolve) => {
+        parent.once("exit", () => resolve());
+      });
       parent.kill("SIGKILL");
       await exited;
     };
@@ -102,10 +104,14 @@ setInterval(() => {}, 1000);
       expect(fresh.pids.every(isRunning)).toBe(true);
     } finally {
       for (const parent of parents) {
-        if (parent.exitCode === null && parent.signalCode === null) await killParent(parent);
+        if (parent.exitCode === null && parent.signalCode === null) {
+          await killParent(parent);
+        }
       }
       for (const pid of children) {
-        if (isRunning(pid)) process.kill(pid, "SIGKILL");
+        if (isRunning(pid)) {
+          process.kill(pid, "SIGKILL");
+        }
       }
       await fs.rm(root, { recursive: true, force: true });
     }

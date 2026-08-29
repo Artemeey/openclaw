@@ -50,7 +50,9 @@ describe("createStdioTransport", () => {
           {},
           {
             assertCurrent: () => {
-              if (!current) throw new Error("connection revoked");
+              if (!current) {
+                throw new Error("connection revoked");
+              }
             },
           },
         ),

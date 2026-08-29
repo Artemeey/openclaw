@@ -213,8 +213,9 @@ On macOS and Linux, each locally spawned stdio process is registered in the
 OpenClaw state database before it receives a request. Before a new connection
 spawns, OpenClaw checks registrations from the same host and state directory
 and terminates surviving children whose original owner has exited. It verifies
-process start identities before signaling, leaving live owners and unrelated
-processes alone. Recovery also contains descendants still attached to the
+kernel process identities before signaling (boot-scoped start ticks on Linux,
+microsecond start times on macOS), leaving live owners and unrelated processes
+alone. Recovery also contains descendants still attached to the
 registered child, including descendants in separate process groups.
 
 If process inspection or containment fails, the connection reports an error

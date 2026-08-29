@@ -15,4 +15,5 @@ export type { OomScoreAdjustedSpawn, OomWrapOptions } from "../process/linux-oom
 export { resolveRuntimeWorkerArgv, resolveRuntimeWorkerUrl } from "../infra/runtime-worker-url.js";
 export { killProcessTree } from "../process/kill-tree.js";
 export { isPidAlive } from "../shared/pid-alive.js";
+export { getProcessIdentity } from "../process/process-identity.js";
 export { prepareSecretInputStdio, type SpawnStdioEntry } from "../process/spawn-secret-input.js";

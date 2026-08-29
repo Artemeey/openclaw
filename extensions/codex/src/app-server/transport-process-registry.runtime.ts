@@ -13,7 +13,7 @@ import {
 const processIdentity = z.object({
   pid: z.number().int().positive(),
   pgid: z.number().int().positive(),
-  startedAt: z.string().min(1),
+  instance: z.string().min(1),
 });
 const registrationSchema = z.object({
   host: z.string(),
@@ -50,7 +50,9 @@ export async function prepareCodexAppServerProcessRegistration(
       );
     }
     const registration = parsed.data;
-    if (registration.host !== host || registration.stateDir !== stateDir) continue;
+    if (registration.host !== host || registration.stateDir !== stateDir) {
+      continue;
+    }
     if (
       (await reapCodexAppServerOrphan(registration.owner, registration.child, deadline)) === "gone"
     ) {
@@ -61,7 +63,9 @@ export async function prepareCodexAppServerProcessRegistration(
   }
   const owner = await captureCodexAppServerProcessIdentity(process.pid);
   return async (child: ChildProcess) => {
-    if (!child.pid) throw new Error("Codex app-server spawn did not return a process id.");
+    if (!child.pid) {
+      throw new Error("Codex app-server spawn did not return a process id.");
+    }
     const identity = await captureCodexAppServerProcessIdentity(child.pid);
     if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error("Codex app-server exited before process registration.");

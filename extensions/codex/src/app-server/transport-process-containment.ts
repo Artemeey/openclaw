@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { getProcessIdentity } from "openclaw/plugin-sdk/process-runtime";
 
 type ContainableTransport = {
   pid?: number;
@@ -12,12 +13,15 @@ type PosixProcess = {
   ppid: number;
   pgid: number;
   state: string;
-  startedAt: string;
 };
 
-export type CodexAppServerProcessIdentity = Pick<PosixProcess, "pid" | "pgid" | "startedAt">;
+type CapturedProcess = PosixProcess & { instance: string };
 
-const PROCESS_COLUMNS = "pid=,ppid=,pgid=,stat=,lstart=";
+export type CodexAppServerProcessIdentity = Pick<PosixProcess, "pid" | "pgid"> & {
+  instance: string;
+};
+
+const PROCESS_COLUMNS = "pid=,ppid=,pgid=,stat=";
 const MAX_CONTAINED_PROCESSES = 512;
 const MAX_PROCESS_CONTAINMENT_MS = 2_000;
 const MAX_PROCESS_QUIESCE_PASSES = 16;
@@ -35,13 +39,14 @@ export async function terminateCodexAppServerDescendants(
   if (!snapshot || Date.now() >= deadline) {
     return undefined;
   }
-  const root = snapshot.find((row) => row.pid === rootPid);
+  const rootRow = snapshot.find((row) => row.pid === rootPid);
+  const root = rootRow && captureProcess(rootRow);
   if (!root || root.ppid !== process.pid || !isSameLiveRoot(root, root)) {
     return undefined;
   }
 
-  return await terminateProcessDescendants(root, snapshot, deadline, (failed) =>
-    resumeTransportRoot(child, root, failed),
+  return await terminateProcessDescendants(root, snapshot, deadline, () =>
+    signalCapturedProcess(root, "SIGCONT"),
   );
 }
 
@@ -51,10 +56,15 @@ export async function captureCodexAppServerProcessIdentity(
 ): Promise<CodexAppServerProcessIdentity> {
   const rows = await readProcessSnapshot(Date.now() + MAX_PROCESS_CONTAINMENT_MS);
   const row = rows?.find((candidate) => candidate.pid === pid);
-  if (!row || row.state.startsWith("Z")) {
+  const captured = row && captureProcess(row);
+  if (!captured || captured.state.startsWith("Z")) {
     throw new Error("Cannot register Codex app-server process identity; retry the connection.");
   }
-  return { pid: row.pid, pgid: row.pgid, startedAt: row.startedAt };
+  return {
+    pid: captured.pid,
+    pgid: captured.pgid,
+    instance: captured.instance,
+  };
 }
 
 /** Only a recorded child of a proven-dead owner can enter orphan containment. */
@@ -69,45 +79,84 @@ export async function reapCodexAppServerOrphan(
     new Error(
       "Cannot reap an orphaned Codex app-server safely; retry the connection after checking local process permissions.",
     );
-  if (!snapshot) throw failure();
+  if (!snapshot) {
+    throw failure();
+  }
   const parent = snapshot.find((row) => row.pid === owner.pid);
-  if (parent && hasSameIdentity(parent, owner) && !parent.state.startsWith("Z")) {
+  const matchesRegistration = (row: PosixProcess, expected: CodexAppServerProcessIdentity) => {
+    const identity = getProcessIdentity(row.pid);
+    if (!identity.ok) {
+      throw failure();
+    }
+    if (identity.value.start !== expected.instance) {
+      return false;
+    }
+    if (identity.value.parentPid !== row.ppid || identity.value.processGroupId !== row.pgid) {
+      throw failure();
+    }
+    return true;
+  };
+  if (parent && !parent.state.startsWith("Z") && matchesRegistration(parent, owner)) {
     return "owned";
   }
-  const root = snapshot.find((row) => row.pid === child.pid);
-  if (!root || !hasSameIdentity(root, child) || root.state.startsWith("Z")) {
+  const rootRow = snapshot.find((row) => row.pid === child.pid);
+  if (!rootRow || rootRow.state.startsWith("Z") || !matchesRegistration(rootRow, child)) {
     return "gone";
   }
-  if (root.pgid !== child.pgid) throw failure();
+  if (rootRow.pgid !== child.pgid) {
+    throw failure();
+  }
+  const root: CapturedProcess = { ...rootRow, instance: child.instance };
   // Orphan custody is terminal. Never resume on failure: another recovering
   // process may be killing this same stopped tree. Retain its registration.
   const contained = await terminateProcessDescendants(root, snapshot, deadline);
-  if (contained) await signalSameRoot(root, "SIGKILL", deadline);
+  if (contained) {
+    await signalSameRoot(root, "SIGKILL", deadline);
+  }
   // A concurrent reaper or natural exit may win any inspection/signal race.
   // Only observed absence retires custody, regardless of who delivered the kill.
   while (Date.now() < deadline) {
     const rows = await readProcessSnapshot(deadline);
-    if (!rows) throw failure();
+    if (!rows) {
+      throw failure();
+    }
     const current = rows.find((row) => row.pid === child.pid);
-    if (!current || !hasSameIdentity(current, child) || current.state.startsWith("Z")) {
+    const identity = current && getProcessIdentity(child.pid);
+    // A killed process can disappear between ps and the kernel query. Unknown
+    // evidence stays pending until the next observation; it never authorizes a signal.
+    if (
+      !current ||
+      current.state.startsWith("Z") ||
+      (identity?.ok && identity.value.start !== child.instance)
+    ) {
       return "gone";
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
   }
   throw failure();
 }
 
 async function terminateProcessDescendants(
-  root: PosixProcess,
+  root: CapturedProcess,
   snapshot: PosixProcess[],
   deadline: number,
-  resumeRoot?: (failed: boolean) => void,
+  resumeRoot?: () => void,
 ): Promise<(() => void) | undefined> {
   const initialDescendants = collectDescendants(snapshot, [root.pid]);
   if (initialDescendants.length > MAX_CONTAINED_PROCESSES) {
     return undefined;
   }
-  const stoppedDescendants = new Map<string, PosixProcess>();
+  const capturedDescendants: CapturedProcess[] = [];
+  for (const descendant of initialDescendants) {
+    const captured = captureProcess(descendant);
+    if (!captured) {
+      return undefined;
+    }
+    capturedDescendants.push(captured);
+  }
+  const stoppedDescendants = new Map<string, CapturedProcess>();
   if (!(await signalSameRoot(root, "SIGSTOP", deadline))) {
     return undefined;
   }
@@ -115,7 +164,7 @@ async function terminateProcessDescendants(
   try {
     const descendants = await quiesceDescendants(
       root,
-      initialDescendants,
+      capturedDescendants,
       stoppedDescendants,
       deadline,
     );
@@ -142,26 +191,25 @@ async function terminateProcessDescendants(
         return;
       }
       resumed = true;
-      resumeRoot?.(false);
+      resumeRoot?.();
     };
   } finally {
     if (resumeRootOnUnwind && resumeRoot) {
-      // Inspection failure cannot also own release. These PIDs were signaled
-      // synchronously in this call and have not crossed an asynchronous boundary.
+      // Unwind only processes whose captured kernel identity still owns the PID.
       for (const descendant of stoppedDescendants.values()) {
-        signalProcess(descendant.pid, "SIGCONT");
+        signalCapturedProcess(descendant, "SIGCONT");
       }
-      resumeRoot(true);
+      resumeRoot();
     }
   }
 }
 
 async function quiesceDescendants(
-  root: PosixProcess,
-  initialDescendants: PosixProcess[],
-  stopped: Map<string, PosixProcess>,
+  root: CapturedProcess,
+  initialDescendants: CapturedProcess[],
+  stopped: Map<string, CapturedProcess>,
   deadline: number,
-): Promise<PosixProcess[] | undefined> {
+): Promise<CapturedProcess[] | undefined> {
   const provenByPid = new Map(initialDescendants.map((descendant) => [descendant.pid, descendant]));
   const stopFailures = new Map<string, number>();
   for (let pass = 0; pass < MAX_PROCESS_QUIESCE_PASSES; pass += 1) {
@@ -183,7 +231,6 @@ async function quiesceDescendants(
       continue;
     }
     const snapshotByPid = new Map(snapshot.map((process) => [process.pid, process]));
-    const liveProven: PosixProcess[] = [];
     for (const proven of provenByPid.values()) {
       const current = snapshotByPid.get(proven.pid);
       if (!current) {
@@ -191,36 +238,29 @@ async function quiesceDescendants(
         stopped.delete(identityKey(proven));
         continue;
       }
-      if (!hasSameIdentity(proven, current)) {
+      if (!isSameProcess(current, proven)) {
         return undefined;
       }
-      provenByPid.set(current.pid, current);
-      const key = identityKey(current);
+      const refreshed = { ...current, instance: proven.instance };
+      provenByPid.set(current.pid, refreshed);
+      const key = identityKey(refreshed);
       if (stopped.has(key)) {
-        stopped.set(key, current);
+        stopped.set(key, refreshed);
       }
-      liveProven.push(current);
     }
-    const descendants = collectDescendants(snapshot, [
-      root.pid,
-      ...liveProven.map(({ pid }) => pid),
-    ]);
+    const descendants = collectDescendants(snapshot, [root.pid, ...provenByPid.keys()]);
     for (const descendant of descendants) {
-      const proven = provenByPid.get(descendant.pid);
-      if (proven && !hasSameIdentity(proven, descendant)) {
+      const captured = captureProcess(descendant);
+      if (!captured) {
         return undefined;
       }
-      provenByPid.set(descendant.pid, descendant);
+      provenByPid.set(descendant.pid, captured);
     }
     if (provenByPid.size > MAX_CONTAINED_PROCESSES) {
       return undefined;
     }
-    const quiescenceTargets = new Map(liveProven.map((process) => [process.pid, process]));
-    for (const descendant of descendants) {
-      quiescenceTargets.set(descendant.pid, descendant);
-    }
     let allStopped = true;
-    for (const descendant of quiescenceTargets.values()) {
+    for (const descendant of provenByPid.values()) {
       if (Date.now() >= deadline) {
         return undefined;
       }
@@ -287,8 +327,6 @@ async function readProcesses(
       {
         encoding: "utf8",
         maxBuffer: PROCESS_INSPECTION_MAX_BYTES,
-        // Persisted lstart identities must survive locale/timezone changes.
-        env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
       },
       (error, stdout) => {
         settle(error ? undefined : parseProcesses(stdout));
@@ -311,24 +349,17 @@ async function readProcesses(
 function parseProcesses(output: string): PosixProcess[] {
   const rows: PosixProcess[] = [];
   for (const line of output.split("\n")) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(line);
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*$/.exec(line);
     if (!match) {
       continue;
     }
     const pid = Number(match[1] ?? "");
     const ppid = Number(match[2] ?? "");
     const pgid = Number(match[3] ?? "");
-    const startedAt = (match[5] ?? "").trim().replace(/\s+/g, " ");
-    if (
-      ![pid, ppid, pgid].every(Number.isSafeInteger) ||
-      pid <= 0 ||
-      ppid < 0 ||
-      pgid <= 0 ||
-      !startedAt
-    ) {
+    if (![pid, ppid, pgid].every(Number.isSafeInteger) || pid <= 0 || ppid < 0 || pgid <= 0) {
       continue;
     }
-    rows.push({ pid, ppid, pgid, state: match[4] ?? "", startedAt });
+    rows.push({ pid, ppid, pgid, state: match[4] ?? "" });
   }
   return rows;
 }
@@ -368,17 +399,34 @@ function isUninterruptibleState(state: string): boolean {
   return state.startsWith("D") || state.startsWith("U");
 }
 
-function isSameLiveProcess(current: PosixProcess, expected: PosixProcess): boolean {
+function captureProcess(row: PosixProcess): CapturedProcess | undefined {
+  const identity = getProcessIdentity(row.pid);
+  if (
+    !identity.ok ||
+    identity.value.parentPid !== row.ppid ||
+    identity.value.processGroupId !== row.pgid
+  ) {
+    return undefined;
+  }
+  return { ...row, instance: identity.value.start };
+}
+
+function isSameProcess(current: PosixProcess, expected: CapturedProcess): boolean {
+  const captured = captureProcess(current);
   return (
+    current.pid === expected.pid &&
     current.pgid === expected.pgid &&
-    !current.state.startsWith("Z") &&
-    hasSameIdentity(current, expected)
+    captured?.instance === expected.instance
   );
+}
+
+function isSameLiveProcess(current: PosixProcess, expected: CapturedProcess): boolean {
+  return !current.state.startsWith("Z") && isSameProcess(current, expected);
 }
 
 function isSameLiveRoot(
   current: PosixProcess,
-  expected: PosixProcess,
+  expected: CapturedProcess,
   requireStopped = false,
 ): boolean {
   return (
@@ -389,7 +437,7 @@ function isSameLiveRoot(
 }
 
 async function signalSameRoot(
-  root: PosixProcess,
+  root: CapturedProcess,
   signal: NodeJS.Signals,
   deadline: number,
 ): Promise<boolean> {
@@ -397,30 +445,18 @@ async function signalSameRoot(
   return Boolean(current && isSameLiveRoot(current, root) && signalProcess(current.pid, signal));
 }
 
-function resumeTransportRoot(
-  child: ContainableTransport,
-  root: PosixProcess,
-  allowSynchronousPidFallback: boolean,
-): void {
-  try {
-    if (child.kill) {
-      child.kill("SIGCONT");
-      return;
-    }
-  } catch {
-    if (!allowSynchronousPidFallback) {
-      return;
-    }
-  }
-  if (allowSynchronousPidFallback) {
-    // Failure unwind has not crossed an asynchronous boundary, so the saved
-    // PID is still bounded to this synchronous stopped-root custody window.
-    signalProcess(root.pid, "SIGCONT");
-  }
+function signalCapturedProcess(expected: CapturedProcess, signal: NodeJS.Signals): boolean {
+  const identity = getProcessIdentity(expected.pid);
+  return (
+    identity.ok &&
+    identity.value.start === expected.instance &&
+    identity.value.processGroupId === expected.pgid &&
+    signalProcess(expected.pid, signal)
+  );
 }
 
 async function signalSameProcess(
-  expected: PosixProcess,
+  expected: CapturedProcess,
   signal: NodeJS.Signals,
   deadline: number,
 ): Promise<boolean> {
@@ -432,15 +468,8 @@ async function signalSameProcess(
   );
 }
 
-function hasSameIdentity(
-  left: CodexAppServerProcessIdentity,
-  right: CodexAppServerProcessIdentity,
-): boolean {
-  return identityKey(left) === identityKey(right);
-}
-
-function identityKey(row: CodexAppServerProcessIdentity): string {
-  return `${row.pid}\0${row.startedAt}`;
+function identityKey(row: CapturedProcess): string {
+  return `${row.pid}\0${row.instance}`;
 }
 
 function hasExited(child: ContainableTransport): boolean {
