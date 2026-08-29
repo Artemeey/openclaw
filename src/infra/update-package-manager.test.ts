@@ -47,12 +47,16 @@ describe("resolveUpdateBuildManager", () => {
       version: "12.0.0",
       hostVersion: undefined,
       pathKey: "PATH",
+      // Hostile fixture proves context replacement, not live host override permission.
+      // nosemgrep: security.opengrep.ghsa-j425-whc4-4jgc.openclaw-dangerous-host-env-override-pivots
       rootOverrides: ["NPM_CONFIG_WORKSPACE_DIR"],
     },
     {
       version: "12.0.0",
       hostVersion: "11.15.1",
       pathKey: "PATH",
+      // Hostile fixture proves context replacement, not live host override permission.
+      // nosemgrep: security.opengrep.ghsa-j425-whc4-4jgc.openclaw-dangerous-host-env-override-pivots
       rootOverrides: ["NPM_CONFIG_WORKSPACE_DIR"],
     },
     {
@@ -72,6 +76,8 @@ describe("resolveUpdateBuildManager", () => {
       hostVersion: "11.15.1",
       pathKey: "PATH",
       rootOverrides: [
+        // Hostile fixture proves context replacement, not live host override permission.
+        // nosemgrep: security.opengrep.ghsa-j425-whc4-4jgc.openclaw-dangerous-host-env-override-pivots
         "NPM_CONFIG_WORKSPACE_DIR",
         "npm_config_workspace_dir",
         "PNPM_CONFIG_LOCKFILE_DIR",
