@@ -102,6 +102,7 @@ export async function modelsListCommand(
     cfg,
     agentId,
     ...DISPLAY_MODEL_PARSE_OPTIONS,
+    manifestPlugins: metadataSnapshot.manifestRegistry.plugins,
     canonicalizeRef: providerAliasCanonicalizer.ref,
   });
   if (providerFilter) {

@@ -14,6 +14,8 @@ import {
   withPluginMetadataCollectionScope,
 } from "../../plugins/plugin-metadata-collection.js";
 import { resolveModelDirectiveSelection } from "./model-selection-directive.js";
+import { createModelSelectionState } from "./model-selection.js";
+import { prepareRawModelSelectionFixture } from "./model-selection.test-support.js";
 
 let directivePlugin: ReturnType<typeof writePlugin>;
 
@@ -41,9 +43,9 @@ afterEach(() => {
   resetPluginLoaderTestStateForTest();
 });
 
-function resolveDirective(params: { cfg: OpenClawConfig; raw: string; agentId?: string }) {
+function withDirectiveMetadata<T>(config: OpenClawConfig, run: (cfg: OpenClawConfig) => T): T {
   const cfg: OpenClawConfig = {
-    ...params.cfg,
+    ...config,
     plugins: {
       allow: [directivePlugin.id],
       entries: { [directivePlugin.id]: { enabled: true } },
@@ -56,40 +58,44 @@ function resolveDirective(params: { cfg: OpenClawConfig; raw: string; agentId?: 
     workspaceDir: directivePlugin.dir,
     allowCurrent: false,
   });
-  return withPluginMetadataCollectionScope(
-    metadata,
-    () => {
-      const defaultProvider = "openai";
-      const defaultModel = "safe";
-      const policy = createModelVisibilityPolicy({
-        cfg,
-        catalog: [],
+  return withPluginMetadataCollectionScope(metadata, () => run(cfg), {
+    config: cfg,
+    workspaceDir: directivePlugin.dir,
+  });
+}
+
+function resolveDirective(params: { cfg: OpenClawConfig; raw: string; agentId?: string }) {
+  return withDirectiveMetadata(params.cfg, (cfg) => {
+    const defaultProvider = "openai";
+    const defaultModel = "safe";
+    const policy = createModelVisibilityPolicy({
+      cfg,
+      catalog: [],
+      defaultProvider,
+      defaultModel,
+      agentId: params.agentId,
+      workspaceDir: directivePlugin.dir,
+    });
+    return {
+      policy,
+      result: resolveModelDirectiveSelection({
+        raw: params.raw,
         defaultProvider,
         defaultModel,
-        agentId: params.agentId,
-        workspaceDir: directivePlugin.dir,
-      });
-      return {
-        policy,
-        result: resolveModelDirectiveSelection({
-          raw: params.raw,
-          defaultProvider,
-          defaultModel,
-          aliasIndex: buildModelAliasIndex({
-            cfg,
-            defaultProvider,
-            agentId: params.agentId,
-            workspaceDir: directivePlugin.dir,
-          }),
-          allowedModelKeys: policy.allowedKeys,
+        aliasIndex: buildModelAliasIndex({
           cfg,
+          defaultProvider,
           agentId: params.agentId,
           workspaceDir: directivePlugin.dir,
         }),
-      };
-    },
-    { config: cfg, workspaceDir: directivePlugin.dir },
-  );
+        allowedModelKeys: policy.allowedKeys,
+        modelPolicy: policy,
+        cfg,
+        agentId: params.agentId,
+        workspaceDir: directivePlugin.dir,
+      }),
+    };
+  });
 }
 
 describe("resolveModelDirectiveSelection", () => {
@@ -134,6 +140,95 @@ describe("resolveModelDirectiveSelection", () => {
       alias,
     });
   });
+
+  it.each([
+    {
+      allow: ["fixture-route/namespace/*"],
+      raw: "fixture-route/namespace/reasoner",
+      agentAllow: undefined,
+      allowed: true,
+    },
+    {
+      allow: ["fixture-route/namespace/*"],
+      raw: "fixture-route/namespace-other/reasoner",
+      agentAllow: undefined,
+      allowed: false,
+    },
+    {
+      allow: ["openai/*"],
+      raw: "fixture-route/namespace/reasoner",
+      agentAllow: ["fixture-route/namespace/*"],
+      allowed: true,
+    },
+    {
+      allow: ["fixture-route/*"],
+      raw: "fixture-route/namespace/reasoner",
+      agentAllow: ["openai/*"],
+      allowed: false,
+    },
+    { allow: ["openai/*"], raw: "fixture-route/namespace/reasoner", agentAllow: [], allowed: true },
+  ])(
+    "preserves wildcard boundaries and per-agent replacement: %j",
+    ({ allow, raw, agentAllow, allowed }) => {
+      const { result } = resolveDirective({
+        cfg: {
+          agents: {
+            defaults: { modelPolicy: { allow } },
+            list: [{ id: "ops", ...(agentAllow ? { modelPolicy: { allow: agentAllow } } : {}) }],
+          },
+        },
+        raw,
+        agentId: "ops",
+      });
+      if (allowed) {
+        expect(result.selection).toMatchObject({
+          provider: "fixture-route",
+          model: "namespace/reasoner",
+        });
+      } else {
+        expect(result.selection).toBeUndefined();
+        expect(result.error).toContain("is not allowed");
+      }
+    },
+  );
+
+  it.each([undefined, {}, { allow: [] }, { allow: ["openai/*"] }])(
+    "permits an explicit uncataloged model with policy %j",
+    async (modelPolicy) => {
+      const cfg: OpenClawConfig = {
+        agents: { defaults: { model: "anthropic/claude-sonnet-4-6", modelPolicy } },
+      };
+      const entries = [{ provider: "anthropic", id: "claude-sonnet-4-6", name: "Sonnet" }];
+      await withDirectiveMetadata(cfg, async (cfg) => {
+        const state = await createModelSelectionState(
+          prepareRawModelSelectionFixture({
+            cfg,
+            agentCfg: cfg.agents?.defaults,
+            workspaceDir: directivePlugin.dir,
+            defaultProvider: "anthropic",
+            defaultModel: "claude-sonnet-4-6",
+            provider: "anthropic",
+            model: "claude-sonnet-4-6",
+            hasModelDirective: true,
+            preparedModelCatalog: { entries, routeVariants: entries },
+          }),
+        );
+        const result = resolveModelDirectiveSelection({
+          ...state.runtimeModelNormalization,
+          raw: "openai/gpt-5.6-luna",
+          defaultProvider: "anthropic",
+          defaultModel: "claude-sonnet-4-6",
+          aliasIndex: state.policyAliasIndex,
+          allowedModelKeys: state.allowedModelKeys,
+          modelPolicy: state.modelPolicy,
+          cfg,
+        });
+        expect(result).toMatchObject({
+          selection: { provider: "openai", model: "gpt-5.6-luna", isDefault: false },
+        });
+      });
+    },
+  );
 
   it("rejects a configured fallback that the explicit policy does not allow", () => {
     const { policy, result } = resolveDirective({

@@ -459,12 +459,13 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
     return { handled: true, reply: markCommandReplyForDelivery(directiveResult.reply) };
   }
 
+  const { provider, model, modelState } = directiveResult.result;
   const shouldPrepareStatusThinkingCatalog =
     directiveResult.result.inlineStatusRequested ||
     directiveResult.result.directives.hasStatusDirective ||
     directiveResult.result.command.commandBodyNormalized.trim() === "/status";
   const thinkingCatalog = shouldPrepareStatusThinkingCatalog
-    ? await directiveResult.result.modelState.resolveThinkingCatalog()
+    ? await modelState.resolveThinkingCatalog({ provider, model })
     : undefined;
 
   const inlineActionResult = await handleInlineActions({
@@ -505,9 +506,9 @@ export async function maybeResolveNativeSlashCommandFastReply(params: {
     execOverrides: directiveResult.result.execOverrides,
     blockReplyChunking: directiveResult.result.blockReplyChunking,
     resolvedBlockStreamingBreak: directiveResult.result.resolvedBlockStreamingBreak,
-    resolveDefaultThinkingLevel: directiveResult.result.modelState.resolveDefaultThinkingLevel,
-    provider: directiveResult.result.provider,
-    model: directiveResult.result.model,
+    resolveDefaultThinkingLevel: () => modelState.resolveDefaultThinkingLevel({ provider, model }),
+    provider,
+    model,
     contextTokens: directiveResult.result.contextTokens,
     directiveAck: directiveResult.result.directiveAck,
     abortedLastRun: sessionState.abortedLastRun,

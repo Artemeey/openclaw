@@ -187,6 +187,7 @@ export async function applyInlineDirectiveOverrides(params: {
   let { provider, model } = params;
   let { contextTokens } = params;
   const directiveModelState = {
+    modelPolicy: modelState.modelPolicy,
     allowedModelKeys: modelState.allowedModelKeys,
     allowedModelCatalog: modelState.allowedModelCatalog,
     policyAliasIndex: modelState.policyAliasIndex,
@@ -217,6 +218,7 @@ export async function applyInlineDirectiveOverrides(params: {
   });
 
   let directiveAck: ReplyPayload | undefined;
+  let selectionCatalog = modelState.allowedModelCatalog;
 
   // Fire on the reason, not the boolean: a temporarily-unavailable override
   // surfaces a notice without destroying the pin, so resetModelOverride stays false.
@@ -298,6 +300,7 @@ export async function applyInlineDirectiveOverrides(params: {
       defaultProvider,
       defaultModel,
       aliasIndex,
+      modelPolicy: modelState.modelPolicy,
       allowedModelKeys: modelState.allowedModelKeys,
       allowedModelCatalog: modelState.allowedModelCatalog,
       provider,
@@ -405,6 +408,7 @@ export async function applyInlineDirectiveOverrides(params: {
         defaultProvider,
         defaultModel,
         aliasIndex,
+        modelPolicy: modelState.modelPolicy,
         allowedModelKeys: modelState.allowedModelKeys,
         allowedModelCatalog: modelState.allowedModelCatalog,
         provider,
@@ -445,7 +449,8 @@ export async function applyInlineDirectiveOverrides(params: {
           defaultModel,
           currentProvider: provider,
           currentModel: model,
-          allowedModelKeys: modelState.allowedModelKeys,
+          modelPolicy: modelState.modelPolicy,
+          modelNormalization: modelState.runtimeModelNormalization,
           modelCatalog: modelState.allowedModelCatalog,
           thinkingCatalog: modelState.allowedModelCatalog,
           canPersistStickyModelSelection,
@@ -549,9 +554,10 @@ export async function applyInlineDirectiveOverrides(params: {
       };
     }
     ({ provider, model } = persistenceState.outcome);
+    selectionCatalog = persistenceState.outcome.modelCatalog ?? selectionCatalog;
   }
 
-  const selectedCatalogEntry = modelState.allowedModelCatalog.find(
+  const selectedCatalogEntry = selectionCatalog.find(
     (entry) =>
       buildModelCatalogRef(entry.provider, entry.id) === buildModelCatalogRef(provider, model),
   );

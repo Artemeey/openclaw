@@ -2792,6 +2792,23 @@ describe("createTelegramBot", () => {
           providers: ["anthropic", "openai"],
           resolvedDefault: { provider: defaultProvider, model: defaultModel },
           modelNames: new Map(),
+          modelCatalog: [
+            { provider: "openai", id: "gpt-4o", name: "GPT-4o", reasoning: false },
+            { provider: "openai", id: "gpt-4.1", name: "GPT-4.1", reasoning: false },
+            { provider: "openai", id: "gpt-5", name: "GPT-5", reasoning: true },
+            {
+              provider: "anthropic",
+              id: "claude-sonnet-4-5",
+              name: "Claude Sonnet",
+              reasoning: true,
+            },
+          ],
+          modelPolicy: { allows: () => true },
+          modelNormalization: {
+            manifestPlugins: [],
+            allowManifestNormalization: false,
+            allowPluginNormalization: false,
+          },
         });
 
         loadConfig.mockReturnValue(config);

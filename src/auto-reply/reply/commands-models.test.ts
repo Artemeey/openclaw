@@ -13,7 +13,7 @@ import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import { createColdPluginFixture } from "../../plugins/test-helpers/cold-plugin-fixtures.js";
 import { createTestRegistry } from "../../test-utils/channel-plugins.js";
 import { withOpenClawTestState } from "../../test-utils/openclaw-test-state.js";
-import { buildModelsProviderData, handleModelsCommand } from "./commands-models.js";
+import { buildPreparedModelsProviderData, handleModelsCommand } from "./commands-models.js";
 import {
   buildModelsCommandParams as buildParams,
   menuOnlyModelsTestPlugin,
@@ -147,7 +147,7 @@ beforeAll(async () => {
   modelCatalogMocks.loadModelCatalog.mockResolvedValue([
     { provider: "anthropic", id: "claude-opus-4-5", name: "Claude Opus" },
   ]);
-  await buildModelsProviderData({
+  await buildPreparedModelsProviderData({
     agents: { defaults: { model: { primary: "anthropic/claude-opus-4-5" } } },
   } as OpenClawConfig);
 });
@@ -305,7 +305,7 @@ describe("handleModelsCommand", () => {
       },
     } as OpenClawConfig;
 
-    await buildModelsProviderData(cfg, "worker");
+    await buildPreparedModelsProviderData(cfg, "worker");
 
     expect(modelCatalogMocks.loadModelCatalog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -345,7 +345,7 @@ describe("handleModelsCommand", () => {
       },
     ]);
 
-    const data = await buildModelsProviderData({
+    const data = await buildPreparedModelsProviderData({
       agents: { defaults: { model: { primary: "anthropic/claude-opus-4-5" } } },
     } as OpenClawConfig);
 
@@ -365,41 +365,49 @@ describe("handleModelsCommand", () => {
     );
   });
 
-  it("uses the selected route's logical model name", async () => {
-    modelProviderAuthMocks.selectedRoute = {
-      api: "openai-chatgpt-responses",
-      baseUrl: "https://chatgpt.com/backend-api/codex",
-      authRequirement: "subscription",
-      requestTransportOverrides: "none",
-    };
-    modelCatalogMocks.loadModelCatalog.mockResolvedValue([
-      {
-        provider: "openai",
-        id: "gpt-5.5",
-        name: "Platform GPT-5.5",
-        api: "openai-responses",
-        baseUrl: "https://api.openai.com/v1",
-      },
-      {
+  it.each(["default", "all"] as const)(
+    "retains selected route metadata for %s browse",
+    async (view) => {
+      modelProviderAuthMocks.selectedRoute = {
+        api: "openai-chatgpt-responses",
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+        authRequirement: "subscription",
+        requestTransportOverrides: "none",
+      };
+      const selected = {
         provider: "openai",
         id: "gpt-5.5",
         name: "ChatGPT GPT-5.5",
         api: "openai-chatgpt-responses",
         baseUrl: "https://chatgpt.com/backend-api/codex",
-      },
-    ]);
+        reasoning: true,
+        contextWindow: 128_000,
+        thinkingLevelMap: { high: "high", xhigh: "xhigh" },
+      };
+      modelCatalogMocks.loadModelCatalog.mockResolvedValue([
+        {
+          ...selected,
+          name: "Platform GPT-5.5",
+          api: "openai-responses",
+          baseUrl: "https://api.openai.com/v1",
+          contextWindow: 32_000,
+        },
+        selected,
+      ]);
 
-    const data = await buildModelsProviderData(
-      {
-        agents: { defaults: { model: { primary: "anthropic/claude-opus-4-5" } } },
-      } as OpenClawConfig,
-      undefined,
-      { view: "all" },
-    );
+      const data = await buildPreparedModelsProviderData(
+        {
+          agents: { defaults: { model: { primary: "anthropic/claude-opus-4-5" } } },
+        } as OpenClawConfig,
+        undefined,
+        { view },
+      );
 
-    expect(data.byProvider.get("openai")).toEqual(new Set(["gpt-5.5"]));
-    expect(data.modelNames.get("openai/gpt-5.5")).toBe("ChatGPT GPT-5.5");
-  });
+      expect(data.byProvider.get("openai")).toEqual(new Set(["gpt-5.5"]));
+      expect(data.modelNames.get("openai/gpt-5.5")).toBe("ChatGPT GPT-5.5");
+      expect(data.modelCatalog.filter((entry) => entry.provider === "openai")).toEqual([selected]);
+    },
+  );
 
   it.each(["selected agent", "explicit workspace"] as const)(
     "uses prepared %s policy for model defaults and browse data",
@@ -456,11 +464,11 @@ describe("handleModelsCommand", () => {
         const dispose = installPluginMetadataOwner(owner, pluginCache);
         try {
           owner.publish(owner.prepare({ config: cfg }), { config: cfg });
-          const main = await buildModelsProviderData(cfg, "main");
+          const main = await buildPreparedModelsProviderData(cfg, "main");
           expect(main.resolvedDefault).toEqual({ provider: "custom", model: "main-current" });
           expect(main.byProvider.get("custom")).toEqual(new Set(["main-current"]));
 
-          const data = await buildModelsProviderData(
+          const data = await buildPreparedModelsProviderData(
             cfg,
             scope === "selected agent" ? "work" : "main",
             scope === "explicit workspace" ? { workspaceDir: workspaceDirs.work } : {},
@@ -468,7 +476,7 @@ describe("handleModelsCommand", () => {
           expect(data.resolvedDefault).toEqual({ provider: "custom", model: "work-current" });
           expect(data.byProvider.get("custom")).toEqual(new Set(["work-current"]));
 
-          const again = await buildModelsProviderData(cfg, "main");
+          const again = await buildPreparedModelsProviderData(cfg, "main");
           expect(again.resolvedDefault).toEqual(main.resolvedDefault);
           expect(again.byProvider.get("custom")).toEqual(main.byProvider.get("custom"));
         } finally {
@@ -554,7 +562,7 @@ describe("handleModelsCommand", () => {
     ]);
     modelProviderAuthMocks.authenticatedProviders = new Set(["claude-cli"]);
 
-    const data = await buildModelsProviderData({
+    const data = await buildPreparedModelsProviderData({
       agents: {
         defaults: {
           model: { primary: "anthropic/claude-opus-4-7" },
@@ -608,7 +616,7 @@ describe("handleModelsCommand", () => {
     ]);
     modelProviderAuthMocks.authenticatedProviders = new Set(["anthropic", "acme-cli"]);
 
-    const data = await buildModelsProviderData({
+    const data = await buildPreparedModelsProviderData({
       agents: {
         defaults: {
           model: { primary: "anthropic/claude-opus-4-7" },
@@ -636,7 +644,7 @@ describe("handleModelsCommand", () => {
     ]);
     modelProviderAuthMocks.authenticatedProviders = new Set(["anthropic", "claude-cli", "minimax"]);
 
-    const minimaxData = await buildModelsProviderData({
+    const minimaxData = await buildPreparedModelsProviderData({
       agents: {
         defaults: {
           model: { primary: "anthropic/claude-opus-4-7" },
@@ -694,7 +702,7 @@ describe("handleModelsCommand", () => {
   });
 
   it("labels the OpenAI default runtime choice as Codex", async () => {
-    const data = await buildModelsProviderData({
+    const data = await buildPreparedModelsProviderData({
       agents: {
         defaults: {
           model: { primary: "openai/gpt-5.5" },
@@ -715,7 +723,7 @@ describe("handleModelsCommand", () => {
   });
 
   it("keeps custom OpenAI-compatible providers on the OpenClaw default runtime choice", async () => {
-    const data = await buildModelsProviderData({
+    const data = await buildPreparedModelsProviderData({
       models: {
         providers: {
           openai: {
@@ -739,7 +747,7 @@ describe("handleModelsCommand", () => {
   });
 
   it("lets exact model runtime policy override provider runtime policy in picker choices", async () => {
-    const data = await buildModelsProviderData({
+    const data = await buildPreparedModelsProviderData({
       models: {
         providers: {
           openai: {
@@ -778,7 +786,7 @@ describe("handleModelsCommand", () => {
       { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet" },
     ]);
 
-    const data = await buildModelsProviderData({
+    const data = await buildPreparedModelsProviderData({
       agents: {
         defaults: {
           model: { primary: "openai/gpt-5.5" },
@@ -803,7 +811,7 @@ describe("handleModelsCommand", () => {
       { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet" },
     ]);
 
-    const data = await buildModelsProviderData({
+    const data = await buildPreparedModelsProviderData({
       agents: {
         defaults: {
           model: { primary: "openai/gpt-5.5" },
@@ -834,7 +842,7 @@ describe("handleModelsCommand", () => {
     ]);
     modelProviderAuthMocks.authenticatedProviders = new Set(["clawrouter", "openai"]);
 
-    const data = await buildModelsProviderData({
+    const data = await buildPreparedModelsProviderData({
       agents: { defaults: { modelPolicy: { allow: ["clawrouter/anthropic/*"] } } },
     } as OpenClawConfig);
 
@@ -954,7 +962,7 @@ describe("handleModelsCommand", () => {
       },
     } satisfies Partial<OpenClawConfig>;
 
-    const data = await buildModelsProviderData(cfg as OpenClawConfig);
+    const data = await buildPreparedModelsProviderData(cfg as OpenClawConfig);
 
     expect([...(data.byProvider.get("openai") ?? [])]).toEqual(["gpt-5.4"]);
     expect([...(data.byProvider.get("deepseek") ?? [])].toSorted()).toEqual([

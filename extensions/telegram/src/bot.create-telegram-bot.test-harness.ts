@@ -139,7 +139,7 @@ const skillCommandListHoisted = vi.hoisted(() => ({
   listSkillCommandsForAgents: vi.fn<TelegramBotDeps["listSkillCommandsForAgents"]>(() => []),
 }));
 const modelProviderDataHoisted = vi.hoisted(() => ({
-  buildModelsProviderData: vi.fn() as MockFn<TelegramBotDeps["buildModelsProviderData"]>,
+  buildModelsProviderData: vi.fn<TelegramBotDeps["buildModelsProviderData"]>(),
 }));
 const replySpyHoisted = vi.hoisted(() => ({
   replySpy: vi.fn<ReplySpy>(async (_ctx, opts) => {
@@ -271,7 +271,22 @@ async function createModelsProviderDataFromConfig(
   }
 
   const providers = [...byProvider.keys()].toSorted();
-  return { byProvider, providers, resolvedDefault, modelNames: new Map<string, string>() };
+  return {
+    byProvider,
+    providers,
+    resolvedDefault,
+    modelNames: new Map<string, string>(),
+    modelCatalog: [...byProvider].flatMap(([provider, models]) =>
+      [...models].map((id) => ({ provider, id, name: id, reasoning: false })),
+    ),
+    // These catalog fixtures have no modelPolicy restrictions.
+    modelPolicy: { allows: () => true },
+    modelNormalization: {
+      manifestPlugins: [],
+      allowManifestNormalization: false,
+      allowPluginNormalization: false,
+    },
+  };
 }
 
 const systemEventsHoisted = vi.hoisted(() => ({
@@ -506,7 +521,7 @@ export const telegramBotDepsForTest: TelegramBotDeps = {
   enqueueSystemEvent: enqueueSystemEventSpy as TelegramBotDeps["enqueueSystemEvent"],
   dispatchReplyWithBufferedBlockDispatcher,
   loadWebMedia: loadWebMedia as TelegramBotDeps["loadWebMedia"],
-  buildModelsProviderData: buildModelsProviderData as TelegramBotDeps["buildModelsProviderData"],
+  buildModelsProviderData,
   listSkillCommandsForAgents:
     listSkillCommandsForAgents as TelegramBotDeps["listSkillCommandsForAgents"],
   syncTelegramMenuCommands: syncTelegramMenuCommands as TelegramBotDeps["syncTelegramMenuCommands"],

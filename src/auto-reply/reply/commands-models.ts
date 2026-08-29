@@ -18,9 +18,13 @@ import {
   resolveLogicalVisibleModelCatalog,
   type ModelCatalogAuthChecker,
 } from "../../agents/model-catalog-visibility.js";
+import type { ModelCatalogEntry } from "../../agents/model-catalog.js";
 import { createProviderAuthChecker } from "../../agents/model-provider-auth.js";
 import { isRetiredModelPickerProvider } from "../../agents/model-runtime-aliases.js";
-import { modelCatalogLogicalKey } from "../../agents/model-selection-shared.js";
+import {
+  dedupeModelCatalogEntries,
+  modelCatalogLogicalKey,
+} from "../../agents/model-selection-shared.js";
 import {
   buildModelAliasIndex,
   normalizeProviderId,
@@ -28,7 +32,10 @@ import {
   resolveDefaultModelForAgent,
   resolveModelRefFromString,
 } from "../../agents/model-selection.js";
-import { createModelVisibilityPolicy } from "../../agents/model-visibility-policy.js";
+import {
+  createModelVisibilityPolicy,
+  type ModelVisibilityPolicy,
+} from "../../agents/model-visibility-policy.js";
 import { openAIModelCatalogRoutePolicy } from "../../agents/openai-model-routes.js";
 import { listOpenAIAuthProfileProvidersForAgentRuntime } from "../../agents/openai-routing.js";
 import { loadPreparedModelCatalogSnapshot } from "../../agents/prepared-model-catalog.js";
@@ -40,7 +47,10 @@ import { resolveAgentRuntimeLabel } from "../../status/agent-runtime-label.js";
 import type { ReplyPayload } from "../types.js";
 import { rejectUnauthorizedCommand } from "./command-gates.js";
 import type { CommandHandler } from "./commands-types.js";
-import { resolveRuntimeNormalization } from "./model-runtime-normalization.js";
+import {
+  resolveRuntimeNormalization,
+  type RuntimeModelNormalization,
+} from "./model-runtime-normalization.js";
 
 const PAGE_SIZE_DEFAULT = 20;
 const PAGE_SIZE_MAX = 100;
@@ -57,6 +67,12 @@ export type ModelsProviderData = {
   resolvedDefault: { provider: string; model: string };
   modelNames: Map<string, string>;
   runtimeChoicesByProvider?: Map<string, ModelsRuntimeChoice[]>;
+};
+
+type PreparedModelsProviderData = ModelsProviderData & {
+  modelCatalog: ModelCatalogEntry[];
+  modelPolicy: Pick<ModelVisibilityPolicy, "allows">;
+  modelNormalization: RuntimeModelNormalization;
 };
 
 export type ModelsRuntimeChoice = {
@@ -148,11 +164,11 @@ function addRuntimeChoice(
   return choices;
 }
 
-export async function buildModelsProviderData(
+export async function buildPreparedModelsProviderData(
   cfg: OpenClawConfig,
   agentId?: string,
   options: { view?: "default" | "all"; workspaceDir?: string } = {},
-): Promise<ModelsProviderData> {
+): Promise<PreparedModelsProviderData> {
   const runtimeNormalization = resolveRuntimeNormalization(cfg, agentId, options);
   const resolvedDefault = resolveDefaultModelForAgent({
     cfg,
@@ -186,6 +202,7 @@ export async function buildModelsProviderData(
     catalog,
     defaultProvider: resolvedDefault.provider,
     defaultModel: resolvedDefault.model,
+    preparedDefaultModel: resolvedDefault,
     agentId,
     ...runtimeNormalization,
   });
@@ -274,7 +291,7 @@ export async function buildModelsProviderData(
           model: trimmed,
           defaultProvider: resolvedDefault.provider,
           agentId,
-          manifestPlugins: runtimeNormalization.manifestPlugins,
+          ...runtimeNormalization,
         })
       : resolvedDefault.provider;
     const resolved = resolveModelRefFromString({
@@ -398,7 +415,18 @@ export async function buildModelsProviderData(
     runtimeChoicesByProvider.set(provider, choices);
   }
 
-  return { byProvider, providers, resolvedDefault, modelNames, runtimeChoicesByProvider };
+  return {
+    byProvider,
+    providers,
+    resolvedDefault,
+    modelNames,
+    // Selection needs the prepared capabilities, with selected physical routes
+    // ahead of other inventory rows for the same logical model.
+    modelCatalog: dedupeModelCatalogEntries([...visibleCatalog, ...catalog]),
+    modelPolicy: visibilityPolicy,
+    modelNormalization: runtimeNormalization,
+    runtimeChoicesByProvider,
+  };
 }
 
 function formatProviderLine(params: { provider: string; count: number }): string {
@@ -572,7 +600,7 @@ export async function resolveModelsCommandReply(params: {
   const argText = body.replace(/^\/models\b/i, "").trim();
   const parsed = parseModelsArgs(argText);
 
-  const { byProvider, providers, modelNames } = await buildModelsProviderData(
+  const { byProvider, providers, modelNames } = await buildPreparedModelsProviderData(
     params.cfg,
     params.agentId,
     {

@@ -624,7 +624,7 @@ export async function resolveReplyDirectives(params: {
     !thinkingActive &&
     !thinkingExplicitlySet
   ) {
-    resolvedReasoningLevel = await modelState.resolveDefaultReasoningLevel();
+    resolvedReasoningLevel = await modelState.resolveDefaultReasoningLevel({ provider, model });
   }
   const { directiveAck, perMessageQueueMode, perMessageQueueOptions } = applyResult;
   const resolvedFastModeState = resolveFastModeState({

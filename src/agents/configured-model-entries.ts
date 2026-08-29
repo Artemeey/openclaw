@@ -7,12 +7,12 @@ import {
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveAgentConfig } from "./agent-scope-config.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
-import type { ModelManifestNormalizationContext } from "./model-ref-shared.js";
 import { resolveConfiguredModelFallbacks } from "./model-selection-resolve.js";
 import {
   buildModelAliasIndexCore as buildModelAliasIndex,
   inferUniqueProviderFromConfiguredModels,
   type ModelAliasIndex,
+  type ModelSelectionNormalizationContext,
   resolveConfiguredModelRef,
   resolveModelRefFromString,
 } from "./model-selection-shared.js";
@@ -35,7 +35,7 @@ export function resolveConfiguredModelEntries(
     allowPluginNormalization?: boolean;
     canonicalizeRef?: <TRef extends { provider: string; model: string }>(ref: TRef) => TRef;
     aliasIndex?: ModelAliasIndex;
-  } & ModelManifestNormalizationContext,
+  } & ModelSelectionNormalizationContext,
 ): {
   entries: ConfiguredModelEntry[];
   byKey: Map<string, ConfiguredModelEntry>;
@@ -90,11 +90,8 @@ export function resolveConfiguredModelEntries(
     const inferredProvider = trimmed.includes("/")
       ? undefined
       : inferUniqueProviderFromConfiguredModels({
-          cfg: params.cfg,
-          agentId: params.agentId,
+          ...params,
           model: trimmed,
-          allowManifestNormalization: params.allowManifestNormalization,
-          manifestPlugins: params.manifestPlugins,
         });
     const resolved = resolveModelRefFromString({
       ...params,

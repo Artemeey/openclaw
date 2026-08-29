@@ -60,11 +60,18 @@ const upsertChannelPairingRequestHoisted = vi.hoisted(() =>
 );
 const enqueueSystemEventHoisted = vi.hoisted(() => vi.fn());
 const buildModelsProviderDataHoisted = vi.hoisted(() =>
-  vi.fn(async () => ({
+  vi.fn<TelegramBotDeps["buildModelsProviderData"]>(async () => ({
     byProvider: new Map<string, Set<string>>(),
     providers: [],
     resolvedDefault: { provider: "openai", model: "gpt-test" },
     modelNames: new Map<string, string>(),
+    modelCatalog: [],
+    modelPolicy: { allows: () => true },
+    modelNormalization: {
+      manifestPlugins: [],
+      allowManifestNormalization: false,
+      allowPluginNormalization: false,
+    },
   })),
 );
 const listSkillCommandsForAgentsHoisted = vi.hoisted(() => vi.fn(() => []));
@@ -346,7 +353,7 @@ export const telegramDepsForTest: TelegramBotDeps = {
   enqueueSystemEvent: enqueueSystemEvent as TelegramBotDeps["enqueueSystemEvent"],
   dispatchReplyWithBufferedBlockDispatcher:
     dispatchReplyWithBufferedBlockDispatcher as TelegramBotDeps["dispatchReplyWithBufferedBlockDispatcher"],
-  buildModelsProviderData: buildModelsProviderData as TelegramBotDeps["buildModelsProviderData"],
+  buildModelsProviderData,
   listSkillCommandsForAgents:
     listSkillCommandsForAgents as TelegramBotDeps["listSkillCommandsForAgents"],
   createChannelMessageReplyPipeline:
@@ -442,12 +449,6 @@ function resetTelegramDispatchTestState() {
     created: true,
   });
   enqueueSystemEvent.mockResolvedValue(undefined);
-  buildModelsProviderData.mockResolvedValue({
-    byProvider: new Map<string, Set<string>>(),
-    providers: [],
-    resolvedDefault: { provider: "openai", model: "gpt-test" },
-    modelNames: new Map<string, string>(),
-  });
   listSkillCommandsForAgents.mockReturnValue([]);
   createChannelMessageReplyPipeline.mockReturnValue({
     responsePrefix: undefined,

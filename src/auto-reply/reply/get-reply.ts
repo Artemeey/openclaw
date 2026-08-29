@@ -1129,7 +1129,7 @@ export async function getReplyFromConfig(
     command.commandBodyNormalized.trim() === "/status";
   const statusThinkingCatalog = shouldPrepareStatusThinkingCatalog
     ? await traceGetReplyPhase("reply.prepare_status_thinking_catalog", () =>
-        modelState.resolveThinkingCatalog(),
+        modelState.resolveThinkingCatalog({ provider, model }),
       )
     : undefined;
 
@@ -1169,7 +1169,8 @@ export async function getReplyFromConfig(
       resolvedElevatedLevel,
       blockReplyChunking,
       resolvedBlockStreamingBreak,
-      resolveDefaultThinkingLevel: modelState.resolveDefaultThinkingLevel,
+      resolveDefaultThinkingLevel: () =>
+        modelState.resolveDefaultThinkingLevel({ provider, model }),
       provider,
       model,
       contextTokens,

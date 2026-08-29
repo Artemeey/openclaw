@@ -75,6 +75,7 @@ type ModelSelectionState = {
   provider: string;
   model: string;
   requestedRouteResolution: ModelFallbackRouteResolution;
+  modelPolicy: ModelVisibilityPolicy;
   allowedModelKeys: Set<string>;
   allowedModelCatalog: ModelCatalog;
   policyAliasIndex: ModelAliasIndex;
@@ -83,11 +84,13 @@ type ModelSelectionState = {
   resetModelOverrideReason?: "disallowed" | "stale" | "temporarily-unavailable";
   modelPolicyConfigPath?: string;
   modelPolicyRepairConfigPath?: string;
-  resolveThinkingCatalog: () => Promise<ModelCatalog | undefined>;
+  resolveThinkingCatalog: (
+    selection?: ThinkingDefaultSelection,
+  ) => Promise<ModelCatalog | undefined>;
   resolveDefaultThinkingLevel: (selection?: ThinkingDefaultSelection) => Promise<ThinkLevel>;
   hasConfiguredThinkingDefault?: boolean;
   /** Default reasoning level from model capability: "on" if model has reasoning, else "off". */
-  resolveDefaultReasoningLevel: () => Promise<"on" | "off">;
+  resolveDefaultReasoningLevel: (selection?: ThinkingDefaultSelection) => Promise<"on" | "off">;
   needsModelCatalog: boolean;
   modelContextWindow?: number;
   modelContextTokens?: number;
@@ -111,6 +114,12 @@ export function createFastTestModelSelectionState(params: {
     provider: params.provider,
     model: params.model,
     requestedRouteResolution: "resolved",
+    modelPolicy: createModelVisibilityPolicy({
+      cfg: { agents: { defaults: params.agentCfg } },
+      catalog: [],
+      defaultProvider: params.provider,
+      defaultModel: params.model,
+    }),
     allowedModelKeys: new Set<string>(),
     allowedModelCatalog: [],
     policyAliasIndex: { byAlias: new Map(), byKey: new Map() },
@@ -197,6 +206,10 @@ export async function createModelSelectionState(params: {
     ).loadPreparedModelCatalogSnapshot({
       config: cfg,
       ...(params.agentId ? { agentId: params.agentId } : {}),
+      ...(params.agentDir ? { agentDir: params.agentDir } : {}),
+      ...(runtimeModelNormalization.workspaceDir
+        ? { workspaceDir: runtimeModelNormalization.workspaceDir }
+        : {}),
     }));
   const runtimeModelNormalization = resolveRuntimeNormalization(cfg, params.agentId, params);
 
@@ -209,15 +222,17 @@ export async function createModelSelectionState(params: {
   const modelSelectionLocked = sessionEntry?.modelSelectionLocked === true;
   const agentEntry = params.agentId ? resolveAgentConfig(cfg, params.agentId) : undefined;
 
-  let visibilityPolicy: ModelVisibilityPolicy = createModelVisibilityPolicy({
-    cfg,
-    catalog: [],
-    defaultProvider,
-    defaultModel,
-    preparedDefaultModel,
-    agentId: params.agentId,
-    ...runtimeModelNormalization,
-  });
+  const buildVisibilityPolicy = (catalog: ModelCatalog): ModelVisibilityPolicy =>
+    createModelVisibilityPolicy({
+      cfg,
+      catalog,
+      defaultProvider,
+      defaultModel,
+      preparedDefaultModel,
+      agentId: params.agentId,
+      ...runtimeModelNormalization,
+    });
+  let visibilityPolicy = buildVisibilityPolicy([]);
   const hasAllowlist = !visibilityPolicy.allowAny;
   const hasConfiguredModels =
     Object.keys(agentCfg?.models ?? {}).length > 0 ||
@@ -306,15 +321,7 @@ export async function createModelSelectionState(params: {
       "catalog-loaded",
       `entries=${modelCatalog.length} authoritative=${catalogAuthoritative}`,
     );
-    visibilityPolicy = createModelVisibilityPolicy({
-      cfg,
-      catalog: modelCatalog,
-      defaultProvider,
-      defaultModel,
-      preparedDefaultModel,
-      agentId: params.agentId,
-      ...runtimeModelNormalization,
-    });
+    visibilityPolicy = buildVisibilityPolicy(modelCatalog);
     allowedModelCatalog = visibilityPolicy.allowedCatalog;
     allowedModelKeys = visibilityPolicy.allowedKeys;
     logStage(
@@ -322,15 +329,7 @@ export async function createModelSelectionState(params: {
       `allowed=${allowedModelCatalog.length} keys=${allowedModelKeys.size}`,
     );
   } else if (hasAllowlist || hasConfiguredModels) {
-    visibilityPolicy = createModelVisibilityPolicy({
-      cfg,
-      catalog: configuredModelCatalog,
-      defaultProvider,
-      defaultModel,
-      preparedDefaultModel,
-      agentId: params.agentId,
-      ...runtimeModelNormalization,
-    });
+    visibilityPolicy = buildVisibilityPolicy(configuredModelCatalog);
     allowedModelCatalog = visibilityPolicy.allowedCatalog;
     allowedModelKeys = visibilityPolicy.allowedKeys;
     logStage(
@@ -546,18 +545,9 @@ export async function createModelSelectionState(params: {
     }
   }
 
-  let thinkingCatalog: ModelCatalog | undefined;
   let manifestModelCatalog: ModelCatalog | null = null;
   const buildThinkingCatalog = (catalog: ModelCatalog): ModelCatalog =>
-    createModelVisibilityPolicy({
-      cfg,
-      catalog,
-      defaultProvider,
-      defaultModel,
-      preparedDefaultModel,
-      agentId: params.agentId,
-      ...runtimeModelNormalization,
-    }).allowedCatalog;
+    buildVisibilityPolicy(catalog).allowedCatalog;
   const loadManifestCatalog = async () => {
     if (manifestModelCatalog) {
       return manifestModelCatalog;
@@ -565,59 +555,57 @@ export async function createModelSelectionState(params: {
     const { loadManifestModelCatalog } = await modelCatalogRuntimeLoader.load();
     manifestModelCatalog = loadManifestModelCatalog({
       config: cfg,
+      ...(runtimeModelNormalization.workspaceDir
+        ? { workspaceDir: runtimeModelNormalization.workspaceDir }
+        : {}),
       fallbackToMetadataScan: false,
     });
     logStage("manifest-catalog-loaded", `entries=${manifestModelCatalog.length}`);
     return manifestModelCatalog;
   };
-  const resolveThinkingCatalog = async () => {
-    if (thinkingCatalog) {
-      return thinkingCatalog;
+  const thinkingCatalogs = new Map<string, ModelCatalog>();
+  const resolveThinkingCatalog = async (
+    selection: ThinkingDefaultSelection = { provider, model },
+  ) => {
+    const key = buildModelCatalogRef(selection.provider, selection.model);
+    const cached = thinkingCatalogs.get(key);
+    if (cached) {
+      return cached.length > 0 ? cached : undefined;
     }
-    let catalogForThinking =
-      allowedModelCatalog.length > 0
-        ? allowedModelCatalog
-        : modelCatalog && modelCatalog.length > 0
-          ? buildThinkingCatalog(modelCatalog)
-          : [];
-    let selectedCatalogEntry = findSelectedCatalogEntry({
-      catalog: catalogForThinking,
-      provider,
-      model,
-    });
-    // Prefer static manifest rows before cold runtime discovery. Synthetic
-    // allowlist rows know only provider/id; manifest rows can prove reasoning
-    // support without opening the Pi auth-backed model registry.
-    if (!modelCatalog && selectedCatalogEntry?.reasoning === undefined) {
+    let catalog = allowedModelCatalog;
+    const hasReasoning = (entries: ModelCatalog) =>
+      findSelectedCatalogEntry({
+        catalog: entries,
+        provider: selection.provider,
+        model: selection.model,
+      })?.reasoning !== undefined;
+    if (!hasReasoning(catalog)) {
       const manifestCatalog = buildThinkingCatalog(await loadManifestCatalog());
-      const manifestSelectedEntry = findSelectedCatalogEntry({
-        catalog: manifestCatalog,
-        provider,
-        model,
-      });
-      if (manifestSelectedEntry?.reasoning !== undefined) {
-        catalogForThinking = manifestCatalog;
-        selectedCatalogEntry = manifestSelectedEntry;
+      if (hasReasoning(manifestCatalog)) {
+        catalog = manifestCatalog;
+      } else {
+        // Capability reads stay scoped to the actual selection, including a model
+        // chosen after this state was prepared. Never discover every provider here.
+        const { loadProviderScopedThinkingCatalog } = await modelCatalogRuntimeLoader.load();
+        const scopedCatalog = buildThinkingCatalog(
+          await loadProviderScopedThinkingCatalog({
+            config: cfg,
+            agentId: params.agentId,
+            ...(params.agentDir ? { agentDir: params.agentDir } : {}),
+            ...(runtimeModelNormalization.workspaceDir
+              ? { workspaceDir: runtimeModelNormalization.workspaceDir }
+              : {}),
+            provider: selection.provider,
+            model: selection.model,
+          }),
+        );
+        if (findSelectedCatalogEntry({ catalog: scopedCatalog, ...selection })) {
+          catalog = scopedCatalog;
+        }
       }
     }
-    if (!modelCatalog && selectedCatalogEntry?.reasoning === undefined) {
-      modelCatalog = (await loadRuntimeCatalogSnapshot()).entries;
-      logStage("catalog-loaded-for-thinking", `entries=${modelCatalog.length}`);
-      const runtimeCatalog = buildThinkingCatalog(modelCatalog);
-      const runtimeSelectedEntry = findSelectedCatalogEntry({
-        catalog: runtimeCatalog,
-        provider,
-        model,
-      });
-      catalogForThinking =
-        runtimeSelectedEntry || !catalogForThinking || catalogForThinking.length === 0
-          ? runtimeCatalog.length > 0
-            ? runtimeCatalog
-            : allowedModelCatalog
-          : allowedModelCatalog;
-    }
-    thinkingCatalog = catalogForThinking.length > 0 ? catalogForThinking : undefined;
-    return thinkingCatalog;
+    thinkingCatalogs.set(key, catalog);
+    return catalog.length > 0 ? catalog : undefined;
   };
 
   const defaultThinkingLevels = new Map<string, ThinkLevel>();
@@ -652,7 +640,7 @@ export async function createModelSelectionState(params: {
       defaultThinkingLevels.set(cacheKey, configuredThinkingDefault);
       return configuredThinkingDefault;
     }
-    const catalogForThinking = await resolveThinkingCatalog();
+    const catalogForThinking = await resolveThinkingCatalog(selection);
     const resolved = resolveThinkingDefault({
       cfg,
       provider: selectedProvider,
@@ -665,48 +653,14 @@ export async function createModelSelectionState(params: {
     return defaultThinkingLevel;
   };
 
-  let defaultReasoningLevel: "on" | "off" | undefined;
-  const resolveDefaultReasoningLevel = async (): Promise<"on" | "off"> => {
-    if (defaultReasoningLevel) {
-      return defaultReasoningLevel;
-    }
-    let catalogForReasoning = modelCatalog ?? allowedModelCatalog;
-    let selectedReasoningEntry = findSelectedCatalogEntry({
-      catalog: catalogForReasoning,
-      provider,
-      model,
+  const resolveDefaultReasoningLevel = async (
+    selection: ThinkingDefaultSelection = { provider, model },
+  ): Promise<"on" | "off"> =>
+    resolveReasoningDefault({
+      provider: selection.provider,
+      model: selection.model,
+      catalog: await resolveThinkingCatalog(selection),
     });
-    if (!modelCatalog && selectedReasoningEntry?.reasoning === undefined) {
-      const manifestCatalog = await loadManifestCatalog();
-      const manifestReasoningCatalog =
-        hasAllowlist || hasConfiguredModels
-          ? buildThinkingCatalog(manifestCatalog)
-          : manifestCatalog;
-      const manifestSelectedEntry = findSelectedCatalogEntry({
-        catalog: manifestReasoningCatalog,
-        provider,
-        model,
-      });
-      if (manifestSelectedEntry?.reasoning !== undefined) {
-        catalogForReasoning = manifestReasoningCatalog;
-        selectedReasoningEntry = manifestSelectedEntry;
-      }
-    }
-    if (
-      (!catalogForReasoning || catalogForReasoning.length === 0) &&
-      selectedReasoningEntry?.reasoning === undefined
-    ) {
-      modelCatalog = (await loadRuntimeCatalogSnapshot()).entries;
-      logStage("catalog-loaded-for-reasoning", `entries=${modelCatalog.length}`);
-      catalogForReasoning = modelCatalog;
-    }
-    defaultReasoningLevel = resolveReasoningDefault({
-      provider,
-      model,
-      catalog: catalogForReasoning,
-    });
-    return defaultReasoningLevel;
-  };
   const selectedCatalogEntry = findSelectedCatalogEntry({
     catalog: modelCatalog ?? allowedModelCatalog,
     provider,
@@ -728,6 +682,7 @@ export async function createModelSelectionState(params: {
     provider,
     model,
     requestedRouteResolution,
+    modelPolicy: visibilityPolicy,
     allowedModelKeys,
     allowedModelCatalog,
     policyAliasIndex: visibilityPolicy.policyAliasIndex,

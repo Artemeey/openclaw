@@ -6,6 +6,7 @@ import {
 } from "../../agents/context-cache.js";
 import {
   loadManifestModelCatalog,
+  loadProviderScopedThinkingCatalog,
   loadPreparedModelCatalog as loadModelCatalogLocal,
 } from "../../agents/model-catalog.runtime.js";
 import { normalizeModelRef } from "../../agents/model-ref-shared.js";
@@ -178,6 +179,7 @@ afterEach(() => {
   vi.mocked(loadManifestModelCatalog).mockReset();
   vi.mocked(loadManifestModelCatalog).mockReturnValue([]);
   authProfileStoreMock.reset();
+  vi.mocked(loadProviderScopedThinkingCatalog).mockReset().mockResolvedValue([]);
 });
 
 const makeConfiguredModel = (overrides: Record<string, unknown> = {}) => ({
@@ -663,7 +665,7 @@ describe("createModelSelectionState catalog loading", () => {
 
   it("hydrates runtime catalog metadata when the configured allowlist entry lacks reasoning", async () => {
     vi.mocked(loadModelCatalogLocal).mockClear();
-    vi.mocked(loadModelCatalogLocal).mockResolvedValueOnce([
+    vi.mocked(loadProviderScopedThinkingCatalog).mockResolvedValueOnce([
       { provider: "openai", id: "gpt-5.4", name: "GPT-5.4", reasoning: true },
     ]);
     const cfg = {
@@ -691,7 +693,13 @@ describe("createModelSelectionState catalog loading", () => {
     });
 
     await expect(state.resolveDefaultThinkingLevel()).resolves.toBe("medium");
-    expect(loadModelCatalogLocal).toHaveBeenCalledOnce();
+    expect(loadModelCatalogLocal).not.toHaveBeenCalled();
+    expect(loadProviderScopedThinkingCatalog).toHaveBeenCalledWith({
+      config: cfg,
+      agentId: undefined,
+      provider: "openai",
+      model: "gpt-5.4",
+    });
   });
 
   it("uses the prepared gateway owner catalog without an exact-generation reload", async () => {
@@ -2770,9 +2778,7 @@ describe("createModelSelectionState resolveDefaultReasoningLevel", () => {
   });
 
   it("returns on when catalog model has reasoning true", async () => {
-    const { loadPreparedModelCatalog: loadModelCatalogForCase } =
-      await import("../../agents/model-catalog.runtime.js");
-    vi.mocked(loadModelCatalogForCase).mockResolvedValueOnce([
+    vi.mocked(loadProviderScopedThinkingCatalog).mockResolvedValueOnce([
       { provider: "openrouter", id: "x-ai/grok-4.1-fast", name: "Grok", reasoning: true },
     ]);
     const state = await createModelSelectionState({

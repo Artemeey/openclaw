@@ -175,10 +175,17 @@ function createTelegramDeps(stateDir: string): TelegramBotDeps {
       providers: [],
       resolvedDefault: { provider: "openai", model: "gpt-test" },
       modelNames: new Map<string, string>(),
+      modelCatalog: [],
+      modelPolicy: { allows: () => true },
+      modelNormalization: {
+        manifestPlugins: [],
+        allowManifestNormalization: false,
+        allowPluginNormalization: false,
+      },
     }),
     listSkillCommandsForAgents: () => [],
     wasSentByBot: () => false,
-  } as TelegramBotDeps;
+  };
 }
 
 /** Both members must land in one turn; a second turn is the split this file guards. */

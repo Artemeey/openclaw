@@ -435,6 +435,13 @@ describe("modelsListCommand forward-compat", () => {
     expect(mocks.ensureAuthProfileStore).toHaveBeenCalledWith("/tmp/openclaw-agent-research", {
       inheritedAuthDir: expect.any(String),
     });
+    expect(mocks.resolveConfiguredEntries).toHaveBeenCalledWith({
+      cfg: mocks.resolvedConfig,
+      agentId: "research",
+      allowPluginNormalization: false,
+      manifestPlugins: mocks.emptyPluginMetadataSnapshot.manifestRegistry.plugins,
+      canonicalizeRef: expect.any(Function),
+    });
   });
 
   it("rejects unknown provider filters before loading the model registry", async () => {

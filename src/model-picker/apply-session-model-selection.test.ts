@@ -1,9 +1,17 @@
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { DEFAULT_CONTEXT_TOKENS } from "../agents/defaults.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
+import { loadProviderScopedThinkingCatalog } from "../agents/model-catalog.runtime.js";
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
+
+vi.mock("../agents/model-catalog.runtime.js", () => ({
+  loadProviderScopedThinkingCatalog: vi.fn(async () => []),
+}));
 
 const effects = vi.hoisted(() => ({
   enqueueSystemEvent: vi.fn(),
@@ -79,7 +87,6 @@ function createParams(overrides: Partial<ApplySessionModelSelectionParams> = {})
     defaultModel: "claude-opus-4-6",
     currentProvider: "anthropic",
     currentModel: "claude-opus-4-6",
-    allowedModelKeys: new Set(["anthropic/claude-opus-4-6", "openai/gpt-4o"]),
     modelCatalog: catalog,
     thinkingCatalog: catalog,
     canPersistStickyModelSelection: false,
@@ -95,6 +102,7 @@ function createParams(overrides: Partial<ApplySessionModelSelectionParams> = {})
 }
 
 beforeEach(() => {
+  vi.mocked(loadProviderScopedThinkingCatalog).mockReset().mockResolvedValue([]);
   effects.enqueueSystemEvent.mockReset();
   effects.info.mockReset();
   effects.warn.mockReset();
@@ -107,6 +115,131 @@ beforeEach(() => {
 });
 
 describe("applySessionModelSelection", () => {
+  it("uses selected route metadata for context and thinking outside the prepared inventory", async () => {
+    const selected: ModelCatalogEntry = {
+      provider: "fixture-route",
+      id: "reasoner",
+      name: "Reasoner",
+      api: "openai-responses",
+      contextWindow: 48_000,
+      contextTokens: 24_000,
+      reasoning: true,
+      compat: { supportedReasoningEfforts: ["low", "medium", "high", "max"] },
+    };
+    vi.mocked(loadProviderScopedThinkingCatalog).mockResolvedValueOnce([selected]);
+    const sessionEntry = createEntry({ thinkingLevel: "max" });
+    const result = await applySessionModelSelection(
+      createParams({
+        cfg: {
+          models: {
+            providers: {
+              "fixture-route": {
+                api: "openai-responses",
+                baseUrl: "https://fixture.invalid/v1",
+                models: [],
+              },
+            },
+          },
+        },
+        sessionEntry,
+        modelCatalog: [catalog[0]!],
+        thinkingCatalog: [catalog[0]!],
+        request: {
+          provider: selected.provider,
+          model: selected.id,
+          isDefault: false,
+          runtime: { kind: "set", runtime: "openclaw" },
+        },
+      }),
+    );
+    expect(result).toMatchObject({ status: "applied", contextTokens: 24_000 });
+    expect(result).not.toHaveProperty("thinkingRemap");
+    expect(sessionEntry).toMatchObject({
+      providerOverride: selected.provider,
+      modelOverride: selected.id,
+      thinkingLevel: "max",
+    });
+    expect(loadProviderScopedThinkingCatalog).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ provider: selected.provider, model: selected.id }),
+    );
+    expect(effects.refreshQueuedFollowupSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        nextThinking: expect.objectContaining({
+          level: "max",
+          catalog: expect.arrayContaining([selected]),
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    {
+      provider: "missing-provider",
+      model: "reasoner",
+      runtime: { kind: "unchanged" } as const,
+      reason: "unknown-provider",
+    },
+    {
+      provider: "openai",
+      model: "gpt-5.6-luna",
+      runtime: { kind: "set", runtime: "missing-runtime" } as const,
+      reason: "invalid-runtime",
+    },
+  ])(
+    "rejects $reason without persistence under unrestricted policy",
+    async ({ provider, model, runtime, reason }) => {
+      const sessionEntry = createEntry({ thinkingLevel: "high" });
+      const initial = structuredClone(sessionEntry);
+      const result = await applySessionModelSelection(
+        createParams({
+          sessionEntry,
+          modelCatalog: [catalog[0]!],
+          thinkingCatalog: [catalog[0]!],
+          request: { provider, model, runtime, isDefault: false },
+        }),
+      );
+      expect(result).toMatchObject({ status: "rejected", reason });
+      expect(sessionEntry).toEqual(initial);
+      expect(effects.triggerSessionPatchHook).not.toHaveBeenCalled();
+      expect(effects.refreshQueuedFollowupSession).not.toHaveBeenCalled();
+      expect(loadProviderScopedThinkingCatalog).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([undefined, {}, { allow: [] }, { allow: ["openai/*"] }])(
+    "persists an off-catalog selection under policy %j without credentials",
+    async (modelPolicy) => {
+      const sessionEntry = createEntry({ thinkingLevel: "high" });
+      const cfg: OpenClawConfig = { agents: { defaults: { modelPolicy } } };
+      const result = await applySessionModelSelection(
+        createParams({
+          cfg,
+          sessionEntry,
+          modelCatalog: [catalog[0]!],
+          thinkingCatalog: [catalog[0]!],
+          request: {
+            provider: "openai",
+            model: "gpt-5.6-luna",
+            isDefault: false,
+            runtime: { kind: "unchanged" },
+          },
+        }),
+      );
+      expect(result).toMatchObject({
+        status: "applied",
+        provider: "openai",
+        model: "gpt-5.6-luna",
+      });
+      expect(sessionEntry).toMatchObject({
+        providerOverride: "openai",
+        modelOverride: "gpt-5.6-luna",
+        modelOverrideSource: "user",
+        thinkingLevel: "high",
+      });
+      expect(effects.mutateConfigFileWithRetry).not.toHaveBeenCalled();
+    },
+  );
+
   it("applies a non-default selection, auth profile, cleanup, and side effects once", async () => {
     const sessionEntry = createEntry({
       model: "claude-opus-4-6",
@@ -482,6 +615,36 @@ describe("applySessionModelSelection", () => {
     expect(effects.triggerSessionPatchHook).not.toHaveBeenCalled();
   });
 
+  it.each([
+    {
+      name: "locked",
+      concurrent: createEntry({ modelSelectionLocked: true }),
+      outcome: { status: "rejected", reason: "locked" },
+    },
+    {
+      name: "replaced",
+      concurrent: createEntry({ sessionId: "session-2" }),
+      outcome: { status: "conflict" },
+    },
+  ])(
+    "preserves an in-memory session $name during metadata preparation",
+    async ({ concurrent, outcome }) => {
+      const metadata = createDeferred<ModelCatalogEntry[]>();
+      vi.mocked(loadProviderScopedThinkingCatalog).mockReturnValueOnce(metadata.promise);
+      const params = createParams();
+      const pending = applySessionModelSelection(params);
+      params.sessionStore[params.sessionKey] = concurrent;
+      metadata.resolve([]);
+
+      expect(await pending).toMatchObject(outcome);
+      expect(params.sessionStore[params.sessionKey]).toBe(concurrent);
+      expect(params.sessionEntry).toEqual(createEntry());
+      expect(effects.triggerSessionPatchHook).not.toHaveBeenCalled();
+      expect(effects.refreshQueuedFollowupSession).not.toHaveBeenCalled();
+      expect(effects.enqueueSystemEvent).not.toHaveBeenCalled();
+    },
+  );
+
   it("rejects when the authoritative persisted row became locked", async () => {
     const tempRoot = tempDirs.make("openclaw-model-picker-lock-");
     const storePath = path.join(tempRoot, "sessions.json");
@@ -503,11 +666,7 @@ describe("applySessionModelSelection", () => {
   it.each([
     {
       name: "allowlist",
-      overrides: { allowedModelKeys: new Set(["anthropic/claude-opus-4-6"]) },
-    },
-    {
-      name: "fresh catalog",
-      overrides: { allowedModelKeys: new Set<string>(), modelCatalog: [catalog[0]!] },
+      overrides: { cfg: { agents: { defaults: { modelPolicy: { allow: ["anthropic/*"] } } } } },
     },
   ])("rejects a model missing from the $name", async ({ overrides }) => {
     const sessionEntry = createEntry();
@@ -525,7 +684,7 @@ describe("applySessionModelSelection", () => {
 
   it.each([
     { boundary: "allowlist", allowed: ["model"], catalog: ["model", "custom/model"] },
-    { boundary: "catalog", allowed: ["model", "custom/model"], catalog: ["model"] },
+    { boundary: "off-catalog selection", allowed: ["model", "custom/model"], catalog: ["model"] },
     {
       boundary: "accepted selection",
       allowed: ["model", "custom/model"],
@@ -536,20 +695,35 @@ describe("applySessionModelSelection", () => {
     async ({ boundary, allowed, catalog: catalogKeys }) => {
       const sessionEntry = createEntry();
       const initial = structuredClone(sessionEntry);
+      const modelCatalog = catalogKeys.map((id) => ({
+        provider: "custom",
+        id,
+        name: id,
+        contextTokens: id === "model" ? 8_000 : 16_000,
+      }));
       const result = await applySessionModelSelection(
         createParams({
+          cfg: {
+            agents: {
+              defaults: { modelPolicy: { allow: allowed.map((id) => `custom/${id}`) } },
+            },
+            models: {
+              providers: {
+                custom: {
+                  api: "openai-responses",
+                  baseUrl: "https://models.example.test",
+                  models: [],
+                },
+              },
+            },
+          },
           sessionEntry,
           defaultProvider: "custom",
           defaultModel: "model",
           currentProvider: "custom",
           currentModel: "model",
-          allowedModelKeys: new Set(allowed.map((id) => `custom/${id}`)),
-          modelCatalog: catalogKeys.map((id) => ({
-            provider: "custom",
-            id,
-            name: id,
-            contextTokens: id === "model" ? 8_000 : 16_000,
-          })),
+          modelCatalog,
+          thinkingCatalog: modelCatalog,
           request: {
             provider: "custom",
             model: "custom/model",
@@ -559,11 +733,11 @@ describe("applySessionModelSelection", () => {
         }),
       );
 
-      if (boundary === "accepted selection") {
+      if (boundary !== "allowlist") {
         expect(result).toMatchObject({
           status: "applied",
           effectiveModelRef: "custom/custom/model",
-          contextTokens: 16_000,
+          contextTokens: boundary === "accepted selection" ? 16_000 : DEFAULT_CONTEXT_TOKENS,
         });
         expect(sessionEntry).toMatchObject({
           providerOverride: "custom",
