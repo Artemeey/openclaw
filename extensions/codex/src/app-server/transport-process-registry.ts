@@ -4,6 +4,7 @@ import type { PluginStateSyncKeyedStore } from "openclaw/plugin-sdk/plugin-state
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
   inspectCodexTransportProcess,
+  inspectCodexTransportProcessCommand,
   inspectCodexTransportProcessSnapshot,
   type PosixProcess,
 } from "./transport-process-containment.js";
@@ -11,6 +12,7 @@ import {
 export type StoredCodexAppServerProcess = {
   pid: number;
   startedAt: string;
+  command: string;
   ownerPid: number;
   ownerStartedAt: string;
   spawnedAtMs: number;
@@ -30,6 +32,7 @@ type SpawnedProcess = {
 type ProcessRegistryRuntime = {
   platform: NodeJS.Platform;
   inspectProcess: typeof inspectCodexTransportProcess;
+  inspectCommand: typeof inspectCodexTransportProcessCommand;
   inspectSnapshot: typeof inspectCodexTransportProcessSnapshot;
   kill: (pid: number, signal: NodeJS.Signals) => boolean;
   now: () => number;
@@ -37,6 +40,7 @@ type ProcessRegistryRuntime = {
 const PROCESS_REGISTRY_RUNTIME: ProcessRegistryRuntime = {
   platform: process.platform,
   inspectProcess: inspectCodexTransportProcess,
+  inspectCommand: inspectCodexTransportProcessCommand,
   inspectSnapshot: inspectCodexTransportProcessSnapshot,
   kill: (pid, signal) => process.kill(pid, signal),
   now: Date.now,
@@ -64,8 +68,9 @@ export async function registerCodexAppServerProcessSpawn(
   const deadline = spawnedAtMs + PROCESS_REGISTRY_INSPECTION_MS;
   try {
     // SIGKILL in this small spawn-to-identity window leaves cleanup to Codex's stdin-EOF drain.
-    const [identity, owner] = await Promise.all([
+    const [identity, command, owner] = await Promise.all([
       runtime.inspectProcess(pid, deadline),
+      runtime.inspectCommand(pid, deadline),
       (ownerIdentity ??= runtime.inspectProcess(process.pid, deadline)),
     ]);
     if (!owner) {
@@ -73,7 +78,7 @@ export async function registerCodexAppServerProcessSpawn(
       // whole process lifetime; drop it so the next spawn retries.
       ownerIdentity = undefined;
     }
-    if (!identity || !owner) {
+    if (!identity || !command || !owner) {
       // Without exact identities, a later reap could kill an innocent reused PID.
       warnRegistry("codex app-server process identity unavailable; skipping registration", { pid });
       return;
@@ -85,6 +90,7 @@ export async function registerCodexAppServerProcessSpawn(
       store.register(String(pid), {
         pid,
         startedAt: identity.startedAt,
+        command,
         ownerPid: process.pid,
         ownerStartedAt: owner.startedAt,
         spawnedAtMs,
@@ -151,6 +157,20 @@ async function reapProcesses(runtime: ProcessRegistryRuntime): Promise<void> {
       withRegistryStore((store) => deleteRegistryRowIfCurrent(store, key, value));
       continue;
     }
+    // lstart is second-granular, so pid + lstart alone could match a same-second
+    // replacement process. Command equality is the extra kill-authority gate;
+    // absent-or-failed reads keep the row for a later pass instead of killing.
+    // lstart is second-granular, so pid + lstart alone could match a same-second
+    // replacement process. Command equality is the extra kill-authority gate;
+    // absent-or-failed reads keep the row for a later pass instead of killing.
+    const command = await runtime.inspectCommand(value.pid, deadline);
+    if (runtime.now() >= deadline || command === undefined) {
+      continue;
+    }
+    if (command !== value.command) {
+      withRegistryStore((store) => deleteRegistryRowIfCurrent(store, key, value));
+      continue;
+    }
     // Never carry numeric signal authority across an await after this final identity check.
     const current = await runtime.inspectProcess(value.pid, deadline);
     if (
@@ -188,7 +208,10 @@ function deleteRegistryRowIfCurrent(
   }
   return store.deleteIf(
     key,
-    (row) => row.startedAt === expected.startedAt && row.ownerStartedAt === expected.ownerStartedAt,
+    (row) =>
+      row.startedAt === expected.startedAt &&
+      row.command === expected.command &&
+      row.ownerStartedAt === expected.ownerStartedAt,
   );
 }
 
@@ -200,6 +223,8 @@ function isStoredProcess(value: unknown): value is StoredCodexAppServerProcess {
     value.pid > 0 &&
     typeof value.startedAt === "string" &&
     value.startedAt.length > 0 &&
+    typeof value.command === "string" &&
+    value.command.length > 0 &&
     Number.isSafeInteger(value.ownerPid) &&
     typeof value.ownerPid === "number" &&
     value.ownerPid > 0 &&

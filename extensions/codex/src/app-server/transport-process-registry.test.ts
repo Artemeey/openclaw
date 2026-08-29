@@ -15,6 +15,7 @@ import { createCodexProcessRegistryTestStore } from "./transport-process-registr
 
 const STARTED_AT = "Sat Aug 29 10:00:00 2026";
 const OWNER_STARTED_AT = "Sat Aug 29 09:00:00 2026";
+const CHILD_COMMAND = "codex app-server --listen stdio://";
 
 class SpawnedChild extends EventEmitter {
   exitCode: number | null = null;
@@ -42,6 +43,7 @@ function createHarness() {
   const runtime = {
     platform: "linux" as NodeJS.Platform,
     inspectProcess,
+    inspectCommand: vi.fn(async (): Promise<string | undefined> => CHILD_COMMAND),
     inspectSnapshot: vi.fn(async (): Promise<PosixProcess[] | undefined> => [self, child]),
     kill: vi.fn(() => true),
     now: vi.fn(() => 1_000),
@@ -49,6 +51,7 @@ function createHarness() {
   const row: StoredCodexAppServerProcess = {
     pid: child.pid,
     startedAt: child.startedAt,
+    command: CHILD_COMMAND,
     ownerPid: process.pid + 1,
     ownerStartedAt: OWNER_STARTED_AT,
     spawnedAtMs: 100,
@@ -82,6 +85,7 @@ describe("Codex app-server process registry", () => {
     expect(store.lookup("101")).toEqual({
       pid: 101,
       startedAt: STARTED_AT,
+      command: CHILD_COMMAND,
       ownerPid: process.pid,
       ownerStartedAt: OWNER_STARTED_AT,
       spawnedAtMs: 1_000,
@@ -104,14 +108,18 @@ describe("Codex app-server process registry", () => {
     }
   });
 
-  it.each(["child", "owner"] as const)(
+  it.each(["child", "owner", "command"] as const)(
     "skips registration when the %s identity is unavailable",
     async (missing) => {
       const { store, runtime } = createHarness();
       const child = new SpawnedChild();
-      runtime.inspectProcess.mockImplementation(async (pid) =>
-        (missing === "owner") === (pid === process.pid) ? undefined : processRow(pid),
-      );
+      if (missing === "command") {
+        runtime.inspectCommand.mockResolvedValue(undefined);
+      } else {
+        runtime.inspectProcess.mockImplementation(async (pid) =>
+          (missing === "owner") === (pid === process.pid) ? undefined : processRow(pid),
+        );
+      }
       await registerCodexAppServerProcessSpawn(child, runtime);
       expect(store.entries()).toEqual([]);
       expect(embeddedAgentLog.warn).toHaveBeenCalledWith(
@@ -194,6 +202,25 @@ describe("Codex app-server process registry", () => {
       ownerPid: row.ownerPid,
       spawnedAtMs: row.spawnedAtMs,
     });
+  });
+
+  it("never kills a same-second replacement process running a different command", async () => {
+    const { store, runtime, seed } = createHarness();
+    seed();
+    // pid + lstart collide within lstart's 1s granularity; only the command differs.
+    runtime.inspectCommand.mockResolvedValue("/usr/bin/innocent-replacement");
+    await reapOrphanedCodexAppServerProcesses(runtime);
+    expect(runtime.kill).not.toHaveBeenCalled();
+    expect(store.entries()).toEqual([]);
+  });
+
+  it("keeps the row without killing when the command read fails", async () => {
+    const { store, runtime, seed, row } = createHarness();
+    seed();
+    runtime.inspectCommand.mockResolvedValue(undefined);
+    await reapOrphanedCodexAppServerProcesses(runtime);
+    expect(runtime.kill).not.toHaveBeenCalled();
+    expect(store.lookup("101")).toEqual(row);
   });
 
   it("reaps rows inherited from a pid-reusing predecessor gateway", async () => {

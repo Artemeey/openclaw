@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { describe, expect, it } from "vitest";
 import {
   inspectCodexTransportProcess,
+  inspectCodexTransportProcessCommand,
   inspectCodexTransportProcessSnapshot,
   type PosixProcess,
 } from "./transport-process-containment.js";
@@ -38,11 +39,12 @@ describe.skipIf(process.platform === "win32")("Codex app-server orphan process r
         throw new Error("process fixtures did not acquire PIDs");
       }
       const deadline = Date.now() + 5_000;
-      const [orphanIdentity, ownerIdentity] = await Promise.all([
+      const [orphanIdentity, orphanCommand, ownerIdentity] = await Promise.all([
         inspectCodexTransportProcess(orphanPid, deadline),
+        inspectCodexTransportProcessCommand(orphanPid, deadline),
         inspectCodexTransportProcess(ownerPid, deadline),
       ]);
-      if (!orphanIdentity || !ownerIdentity) {
+      if (!orphanIdentity || !orphanCommand || !ownerIdentity) {
         throw new Error("could not inspect process fixture identities");
       }
       expect(orphanIdentity.pgid).toBe(orphanPid);
@@ -50,6 +52,7 @@ describe.skipIf(process.platform === "win32")("Codex app-server orphan process r
       store.register(key, {
         pid: orphanPid,
         startedAt: orphanIdentity.startedAt,
+        command: orphanCommand,
         ownerPid,
         ownerStartedAt: ownerIdentity.startedAt,
         spawnedAtMs: Date.now(),
@@ -140,13 +143,17 @@ describe.skipIf(process.platform === "win32")("Codex app-server orphan process r
           setTimeout(resolve, 100);
         });
       }
-      const orphanIdentity = await inspectCodexTransportProcess(orphanPid, Date.now() + 5_000);
-      if (!zombieRow || !orphanIdentity) {
+      const [orphanIdentity, orphanCommand] = await Promise.all([
+        inspectCodexTransportProcess(orphanPid, Date.now() + 5_000),
+        inspectCodexTransportProcessCommand(orphanPid, Date.now() + 5_000),
+      ]);
+      if (!zombieRow || !orphanIdentity || !orphanCommand) {
         throw new Error("could not inspect zombie or orphan fixture identities");
       }
       store.register(String(orphanPid), {
         pid: orphanPid,
         startedAt: orphanIdentity.startedAt,
+        command: orphanCommand,
         ownerPid: zombiePid,
         ownerStartedAt: zombieRow.startedAt,
         spawnedAtMs: Date.now(),

@@ -36,6 +36,50 @@ export function inspectCodexTransportProcess(
   return readProcess(pid, deadline);
 }
 
+// Full command line for one PID; undefined conflates absent and failed like
+// inspectCodexTransportProcess. lstart is only second-granular, so callers use
+// command equality as the extra discriminator before exercising kill authority.
+export async function inspectCodexTransportProcessCommand(
+  pid: number,
+  deadline: number,
+): Promise<string | undefined> {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) {
+    return undefined;
+  }
+  return await new Promise<string | undefined>((resolve) => {
+    let settled = false;
+    const settle = (command: string | undefined) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve(command);
+    };
+    const inspector = execFile(
+      "ps",
+      ["-o", "command=", "-p", String(pid)],
+      { encoding: "utf8", maxBuffer: PROCESS_INSPECTION_MAX_BYTES },
+      (error, stdout) => {
+        const command = stdout.split("\n")[0]?.trim();
+        settle(error || !command ? undefined : command);
+      },
+    );
+    const timer = setTimeout(
+      () => {
+        settle(undefined);
+        inspector.stdout?.destroy();
+        inspector.stderr?.destroy();
+        inspector.kill("SIGKILL");
+        inspector.unref();
+      },
+      Math.max(1, remainingMs),
+    );
+    timer.unref?.();
+  });
+}
+
 export async function terminateCodexAppServerDescendants(
   child: ContainableTransport,
 ): Promise<(() => void) | undefined> {
