@@ -240,12 +240,11 @@ export function visitSessionTranscriptProjection(
   const rows =
     visiblePath.length > 0
       ? (function* () {
-          for (const node of visiblePath) {
-            const row = executeSqliteQueryTakeFirstSync(
-              db,
-              query.where("seq", "=", node.entry.seq),
-            );
-            if (row) {
+          const visibleSeqs = new Set(visiblePath.map((node) => node.entry.seq));
+          // Stream one second ordered pass instead of issuing one point query
+          // per active row; dirty transcripts can contain thousands of rows.
+          for (const row of iterateSqliteQuerySync(db, query.orderBy("seq", "asc"))) {
+            if (visibleSeqs.has(row.seq)) {
               yield row;
             }
           }

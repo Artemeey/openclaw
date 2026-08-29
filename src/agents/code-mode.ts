@@ -30,6 +30,7 @@ import {
   readRunId,
   resolveCodeModeConfig,
 } from "./code-mode-runtime.js";
+import type { CodeModeTranscriptAuthority } from "./code-mode-waiting-claim.js";
 import {
   normalizeCodeModeTimeoutResult,
   CodeModeHeadlessAbortError,
@@ -53,7 +54,7 @@ import {
   type ToolSearchCatalogRef,
   type ToolSearchToolContext,
 } from "./tool-search.js";
-import type { AnyAgentTool } from "./tools/common.js";
+import { ToolInputError, type AnyAgentTool } from "./tools/common.js";
 
 export { CODE_MODE_EXEC_TOOL_NAME, CODE_MODE_WAIT_TOOL_NAME };
 export {
@@ -65,7 +66,9 @@ export {
 };
 export type { CodeModeFailureCode, CodeModeHeadlessResult } from "./code-mode-runtime.js";
 
-type CodeModeToolContext = ToolSearchToolContext;
+type CodeModeToolContext = ToolSearchToolContext & {
+  transcriptAuthority?: CodeModeTranscriptAuthority;
+};
 
 const MAX_CODE_MODE_CATALOG_INDEX_CHARS = 8_000;
 
@@ -222,6 +225,10 @@ export function createCodeModeTools(ctx: CodeModeToolContext): AnyAgentTool[] {
       signal?: AbortSignal,
       onUpdate?: AgentToolUpdateCallback,
     ) => {
+      if (!ctx.transcriptAuthority) {
+        throw new ToolInputError("code mode requires an attached durable transcript authority.");
+      }
+      ctx.transcriptAuthority.assertActive();
       const input = readCode(args);
       const executionContext = getAgentToolExecutionContext();
       let runtime: ToolSearchRuntime | undefined;
@@ -243,6 +250,14 @@ export function createCodeModeTools(ctx: CodeModeToolContext): AnyAgentTool[] {
           },
         }),
       );
+      if (result.status === "waiting") {
+        ctx.transcriptAuthority.capture({
+          outcome: "replace",
+          runId: result.runId,
+          sourceToolCallId: toolCallId,
+          sourceToolName: CODE_MODE_EXEC_TOOL_NAME,
+        });
+      }
       return formatToolSearchControlResult(result, runtime, undefined, result.status);
     },
   } as AnyAgentTool);
@@ -264,12 +279,21 @@ export function createCodeModeTools(ctx: CodeModeToolContext): AnyAgentTool[] {
       signal?: AbortSignal,
       onUpdate?: AgentToolUpdateCallback,
     ) => {
+      if (!ctx.transcriptAuthority) {
+        throw new ToolInputError("code mode requires an attached durable transcript authority.");
+      }
+      ctx.transcriptAuthority.assertActive();
       let runtime: ToolSearchRuntime | undefined;
+      const waitingRunId = readRunId(args);
+      const predecessor = ctx.transcriptAuthority.verify(waitingRunId);
+      if (!predecessor) {
+        throw new ToolInputError("code mode run lacks a verified durable predecessor.");
+      }
       const result = normalizeCodeModeTimeoutResult(
         await runWait({
           toolCallId,
           ctx,
-          runId: readRunId(args),
+          runId: waitingRunId,
           signal,
           onUpdate,
           onRuntime: (value) => {
@@ -277,6 +301,13 @@ export function createCodeModeTools(ctx: CodeModeToolContext): AnyAgentTool[] {
           },
         }),
       );
+      ctx.transcriptAuthority.capture({
+        outcome: result.status === "waiting" ? "replace" : "remove",
+        predecessor,
+        runId: waitingRunId,
+        sourceToolCallId: toolCallId,
+        sourceToolName: CODE_MODE_WAIT_TOOL_NAME,
+      });
       return formatToolSearchControlResult(result, runtime, undefined, result.status);
     },
   } as AnyAgentTool);

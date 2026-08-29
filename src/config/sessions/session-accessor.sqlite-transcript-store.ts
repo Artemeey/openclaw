@@ -618,7 +618,7 @@ function readTranscriptMessageByIdentity(
   return { messageId: identity.eventId, message: event.message };
 }
 
-function readTranscriptEventIdentity(event: unknown):
+export function readTranscriptEventIdentity(event: unknown):
   | {
       eventId: string;
       eventType: string | null;

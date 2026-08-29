@@ -97,6 +97,7 @@ export function prepareEmbeddedAttemptToolCatalog(input: {
         sessionKey: input.sandboxSessionKey,
         sessionId: attempt.sessionId,
         runId: attempt.runId,
+        transcriptAuthority: attempt.codeModeTranscriptAuthority,
         catalogRef: preparedToolBase.toolSearchCatalogRef,
         abortSignal: input.abortSignal,
         forceRestartSafeTools: attempt.forceRestartSafeTools,

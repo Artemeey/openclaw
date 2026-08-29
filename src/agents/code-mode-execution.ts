@@ -605,6 +605,7 @@ export async function runWait(params: {
       // so the next wait can resume with a fresh deadline instead of losing
       // the run to a restore-only interrupt timeout.
       const pending = state.pending.filter((entry) => !entry.settled);
+      state.parentToolCallId = params.toolCallId;
       return {
         status: "waiting" as const,
         runId: state.runId,
@@ -650,7 +651,7 @@ export async function runWait(params: {
       output,
       replaySafe: state.replaySafe,
       deadlineMs,
-      parentToolCallId: state.parentToolCallId,
+      parentToolCallId: params.toolCallId,
       codeModeReplayId: state.replayId,
       ctx: state.ctx,
       config: state.config,
