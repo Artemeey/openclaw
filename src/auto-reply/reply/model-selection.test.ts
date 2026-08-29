@@ -702,7 +702,7 @@ describe("createModelSelectionState catalog loading", () => {
     await expect(state.resolveDefaultThinkingLevel()).resolves.toBe("minimal");
   });
 
-  it("keeps nested agent-model params out of thinking precedence", async () => {
+  it("uses only selected-model params for native thinking controls", async () => {
     vi.mocked(loadModelCatalogLocal).mockClear();
     const cfg = {
       agents: {
@@ -734,7 +734,7 @@ describe("createModelSelectionState catalog loading", () => {
       hasModelDirective: false,
     });
 
-    await expect(state.resolveDefaultThinkingLevel()).resolves.toBe("high");
+    await expect(state.resolveDefaultThinkingLevel()).resolves.toBe("medium");
     expect(loadModelCatalogLocal).not.toHaveBeenCalled();
   });
 

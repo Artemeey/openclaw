@@ -419,7 +419,6 @@ export async function runEmbeddedAgentAttempt(params: {
               cfg,
               provider: providerOverride,
               model: modelOverride,
-              agentId: sessionAgentId,
             });
           let candidateThinkingCatalog = thinkingCatalog;
           if (
