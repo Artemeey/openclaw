@@ -300,13 +300,16 @@ public struct OpenClawChatTransportRouteLease: Sendable {
     private let sendTargetedMessageImpl: SendTargetedMessageWithSettings
     private let requestTargetedHistoryImpl: RequestTargetedHistory
     public let sessionRoutingContract: String?
+    public let supportsSessionSettingsCAS: Bool
 
     public init(
         sendMessage: @escaping SendMessage,
         requestHistory: @escaping RequestHistory,
-        sessionRoutingContract: String? = nil)
+        sessionRoutingContract: String? = nil,
+        supportsSessionSettingsCAS: Bool = false)
     {
         self.sessionRoutingContract = sessionRoutingContract
+        self.supportsSessionSettingsCAS = supportsSessionSettingsCAS
         self.sendTargetedMessageImpl = { sessionKey, _, _, message, thinking, idempotencyKey, attachments in
             try await sendMessage(sessionKey, message, thinking, idempotencyKey, attachments)
         }
@@ -318,9 +321,11 @@ public struct OpenClawChatTransportRouteLease: Sendable {
     public init(
         sendTargetedMessage: @escaping SendTargetedMessage,
         requestTargetedHistory: @escaping RequestTargetedHistory,
-        sessionRoutingContract: String? = nil)
+        sessionRoutingContract: String? = nil,
+        supportsSessionSettingsCAS: Bool = false)
     {
         self.sessionRoutingContract = sessionRoutingContract
+        self.supportsSessionSettingsCAS = supportsSessionSettingsCAS
         self.sendTargetedMessageImpl = { sessionKey, agentID, _, message, thinking, idempotencyKey, attachments in
             try await sendTargetedMessage(
                 sessionKey,
@@ -336,9 +341,11 @@ public struct OpenClawChatTransportRouteLease: Sendable {
     public init(
         sendTargetedMessageWithSettings: @escaping SendTargetedMessageWithSettings,
         requestTargetedHistory: @escaping RequestTargetedHistory,
-        sessionRoutingContract: String? = nil)
+        sessionRoutingContract: String? = nil,
+        supportsSessionSettingsCAS: Bool = false)
     {
         self.sessionRoutingContract = sessionRoutingContract
+        self.supportsSessionSettingsCAS = supportsSessionSettingsCAS
         self.sendTargetedMessageImpl = sendTargetedMessageWithSettings
         self.requestTargetedHistoryImpl = requestTargetedHistory
     }
@@ -669,7 +676,7 @@ public enum OpenClawChatMediaKind: String, Sendable {
     case video
 
     public var mimeTypePrefix: String {
-        "\(self.rawValue)/"
+        "\(rawValue)/"
     }
 
     public func acceptsManagedArtifactID(_ artifactID: String) -> Bool {
