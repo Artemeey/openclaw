@@ -549,6 +549,140 @@ function buildCodexCompactionAppServerArgs(mode: CodexCompactionStressMode): str
   return overrides ? buildCodexHarnessAppServerArgs(overrides) : undefined;
 }
 
+async function captureCodexThinkingProjection(params: {
+  modelKey: string;
+  sessionKey: string;
+  emittedRow: { thinkingLevel?: string; agentRuntime?: { id?: string } } | undefined;
+}): Promise<void> {
+  const { loadGatewaySessionEntryReadOnly } = await import("./session-utils-store.js");
+  const { readPreparedGatewayModelCatalog } = await import("./server-model-catalog.js");
+  const { getPublishedPreparedModelCatalogOwnerSnapshot } =
+    await import("../agents/prepared-model-catalog.js");
+  const { resolveEffectiveAgentRuntime } = await import("../agents/thinking-runtime.js");
+  const { resolveEffectiveThinkingProfile } = await import("../plugins/provider-thinking.js");
+  const { resolveThinkingProfile } = await import("../auto-reply/thinking.js");
+  const { buildGatewaySessionRow } = await import("./session-utils-row.js");
+  const selected = parseModelKey(params.modelKey);
+  const loaded = loadGatewaySessionEntryReadOnly(params.sessionKey, { agentId: "dev" });
+  const ownerParams = { agentId: "dev", config: loaded.cfg };
+  const ownerBefore = getPublishedPreparedModelCatalogOwnerSnapshot(ownerParams);
+  const catalog = await readPreparedGatewayModelCatalog({ agentId: "dev" });
+  const fullCatalog = ownerBefore?.readFullModelCatalog?.();
+  const entry = catalog?.find(
+    (candidate) => candidate.provider === selected.provider && candidate.id === selected.modelId,
+  );
+  const thinkingRuntime = resolveEffectiveAgentRuntime({
+    cfg: loaded.cfg,
+    provider: selected.provider,
+    modelId: selected.modelId,
+    modelApi: entry?.api,
+    modelBaseUrl: entry?.baseUrl,
+    agentId: "dev",
+    sessionKey: params.sessionKey,
+    sessionEntry: loaded.entry,
+  });
+  const policyProvider = entry?.thinkingPolicyProvider ?? selected.provider;
+  const policyContext = {
+    provider: policyProvider,
+    modelId: selected.modelId,
+    agentRuntime: thinkingRuntime,
+    api: entry?.api,
+    reasoning: entry?.configuredReasoning ?? entry?.reasoning,
+    params: entry?.params,
+    compat: entry?.compat,
+  };
+  const activeProfile = resolveEffectiveThinkingProfile(
+    { provider: policyProvider, context: policyContext },
+    { allowPublicArtifactFallback: false },
+  );
+  const profile = resolveThinkingProfile({
+    provider: selected.provider,
+    model: selected.modelId,
+    catalog,
+    agentRuntime: thinkingRuntime,
+    providerPolicySource: "active",
+  });
+  const projected = buildGatewaySessionRow({
+    cfg: loaded.cfg,
+    storePath: loaded.storePath,
+    store: loaded.store,
+    key: params.sessionKey,
+    entry: loaded.entry,
+    modelCatalog: catalog,
+    agentId: "dev",
+    skipTranscriptUsageFallback: true,
+    lightweightListRow: true,
+  });
+  const projectCatalogEntry = (candidate: typeof entry) =>
+    candidate
+      ? {
+          provider: candidate.provider,
+          id: candidate.id,
+          api: candidate.api,
+          nativeRuntime: candidate.nativeRuntime,
+          reasoning: candidate.reasoning,
+          configuredReasoning: candidate.configuredReasoning,
+          thinkingPolicyProvider: candidate.thinkingPolicyProvider,
+          supportedReasoningEfforts: candidate.compat?.supportedReasoningEfforts,
+          thinkingFormat: candidate.compat?.thinkingFormat,
+          thinkingLevelMap: candidate.thinkingLevelMap,
+        }
+      : null;
+  const ownerAfter = getPublishedPreparedModelCatalogOwnerSnapshot(ownerParams);
+  logCodexLiveStep("thinking-projection-diagnostic", {
+    stored: {
+      thinkingLevel: loaded.entry?.thinkingLevel,
+      providerOverride: loaded.entry?.providerOverride,
+      modelOverride: loaded.entry?.modelOverride,
+      agentRuntimeOverride: loaded.entry?.agentRuntimeOverride,
+      modelProvider: loaded.entry?.modelProvider,
+      model: loaded.entry?.model,
+    },
+    emitted: {
+      thinkingLevel: params.emittedRow?.thinkingLevel,
+      agentRuntime: params.emittedRow?.agentRuntime?.id,
+    },
+    projected: {
+      thinkingLevel: projected.thinkingLevel,
+      thinkingOptions: projected.thinkingOptions,
+      agentRuntime: projected.agentRuntime?.id,
+    },
+    owner: {
+      present: ownerBefore !== undefined,
+      agentId: ownerBefore?.agentId,
+      catalogOwnerAgentId: ownerBefore?.catalogOwner?.agentId,
+      sameGenerationAfterReads: ownerBefore !== undefined && ownerBefore === ownerAfter,
+      completedFullCatalogPresent: fullCatalog !== undefined,
+      readMatchesConfiguredCatalog: catalog === ownerBefore?.modelCatalog.entries,
+      readMatchesCompletedFullCatalog: catalog === fullCatalog?.entries,
+      activeProviderIds: ownerBefore?.pluginRegistry?.providers.map(({ provider }) => provider.id),
+    },
+    preparedSelected: projectCatalogEntry(entry),
+    configuredSelected: projectCatalogEntry(
+      ownerBefore?.modelCatalog.entries.find(
+        (candidate) =>
+          candidate.provider === selected.provider && candidate.id === selected.modelId,
+      ),
+    ),
+    completedFullSelected: projectCatalogEntry(
+      fullCatalog?.entries.find(
+        (candidate) =>
+          candidate.provider === selected.provider && candidate.id === selected.modelId,
+      ),
+    ),
+    policyContext: {
+      provider: policyProvider,
+      modelId: selected.modelId,
+      agentRuntime: thinkingRuntime,
+      api: policyContext.api,
+      reasoning: policyContext.reasoning,
+      supportedReasoningEfforts: policyContext.compat?.supportedReasoningEfforts,
+    },
+    activeProviderProfile: activeProfile ?? null,
+    resolvedActiveOnlyProfile: profile,
+  });
+}
+
 async function assertCodexHarnessSessionSelection(params: {
   client: GatewayClient;
   modelKey: string;
@@ -568,6 +702,7 @@ async function assertCodexHarnessSessionSelection(params: {
     limit: 200,
   });
   const row = result.sessions?.find((entry) => entry.key === params.sessionKey);
+  await captureCodexThinkingProjection({ ...params, emittedRow: row });
   expect(row, `expected sessions.list row for ${params.sessionKey}`).toBeDefined();
   expect(row?.modelProvider).toBe(expected.provider);
   expect(row?.model).toBe(expected.modelId);
