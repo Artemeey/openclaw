@@ -7,6 +7,10 @@ import { join } from "node:path";
 import { Bot } from "grammy";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { listSessionEntries } from "openclaw/plugin-sdk/session-store-runtime";
+import {
+  closeOpenClawAgentDatabasesForTest,
+  closeOpenClawStateDatabaseForTest,
+} from "openclaw/plugin-sdk/sqlite-runtime-testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultTelegramBotDeps, type TelegramBotDeps } from "./bot-deps.js";
 import type { TelegramCallbackMessageRuntime } from "./bot-handlers.callback-router-controls.js";
@@ -280,6 +284,9 @@ describe("Telegram model callback loopback", () => {
         server.close();
         server.closeAllConnections();
         server.unref();
+        // Agent lease release uses shared state, so close agent handles first.
+        closeOpenClawAgentDatabasesForTest();
+        closeOpenClawStateDatabaseForTest();
         await rm(stateDir, { recursive: true, force: true });
       }
     },
