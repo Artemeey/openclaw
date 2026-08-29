@@ -68,8 +68,14 @@ it.each([
     );
     expect(result.events).toContainEqual({ event: "terminate", signal: "SIGTERM" });
   } else if (scenario !== "plain") {
-    expect(result.profiles.cpu, result.output).toBeGreaterThan(0);
-    expect(result.profiles.heap, result.output).toBeGreaterThan(0);
+    // Only runs routed through the profiling runner emit profiles; the fixture
+    // reports that, since the profiler rejects vmForks and custom pools.
+    if (result.profiled) {
+      expect(result.profiles.cpu, result.output).toBeGreaterThan(0);
+      expect(result.profiles.heap, result.output).toBeGreaterThan(0);
+    } else {
+      expect(result.output, result.output).toContain("1 passed");
+    }
     expect(result.events.some((event: { event: string }) => event.event === "terminate")).toBe(
       false,
     );

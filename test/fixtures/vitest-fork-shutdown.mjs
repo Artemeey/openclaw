@@ -252,8 +252,12 @@ it("completes the test before worker shutdown", () => {
 });
 `,
   );
+  // The profiling runner rejects any pool other than forks/threads
+  // (scripts/lib/vitest-profiler.mts), so vmForks and custom-pool scenarios must
+  // run through the plain runner or the inner run dies during global setup.
+  const profilerSupportsPool = !custom && scenario !== "vmForks";
   const args =
-    scenario === "plain" || scenario === "custom"
+    scenario === "plain" || !profilerSupportsPool
       ? [
           path.join(repo, "scripts/run-vitest.mjs"),
           "run",
@@ -315,6 +319,7 @@ it("completes the test before worker shutdown", () => {
       code,
       output,
       workerStopped,
+      profiled: profilerSupportsPool && scenario !== "plain",
       profiles: counts,
       homeRemoved: !fs.existsSync(state.home),
       callerPreserved: fs.readFileSync(path.join(root, "home", "caller"), "utf8") === "keep",
