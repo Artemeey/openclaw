@@ -270,12 +270,13 @@ export const createTalkClient: GatewayRequestHandler = async ({
               }
             },
             runAgentConsult: consultRunner.runArgs,
-            controlAgentRun: async (controlParams) => {
-              const target = resolveOwnedActiveTalkClientInjectionTarget({
+            captureAgentRunControl: () =>
+              resolveOwnedActiveTalkClientInjectionTarget({
                 context,
                 clientConnId: ownerConnId,
                 sessionKey,
-              });
+              }),
+            controlAgentRun: async (controlParams, target) => {
               return controlOwnedRealtimeVoiceAgentRun(controlParams, target);
             },
             appendTranscript: ({ entryId, role, text }) =>
