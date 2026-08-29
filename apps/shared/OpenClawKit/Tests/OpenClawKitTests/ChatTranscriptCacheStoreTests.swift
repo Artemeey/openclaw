@@ -1142,9 +1142,12 @@ final class ChatCommandOutboxStoreTests: ClientDatabaseTestSuite, @unchecked Sen
             deliverySessionKey: "agent:main:main",
             routingContract: "per-sender|main|main",
             agentID: "main",
+            sendContext: OpenClawChatSendContext(
+                agentID: "main",
+                expectedSessionRoutingContract: "per-sender|main|main",
+                expectedSessionSettings: expectation),
             text: "safe replay",
             thinking: "off",
-            expectedSessionSettings: expectation,
             createdAt: Date().timeIntervalSince1970,
             status: .queued,
             retryCount: 0,
@@ -1152,7 +1155,8 @@ final class ChatCommandOutboxStoreTests: ClientDatabaseTestSuite, @unchecked Sen
         try databases.close()
 
         let reopened = try OpenClawClientDatabases(directoryURL: directory)
-        #expect(await reopened.store(gatewayID: "gw-a").loadCommands().first?.expectedSessionSettings == expectation)
+        #expect(await reopened.store(gatewayID: "gw-a").loadCommands().first?.sendContext?.expectedSessionSettings ==
+            expectation)
     }
 
     @Test func `legacy null settings row cannot claim or retry without current client authorization`() async throws {
@@ -1239,9 +1243,12 @@ final class ChatCommandOutboxStoreTests: ClientDatabaseTestSuite, @unchecked Sen
             deliverySessionKey: "agent:main:main",
             routingContract: "per-sender|main|main",
             agentID: "main",
+            sendContext: OpenClawChatSendContext(
+                agentID: "main",
+                expectedSessionRoutingContract: "per-sender|main|main",
+                expectedSessionSettings: expectation),
             text: "preserve authority",
             thinking: "off",
-            expectedSessionSettings: expectation,
             createdAt: Date().timeIntervalSince1970,
             status: .queued,
             retryCount: 0,
@@ -1263,7 +1270,7 @@ final class ChatCommandOutboxStoreTests: ClientDatabaseTestSuite, @unchecked Sen
         }))
         #expect(failed.status == .failed)
         #expect(failed.lastError == OpenClawChatSQLiteTranscriptCache.outboxSettingsUpgradeRequiredError)
-        #expect(failed.expectedSessionSettings == expectation)
+        #expect(failed.sendContext?.expectedSessionSettings == expectation)
         #expect(await reopenedStore.markCommandRetriedIfPresent(
             id: failed.id,
             expectation: retryExpectation(failed),
@@ -1279,7 +1286,7 @@ final class ChatCommandOutboxStoreTests: ClientDatabaseTestSuite, @unchecked Sen
             $0.id == "legacy-writer-settings"
         }))
         #expect(retriedCommand.status == .queued)
-        #expect(retriedCommand.expectedSessionSettings == expectation)
+        #expect(retriedCommand.sendContext?.expectedSessionSettings == expectation)
     }
 
     @Test func `nil agent rows use the canonical empty scope owner`() async throws {
@@ -1502,6 +1509,11 @@ final class ChatCommandOutboxStoreTests: ClientDatabaseTestSuite, @unchecked Sen
         let context = OpenClawChatSendContext(
             agentID: "main",
             expectedSessionRoutingContract: "per-sender|main|main",
+            expectedSessionSettings: OpenClawChatSessionSettingsExpectation(
+                permissionMode: .guarded,
+                toolOverrides: OpenClawChatSessionToolOverrides(
+                    webSearch: false,
+                    mcpToolsDeny: ["github": ["delete_issue"]])),
             sessionID: "session-main",
             queueMode: .followup,
             replyToID: "message-42",
@@ -1593,16 +1605,18 @@ final class ChatCommandOutboxStoreTests: ClientDatabaseTestSuite, @unchecked Sen
             #expect(error.localizedDescription.contains("structured outbox retry"))
         }
 
+        let reviewedSettings = OpenClawChatSessionSettingsExpectation(permissionMode: nil, toolOverrides: nil)
         #expect(await store.markCommandRetriedIfPresent(
             id: command.id,
             expectation: expectation,
             agentID: "main",
             deliverySessionKey: "agent:main:main",
             routingContract: "per-sender|main|main",
+            expectedSessionSettings: reviewedSettings,
             replacementID: nil) == .updated)
         let retried = try #require(await store.loadCommands().first)
         #expect(retried.status == .queued)
-        #expect(retried.sendContext == context)
+        #expect(retried.sendContext == context.withExpectedSessionSettings(reviewedSettings))
     }
 
     @Test func `older client claim parks structured row for a current-client reopen`() async throws {
