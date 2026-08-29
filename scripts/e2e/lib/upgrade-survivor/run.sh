@@ -1671,9 +1671,13 @@ if [ -n "${OPENCLAW_CLAWHUB_URL:-}" ]; then
   if configured_plugin_installs_enabled; then
     prepublish_package="@openclaw/matrix"
   fi
+  clawhub_request_attempts=1
+  if [ "$UPDATE_RESTART_MODE" = "auto-auth" ]; then
+    clawhub_request_attempts=complete
+  fi
   phase assert-prepublish-requests node \
     "${OPENCLAW_UPGRADE_SURVIVOR_CLAWHUB_FIXTURE_SERVER:-scripts/e2e/lib/clawhub-fixture-server.cjs}" \
-    assert-prepublish-requests "$OPENCLAW_CLAWHUB_URL" "$prepublish_package" "$candidate_version" "$clawhub_security_mode"
+    assert-prepublish-requests "$OPENCLAW_CLAWHUB_URL" "$prepublish_package" "$candidate_version" "$clawhub_security_mode" "$clawhub_request_attempts"
 fi
 phase root-managed-vps-cli-usable assert_root_managed_vps_cli_usable
 phase assert-legacy-plugin-dependency-debris-before-doctor assert_legacy_plugin_dependency_debris_before_doctor
