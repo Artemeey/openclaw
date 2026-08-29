@@ -1,5 +1,5 @@
 // Check Extension Package Tsc Boundary tests cover check extension package tsc boundary script behavior.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
@@ -264,54 +264,115 @@ describe("check-extension-package-tsc-boundary", () => {
     ).toBe(["slowest plugin compiles:", "- slow: 900ms", "- medium: 250ms", ""].join("\n"));
   });
 
-  it("treats a plugin compile as fresh only when its outputs are newer than plugin and shared sdk inputs", () => {
+  it.each([
+    "extensions/demo/index.ts",
+    "extensions/demo/tsconfig.json",
+    "extensions/demo/package.json",
+    "dist/plugin-sdk/core.d.ts",
+    "packages/plugin-sdk/dist/src/plugin-sdk/core.d.ts",
+    "tsconfig.json",
+    "extensions/tsconfig.package-boundary.base.json",
+    "extensions/tsconfig.package-boundary.paths.json",
+  ])("invalidates a warm compile after %s changes", (input) => {
     const { rootDir, extensionRoot } = createTempExtensionRoot();
-    const extensionSourcePath = path.join(extensionRoot, "index.ts");
-    const extensionTsconfigPath = path.join(extensionRoot, "tsconfig.json");
+    const inputPath = path.join(rootDir, input);
     const stampPath = path.join(extensionRoot, "dist", ".boundary-tsc.stamp");
-    const rootSdkTypePath = path.join(rootDir, "dist", "plugin-sdk", "core.d.ts");
-    const packageSdkTypePath = path.join(
-      rootDir,
-      "packages",
-      "plugin-sdk",
-      "dist",
-      "src",
-      "plugin-sdk",
-      "core.d.ts",
-    );
-
-    fs.mkdirSync(path.dirname(extensionSourcePath), { recursive: true });
+    fs.mkdirSync(path.dirname(inputPath), { recursive: true });
     fs.mkdirSync(path.dirname(stampPath), { recursive: true });
-    fs.mkdirSync(path.dirname(rootSdkTypePath), { recursive: true });
-    fs.mkdirSync(path.dirname(packageSdkTypePath), { recursive: true });
-
-    fs.writeFileSync(extensionSourcePath, "export const demo = 1;\n", "utf8");
-    fs.writeFileSync(
-      extensionTsconfigPath,
-      '{ "extends": "../tsconfig.package-boundary.base.json" }\n',
-      "utf8",
-    );
-    fs.writeFileSync(stampPath, "ok\n", "utf8");
-    fs.writeFileSync(rootSdkTypePath, "export {};\n", "utf8");
-    fs.writeFileSync(packageSdkTypePath, "export {};\n", "utf8");
-
-    fs.utimesSync(extensionSourcePath, new Date(1_000), new Date(1_000));
-    fs.utimesSync(extensionTsconfigPath, new Date(1_000), new Date(1_000));
-    fs.utimesSync(rootSdkTypePath, new Date(500), new Date(500));
-    fs.utimesSync(packageSdkTypePath, new Date(2_000), new Date(2_000));
-    fs.utimesSync(stampPath, new Date(3_000), new Date(3_000));
+    fs.writeFileSync(inputPath, input.endsWith(".json") ? "{}\n" : "export {};\n");
+    fs.writeFileSync(stampPath, "ok\n");
+    fs.utimesSync(inputPath, new Date(1_000), new Date(1_000));
+    fs.utimesSync(stampPath, new Date(2_000), new Date(2_000));
 
     expect(isBoundaryCompileFresh("demo", { rootDir })).toBe(true);
-
-    fs.utimesSync(rootSdkTypePath, new Date(500), new Date(500));
-    fs.utimesSync(packageSdkTypePath, new Date(500), new Date(500));
-
-    expect(isBoundaryCompileFresh("demo", { rootDir })).toBe(true);
-
-    fs.utimesSync(rootSdkTypePath, new Date(4_000), new Date(4_000));
-
+    fs.utimesSync(inputPath, new Date(3_000), new Date(3_000));
     expect(isBoundaryCompileFresh("demo", { rootDir })).toBe(false);
+
+    fs.utimesSync(stampPath, new Date(4_000), new Date(4_000));
+    expect(isBoundaryCompileFresh("demo", { rootDir })).toBe(true);
   });
+
+  it("reruns the real compiler after an inherited paths change in the CLI", () => {
+    const fixture = createTempExtensionRoot();
+    const rootDir = fs.realpathSync(fixture.rootDir);
+    const write = (relativePath: string, contents: string) => {
+      const filePath = path.join(rootDir, relativePath);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, contents);
+      fs.utimesSync(filePath, new Date(1_000), new Date(1_000));
+    };
+    write("package.json", '{"type":"module"}\n');
+    write("tsconfig.json", '{"compilerOptions":{"module":"NodeNext","strict":true,"types":[]}}\n');
+    const pathsConfig = "extensions/tsconfig.package-boundary.paths.json";
+    const config = {
+      extends: "../tsconfig.json",
+      compilerOptions: {
+        paths: { "openclaw/plugin-sdk/*": ["../dist/plugin-sdk/*.d.ts"] },
+      },
+    };
+    write(pathsConfig, JSON.stringify(config));
+    write(
+      "extensions/tsconfig.package-boundary.base.json",
+      '{"extends":"./tsconfig.package-boundary.paths.json","compilerOptions":{"rootDir":"${configDir}"}}\n',
+    );
+    write(
+      "extensions/demo/tsconfig.json",
+      '{"extends":"../tsconfig.package-boundary.base.json","include":["index.ts"]}\n',
+    );
+    write("dist/plugin-sdk/core.d.ts", "export type DemoContract = { ok: boolean };\n");
+    write(
+      "extensions/demo/index.ts",
+      'import type { DemoContract } from "openclaw/plugin-sdk/core";\nexport const demo: DemoContract = { ok: true };\n',
+    );
+    // Hold the already-prepared declaration boundary fixed; the CLI's compile
+    // scheduling, incremental compiler, and successful stamp writer stay real.
+    write("scripts/prepare-extension-package-boundary-artifacts.mts", "export {};\n");
+    fs.symlinkSync(
+      path.resolve("node_modules"),
+      path.join(rootDir, "node_modules"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const scriptPath = path.resolve("scripts/check-extension-package-tsc-boundary.mts");
+    const rootModule = `export const resolveRepoRoot = () => ${JSON.stringify(rootDir)};`;
+    write(
+      "root-hook.mjs",
+      `import { registerHooks } from "node:module";
+registerHooks({ resolve(specifier, context, nextResolve) {
+  if (context.parentURL === ${JSON.stringify(pathToFileURL(scriptPath).href)} && specifier === "./lib/repo-root.mjs") {
+    return { url: ${JSON.stringify(`data:text/javascript,${encodeURIComponent(rootModule)}`)}, shortCircuit: true };
+  }
+  return nextResolve(specifier, context);
+}});\n`,
+    );
+    const run = () =>
+      spawnSync(
+        process.execPath,
+        ["--import", path.join(rootDir, "root-hook.mjs"), scriptPath, "--mode=compile"],
+        { encoding: "utf8", timeout: 20_000 },
+      );
+    const cold = run();
+    expect(cold.error, cold.stderr).toBeUndefined();
+    expect(cold.status, cold.stdout + cold.stderr).toBe(0);
+    expect(cold.stdout).toContain("compiled plugins: 1");
+
+    const stampPath = path.join(rootDir, "extensions/demo/dist/.boundary-tsc.stamp");
+    const stamp = fs.readFileSync(stampPath, "utf8");
+    fs.utimesSync(stampPath, new Date(2_000), new Date(2_000));
+    const warm = run();
+    expect(warm.status, warm.stdout + warm.stderr).toBe(0);
+    expect(warm.stdout).toContain("skipped plugins: 1");
+    expect(warm.stdout).toContain("compiled plugins: 0");
+
+    config.compilerOptions.paths["openclaw/plugin-sdk/*"] = ["../missing-sdk/*.d.ts"];
+    write(pathsConfig, JSON.stringify(config));
+    fs.utimesSync(path.join(rootDir, pathsConfig), new Date(3_000), new Date(3_000));
+    const changed = run();
+    expect(changed.error, changed.stderr).toBeUndefined();
+    expect(changed.status, changed.stdout + changed.stderr).toBe(1);
+    expect(changed.stderr).toContain("TS2307");
+    expect(fs.readFileSync(stampPath, "utf8")).toBe(stamp);
+    expect(fs.statSync(stampPath).mtimeMs).toBe(2_000);
+  }, 30_000);
 
   it("accepts cached input mtimes for freshness checks", () => {
     const { rootDir, extensionRoot } = createTempExtensionRoot();
@@ -517,11 +578,17 @@ describe("check-extension-package-tsc-boundary", () => {
         "setInterval(() => {}, 1000);",
       ].join("");
 
+      const parent = spawn(process.execPath, ["--eval", parentScript], {
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       try {
-        const failurePromise = runNodeStepAsync("hung-step-group", ["--eval", parentScript], 100, {
-          spawnImpl(command: string, args: string[], options: unknown) {
-            return spawn(command, args, options as Parameters<typeof spawn>[2]);
-          },
+        // Give the timeout owner a ready process group: its 100 ms deadline must
+        // test cleanup, not race cold child startup under a loaded test runner.
+        childPid = await waitForPidFile(childPidPath, 2_000);
+        expect(isProcessAlive(childPid)).toBe(true);
+        const failure = await runNodeStepAsync("hung-step-group", ["--eval", parentScript], 100, {
+          spawnImpl: () => parent,
         }).then(
           () => {
             throw new Error("expected hung-step-group to time out");
@@ -529,13 +596,13 @@ describe("check-extension-package-tsc-boundary", () => {
           (error: unknown) => error,
         );
 
-        childPid = await waitForPidFile(childPidPath, 2_000);
-        expect(isProcessAlive(childPid)).toBe(true);
-
-        const failure = await failurePromise;
         expect(failure).toBeInstanceOf(Error);
+        expect(failure).toMatchObject({ kind: "timeout" });
         await waitForDead(childPid, 2_000);
       } finally {
+        if (parent.pid && isProcessAlive(parent.pid)) {
+          process.kill(-parent.pid, "SIGKILL");
+        }
         if (childPid && isProcessAlive(childPid)) {
           process.kill(childPid, "SIGKILL");
         }

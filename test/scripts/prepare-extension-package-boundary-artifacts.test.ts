@@ -1,10 +1,10 @@
 // Prepare Extension Package Boundary Artifacts tests cover prepare extension package boundary artifacts script behavior.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { MAX_TIMER_TIMEOUT_MS } from "@openclaw/normalization-core/number-coercion";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -13,6 +13,7 @@ import {
 } from "../../scripts/lib/plugin-sdk-entries.mjs";
 import {
   computeArtifactInputsDigest,
+  computeExtensionBoundaryInputsFingerprint,
   createPrefixedOutputWriter,
   derivePluginSdkTypeInputsFromBuildInfo,
   isArtifactSetFresh,
@@ -27,6 +28,147 @@ import {
 import { makeTempDir } from "../helpers/temp-dir.js";
 
 const tempRoots = new Set<string>();
+const inheritedConfigs = [
+  "tsconfig.json",
+  "extensions/tsconfig.package-boundary.base.json",
+  "extensions/tsconfig.package-boundary.paths.json",
+];
+
+function createPrepSchedulingFixture() {
+  const rootDir = makeTempDir(tempRoots, "openclaw-boundary-scheduling-");
+  const pluginIds = [
+    "qa-channel",
+    "memory-core",
+    "matrix",
+    "discord",
+    "slack",
+    "telegram",
+    "whatsapp",
+  ];
+  const pluginConfigs = pluginIds.map((id) => `extensions/${id}/tsconfig.json`);
+  const write = (relativePath: string, contents = "{}\n", mtimeMs = 1_000) => {
+    const filePath = path.join(rootDir, relativePath);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, contents);
+    fs.utimesSync(filePath, new Date(mtimeMs), new Date(mtimeMs));
+  };
+  const outputs = new Set([
+    ...resolveBoundaryEntryShimRequiredOutputs({ OPENCLAW_BUILD_PRIVATE_QA: "1" }),
+    "dist/plugin-sdk/.tsbuildinfo",
+    "dist/plugin-sdk/.boundary-dts.stamp",
+    "dist/plugin-sdk/.boundary-entry-shims.stamp",
+    "packages/plugin-sdk/dist/.tsbuildinfo",
+    "packages/plugin-sdk/dist/.boundary-dts.stamp",
+  ]);
+  // Seed declaration-shaped outputs from source paths, not a copied required-output inventory.
+  const collectPackageOutputs = (directory: string) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (["node_modules", "dist"].includes(entry.name)) continue;
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) collectPackageOutputs(entryPath);
+      else if (entry.name.endsWith(".ts")) {
+        const relative = path.relative(process.cwd(), entryPath).replaceAll("\\", "/");
+        for (const prefix of ["dist/plugin-sdk", "packages/plugin-sdk/dist"]) {
+          outputs.add(`${prefix}/${relative.replace(/\.ts$/u, ".d.ts")}`);
+        }
+      }
+    }
+  };
+  const sdkConfig = JSON.parse(fs.readFileSync("tsconfig.plugin-sdk.dts.json", "utf8")) as {
+    include: string[];
+  };
+  for (const include of sdkConfig.include.filter((input) => input.startsWith("packages/"))) {
+    collectPackageOutputs(path.resolve(include.replace(/\/\*\*.*$/u, "")));
+  }
+  for (const id of pluginIds) {
+    for (const output of ["api.d.ts", "test-api.d.ts", ".boundary-dts.stamp"]) {
+      outputs.add(`dist/plugin-sdk/extensions/${id}/${output}`);
+    }
+  }
+  for (const output of outputs) write(output, "{}\n", 2_000);
+  for (const config of [
+    ...inheritedConfigs,
+    "tsconfig.plugin-sdk.dts.json",
+    "packages/plugin-sdk/tsconfig.json",
+  ])
+    write(config);
+  for (const config of pluginConfigs) write(config, "{}\n", 3_000);
+  write("tsconfig.json", "{}\n", 3_000);
+  write("packages/acp-core/package.json");
+  fs.mkdirSync(path.join(rootDir, "packages/ai/src"), { recursive: true });
+  // Keep lane selection, filesystem freshness, and stamp writes in the real prep owner.
+  const managedCommandUrl = pathToFileURL(
+    path.resolve("scripts/lib/managed-child-process.mts"),
+  ).href;
+  write(
+    "command-recorder.mjs",
+    `
+    import fs from 'node:fs';
+    import path from 'node:path';
+    export { createManagedCommandInvocation, signalExitCode } from ${JSON.stringify(managedCommandUrl)};
+    export async function runManagedCommand({ args, cwd }) {
+    const project = args.includes('-p') ? args[args.indexOf('-p') + 1] : 'entry-shims';
+    fs.appendFileSync(path.join(cwd, 'steps.log'), project + '\\n');
+    if (args.includes('-p')) {
+      const buildInfo = args.includes('--tsBuildInfoFile')
+        ? args[args.indexOf('--tsBuildInfoFile') + 1]
+        : project === 'tsconfig.plugin-sdk.dts.json'
+          ? 'dist/plugin-sdk/.tsbuildinfo' : 'packages/plugin-sdk/dist/.tsbuildinfo';
+      fs.mkdirSync(path.dirname(path.join(cwd, buildInfo)), { recursive: true });
+      fs.writeFileSync(path.join(cwd, buildInfo), '{}\\n');
+    }
+    return 0;
+    }
+  `,
+  );
+  const scriptUrl = pathToFileURL(
+    path.resolve("scripts/prepare-extension-package-boundary-artifacts.mts"),
+  ).href;
+  const rootModule = `export const resolveRepoRoot = () => ${JSON.stringify(rootDir)};`;
+  write(
+    "root-hook.mjs",
+    `
+    import { registerHooks } from 'node:module';
+    registerHooks({ resolve(specifier, context, nextResolve) {
+      if (context.parentURL === ${JSON.stringify(scriptUrl)}) {
+        if (specifier === './lib/repo-root.mjs') {
+          return { url: ${JSON.stringify(`data:text/javascript,${encodeURIComponent(rootModule)}`)}, shortCircuit: true };
+        }
+        if (specifier === './lib/managed-child-process.mts') {
+          return { url: ${JSON.stringify(pathToFileURL(path.join(rootDir, "command-recorder.mjs")).href)}, shortCircuit: true };
+        }
+      }
+      return nextResolve(specifier, context);
+    }});
+  `,
+  );
+  const run = () => {
+    write("steps.log", "");
+    const result = spawnSync(
+      process.execPath,
+      ["--import", path.join(rootDir, "root-hook.mjs"), fileURLToPath(scriptUrl)],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        timeout: 20_000,
+      },
+    );
+    expect(result.error, result.stderr).toBeUndefined();
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    return fs
+      .readFileSync(path.join(rootDir, "steps.log"), "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .toSorted();
+  };
+  const resetOutputMtimes = () => {
+    for (const output of outputs) {
+      fs.utimesSync(path.join(rootDir, output), new Date(2_000), new Date(2_000));
+    }
+  };
+  return { rootDir, pluginIds, pluginConfigs, write, run, resetOutputMtimes };
+}
 
 afterEach(() => {
   for (const rootDir of tempRoots) {
@@ -91,6 +233,60 @@ async function waitForProcessExit(
 }
 
 describe("prepare-extension-package-boundary-artifacts", () => {
+  it.each(inheritedConfigs)(
+    "tracks %s in declaration scheduling and successful hash stamps",
+    (config) => {
+      const fixture = createPrepSchedulingFixture();
+      const { rootDir, pluginIds, pluginConfigs, write, run, resetOutputMtimes } = fixture;
+      const allSteps = [
+        ...pluginConfigs,
+        "tsconfig.plugin-sdk.dts.json",
+        "packages/plugin-sdk/tsconfig.json",
+        "entry-shims",
+      ];
+      expect(run()).toEqual(allSteps.toSorted());
+      for (const ownConfig of ["tsconfig.json", ...pluginConfigs]) write(ownConfig);
+      resetOutputMtimes();
+      expect(run()).toEqual([]);
+
+      // Re-stamping identical bytes must use the real lane hash and repair its mtimes.
+      write(config, "{}\n", 3_000);
+      expect(run()).toEqual([]);
+      for (const id of pluginIds) {
+        expect
+          .soft(
+            fs.statSync(path.join(rootDir, `dist/plugin-sdk/extensions/${id}/.boundary-dts.stamp`))
+              .mtimeMs,
+            id,
+          )
+          .toBeGreaterThan(3_000);
+      }
+
+      resetOutputMtimes();
+      write(config, '{"compilerOptions":{"strict":true}}\n', 4_000);
+      const expectedSteps = config === "tsconfig.json" ? allSteps : pluginConfigs;
+      expect(run()).toEqual(expectedSteps.toSorted());
+      expect(run()).toEqual([]);
+    },
+    30_000,
+  );
+
+  it.each([...inheritedConfigs, "scripts/lib/extension-package-boundary-inputs.mts"])(
+    "fingerprints byte changes in %s",
+    (input) => {
+      const rootDir = makeTempDir(tempRoots, "openclaw-boundary-fingerprint-");
+      const buildInfo = path.join(rootDir, "dist/plugin-sdk/.tsbuildinfo");
+      const inputPath = path.join(rootDir, input);
+      fs.mkdirSync(path.dirname(buildInfo), { recursive: true });
+      fs.mkdirSync(path.dirname(inputPath), { recursive: true });
+      fs.writeFileSync(buildInfo, "{}");
+      fs.writeFileSync(inputPath, "{}\n");
+      const before = computeExtensionBoundaryInputsFingerprint(rootDir);
+      fs.appendFileSync(inputPath, "\n");
+      expect(computeExtensionBoundaryInputsFingerprint(rootDir)).not.toBe(before);
+    },
+  );
+
   it("derives the historical SDK cache misses from TypeScript build inputs", () => {
     const rootDir = makeTempDir(tempRoots, "openclaw-plugin-sdk-inputs-");
     const buildInfoPath = path.join(rootDir, "dist", "plugin-sdk", ".tsbuildinfo");

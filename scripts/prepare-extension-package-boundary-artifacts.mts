@@ -11,6 +11,7 @@ import {
   resolveTimerTimeoutMs,
 } from "../packages/normalization-core/src/number-coercion.ts";
 import { acquireExtensionPackageBoundaryArtifactLockSync } from "./lib/extension-package-boundary-artifact-lock.mts";
+import { EXTENSION_BOUNDARY_CONFIG_INPUTS } from "./lib/extension-package-boundary-inputs.mts";
 import {
   ensureRepoToolNodeModulesLink,
   isLocalCheckEnabled,
@@ -371,6 +372,7 @@ const PACKAGE_DTS_REQUIRED_OUTPUTS = [
   "packages/plugin-sdk/dist/src/plugin-sdk/video-generation.d.ts",
 ];
 const QA_CHANNEL_DTS_INPUTS = [
+  ...EXTENSION_BOUNDARY_CONFIG_INPUTS,
   "extensions/qa-channel/api.ts",
   "extensions/qa-channel/runtime-api.ts",
   "extensions/qa-channel/test-api.ts",
@@ -380,6 +382,7 @@ const QA_CHANNEL_DTS_INPUTS = [
 const QA_CHANNEL_DTS_STAMP = "dist/plugin-sdk/extensions/qa-channel/.boundary-dts.stamp";
 const QA_CHANNEL_DTS_REQUIRED_OUTPUTS = ["dist/plugin-sdk/extensions/qa-channel/api.d.ts"];
 const MEMORY_CORE_DTS_INPUTS = [
+  ...EXTENSION_BOUNDARY_CONFIG_INPUTS,
   "extensions/memory-core/api.ts",
   "extensions/memory-core/src",
   "extensions/memory-core/tsconfig.json",
@@ -387,6 +390,7 @@ const MEMORY_CORE_DTS_INPUTS = [
 const MEMORY_CORE_DTS_STAMP = "dist/plugin-sdk/extensions/memory-core/.boundary-dts.stamp";
 const MEMORY_CORE_DTS_REQUIRED_OUTPUTS = ["dist/plugin-sdk/extensions/memory-core/api.d.ts"];
 const MATRIX_DTS_INPUTS = [
+  ...EXTENSION_BOUNDARY_CONFIG_INPUTS,
   "extensions/matrix/test-api.ts",
   "extensions/matrix/src",
   "extensions/matrix/tsconfig.json",
@@ -394,6 +398,7 @@ const MATRIX_DTS_INPUTS = [
 const MATRIX_DTS_STAMP = "dist/plugin-sdk/extensions/matrix/.boundary-dts.stamp";
 const MATRIX_DTS_REQUIRED_OUTPUTS = ["dist/plugin-sdk/extensions/matrix/test-api.d.ts"];
 const DISCORD_DTS_INPUTS = [
+  ...EXTENSION_BOUNDARY_CONFIG_INPUTS,
   "extensions/discord/api.ts",
   "extensions/discord/src/api.ts",
   "extensions/discord/tsconfig.json",
@@ -401,16 +406,22 @@ const DISCORD_DTS_INPUTS = [
 const DISCORD_DTS_STAMP = "dist/plugin-sdk/extensions/discord/.boundary-dts.stamp";
 const DISCORD_DTS_REQUIRED_OUTPUTS = ["dist/plugin-sdk/extensions/discord/api.d.ts"];
 const SLACK_DTS_INPUTS = [
+  ...EXTENSION_BOUNDARY_CONFIG_INPUTS,
   "extensions/slack/api.ts",
   "extensions/slack/src/client.ts",
   "extensions/slack/tsconfig.json",
 ];
 const SLACK_DTS_STAMP = "dist/plugin-sdk/extensions/slack/.boundary-dts.stamp";
 const SLACK_DTS_REQUIRED_OUTPUTS = ["dist/plugin-sdk/extensions/slack/api.d.ts"];
-const TELEGRAM_DTS_INPUTS = ["extensions/telegram/api.ts", "extensions/telegram/tsconfig.json"];
+const TELEGRAM_DTS_INPUTS = [
+  ...EXTENSION_BOUNDARY_CONFIG_INPUTS,
+  "extensions/telegram/api.ts",
+  "extensions/telegram/tsconfig.json",
+];
 const TELEGRAM_DTS_STAMP = "dist/plugin-sdk/extensions/telegram/.boundary-dts.stamp";
 const TELEGRAM_DTS_REQUIRED_OUTPUTS = ["dist/plugin-sdk/extensions/telegram/api.d.ts"];
 const WHATSAPP_DTS_INPUTS = [
+  ...EXTENSION_BOUNDARY_CONFIG_INPUTS,
   "extensions/whatsapp/api.ts",
   "extensions/whatsapp/src/qa-driver.runtime.ts",
   "extensions/whatsapp/tsconfig.json",
@@ -555,6 +566,7 @@ const EXTENSION_BOUNDARY_NON_TYPE_INPUTS = [
   "packages/plugin-sdk/tsconfig.json",
   "scripts/check-extension-package-tsc-boundary.mts",
   "scripts/prepare-extension-package-boundary-artifacts.mts",
+  "scripts/lib/extension-package-boundary-inputs.mts",
   "scripts/write-plugin-sdk-entry-dts.ts",
   "scripts/lib/plugin-sdk-entrypoints.json",
   "scripts/lib/plugin-sdk-entries.mts",

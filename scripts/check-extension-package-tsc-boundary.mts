@@ -21,6 +21,7 @@ import {
   resolveTimerTimeoutMs,
 } from "../packages/normalization-core/src/number-coercion.ts";
 import { toErrorObject } from "./lib/error-format.mts";
+import { EXTENSION_BOUNDARY_CONFIG_INPUTS } from "./lib/extension-package-boundary-inputs.mts";
 import { parsePositiveInt } from "./lib/numeric-options.mjs";
 import { resolveRepoRoot } from "./lib/repo-root.mjs";
 import {
@@ -400,6 +401,14 @@ function collectOldestMtime(paths: string[]) {
   return Number.isFinite(oldestMtimeMs) ? oldestMtimeMs : null;
 }
 
+function collectSharedNewestInputMtime(rootDir: string) {
+  return Math.max(
+    ...[...EXTENSION_BOUNDARY_CONFIG_INPUTS, "dist/plugin-sdk", "packages/plugin-sdk/dist"].map(
+      (input) => collectNewestMtime(resolve(rootDir, input), { skipDistDirectories: false }),
+    ),
+  );
+}
+
 /**
  * Checks whether an extension boundary compile canary is still fresh.
  */
@@ -410,15 +419,7 @@ export function isBoundaryCompileFresh(extensionId: string, params: CompileFresh
     params.extensionNewestInputMtimeMs ??
     collectNewestMtime(extensionRoot, { includeFile: isRelevantCompileInput });
   const sharedNewestInputMtimeMs =
-    params.sharedNewestInputMtimeMs ??
-    Math.max(
-      collectNewestMtime(resolve(rootDir, "dist/plugin-sdk"), {
-        skipDistDirectories: false,
-      }),
-      collectNewestMtime(resolve(rootDir, "packages/plugin-sdk/dist"), {
-        skipDistDirectories: false,
-      }),
-    );
+    params.sharedNewestInputMtimeMs ?? collectSharedNewestInputMtime(rootDir);
   const newestInputMtimeMs = Math.max(extensionNewestInputMtimeMs, sharedNewestInputMtimeMs);
   const oldestOutputMtimeMs = collectOldestMtime([
     resolveBoundaryTsStampPath(extensionId, rootDir),
@@ -910,14 +911,7 @@ async function runCompileCheck(extensionIds: string[]) {
   const prepElapsedMs = Date.now() - prepStartedAt;
   const concurrency = resolveCompileConcurrency();
   const verboseFreshLogs = process.env.OPENCLAW_EXTENSION_BOUNDARY_VERBOSE_FRESH === "1";
-  const sharedNewestInputMtimeMs = Math.max(
-    collectNewestMtime(resolve(repoRoot, "dist/plugin-sdk"), {
-      skipDistDirectories: false,
-    }),
-    collectNewestMtime(resolve(repoRoot, "packages/plugin-sdk/dist"), {
-      skipDistDirectories: false,
-    }),
-  );
+  const sharedNewestInputMtimeMs = collectSharedNewestInputMtime(repoRoot);
   process.stdout.write(`compile concurrency ${concurrency}\n`);
   const compileStartedAt = Date.now();
   let skippedCompileCount = 0;
