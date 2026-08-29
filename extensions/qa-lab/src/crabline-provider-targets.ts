@@ -40,6 +40,10 @@ function normalizeExplicitMatrixTarget(target: string) {
   return /^[!@#]/u.test(normalized) && normalized.includes(":") ? normalized : undefined;
 }
 
+function encodeQaThreadComponent(value: string) {
+  return value.replaceAll("%", "%25").replaceAll("/", "%2F");
+}
+
 function resolveMatrixQaTarget(target: string) {
   const explicitTarget = normalizeExplicitMatrixTarget(target);
   if (explicitTarget) {

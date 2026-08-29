@@ -90,18 +90,6 @@ function normalizeCrablineSignalGatewayConfig(config: OpenClawConfig): OpenClawC
   } as OpenClawConfig;
 }
 
-function resolveLogicalQaTarget(
-  { conversation, threadId }: QaBusInboundMessageInput,
-  providerQaTarget: string,
-  providerPreservesConversationId: boolean,
-) {
-  if (conversation.kind !== "channel" && providerPreservesConversationId) {
-    return providerQaTarget;
-  }
-  const prefix = conversation.kind === "direct" ? "dm" : conversation.kind;
-  return threadId ? `thread:${conversation.id}/${threadId}` : `${prefix}:${conversation.id}`;
-}
-
 const TELEGRAM_LIFECYCLE_METHOD_RE = /\/(sendMessage|editMessageText|deleteMessage)$/u;
 
 function readTelegramLifecycleEvent(params: {
