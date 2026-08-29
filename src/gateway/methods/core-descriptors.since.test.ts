@@ -80,15 +80,10 @@ const TRAIN_2026_7_METHODS = [
   "tasks.dismiss",
 ] as const;
 
-const CURRENT_TRAIN_METHODS = [
+const TRAIN_2026_8_METHODS = [
   "diagnostics.lanes",
-  "plugins.inspect",
   "device.pair.setupStatus",
-  "exec.approval.grants.list",
-  "exec.approval.grants.revoke",
   "sessions.patchMany",
-  "sessions.goal.update",
-  "sessions.goal.clear",
   "sessions.groups.update",
   "sessions.groups.defaults",
   "sessions.recover",
@@ -129,8 +124,16 @@ const CURRENT_TRAIN_METHODS = [
   "session.members.listEvidence",
 ] as const;
 
+const TRAIN_2026_9_METHODS = [
+  "exec.approval.grants.list",
+  "exec.approval.grants.revoke",
+  "sessions.goal.update",
+  "sessions.goal.clear",
+  "plugins.inspect",
+] as const;
+
 describe("core gateway method release trains", () => {
-  it("records a valid train for every method and dates the 2026.7 families", () => {
+  it("records a valid train for every method and dates each release family", () => {
     const methods = listCoreGatewayMethodMetadata();
 
     for (const method of methods) {
@@ -148,23 +151,12 @@ describe("core gateway method release trains", () => {
         .filter((method) => method.since === "2026.8")
         .map((method) => method.name)
         .toSorted(),
-    ).toEqual(CURRENT_TRAIN_METHODS.toSorted());
-    expect(methods.find((method) => method.name === "update.hold")?.since).toBe("2026.8");
-    expect(methods.find((method) => method.name === "sessions.catalog.startTerminal")?.since).toBe(
-      "2026.8",
-    );
-    expect(methods.find((method) => method.name === "worker.desktop.observe")?.since).toBe(
-      "2026.8",
-    );
-    for (const method of [
-      "projects.list",
-      "projects.register",
-      "projects.remove",
-      "projects.add",
-      "projects.searchRemote",
-    ]) {
-      expect(methods.find((candidate) => candidate.name === method)?.since).toBe("2026.8");
-    }
-    expect(methods.find((method) => method.name === "worker.desktop.launch")?.since).toBe("2026.8");
+    ).toEqual(TRAIN_2026_8_METHODS.toSorted());
+    expect(
+      methods
+        .filter((method) => method.since === "2026.9")
+        .map((method) => method.name)
+        .toSorted(),
+    ).toEqual(TRAIN_2026_9_METHODS.toSorted());
   });
 });
