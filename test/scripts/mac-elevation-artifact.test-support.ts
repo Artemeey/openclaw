@@ -249,6 +249,12 @@ file() {
   esac
 }
 lipo() { [[ "$TEST_FAULT" != lipo ]] || { echo 'mock rejection: lipo' >&2; return 23; }; /usr/bin/lipo "$@"; }
+plutil() {
+  /usr/bin/plutil "$@" && return 0
+  # macOS versions differ in which stream carries extraction diagnostics.
+  [[ "$TEST_FAULT" != plist-error-stdout ]] || printf 'fixture diagnostic, not plist data\\n'
+  return 1
+}
 `,
   );
   for (const tool of [
@@ -987,7 +993,7 @@ export function registerMacElevationArtifactTests() {
           ["-remove", "OpenClawWorkerBuildID", harness.at("Contents/Info.plist")],
           harness.home,
         );
-        const missingIdentity = harness.verify();
+        const missingIdentity = harness.verify("plist-error-stdout");
         expect(missingIdentity.status, missingIdentity.stderr).toBe(1);
         expect(missingIdentity.stderr).toContain("elevation app is missing worker build identity");
       });

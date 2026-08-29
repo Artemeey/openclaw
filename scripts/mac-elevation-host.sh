@@ -306,11 +306,15 @@ for tool in "${required_tools[@]}"; do
 done
 
 plist_value() {
-  plutil -extract "$2" raw -o - "$1/Contents/Info.plist" 2>/dev/null || true
+  plist_file_value "$1/Contents/Info.plist" "$2"
 }
 
 plist_file_value() {
-  plutil -extract "$2" raw -o - "$1" 2>/dev/null || true
+  local value
+  # Some macOS versions write failed-extraction diagnostics to stdout, not stderr.
+  if value="$(plutil -extract "$2" raw -o - "$1" 2>/dev/null)"; then
+    printf '%s\n' "$value"
+  fi
 }
 
 codesign_metadata_value() {
@@ -3257,10 +3261,12 @@ recover_host() {
       then
         fail 'receipt app backup does not pass strict signature and identity validation'
       fi
-    elif [[ "$RECOVERY_PENDING_INSTALL" == "1" && "$current_app_valid" == "1" ]] &&
+    elif [[ "$RECOVERY_PENDING_INSTALL" == "1" ]] &&
       verify_recorded_rollback_app "$APP_PATH"
     then
-      : # The install transaction was persisted before the prior app moved into custody.
+      # Before custody, the prior app is authenticated by its recorded CDHashes, not
+      # the new elevation payload contract. It may legitimately have no bundled worker.
+      :
     elif [[ "$RECOVERY_RESUMED" == "1" ]]; then
       verify_recorded_rollback_app "$APP_PATH" ||
         fail 'resumed recovery has no authenticated prior app at the canonical path'

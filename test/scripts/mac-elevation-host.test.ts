@@ -2676,57 +2676,50 @@ describe("mac elevation host command contract", () => {
     },
   );
 
-  it.skipIf(process.platform !== "darwin")(
-    "recovers a persisted install killed after migration custody",
-    () => {
-      const harness = createInstallRollbackHarness({ killAfterInitialMigrationCustody: true });
+  it
+    .skipIf(process.platform !== "darwin")
+    .each(
+      (["killAfterInitialMigrationCustody", "killAfterPendingReceipt"] as const).flatMap(
+        (killPoint) =>
+          (["valid", "arm64", "x86_64"] as const).map((identity) => ({ killPoint, identity })),
+      ),
+    )(
+    "binds $killPoint recovery to the recorded prior app ($identity)",
+    ({ killPoint, identity }) => {
+      const harness = createInstallRollbackHarness({ [killPoint]: true });
       const oldBinary = readFileSync(path.join(harness.appPath, "Contents", "MacOS", "OpenClaw"));
-      const installArgs = [
-        "install",
-        "--archive",
-        harness.archivePath,
-        "--receipt",
-        harness.receiptPath,
-        ...receiptDigestArgs(harness.receiptPath),
-        "--app",
-        harness.appPath,
-        "--migrate-launch-agent",
-        harness.sourcePlist,
-      ];
-      const interrupted = runInstaller(harness.installerPath, installArgs, harness.env);
-      expect(interrupted.signal).toBe("SIGKILL");
-      expect(existsSync(harness.sourcePlist)).toBe(false);
-      expect(existsSync(path.join(harness.stateDir, "elevation-host-install.pending.json"))).toBe(
-        true,
-      );
-
-      const recovered = runAuthenticatedElevationRecovery(harness);
-      expect(recovered.status, recovered.stderr).toBe(0);
-      expect(readFileSync(path.join(harness.appPath, "Contents", "MacOS", "OpenClaw"))).toEqual(
-        oldBinary,
-      );
-      expect(readFileSync(harness.sourcePlist, "utf8")).toBe(harness.sourceContents);
-      expect(existsSync(path.join(harness.stateDir, "elevation-host-install.pending.json"))).toBe(
-        false,
-      );
-    },
-  );
-
-  it.skipIf(process.platform !== "darwin")(
-    "recovers on the first attempt when killed immediately after publishing the prepared receipt",
-    () => {
-      const harness = createInstallRollbackHarness({ killAfterPendingReceipt: true });
-      const oldBinary = readFileSync(path.join(harness.appPath, "Contents", "MacOS", "OpenClaw"));
+      const pendingPath = path.join(harness.stateDir, "elevation-host-install.pending.json");
       const interrupted = runAuthenticatedMigrationInstall(harness);
       expect(interrupted.signal).toBe("SIGKILL");
-      expect(readFileSync(harness.sourcePlist, "utf8")).toBe(harness.sourceContents);
+      expect(existsSync(harness.sourcePlist)).toBe(killPoint === "killAfterPendingReceipt");
+      expect(existsSync(pendingPath)).toBe(true);
+      expect(existsSync(path.join(harness.appPath, "Contents", "Resources", "node-worker"))).toBe(
+        false,
+      );
+      if (identity !== "valid") {
+        const pending = JSON.parse(readFileSync(pendingPath, "utf8")) as {
+          backupCDHashes: Record<"arm64" | "x86_64", string>;
+        };
+        pending.backupCDHashes[identity] = "0".repeat(40);
+        writeFileSync(pendingPath, JSON.stringify(pending));
+      }
 
       const recovered = runAuthenticatedElevationRecovery(harness);
-      expect(recovered.status, recovered.stderr).toBe(0);
+      expect(recovered.status, recovered.stderr).toBe(identity === "valid" ? 0 : 1);
+      if (identity !== "valid") {
+        expect(recovered.stderr).toContain(
+          "receipt app backup is missing, symlinked, or not a bundle directory",
+        );
+      }
       expect(readFileSync(path.join(harness.appPath, "Contents", "MacOS", "OpenClaw"))).toEqual(
         oldBinary,
       );
-      expect(readFileSync(harness.sourcePlist, "utf8")).toBe(harness.sourceContents);
+      const sourceRestored = identity === "valid" || killPoint === "killAfterPendingReceipt";
+      expect(existsSync(harness.sourcePlist)).toBe(sourceRestored);
+      if (sourceRestored) {
+        expect(readFileSync(harness.sourcePlist, "utf8")).toBe(harness.sourceContents);
+      }
+      expect(existsSync(pendingPath)).toBe(identity !== "valid");
     },
   );
 
