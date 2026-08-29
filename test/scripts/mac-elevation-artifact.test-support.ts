@@ -100,7 +100,8 @@ export function artifactFixture() {
   const root = tempDirs.make("openclaw-elevation-native-");
   const binaries = compiledMacNativeFixtures(root);
   const home = path.join(root, "home [portable]");
-  const app = path.join(root, "payload [archive]", "OpenClaw.app");
+  const payload = path.join(root, "payload [archive]");
+  const app = path.join(payload, "OpenClaw.app");
   const bin = path.join(home, "bin");
   const installer = path.join(home, "elevation-installer.sh");
   const archive = path.join(home, "elevation.zip");
@@ -325,7 +326,7 @@ lipo() { [[ "$TEST_FAULT" != lipo ]] || { echo 'mock rejection: lipo' >&2; retur
   };
   const verify = (fault = "") => {
     rmSync(archive, { force: true });
-    runMacFixtureTool("/usr/bin/ditto", ["-c", "-k", "--keepParent", app, archive], root);
+    runMacFixtureTool("/usr/bin/ditto", ["-c", "-k", payload, archive], root);
     receipt.archiveSha256 = digest(readFileSync(archive));
     write(receiptPath, JSON.stringify(receipt));
     return run(
@@ -468,6 +469,31 @@ export function registerMacElevationArtifactTests() {
           expect(calls).toContain(`/${arch}/${library}`);
         }
       });
+
+      it.each(["extra-entry", "regular-file", "symlink"])(
+        "rejects an archive with an invalid app root (%s) before authenticating a helper",
+        (kind) => {
+          const harness = artifactFixture();
+          if (kind === "extra-entry") {
+            write(path.join(path.dirname(harness.app), "unexpected"), "not app content\n");
+          } else {
+            const reference = path.join(harness.home, "reference.app");
+            renameSync(harness.app, reference);
+            if (kind === "symlink") {
+              symlinkSync(reference, harness.app);
+            } else {
+              write(harness.app, "not an app directory\n");
+            }
+          }
+          const result = harness.verify();
+          expect(result.status, result.stderr).toBe(1);
+          expect(result.stderr).toContain("elevation archive root");
+          expect(result.stdout).not.toContain("Elevation artifact verified");
+          const calls = readFileSync(harness.calls, "utf8");
+          expect(calls).not.toContain("candidate-helper-hash");
+          expect(calls).not.toContain("codesign --verify");
+        },
+      );
 
       it("accepts universal worker slices and contained terminal symlinks", () => {
         const harness = artifactFixture();

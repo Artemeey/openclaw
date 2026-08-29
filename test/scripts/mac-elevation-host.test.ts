@@ -4389,7 +4389,6 @@ describe("mac elevation host command contract", () => {
     expect(script).not.toContain("--elevation-installer");
     expect(script).toContain("notarizationId");
     expect(script).toContain("entitlementsSha256");
-    expect(script).toContain("elevation archive root must contain exactly OpenClaw.app");
     expect(script).toContain("codesign --verify --strict --test-requirement='=notarized'");
     expect(script).toContain('spctl --assess --type execute "$app"');
   });

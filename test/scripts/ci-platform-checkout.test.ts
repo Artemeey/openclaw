@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -23,6 +23,7 @@ const platformCases = [
   { scenario: "harness-timeout", attempts: 2, code: 124, checkout: true },
   { scenario: "git-failure", attempts: 1, code: 23, checkout: false },
   { scenario: "git-exit-124", attempts: 1, code: 124, checkout: false },
+  { scenario: "pre-existing-lock", attempts: 1, code: 128, checkout: false },
   // Windows has no POSIX signals/ps boundary; native Job cancellation proof is separate.
   ...(process.platform === "win32" ? [] : ["SIGTERM", "SIGINT", "SIGHUP"]).map((signal, index) => ({
     scenario: `cancel-${signal}`,
@@ -131,10 +132,27 @@ it.each([
         expect(report.error, stderr).toBeUndefined();
         expectCiCheckoutCleanup(report);
         expect(report.code).toBe(code);
+        expect(readFileSync(path.join(workspace, ".git/preexisting.lock"), "utf8")).toBe(
+          "not invocation-owned\n",
+        );
+        if (scenario === "pre-existing-lock") {
+          expect(readFileSync(path.join(workspace, ".git/shallow.lock"), "utf8")).toBe(
+            "not invocation-owned\n",
+          );
+        }
+        if (scenario === "recovery") {
+          for (let attempt = 1; attempt <= attempts; attempt++) {
+            expect(
+              readFileSync(path.join(root, "shared-git-cache", `${attempt}.lock`), "utf8"),
+            ).toBe("outside Git ownership\n");
+          }
+        }
         if (scenario === "git-exit-124") {
           expect(report.output).toBe("");
         }
-        expect(report.readyAttempts).toEqual(Array.from({ length: attempts }, (_, i) => i + 1));
+        const readyAttempts =
+          scenario === "pre-existing-lock" ? [] : Array.from({ length: attempts }, (_, i) => i + 1);
+        expect(report.readyAttempts).toEqual(readyAttempts);
         expect(report.boundaries.filter((entry) => entry.name.startsWith("fetch:"))).toHaveLength(
           attempts,
         );
