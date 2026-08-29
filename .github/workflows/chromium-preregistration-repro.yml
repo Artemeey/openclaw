@@ -1,0 +1,52 @@
+name: Chromium preregistration repro
+
+on:
+  push:
+    branches:
+      - steipete/agitated-leavitt-8f411a
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  chromium-preregistration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          node-version: "24.19.0"
+          cache-mode: restore
+          install-bun: "false"
+
+      - name: Run complete Chromium bootstrap scenario
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts/chromium-preregistration
+          pnpm test:e2e:browser-extension 2>&1 | tee .artifacts/chromium-preregistration/hosted.log
+
+      - name: Upload Chromium proof
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: chromium-preregistration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .artifacts/chromium-preregistration/hosted.log
+            .artifacts/browser-lifecycle/*.png
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7

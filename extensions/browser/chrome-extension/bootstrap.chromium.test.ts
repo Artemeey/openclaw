@@ -218,6 +218,16 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
           nodePath: process.execPath,
           nativeHostPath,
         };
+        for (const [target, requestedPath] of Object.entries({
+          node: deps.nodePath,
+          nativeHost: deps.nativeHostPath,
+        })) {
+          const canonicalPath = await fs.realpath(requestedPath);
+          const info = await fs.stat(canonicalPath);
+          process.stderr.write(
+            `[browser-extension-e2e] native target ${JSON.stringify({ target, requestedPath, canonicalPath, mode: (info.mode & 0o777).toString(8), uid: info.uid, gid: info.gid, processUid: process.getuid?.(), processGid: process.getgid?.(), nodeVersion: process.version })}\n`,
+          );
+        }
         const gatewayServer = http.createServer((req, res) => {
           if (req.url === "/browser-owner-proof") {
             diagnostic.mark("http.request", true);
@@ -309,14 +319,27 @@ describe.runIf(runE2E)("Chrome native bootstrap Chromium E2E", () => {
           waitMs: 15_000,
           deps,
         });
-        await expect
-          .poll(
-            async () => await exactOwnedManifestsExist(relevantManifestPaths, expectedOrigins),
-            {
-              timeout: 15_000,
-            },
-          )
-          .toBe(true);
+        // Observe rejection immediately while Chrome waits for preregistration;
+        // the same install must finish before reporting its refusal, without reloading Chrome.
+        const installDiagnostic = installPromise.then(
+          (status) => ({ issues: status.issues }),
+          (error: unknown) => ({ error: String(error) }),
+        );
+        try {
+          await expect
+            .poll(
+              async () => await exactOwnedManifestsExist(relevantManifestPaths, expectedOrigins),
+              {
+                timeout: 15_000,
+              },
+            )
+            .toBe(true);
+        } catch (error) {
+          throw new Error(
+            `Native host preregistration failed: ${JSON.stringify(await installDiagnostic)}`,
+            { cause: error },
+          );
+        }
         process.stderr.write("[browser-extension-e2e] deterministic native host pre-registered\n");
         await loadUnpackedExtension(context, installed);
         const extensionId = await waitForExtensionId(context, installed);
