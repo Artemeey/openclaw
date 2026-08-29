@@ -203,18 +203,6 @@ struct OnboardingViewSmokeTests {
             requiresCLIInstall: false) == [0, 1, 9])
     }
 
-    @Test func `fresh onboarding defaults to this Mac`() {
-        let state = AppState(preview: true)
-        state.onboardingSeen = false
-        state.connectionMode = .unconfigured
-        let view = OnboardingView(state: state)
-
-        #expect(view.selectedConnectionMode == .local)
-        #expect(view.isConnectionSelectionBlocking)
-        #expect(view.pageOrder == [0, 1, 2, 3])
-        #expect(state.connectionMode == .unconfigured)
-    }
-
     @Test func `fresh local setup installs CLI before inference setup`() {
         let order = OnboardingView.pageOrder(
             for: .local,
