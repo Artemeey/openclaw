@@ -33,6 +33,13 @@ import {
   type StoredCodexAppServerBinding,
 } from "./src/app-server/session-binding-store.js";
 import { retireSharedCodexAppServerClientsBeforeDesktopGeneration } from "./src/app-server/shared-client.js";
+import {
+  CODEX_APP_SERVER_PROCESS_MAX_ENTRIES,
+  CODEX_APP_SERVER_PROCESS_NAMESPACE,
+  createCodexAppServerProcessReaperService,
+  setCodexAppServerProcessRegistryStore,
+  type StoredCodexAppServerProcess,
+} from "./src/app-server/transport-process-registry.js";
 import type { CodexPluginsConfigBlock } from "./src/command-plugins-management.js";
 import { createCodexCommand } from "./src/commands.js";
 import { codexConversationBindingRuntime } from "./src/conversation-binding.js";
@@ -110,6 +117,7 @@ export default definePluginEntry({
         onGenerationChange: retireSharedCodexAppServerClientsBeforeDesktopGeneration,
       }),
     );
+    api.registerService(createCodexAppServerProcessReaperService());
     if (appServerConfig?.transport === "websocket") {
       api.registerService(
         createCodexAppServerConnectionHealthService({
@@ -120,6 +128,16 @@ export default definePluginEntry({
     }
     let bindingStateStore: PluginStateSyncKeyedStore<StoredCodexAppServerBinding> | undefined;
     let managedThreadStateStore: PluginStateSyncKeyedStore<StoredCodexManagedThread> | undefined;
+    let processRegistryStore: PluginStateSyncKeyedStore<StoredCodexAppServerProcess> | undefined;
+    // The base registration runtime rejects state access; defer opening until spawn or reap.
+    const openProcessRegistryStore = () =>
+      (processRegistryStore ??= api.runtime.state.openSyncKeyedStore<StoredCodexAppServerProcess>({
+        namespace: CODEX_APP_SERVER_PROCESS_NAMESPACE,
+        maxEntries: CODEX_APP_SERVER_PROCESS_MAX_ENTRIES,
+        overflowPolicy: "evict-oldest",
+        // No TTL: expiring a row could leave a long-lived orphan permanently untracked.
+      }));
+    setCodexAppServerProcessRegistryStore(openProcessRegistryStore);
     const openBindingStateStore = () =>
       (bindingStateStore ??= api.runtime.state.openSyncKeyedStore<StoredCodexAppServerBinding>({
         namespace: CODEX_APP_SERVER_BINDING_NAMESPACE,

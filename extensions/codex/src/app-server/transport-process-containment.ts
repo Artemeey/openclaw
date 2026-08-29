@@ -7,7 +7,7 @@ type ContainableTransport = {
   kill?: (signal?: NodeJS.Signals) => unknown;
 };
 
-type PosixProcess = {
+export type PosixProcess = {
   pid: number;
   ppid: number;
   pgid: number;
@@ -20,6 +20,21 @@ const MAX_CONTAINED_PROCESSES = 512;
 const MAX_PROCESS_CONTAINMENT_MS = 2_000;
 const MAX_PROCESS_QUIESCE_PASSES = 16;
 const PROCESS_INSPECTION_MAX_BYTES = 8 * 1024 * 1024;
+
+export function inspectCodexTransportProcessSnapshot(
+  deadline: number,
+): Promise<PosixProcess[] | undefined> {
+  return readProcessSnapshot(deadline);
+}
+
+// ps -p exits nonzero for missing PIDs: undefined means absent OR inspection failed.
+// Use only where both outcomes require the same fail-closed action.
+export function inspectCodexTransportProcess(
+  pid: number,
+  deadline: number,
+): Promise<PosixProcess | undefined> {
+  return readProcess(pid, deadline);
+}
 
 export async function terminateCodexAppServerDescendants(
   child: ContainableTransport,

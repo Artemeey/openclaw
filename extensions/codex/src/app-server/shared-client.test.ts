@@ -13,6 +13,7 @@ import { codexNativeSubagentMonitorRuntime } from "./native-subagent-monitor.js"
 import { withCodexAppServerJsonClient } from "./request.js";
 import { createClientHarness } from "./test-support.js";
 import { CodexAdoptedThreadActiveError } from "./thread-lifecycle-errors.js";
+import * as processRegistry from "./transport-process-registry.js";
 import { CODEX_APP_SERVER_VERSION, MIN_SUPPORTED_CODEX_APP_SERVER_VERSION } from "./version.js";
 
 const mocks = vi.hoisted(() => ({
@@ -332,6 +333,31 @@ describe("shared Codex app-server client", () => {
     );
     expect(harness.process.stdin.destroyed).toBe(true);
     startSpy.mockRestore();
+  });
+
+  it("waits for orphan reaping before starting a fresh shared client", async () => {
+    const harness = createClientHarness();
+    const reaping = createDeferred<void>();
+    const reap = vi
+      .spyOn(processRegistry, "reapOrphanedCodexAppServerProcesses")
+      .mockReturnValue(reaping.promise);
+    const start = vi.spyOn(CodexAppServerClient, "start").mockReturnValue(harness.client);
+    const acquiring = getSharedCodexAppServerClient({ timeoutMs: 1_000 });
+    void acquiring.catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(reap).toHaveBeenCalledOnce());
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      expect(start).not.toHaveBeenCalled();
+      reaping.resolve();
+      await sendInitializeResult(harness, `openclaw/${CODEX_APP_SERVER_VERSION} (Linux; test)`);
+      await expect(acquiring).resolves.toBe(harness.client);
+      expect(start).toHaveBeenCalledOnce();
+    } finally {
+      reaping.resolve();
+      harness.client.close();
+    }
   });
 
   it("recognizes selection changes thrown by another bundle copy", () => {

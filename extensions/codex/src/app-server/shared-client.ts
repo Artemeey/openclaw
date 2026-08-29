@@ -48,6 +48,10 @@ import {
 import { acquireCodexNativeConfigFence } from "./native-config-fence.js";
 import { CodexAdoptedThreadActiveError } from "./thread-lifecycle-errors.js";
 import { withTimeout } from "./timeout.js";
+import {
+  reapOrphanedCodexAppServerProcesses,
+  resetCodexAppServerProcessRegistryForTests,
+} from "./transport-process-registry.js";
 
 export type { CodexAppServerPreparedAuth } from "./auth-bridge.js";
 
@@ -1003,6 +1007,8 @@ async function startInitializedCodexAppServerClient(params: {
   onStartedClient?: (client: CodexAppServerClient) => void;
   onInitializedClient?: () => void;
 }): Promise<CodexAppServerClient> {
+  // A fresh child must not share rollout state with a pre-restart orphan.
+  await reapOrphanedCodexAppServerProcesses();
   const acquireStartedAt = Date.now();
   const timeoutMs = params.timeoutMs ?? 0;
   const startOptionsCandidates = resolveManagedFallbackStartOptions(params.startOptions);
@@ -1276,6 +1282,7 @@ export function resetSharedCodexAppServerClientForTests(): void {
   for (const client of isolatedClients) {
     client.close();
   }
+  resetCodexAppServerProcessRegistryForTests();
   notifyDesktopGenerationDrainChecks(state);
 }
 

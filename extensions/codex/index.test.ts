@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { createTestPluginApi } from "openclaw/plugin-sdk/plugin-test-api";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import openAIPlugin from "../openai/index.js";
 import { createCodexAppServerAgentHarness } from "./harness.js";
 import plugin from "./index.js";
@@ -14,6 +14,7 @@ import {
   createCodexTestBindingStateStore,
   testCodexAppServerBindingStore,
 } from "./src/app-server/session-binding.test-helpers.js";
+import { resetCodexAppServerProcessRegistryForTests } from "./src/app-server/transport-process-registry.js";
 import { CODEX_SUPERVISION_COMPAT_TOOL_NAMES } from "./src/supervision-tools.js";
 
 const runCodexAppServerAttemptMock = vi.hoisted(() => vi.fn());
@@ -53,6 +54,8 @@ function mockCallArg(mock: { mock: { calls: unknown[][] } }, index = 0, argIndex
 }
 
 describe("codex plugin", () => {
+  afterEach(() => resetCodexAppServerProcessRegistryForTests());
+
   it("is opt-in and does not advertise a text provider", () => {
     const manifest = JSON.parse(
       fs.readFileSync(new URL("./openclaw.plugin.json", import.meta.url), "utf8"),
@@ -154,7 +157,7 @@ describe("codex plugin", () => {
       }),
     );
 
-    expect(registerService).toHaveBeenCalledTimes(2);
+    expect(registerService).toHaveBeenCalledTimes(3);
     expect(registerService.mock.calls.map(([service]) => service)).toContainEqual(
       expect.objectContaining({
         id: "codex-app-server-connection-health",
@@ -180,11 +183,15 @@ describe("codex plugin", () => {
         }),
       );
 
-      expect(registerService).toHaveBeenCalledOnce();
+      expect(registerService).toHaveBeenCalledTimes(2);
       expect(mockCallArg(registerService)).toMatchObject({
         id: "codex-desktop-generation",
         start: expect.any(Function),
         stop: expect.any(Function),
+      });
+      expect(mockCallArg(registerService, 1)).toMatchObject({
+        id: "codex-app-server-process-reaper",
+        start: expect.any(Function),
       });
     }
   });

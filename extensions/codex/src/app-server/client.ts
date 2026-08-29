@@ -25,6 +25,7 @@ import {
   type RpcResponse,
 } from "./protocol.js";
 import { CodexAppServerRpcError } from "./rpc-error.js";
+import { registerCodexAppServerProcessSpawn } from "./transport-process-registry.js";
 import { createStdioTransport } from "./transport-stdio.js";
 import { createWebSocketTransport } from "./transport-websocket.js";
 import {
@@ -286,7 +287,9 @@ export class CodexAppServerClient {
     if (startOptions.transport === "websocket" || startOptions.transport === "unix") {
       return new CodexAppServerClient(createWebSocketTransport(startOptions));
     }
-    return new CodexAppServerClient(createStdioTransport(startOptions));
+    const child = createStdioTransport(startOptions);
+    void registerCodexAppServerProcessSpawn(child);
+    return new CodexAppServerClient(child);
   }
 
   /** Builds a client around a fake transport for tests. */
