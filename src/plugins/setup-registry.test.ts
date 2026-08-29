@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { withMockedWindowsPlatform } from "../test-utils/vitest-spies.js";
+import { createPluginCache, withPluginCache } from "./plugin-cache.js";
 import { cleanupTrackedTempDirs, makeTrackedTempDir } from "./test-helpers/fs-fixtures.js";
 import {
   getRegistryJitiMocks,
@@ -983,6 +984,29 @@ describe("setup-registry module loader", () => {
     );
   });
 
+  it("reports unavailable setup runtime access with the plugin id and registration mode", () => {
+    const pluginRoot = makeTempDir();
+    writeSetupApiStub(pluginRoot);
+    mockSinglePlugin({ id: "runtime-dependent-setup", rootDir: pluginRoot });
+    mocks.createJiti.mockImplementation(() => () => ({
+      default: {
+        register(api: import("./types.js").OpenClawPluginApi) {
+          api.runtime.state.openSyncKeyedStore({ namespace: "example", maxEntries: 1 });
+        },
+      },
+    }));
+
+    expect(resolvePluginSetupRegistry({ env: {} }).diagnostics).toMatchObject([
+      {
+        pluginId: "runtime-dependent-setup",
+        code: "setup-registration-failed",
+        message: expect.stringContaining(
+          'Plugin "runtime-dependent-setup" runtime is intentionally unavailable during "setup-only" registration.',
+        ),
+      },
+    ]);
+  });
+
   it("publishes each plugin setup registration atomically on synchronous success", () => {
     const throwingRoot = makeTempDir();
     const healthyRoot = makeTempDir();
@@ -1204,6 +1228,52 @@ describe("setup-registry module loader", () => {
   });
 
   describe("result cache (ambient process.env)", () => {
+    it("keeps setup registrations isolated between plugin cache operations", () => {
+      const firstRoot = makeTempDir();
+      const secondRoot = makeTempDir();
+      writeSetupApiStub(firstRoot);
+      writeSetupApiStub(secondRoot);
+      const firstCache = createPluginCache();
+      const secondCache = createPluginCache();
+      const roots = new Map([
+        [firstCache, firstRoot],
+        [secondCache, secondRoot],
+      ]);
+      const labels = new Map([
+        [firstRoot, "first operation"],
+        [secondRoot, "second operation"],
+      ]);
+      const resolveFor = (cache: typeof firstCache) =>
+        withPluginCache(cache, () => {
+          const rootDir = roots.get(cache)!;
+          mockSinglePlugin({
+            id: "setup-owner",
+            rootDir,
+            setup: { requiresRuntime: true, providers: [{ id: "setup-owner" }] },
+          });
+          return resolvePluginSetupRegistry().providers[0]?.provider.label;
+        });
+      mocks.createJiti.mockImplementation(() => (modulePath: string) => ({
+        default: {
+          register(api: SetupRegistryApi) {
+            const label = [...labels].find(
+              ([rootDir]) =>
+                modulePath === path.join(rootDir, "setup-api.js") ||
+                modulePath === pathToFileURL(path.join(rootDir, "setup-api.js")).href,
+            )?.[1];
+            if (!label) {
+              throw new Error(`Unexpected setup artifact: ${modulePath}`);
+            }
+            api.registerProvider({ id: "setup-owner", label, auth: [] });
+          },
+        },
+      }));
+
+      expect(resolveFor(firstCache)).toBe("first operation");
+      expect(resolveFor(secondCache)).toBe("second operation");
+      expect(resolveFor(firstCache)).toBe("first operation");
+    });
+
     function mockOpenAiProviderPlugin(): void {
       mocks.loadPluginManifestRegistry.mockReturnValue({
         plugins: [

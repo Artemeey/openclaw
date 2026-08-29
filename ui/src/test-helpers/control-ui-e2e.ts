@@ -11,6 +11,7 @@ import type { InlineConfig, Plugin, PreviewServer, ViteDevServer } from "vite";
 import { PROTOCOL_VERSION } from "../../../packages/gateway-protocol/src/version.js";
 import { CONTROL_UI_BOOTSTRAP_CONFIG_PATH } from "../../../src/gateway/control-ui-contract.js";
 import type { ModelCatalogEntry, UpdateAvailable, UpdateScheduleState } from "../api/types.ts";
+import type { AuthenticatedUser } from "../app/user-profile.ts";
 import { normalizeControlUiBuildInfo } from "../build-info-normalizers.ts";
 import type { ControlUiBuildInfo } from "../build-info.ts";
 
@@ -34,10 +35,11 @@ export function controlUiSessionUrl(baseUrl: string, sessionKey: string): string
 }
 
 export async function navigateToControlUiSession(page: Page, sessionKey: string): Promise<void> {
-  await page.evaluate((pathname) => {
+  const expectedPathname = await page.evaluate((sessionPath) => {
     const app = document.querySelector("openclaw-app") as HTMLElement & {
       runtime?: {
         context: {
+          basePath: string;
           navigate: (routeId: string, options: { pathname: string }) => void;
         };
       };
@@ -45,9 +47,13 @@ export async function navigateToControlUiSession(page: Page, sessionKey: string)
     if (!app.runtime) {
       throw new Error("OpenClaw application runtime is unavailable");
     }
+    const pathname = `${app.runtime.context.basePath}${sessionPath}`;
+    const url = new URL(window.location.href);
+    url.pathname = pathname;
     app.runtime.context.navigate("chat", { pathname });
+    return url.pathname;
   }, controlUiSessionPath(sessionKey));
-  await page.waitForURL((url) => url.pathname === controlUiSessionPath(sessionKey));
+  await page.waitForURL((url) => url.pathname === expectedPathname);
   await page.waitForFunction(
     (targetSessionKey) =>
       [...document.querySelectorAll<HTMLElement>("openclaw-chat-pane")].some(
@@ -109,13 +115,22 @@ export async function waitForControlUiRoute(page: Page, target: ControlUiRouteTa
         };
         const state = app.runtime?.router.getState();
         const pathname = window.location.pathname;
+        // Router paths retain literal characters that browser history percent-encodes.
+        // Serialize as a pathname; decoding would alias encoded delimiters and percent data.
+        const browserPathname = (value: string) => {
+          const url = new URL(window.location.href);
+          url.pathname = value;
+          return url.pathname;
+        };
         return (
           state?.status === "success" &&
           state.matches[0]?.routeId === expected.routeId &&
-          state.resolvedLocation?.pathname === pathname &&
+          state.resolvedLocation !== null &&
+          browserPathname(state.resolvedLocation.pathname) === pathname &&
           state.pendingMatches.length === 0 &&
-          (expected.pathname === undefined || pathname === expected.pathname) &&
-          (expected.pathnamePrefix === undefined || pathname.startsWith(expected.pathnamePrefix)) &&
+          (expected.pathname === undefined || pathname === browserPathname(expected.pathname)) &&
+          (expected.pathnamePrefix === undefined ||
+            pathname.startsWith(browserPathname(expected.pathnamePrefix))) &&
           (expected.search === undefined || window.location.search === expected.search) &&
           (expected.hash === undefined || window.location.hash === expected.hash)
         );
@@ -313,13 +328,18 @@ export type ControlUiMockGatewayScenario = {
   presenceUsers?: Array<{
     self?: boolean;
     id: string;
+    identity?: AuthenticatedUser["identity"];
     name?: string;
     email?: string;
     avatarUrl?: string;
     deviceFamily?: string;
     host?: string;
+    ip?: string;
     instanceId?: string;
     lastInputSeconds?: number;
+    onlineSince?: number;
+    lastActivityAt?: number;
+    timeZone?: string;
     mode?: string;
     platform?: string;
     ts?: number;
@@ -340,6 +360,8 @@ export type ControlUiMockGatewayScenario = {
   /** Operator scopes returned by the mocked connect handshake. */
   operatorScopes?: string[];
   sessionKey?: string;
+  sessionScope?: "agent" | "global";
+  mainSessionKey?: string;
   /** Initial gateway-owned custom group catalog (sessions.groups.*), in order. */
   sessionGroups?: string[];
   /** Optional New Session defaults keyed by custom group name. */
@@ -856,6 +878,7 @@ function normalizeScenario(
 ): NormalizedControlUiMockGatewayScenario {
   const defaultAgentId = scenario.defaultAgentId?.trim() || "main";
   const sessionKey = scenario.sessionKey?.trim() || "main";
+  const mainSessionKey = scenario.mainSessionKey?.trim() || sessionKey;
   const basePathValue = scenario.basePath?.trim() ?? "";
   const basePathWithSlash = basePathValue
     ? basePathValue.startsWith("/")
@@ -901,6 +924,7 @@ function normalizeScenario(
     omitFeatureMethods: scenario.omitFeatureMethods ?? false,
     historyMessages: scenario.historyMessages ?? [],
     maxPayload: scenario.maxPayload ?? DEFAULT_MOCK_MAX_PAYLOAD_BYTES,
+    mainSessionKey,
     methodResponses: scenario.methodResponses ?? {},
     webSocketPassthroughPrefixes: scenario.webSocketPassthroughPrefixes ?? [],
     inFlightRun: scenario.inFlightRun ?? null,
@@ -918,6 +942,7 @@ function normalizeScenario(
     sessionInfo: scenario.sessionInfo ?? null,
     sessionArchiveFiltering: scenario.sessionArchiveFiltering ?? false,
     sessionKey,
+    sessionScope: scenario.sessionScope ?? "agent",
     sessionGroups: scenario.sessionGroups ?? [],
     sessionGroupDefaults: scenario.sessionGroupDefaults ?? {},
     terminalEnabled: scenario.terminalEnabled ?? false,
@@ -1363,11 +1388,16 @@ function installControlUiMockGateway(
         reason: "connect",
         ts: user.ts ?? Date.now(),
         ...(user.host ? { host: user.host } : {}),
+        ...(user.ip ? { ip: user.ip } : {}),
         ...(user.platform ? { platform: user.platform } : {}),
         ...(user.deviceFamily ? { deviceFamily: user.deviceFamily } : {}),
         ...(user.lastInputSeconds === undefined ? {} : { lastInputSeconds: user.lastInputSeconds }),
+        ...(user.onlineSince === undefined ? {} : { onlineSince: user.onlineSince }),
+        ...(user.lastActivityAt === undefined ? {} : { lastActivityAt: user.lastActivityAt }),
+        ...(user.timeZone ? { timeZone: user.timeZone } : {}),
         user: {
           id: user.id,
+          ...(user.identity ? { identity: user.identity } : {}),
           name: user.name ?? null,
           email: user.email ?? null,
           avatarUrl: user.avatarUrl ?? null,
@@ -1740,9 +1770,9 @@ function installControlUiMockGateway(
             sessionDefaults: {
               defaultAgentId: scenario.defaultAgentId,
               mainKey: "main",
-              mainSessionKey: scenario.sessionKey,
+              mainSessionKey: scenario.mainSessionKey,
               modelConfigured: Boolean(scenario.agentModel),
-              scope: "agent",
+              scope: scenario.sessionScope,
             },
           },
           type: "hello-ok",

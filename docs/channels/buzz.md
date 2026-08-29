@@ -339,6 +339,56 @@ routed agent can do after a message is accepted. Treat room messages as
 untrusted input, and configure that agent's [sandbox and tool policy](/gateway/sandbox-vs-tool-policy-vs-elevated)
 for the room's trust level.
 
+### Bot conversations
+
+Authorized room members with the relay-assigned **Bot** role can activate the
+agent under the same mention and sender rules. Within each Gateway, OpenClaw
+limits repeated exchanges between each bot pair in the same relay and room:
+the default budget is 20 accepted messages in 60 seconds, followed by a
+60-second cooldown. Changing threads does not reset the budget. Restarting the
+Gateway clears this in-memory budget; separate Gateways have separate budgets.
+Human messages are unaffected, and suppressed bot turns are logged without
+starting an agent run.
+
+Use the shared `channels.defaults.botLoopProtection` settings to adjust
+`maxEventsPerWindow`, `windowSeconds`, or `cooldownSeconds`. Setting
+`enabled: false` disables this protection. Bot classification comes from the latest
+received relay-signed room roster, never a display name or message content. If an
+authorized bot stops replying during a busy exchange, check the suppression log
+and allow the cooldown to expire before adjusting the budget.
+
+### Passive room context
+
+Set `channels.buzz.historyLimit` to a number from `1` to `20` to include recent
+unmentioned messages with the next accepted turn (mention or authorized command)
+in the same room and thread.
+The default is `0` (off). A new reply thread does not import top-level room history.
+Sender access still applies: denied senders are never recorded, and senders no
+longer in the current room roster are removed before context is included.
+
+Passive messages do not start an agent run, record a session, or send typing.
+History stays in memory for the current connection, separately for each room and
+thread, and is cleared on reconnect or restart. Each message is truncated to
+512 UTF-8 bytes; the newest complete entries fit within a 1,024-byte rendered
+context budget, including labels and markers. Older entries are discarded.
+An accepted turn consumes its context without deleting messages that arrived
+while the reply was running.
+
+Membership is checked against the latest received roster when context is used.
+If the same identity leaves and rejoins before then, its previously authorized
+messages can remain in the window; leaving does not erase conversation history.
+
+### Reply placement
+
+Buzz keeps automatic replies threaded by default (`channels.buzz.replyToMode: "all"`).
+Set `replyToMode: "off"` to send automatic replies at the top level of the room,
+including replies to messages inside existing threads. Typing indicators follow
+the same placement, including heartbeat typing.
+
+This changes delivery only: inbound thread context and session identity remain
+intact. Explicit message-tool or CLI sends with a thread or reply target still
+honor that target. To restore the default, use `"all"` or remove the setting.
+
 ## Manual configuration
 
 Guided setup is recommended. The equivalent configuration looks like:
@@ -424,6 +474,17 @@ The default account can also read:
 export BUZZ_RELAY_URL="wss://buzz.example.com"
 export BUZZ_PRIVATE_KEY="nsec1..."
 ```
+
+With `BUZZ_PRIVATE_KEY` set, non-interactive setup can also save an account name:
+
+```bash
+openclaw channels add --channel buzz --name "Support bot" \
+  --relay-url wss://buzz.example.com --use-env
+```
+
+Omitting `--name` or supplying a blank name preserves the existing name. This
+command saves credentials and settings; use guided setup to discover and select
+rooms before starting a new bot.
 
 If a hosted workspace operator gives you an identity authorization value, set
 `channels.buzz.authTag` or `BUZZ_AUTH_TAG`. It can use the same plaintext or

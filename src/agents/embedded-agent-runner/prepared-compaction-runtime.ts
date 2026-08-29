@@ -30,6 +30,7 @@ import { createBundleLspToolRuntime } from "../agent-bundle-lsp-runtime.js";
 import { createBundleMcpToolRuntime } from "../agent-bundle-mcp-tools.js";
 import { resolveSessionAgentIds } from "../agent-scope.js";
 import { createOpenClawCodingTools } from "../agent-tools.js";
+import { createSkillInstructionDeliveryCache } from "../agent-tools.read.js";
 import { listActiveProcessSessionReferences } from "../bash-process-references.js";
 import { resolveProcessToolScopeKey } from "../bash-process-scope.js";
 import {
@@ -58,6 +59,7 @@ import { buildAgentRuntimePlan } from "../runtime-plan/build.js";
 import type { AgentRuntimePlan } from "../runtime-plan/types.js";
 import { resolveSessionPermissionExecMode } from "../session-permission-exec-mode.js";
 import { detectRuntimeShell } from "../shell-utils.js";
+import { resolveRuntimeAgentName } from "../system-prompt-params.js";
 import { toolPolicyRestrictsTools } from "../tool-policy.js";
 import {
   filterProviderNormalizableTools,
@@ -328,6 +330,7 @@ export async function buildPreparedCompactionRuntime(prepared: DirectCompactionP
       pluginMetadataSnapshot: params.preparedModelRuntime.metadataSnapshot,
     });
     const toolsEnabled = supportsModelTools(effectiveModel);
+    const skillInstructionDeliveryCache = createSkillInstructionDeliveryCache();
     const toolsRaw = toolsEnabled
       ? createOpenClawCodingTools({
           exec: {
@@ -374,6 +377,7 @@ export async function buildPreparedCompactionRuntime(prepared: DirectCompactionP
           modelContextWindowTokens: contextTokenBudget,
           skillsSnapshot: skillsSnapshotForRun,
           skillUsagePaths,
+          skillInstructionDeliveryCache,
           conversationCapabilityProfile: runtimeCapabilityProfile,
           preparedModelRuntime: params.preparedModelRuntime,
           modelAuthMode: resolveModelAuthMode(effectiveModel.provider, params.config, undefined, {
@@ -512,6 +516,7 @@ export async function buildPreparedCompactionRuntime(prepared: DirectCompactionP
 
     const runtimeInfo = {
       agentId: sessionAgentId,
+      agentName: params.config ? resolveRuntimeAgentName(params.config, sessionAgentId) : undefined,
       sessionKey: params.sessionKey,
       host: machineName,
       os: resolveRuntimeOsLabel(),
