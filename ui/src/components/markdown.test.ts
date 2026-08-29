@@ -1,5 +1,6 @@
 // Control UI tests cover markdown behavior.
 import { describe, expect, it, vi } from "vitest";
+import * as markdownCore from "../../../packages/markdown-core/src/reasoning-tags.js";
 import { i18n } from "../i18n/index.ts";
 import { handleMarkdownCodeBlockClick } from "./markdown-code-blocks.ts";
 import { splitStableStreamingMarkdown } from "./markdown-streaming.ts";
@@ -865,35 +866,25 @@ PY
 });
 
 describe("toStreamingMarkdownHtml", () => {
-  it("keeps appended-prefix splitting below repeated full-rescan cost", () => {
-    const splitIncrementally = splitStableStreamingMarkdown as (
-      markdown: string,
-      streamKey: string,
-    ) => ReturnType<typeof splitStableStreamingMarkdown>;
+  it("reuses completed disclosure scans across appended prefixes", () => {
     const prefixes: string[] = [];
     let prefix = "<details><summary>Done</summary></details>\n\n";
-    // The ratio catches a reverted full-rescan path without making runner load
-    // part of the assertion by spending most of the test timeout on the baseline.
     for (let index = 0; index < 48; index += 1) {
       prefix += `${String(index).padStart(3, "0")} ${"streaming markdown ".repeat(30)}\n`;
       prefixes.push(prefix);
     }
-    const measure = (streamKey?: string) => {
-      const startedAt = performance.now();
+    const codeSpans = vi.spyOn(markdownCore, "findMarkdownCodeSpans");
+    try {
       for (const value of prefixes) {
-        if (streamKey) {
-          splitIncrementally(value, streamKey);
-        } else {
-          splitStableStreamingMarkdown(value);
-        }
+        splitStableStreamingMarkdown(value, "line-scan-regression");
       }
-      return performance.now() - startedAt;
-    };
-    measure("line-scan-warmup");
-    const fullRescanMs = measure();
-    const incrementalMs = measure("line-scan-regression");
-
-    expect(incrementalMs).toBeLessThan(fullRescanMs / 5);
+      // Appended plain lines must reuse the completed disclosure's code-ownership
+      // scan. Count that real work instead of timing sub-millisecond samples.
+      expect(codeSpans.mock.calls.length).toBe(1);
+      expect(codeSpans.mock.calls[0]?.[0]).toBe(prefixes[0]);
+    } finally {
+      codeSpans.mockRestore();
+    }
   }, 5_000);
 
   it("keeps chunked-prefix splits identical to full splits", () => {
