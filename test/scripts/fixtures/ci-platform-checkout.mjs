@@ -115,10 +115,12 @@ function boundary(name) {
   );
 }
 
-async function until(predicate, label, timeout = 4_000) {
-  const deadline = Date.now() + timeout;
+async function until(predicate, label, timeout) {
+  // The supervisor deadline and lease bound startup. Only cleanup needs a local
+  // deadline; slow readiness must not replace the scenario's injected Git result.
+  const deadline = timeout === undefined ? undefined : Date.now() + timeout;
   while (!predicate()) {
-    if (Date.now() >= deadline) {
+    if (deadline !== undefined && Date.now() >= deadline) {
       throw new Error(`Timed out waiting for ${label}`);
     }
     await delay(10);
@@ -179,6 +181,13 @@ async function command() {
     });
     record(process.pid, mode, attempt);
     if (mode === "child") {
+      const startGate = path.join(root, `tree-start-gate-${attempt}`);
+      if (fs.existsSync(startGate)) {
+        publish(`tree-start-waiting-${attempt}.json`, attempt);
+        while (fs.existsSync(startGate)) {
+          await delay(10);
+        }
+      }
       // Startup faults belong to the caller, not every consumer of this shared fixture.
       const startDelay = path.join(root, `tree-start-delay-${attempt}.json`);
       if (fs.existsSync(startDelay)) {
@@ -444,7 +453,7 @@ async function supervise() {
         }
       }
       try {
-        await until(() => liveRecords().length === 0, "fixture cleanup");
+        await until(() => liveRecords().length === 0, "fixture cleanup", 4_000);
       } catch (err) {
         report.error ??= String(err);
       }

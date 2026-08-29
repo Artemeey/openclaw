@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { expectDefined } from "@openclaw/normalization-core";
 import { expect, it } from "vitest";
+import { waitForFile } from "../helpers/process-wait.js";
 import {
   accelerateCiCheckoutFetchClock,
   ciCheckoutFixture,
@@ -60,6 +62,10 @@ it.each([
     const root = realpathSync(mkdtempSync(path.join(tmpdir(), "ci platform checkout ")));
     const workspace = path.join(root, "workspace");
     mkdirSync(workspace);
+    const startGate = path.join(root, "tree-start-gate-1");
+    if (scenario === "git-exit-124") {
+      writeFileSync(startGate, "held\n");
+    }
     if (scenario.startsWith("cancel-")) {
       // Inject slow startup before fetch, beyond the former cancellation readiness deadline.
       writeFileSync(path.join(root, "fixture-config.json"), JSON.stringify({ initDelayMs: 4_100 }));
@@ -91,97 +97,120 @@ it.each([
       setupFailure ? "printf 'unexpected workflow invocation\\n' >&2\nexit 99\n" : accelerated,
     );
 
-    const policyScenario = `${linux ? "linux:" : ""}${scenario}`;
-    await withCiCheckoutFixture(root, policyScenario, (report, result, stderr) => {
-      // Emit evidence before assertions; it remains available even for this deliberately red test.
-      console.log(`${scenario}: ${JSON.stringify(report)}`);
-      if (setupFailure) {
-        expect(report.cleanupRemaining, "fixture cleanup left owned processes").toEqual([]);
-        expect(report.error, report.output).toContain(
-          "Fixture setup: mock command resolution failed",
-        );
-        expect(report.error).toContain(scenario.slice("non-executable-".length));
-        expect(result, stderr).toEqual({ code: 1, signal: null });
-        expect(report.code).toBeNull();
-        expect(report.output).toBe("");
-        expect(report.commands).toEqual([]);
-        expect(report.boundaries).toEqual([]);
+    const releaseStartGate = async () => {
+      if (scenario !== "git-exit-124") {
         return;
       }
-      expect(result, stderr).toEqual({ code: 0, signal: null });
-      expect(report.error, stderr).toBeUndefined();
-      expectCiCheckoutCleanup(report);
-      expect(report.code).toBe(code);
-      expect(report.readyAttempts).toEqual(Array.from({ length: attempts }, (_, i) => i + 1));
-      expect(report.boundaries.filter((entry) => entry.name.startsWith("fetch:"))).toHaveLength(
-        attempts,
-      );
-      expect(report.boundaries.some((entry) => entry.name === "checkout")).toBe(checkout);
-      expect(report.boundaries.filter((entry) => entry.name === "delete")).toHaveLength(deletions);
-      expect(report.output.includes("refusing reuse or retry")).toBe(
-        scenario === "cleanup-failure",
-      );
-      if (scenario.startsWith("cancel-")) {
-        const alive = report.ownedProcesses.filter((entry) => entry.attempt === 1);
-        expect(alive.map((entry) => entry.role).toSorted()).toEqual([
-          "child",
-          "grandchild",
-          "parent",
-        ]);
-        const owner = expectDefined(
-          report.ownedProcesses.find((entry) => entry.role === "shell"),
-          "workflow owner",
-        );
-        expect(owner.pid).toBeGreaterThan(1);
-        const signal = scenario.slice("cancel-".length);
-        expect(report.output).toContain(
-          `cancellation: ${JSON.stringify({ signal, owner: owner.pid, alive })}\n`,
-        );
-      }
-      if (code === 0) {
-        const fetches = report.commands.filter(({ args }) => args.includes("fetch"));
-        const candidateFetch = expectDefined(fetches[0], "candidate fetch");
-        expect(candidateFetch.args).toContain(
-          `+${"a".repeat(40)}:refs/remotes/origin/${linux ? "ci-target" : "checkout"}`,
-        );
-        expect(
-          candidateFetch.args.includes(`+${"c".repeat(40)}:refs/remotes/origin/ci-ratchet-base`),
-        ).toBe(linux && scenario === "early-leader-exit");
-        if (linux) {
-          expect(
-            report.commands.filter(
-              ({ args }) => args.join(" ") === `config --global --add safe.directory ${workspace}`,
-            ),
-          ).toHaveLength(deletions);
-          expect(
-            report.commands
-              .filter(({ cwd, args }) => cwd === workspace && args[0] === "checkout")
-              .every(
-                ({ args }) => args.join(" ") === `checkout --force --detach ${"a".repeat(40)}`,
-              ),
-          ).toBe(true);
+      await waitForFile(path.join(root, "tree-start-waiting-1.json"), 45_000);
+      // Hold the real child before it can launch the grandchild. Startup past
+      // the former readiness deadline must not replace Git's injected exit 124.
+      await delay(4_100);
+      rmSync(startGate);
+    };
+    const policyScenario = `${linux ? "linux:" : ""}${scenario}`;
+    await withCiCheckoutFixture(
+      root,
+      policyScenario,
+      (report, result, stderr) => {
+        // Emit evidence before assertions; it remains available even for this deliberately red test.
+        console.log(`${scenario}: ${JSON.stringify(report)}`);
+        if (setupFailure) {
+          expect(report.cleanupRemaining, "fixture cleanup left owned processes").toEqual([]);
+          expect(report.error, report.output).toContain(
+            "Fixture setup: mock command resolution failed",
+          );
+          expect(report.error).toContain(scenario.slice("non-executable-".length));
+          expect(result, stderr).toEqual({ code: 1, signal: null });
+          expect(report.code).toBeNull();
+          expect(report.output).toBe("");
+          expect(report.commands).toEqual([]);
+          expect(report.boundaries).toEqual([]);
+          return;
         }
-        expect(candidateFetch.cwd).toBe(workspace);
-        expect(fetches.at(-1)?.cwd).toBe(path.join(workspace, ".ci-harness"));
-        for (const { args } of fetches) {
-          expect(args).toEqual(
-            expect.arrayContaining(["--no-tags", "--no-recurse-submodules", "--depth=1"]),
+        expect(result, stderr).toEqual({ code: 0, signal: null });
+        expect(report.error, stderr).toBeUndefined();
+        expectCiCheckoutCleanup(report);
+        expect(report.code).toBe(code);
+        if (scenario === "git-exit-124") {
+          expect(report.output).toBe("");
+        }
+        expect(report.readyAttempts).toEqual(Array.from({ length: attempts }, (_, i) => i + 1));
+        expect(report.boundaries.filter((entry) => entry.name.startsWith("fetch:"))).toHaveLength(
+          attempts,
+        );
+        expect(report.boundaries.some((entry) => entry.name === "checkout")).toBe(checkout);
+        expect(report.boundaries.filter((entry) => entry.name === "delete")).toHaveLength(
+          deletions,
+        );
+        expect(report.output.includes("refusing reuse or retry")).toBe(
+          scenario === "cleanup-failure",
+        );
+        if (scenario.startsWith("cancel-")) {
+          const alive = report.ownedProcesses.filter((entry) => entry.attempt === 1);
+          expect(alive.map((entry) => entry.role).toSorted()).toEqual([
+            "child",
+            "grandchild",
+            "parent",
+          ]);
+          const owner = expectDefined(
+            report.ownedProcesses.find((entry) => entry.role === "shell"),
+            "workflow owner",
+          );
+          expect(owner.pid).toBeGreaterThan(1);
+          const signal = scenario.slice("cancel-".length);
+          expect(report.output).toContain(
+            `cancellation: ${JSON.stringify({ signal, owner: owner.pid, alive })}\n`,
           );
         }
-        expect(fetches.at(-1)?.args).toContain(`+${"b".repeat(40)}:refs/remotes/origin/ci-harness`);
-        expect(
-          report.commands.some(
-            ({ args }) => args.join(" ") === "sparse-checkout set .github/actions",
-          ),
-        ).toBe(true);
-        expect(report.commands.at(-1)?.args).toEqual([
-          "checkout",
-          "--force",
-          "--detach",
-          "b".repeat(40),
-        ]);
-      }
-    });
+        if (code === 0) {
+          const fetches = report.commands.filter(({ args }) => args.includes("fetch"));
+          const candidateFetch = expectDefined(fetches[0], "candidate fetch");
+          expect(candidateFetch.args).toContain(
+            `+${"a".repeat(40)}:refs/remotes/origin/${linux ? "ci-target" : "checkout"}`,
+          );
+          expect(
+            candidateFetch.args.includes(`+${"c".repeat(40)}:refs/remotes/origin/ci-ratchet-base`),
+          ).toBe(linux && scenario === "early-leader-exit");
+          if (linux) {
+            expect(
+              report.commands.filter(
+                ({ args }) =>
+                  args.join(" ") === `config --global --add safe.directory ${workspace}`,
+              ),
+            ).toHaveLength(deletions);
+            expect(
+              report.commands
+                .filter(({ cwd, args }) => cwd === workspace && args[0] === "checkout")
+                .every(
+                  ({ args }) => args.join(" ") === `checkout --force --detach ${"a".repeat(40)}`,
+                ),
+            ).toBe(true);
+          }
+          expect(candidateFetch.cwd).toBe(workspace);
+          expect(fetches.at(-1)?.cwd).toBe(path.join(workspace, ".ci-harness"));
+          for (const { args } of fetches) {
+            expect(args).toEqual(
+              expect.arrayContaining(["--no-tags", "--no-recurse-submodules", "--depth=1"]),
+            );
+          }
+          expect(fetches.at(-1)?.args).toContain(
+            `+${"b".repeat(40)}:refs/remotes/origin/ci-harness`,
+          );
+          expect(
+            report.commands.some(
+              ({ args }) => args.join(" ") === "sparse-checkout set .github/actions",
+            ),
+          ).toBe(true);
+          expect(report.commands.at(-1)?.args).toEqual([
+            "checkout",
+            "--force",
+            "--detach",
+            "b".repeat(40),
+          ]);
+        }
+      },
+      releaseStartGate,
+    );
   },
   55_000,
 );

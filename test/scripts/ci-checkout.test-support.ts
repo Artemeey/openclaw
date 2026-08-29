@@ -75,6 +75,7 @@ export async function withCiCheckoutFixture<T>(
     result: Awaited<ReturnType<typeof waitForChildClose>>,
     stderr: string,
   ) => T,
+  afterSpawn?: () => Promise<void>,
 ): Promise<T> {
   const supervisor = fork(ciCheckoutFixture, ["supervise", root, scenario], {
     detached: true,
@@ -85,6 +86,8 @@ export async function withCiCheckoutFixture<T>(
   supervisor.stderr?.on("data", (data) => (stderr += String(data)));
   const closed = waitForChildClose(supervisor, 50_000);
   try {
+    // In-flight fixture actions must retain the same process-tree cleanup owner.
+    await afterSpawn?.();
     const result = await closed;
     const report = JSON.parse(readFileSync(path.join(root, "report.json"), "utf8")) as Report;
     return await inspect(report, result, stderr);
