@@ -5,16 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { renderCatFacePngBase64 } from "../../test/helpers/live-image-probe.js";
-import { resolveDefaultAgentDir, resolveDefaultAgentId } from "../agents/agent-scope-config.js";
+import { resolveDefaultAgentDir } from "../agents/agent-scope-config.js";
 import { saveAuthProfileStore } from "../agents/auth-profiles/store.js";
 import { isLiveTestEnabled } from "../agents/live-test-helpers.js";
-import { loadPublishedGatewayReplyDispatchRuntime } from "../agents/prepared-model-runtime.js";
 import type { ChannelOutboundContext } from "../channels/plugins/types.adapters.js";
-import {
-  clearConfigCache,
-  clearRuntimeConfigSnapshot,
-  getRuntimeConfig,
-} from "../config/config.js";
+import { clearConfigCache, clearRuntimeConfigSnapshot } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import { getSessionBindingService } from "../infra/outbound/session-binding-service.js";
@@ -484,7 +479,6 @@ describeLive("gateway live (native Codex conversation binding)", () => {
           auth: { mode: "token", token },
           controlUiEnabled: false,
         });
-        await server.startupSettled;
         client = await connectTestGatewayClient({
           url: `ws://127.0.0.1:${port}`,
           token,
@@ -498,21 +492,7 @@ describeLive("gateway live (native Codex conversation binding)", () => {
         if (!activeRegistry) {
           throw new Error("expected gateway root plugin registry");
         }
-        const replyRuntime = await loadPublishedGatewayReplyDispatchRuntime({
-          agentId: resolveDefaultAgentId(getRuntimeConfig()),
-        });
-        if (!replyRuntime) {
-          throw new Error("expected gateway reply runtime");
-        }
-        // Install the mock transport into the same published registries that own
-        // inbound commands and agent replies; the root registry alone is not used by turns.
-        for (const registry of new Set([
-          activeRegistry,
-          replyRuntime.inboundPluginRegistry,
-          replyRuntime.pluginGeneration.pluginRegistry,
-        ])) {
-          registry?.channels.push(...channelRegistry.channels);
-        }
+        activeRegistry.channels.push(...channelRegistry.channels);
 
         seedPluginConversationBindingApprovalForTest({
           pluginRoot: resolveCodexPluginRoot(),
