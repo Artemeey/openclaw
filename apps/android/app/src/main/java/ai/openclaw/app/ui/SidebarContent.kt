@@ -123,8 +123,7 @@ internal fun sessionPresentationTitle(
   session: ChatSessionEntry,
   unnamedTitle: () -> String,
 ): String =
-  nativeString("Main session").takeIf { session.key.substringAfterLast(':').startsWith("node-") }
-    ?: session.label?.trim()?.takeIf(String::isNotEmpty)
+  session.label?.trim()?.takeIf(String::isNotEmpty)
     ?: session.displayName?.trim()?.takeIf(String::isNotEmpty)
     ?: nativeString("New chat").takeIf { session.isDashboardSession() }
     ?: unnamedTitle()
@@ -135,7 +134,14 @@ private fun ChatSessionEntry.isDashboardSession(): Boolean {
   return parts.size == 4 && parts[0] == "agent" && parts[2] == "dashboard"
 }
 
-internal fun sidebarSessionTitle(session: ChatSessionEntry): String = sessionPresentationTitle(session) { session.key }
+internal fun sidebarSessionTitle(
+  session: ChatSessionEntry,
+  mainSessionKey: String,
+): String {
+  val mainKey = mainSessionKey.trim().ifEmpty { "main" }
+  val sessionKey = session.key.trim().let { if (it == "main" && mainKey != "main") mainKey else it }
+  return if (sessionKey == mainKey) nativeString("Main session") else sessionPresentationTitle(session) { session.key }
+}
 
 internal data class SidebarPalette(
   val background: Color,
@@ -166,6 +172,7 @@ internal fun OpenClawSidebar(
   selectedAgentId: String?,
   sessions: List<ChatSessionEntry>,
   activeSessionKey: String,
+  mainSessionKey: String,
   activeDestination: SidebarDestination?,
   connection: GatewayConnectionDisplay,
   showCloseButton: Boolean,
@@ -290,6 +297,7 @@ internal fun OpenClawSidebar(
                 searchResults.forEach { session ->
                   SidebarSessionRow(
                     session = session,
+                    mainSessionKey = mainSessionKey,
                     selected = session.key == activeSessionKey,
                     palette = palette,
                     onClick = { onSelectSession(session) },
@@ -333,6 +341,7 @@ internal fun OpenClawSidebar(
               section.entries.forEach { session ->
                 SidebarSessionRow(
                   session = session,
+                  mainSessionKey = mainSessionKey,
                   selected = session.key == activeSessionKey,
                   palette = palette,
                   onClick = { onSelectSession(session) },

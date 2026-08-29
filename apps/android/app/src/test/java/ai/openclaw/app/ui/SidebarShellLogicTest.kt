@@ -172,15 +172,22 @@ class SidebarShellLogicTest {
   }
 
   @Test
-  fun nodeMainSessionTitleHidesDeviceIdentity() {
-    val session =
+  fun onlyCanonicalNodeSessionTitleHidesDeviceIdentity() {
+    val mainSession =
       ChatSessionEntry(
         key = "agent:main:node-1234567890ab",
         updatedAtMs = 1L,
         displayName = "OpenClaw App · Pixel · 1234567890ab",
       )
+    val otherNodeSession =
+      ChatSessionEntry(
+        key = "agent:main:node-fedcba098765",
+        updatedAtMs = 2L,
+        displayName = "OpenClaw App · Tablet · fedcba098765",
+      )
 
-    assertEquals("Main session", sidebarSessionTitle(session))
+    assertEquals("Main session", sidebarSessionTitle(mainSession, mainSession.key))
+    assertEquals(otherNodeSession.displayName, sidebarSessionTitle(otherNodeSession, mainSession.key))
   }
 
   @Test

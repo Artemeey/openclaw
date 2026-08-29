@@ -176,6 +176,7 @@ fun ShellScreen(
     val chatSessionOwnerAgentId by viewModel.chatSessionOwnerAgentId.collectAsState()
     val chatSessions by viewModel.chatSessions.collectAsState()
     val chatSessionKey by viewModel.chatSessionKey.collectAsState()
+    val mainSessionKey by viewModel.mainSessionKey.collectAsState()
     val gatewayConnectionDisplay by viewModel.gatewayConnectionDisplay.collectAsState()
 
     LaunchedEffect(requestedHomeDestination) {
@@ -268,6 +269,7 @@ fun ShellScreen(
             selectedAgentId = chatSessionOwnerAgentId ?: gatewayDefaultAgentId,
             sessions = chatSessions,
             activeSessionKey = chatSessionKey,
+            mainSessionKey = mainSessionKey,
             activeDestination = activeSidebarDestination,
             connection = gatewayConnectionDisplay,
             showCloseButton = true,

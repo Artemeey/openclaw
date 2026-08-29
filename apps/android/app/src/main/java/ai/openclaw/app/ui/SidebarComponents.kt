@@ -187,6 +187,7 @@ internal fun SidebarNavigationRow(
 @Composable
 internal fun SidebarSessionRow(
   session: ChatSessionEntry,
+  mainSessionKey: String,
   selected: Boolean,
   palette: SidebarPalette,
   onClick: () -> Unit,
@@ -220,7 +221,7 @@ internal fun SidebarSessionRow(
     )
     Column(modifier = Modifier.weight(1f)) {
       Text(
-        text = sidebarSessionTitle(session),
+        text = sidebarSessionTitle(session, mainSessionKey),
         style = ClawTheme.type.body,
         color = if (selected) ClawTheme.colors.accent else palette.text,
         maxLines = 1,
