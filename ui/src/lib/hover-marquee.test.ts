@@ -11,6 +11,10 @@ function leave(row: HTMLElement) {
   row.dispatchEvent(new MouseEvent("mouseleave"));
 }
 
+function settleHoverLayout() {
+  vi.advanceTimersToNextTimer();
+}
+
 function buildRow(params: { textWidth: number; labelWidth: number }) {
   const row = document.createElement("div");
   const label = document.createElement("span");
@@ -18,7 +22,10 @@ function buildRow(params: { textWidth: number; labelWidth: number }) {
   label.textContent = "Fix stale iMessage group-allowlist warning copy";
   row.append(label);
   document.body.append(row);
-  Object.defineProperty(label, "clientWidth", { value: params.labelWidth });
+  Object.defineProperty(row, "matches", {
+    value: (selector: string) => selector === ":hover" || selector === ":focus-within",
+  });
+  Object.defineProperty(label, "clientWidth", { configurable: true, value: params.labelWidth });
   Object.defineProperty(label, "scrollWidth", { value: params.textWidth });
   return { row, label };
 }
@@ -35,6 +42,7 @@ describe("hover marquee", () => {
   it("waits before scrolling overflowing labels by the clipped distance", () => {
     const { row, label } = buildRow({ textWidth: 320, labelWidth: 180 });
     enter(row);
+    settleHoverLayout();
     expect(label.style.getPropertyValue("--hover-marquee-shift")).toBe("-140px");
     expect(label.style.getPropertyValue("--hover-marquee-duration")).toBe("1750ms");
     vi.advanceTimersByTime(499);
@@ -57,6 +65,7 @@ describe("hover marquee", () => {
   it("keeps short scroll distances readable with a minimum duration", () => {
     const { row, label } = buildRow({ textWidth: 190, labelWidth: 180 });
     enter(row);
+    settleHoverLayout();
     expect(label.style.getPropertyValue("--hover-marquee-shift")).toBe("-10px");
     expect(label.style.getPropertyValue("--hover-marquee-duration")).toBe("300ms");
   });
@@ -66,6 +75,7 @@ describe("hover marquee", () => {
     label.dataset.hoverMarqueeDelay = "250";
     label.dataset.hoverMarqueeExtraShift = "18";
     enter(row);
+    settleHoverLayout();
     expect(label.style.getPropertyValue("--hover-marquee-shift")).toBe("-158px");
     expect(label.style.getPropertyValue("--hover-marquee-duration")).toBe("1975ms");
     vi.advanceTimersByTime(249);
@@ -77,6 +87,7 @@ describe("hover marquee", () => {
   it("leaves labels that fit untouched", () => {
     const { row, label } = buildRow({ textWidth: 120, labelWidth: 180 });
     enter(row);
+    settleHoverLayout();
     expect(label.classList.contains("hover-marquee--scrolling")).toBe(false);
     expect(label.style.getPropertyValue("--hover-marquee-shift")).toBe("");
   });
@@ -121,6 +132,7 @@ describe("hover marquee", () => {
     Object.defineProperty(label, "scrollWidth", { value: 320 });
 
     enter(row);
+    settleHoverLayout();
     vi.advanceTimersByTime(500);
     expect(label.style.getPropertyValue("--hover-marquee-shift")).toBe("-140px");
     expect(label.classList.contains("hover-marquee--scrolling")).toBe(true);
@@ -138,9 +150,22 @@ describe("hover marquee", () => {
     }
     resizeCallback([resizeEntry], callbackObserver);
 
+    settleHoverLayout();
     expect(label.style.getPropertyValue("--hover-marquee-shift")).toBe("-200px");
     expect(label.classList.contains("hover-marquee--scrolling")).toBe(false);
     vi.advanceTimersByTime(500);
     expect(label.classList.contains("hover-marquee--scrolling")).toBe(true);
+  });
+
+  it("measures after hover actions reduce the available title width", () => {
+    let labelWidth = 180;
+    const { row, label } = buildRow({ textWidth: 320, labelWidth });
+    Object.defineProperty(label, "clientWidth", { configurable: true, get: () => labelWidth });
+
+    enter(row);
+    labelWidth = 128;
+    settleHoverLayout();
+
+    expect(label.style.getPropertyValue("--hover-marquee-shift")).toBe("-192px");
   });
 });

@@ -5945,18 +5945,17 @@ td.data-table-key-col {
 
 /* Truncated single-line labels that slide on hover to reveal the clipped
    tail. lib/hover-marquee.ts measures the overflow and sets the custom
-   properties; without it the label stays a plain ellipsized span. Animates
-   text-indent so the resting ellipsis keeps rendering (text-overflow shows
-   no "…" for atomic inline children, ruling out a transformed wrapper). */
+   properties; without it the label stays clipped behind a soft edge. */
 .hover-marquee {
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   white-space: nowrap;
+  mask-image: linear-gradient(to right, black calc(100% - 16px), transparent);
   transition: text-indent 180ms ease-out;
 }
 
 .hover-marquee--scrolling {
-  text-overflow: clip;
+  mask-image: none;
   text-indent: var(--hover-marquee-shift, 0);
   transition-duration: var(--hover-marquee-duration, 600ms);
   transition-timing-function: linear;
@@ -5968,7 +5967,7 @@ td.data-table-key-col {
   }
 
   .hover-marquee--scrolling {
-    text-overflow: ellipsis;
+    mask-image: linear-gradient(to right, black calc(100% - 16px), transparent);
     text-indent: 0;
   }
 }
