@@ -32,6 +32,9 @@ function processRow(pid: number, startedAt = STARTED_AT, pgid = pid): PosixProce
 function createHarness() {
   const store = createCodexProcessRegistryTestStore();
   const owner = processRow(process.pid, OWNER_STARTED_AT);
+  // The reaper refuses snapshots that cannot see the observer, so every
+  // snapshot mock includes this process's own row.
+  const self = owner;
   const child = processRow(101);
   const inspectProcess = vi.fn(
     async (pid: number): Promise<PosixProcess | undefined> => (pid === process.pid ? owner : child),
@@ -39,7 +42,7 @@ function createHarness() {
   const runtime = {
     platform: "linux" as NodeJS.Platform,
     inspectProcess,
-    inspectSnapshot: vi.fn(async (): Promise<PosixProcess[] | undefined> => [child]),
+    inspectSnapshot: vi.fn(async (): Promise<PosixProcess[] | undefined> => [self, child]),
     kill: vi.fn(() => true),
     now: vi.fn(() => 1_000),
   };
@@ -56,7 +59,7 @@ function createHarness() {
     return value;
   };
   setCodexAppServerProcessRegistryStore(() => store);
-  return { store, runtime, row, seed, child };
+  return { store, runtime, row, seed, child, self };
 }
 
 describe("Codex app-server process registry", () => {
@@ -154,10 +157,10 @@ describe("Codex app-server process registry", () => {
   );
 
   it.each(["own", "foreign"] as const)("preserves children with a live %s owner", async (kind) => {
-    const { store, runtime, seed, child } = createHarness();
+    const { store, runtime, seed, child, self } = createHarness();
     const row = seed(kind === "own" ? { ownerPid: process.pid } : {});
     runtime.inspectSnapshot.mockResolvedValue(
-      kind === "own" ? [] : [child, processRow(row.ownerPid, row.ownerStartedAt)],
+      kind === "own" ? [self] : [self, child, processRow(row.ownerPid, row.ownerStartedAt)],
     );
     await reapOrphanedCodexAppServerProcesses(runtime);
     expect(store.lookup("101")).toEqual(row);
@@ -171,9 +174,10 @@ describe("Codex app-server process registry", () => {
     { name: "zombie owner", pgid: 101, ownerRow: "zombie", target: -101 },
     { name: "non-leader child", pgid: 99, ownerRow: "absent", target: 101 },
   ] as const)("reaps an identity-confirmed orphan: $name", async ({ pgid, ownerRow, target }) => {
-    const { store, runtime, seed, child } = createHarness();
+    const { store, runtime, seed, child, self } = createHarness();
     const row = seed();
     runtime.inspectSnapshot.mockResolvedValue([
+      self,
       child,
       // A zombie keeps its exact pid + lstart in the snapshot; only the state marks it dead.
       ...(ownerRow === "reused" ? [processRow(row.ownerPid, "new owner")] : []),
@@ -192,13 +196,35 @@ describe("Codex app-server process registry", () => {
     });
   });
 
+  it("reaps rows inherited from a pid-reusing predecessor gateway", async () => {
+    const { store, runtime, seed, child, self } = createHarness();
+    // Same numeric owner pid as this process, but the dead predecessor's lstart.
+    const row = seed({ ownerPid: process.pid, ownerStartedAt: "previous gateway" });
+    runtime.inspectSnapshot.mockResolvedValue([self, child]);
+    await reapOrphanedCodexAppServerProcesses(runtime);
+    expect(runtime.kill).toHaveBeenCalledExactlyOnceWith(-row.pid, "SIGKILL");
+    expect(store.entries()).toEqual([]);
+  });
+
+  it("keeps all rows when the snapshot omits this process", async () => {
+    const { store, runtime, seed, child } = createHarness();
+    seed();
+    const before = store.entries();
+    runtime.inspectSnapshot.mockResolvedValue([child]);
+    await reapOrphanedCodexAppServerProcesses(runtime);
+    expect(store.entries()).toEqual(before);
+    expect(runtime.inspectProcess).not.toHaveBeenCalled();
+    expect(runtime.kill).not.toHaveBeenCalled();
+    expect(embeddedAgentLog.warn).toHaveBeenCalledOnce();
+  });
+
   it.each(["gone", "reused"] as const)(
     "deletes a child proven %s by the snapshot without signaling",
     async (kind) => {
-      const { store, runtime, seed, child } = createHarness();
+      const { store, runtime, seed, child, self } = createHarness();
       seed();
       runtime.inspectSnapshot.mockResolvedValue(
-        kind === "gone" ? [] : [{ ...child, startedAt: "new child" }],
+        kind === "gone" ? [self] : [self, { ...child, startedAt: "new child" }],
       );
       await reapOrphanedCodexAppServerProcesses(runtime);
       expect(store.entries()).toEqual([]);
@@ -208,14 +234,14 @@ describe("Codex app-server process registry", () => {
   );
 
   it("keeps a row re-registered with a new identity after the snapshot was judged", async () => {
-    const { store, runtime, seed } = createHarness();
+    const { store, runtime, seed, self } = createHarness();
     const stale = seed();
     const replacement = { ...stale, startedAt: "new child", ownerPid: process.pid + 2 };
     // The reaper judged the stale row against its snapshot; a live owner re-registered
     // the same pid meanwhile. Only the judged row may be deleted.
     vi.spyOn(store, "entries").mockReturnValue([{ key: "101", value: stale, createdAt: 0 }]);
     store.register("101", replacement);
-    runtime.inspectSnapshot.mockResolvedValue([]);
+    runtime.inspectSnapshot.mockResolvedValue([self]);
     await reapOrphanedCodexAppServerProcesses(runtime);
     expect(store.lookup("101")).toEqual(replacement);
     expect(runtime.kill).not.toHaveBeenCalled();
@@ -279,13 +305,13 @@ describe("Codex app-server process registry", () => {
   it.each(["snapshot", "confirmation", "next row"] as const)(
     "stops at the deadline after %s",
     async (boundary) => {
-      const { store, runtime, seed, child } = createHarness();
+      const { store, runtime, seed, child, self } = createHarness();
       seed();
       seed({ pid: 102 });
       if (boundary === "snapshot") {
         runtime.inspectSnapshot.mockImplementation(async () => {
           runtime.now.mockReturnValue(6_000);
-          return [child];
+          return [self, child];
         });
       } else if (boundary === "confirmation") {
         runtime.inspectProcess.mockImplementation(async () => {

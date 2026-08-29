@@ -120,15 +120,24 @@ async function reapProcesses(runtime: ProcessRegistryRuntime): Promise<void> {
     return;
   }
   const byPid = new Map(snapshot.map((row) => [row.pid, row]));
+  const self = byPid.get(process.pid);
+  if (!self) {
+    // A snapshot that cannot see the observer is not authoritative; without our
+    // own lstart, a pid-reused row could be misjudged in either direction.
+    warnRegistry("codex app-server process snapshot missing this process; skipping orphan reap");
+    return;
+  }
   for (const { key, value } of entries) {
     if (runtime.now() >= deadline) {
       return;
     }
-    if (isRecord(value) && value.ownerPid === process.pid) {
-      continue;
-    }
     if (!isStoredProcess(value)) {
       withRegistryStore((store) => store.delete(key));
+      continue;
+    }
+    // "Our row" is an identity claim, not a numeric pid match: a restarted
+    // gateway can reuse its predecessor's pid and must still reap those rows.
+    if (value.ownerPid === process.pid && value.ownerStartedAt === self.startedAt) {
       continue;
     }
     const owner = byPid.get(value.ownerPid);
