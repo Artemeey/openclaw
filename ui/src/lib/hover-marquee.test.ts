@@ -102,12 +102,15 @@ describe("hover marquee", () => {
 
   it("remeasures an active marquee when its available width changes", () => {
     let resizeCallback: ResizeObserverCallback | undefined;
+    let observeCount = 0;
     class TestResizeObserver implements ResizeObserver {
       constructor(callback: ResizeObserverCallback) {
         resizeCallback = callback;
       }
 
-      observe() {}
+      observe() {
+        observeCount += 1;
+      }
       unobserve() {}
       disconnect() {}
     }
@@ -155,6 +158,12 @@ describe("hover marquee", () => {
     expect(label.classList.contains("hover-marquee--scrolling")).toBe(false);
     vi.advanceTimersByTime(500);
     expect(label.classList.contains("hover-marquee--scrolling")).toBe(true);
+    resizeCallback([resizeEntry], callbackObserver);
+    resizeCallback([resizeEntry], callbackObserver);
+
+    expect(observeCount).toBe(1);
+    expect(label.classList.contains("hover-marquee--scrolling")).toBe(true);
+    expect(label.style.getPropertyValue("--hover-marquee-shift")).toBe("-200px");
   });
 
   it("measures after hover actions reduce the available title width", () => {

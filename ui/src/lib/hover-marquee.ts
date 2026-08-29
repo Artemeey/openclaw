@@ -9,6 +9,8 @@ const MARQUEE_HOVER_DELAY_MS = 500;
 type PendingMarquee = { frame: number; timer?: number };
 
 const pendingMarquees = new WeakMap<HTMLElement, PendingMarquee>();
+const marqueeWidths = new WeakMap<HTMLElement, number>();
+const observedMarquees = new WeakSet<HTMLElement>();
 let marqueeResizeObserver: ResizeObserver | undefined;
 
 function isMarqueeHostActive(host: HTMLElement): boolean {
@@ -46,15 +48,27 @@ function observeMarquee(label: HTMLElement): void {
         const host = resizedLabel.closest<HTMLElement>(".session-row-host");
         if (!host || !isMarqueeHostActive(host)) {
           marqueeResizeObserver?.unobserve(resizedLabel);
+          observedMarquees.delete(resizedLabel);
+          marqueeWidths.delete(resizedLabel);
           continue;
         }
+        const width = resizedLabel.clientWidth;
+        // ResizeObserver can redeliver unchanged geometry. Restarting for that
+        // no-op would remove the scrolling class on every animation frame.
+        if (marqueeWidths.get(resizedLabel) === width) {
+          continue;
+        }
+        marqueeWidths.set(resizedLabel, width);
         clearPendingMarquee(resizedLabel);
         resizedLabel.classList.remove("hover-marquee--scrolling");
         startHoverMarquee(host);
       }
     });
   }
-  marqueeResizeObserver?.observe(label);
+  if (marqueeResizeObserver && !observedMarquees.has(label)) {
+    observedMarquees.add(label);
+    marqueeResizeObserver.observe(label);
+  }
 }
 
 function startHoverMarquee(host: HTMLElement): void {
@@ -78,6 +92,7 @@ function startHoverMarquee(host: HTMLElement): void {
       // A negative mid-transition indent (re-hover while snapping back) shrinks
       // scrollWidth; add it back when calculating the clipped distance.
       const indent = Number.parseFloat(getComputedStyle(label).textIndent) || 0;
+      marqueeWidths.set(label, label.clientWidth);
       const overflow = label.scrollWidth - indent - label.clientWidth;
       if (overflow <= 1) {
         pendingMarquees.delete(label);
@@ -115,6 +130,8 @@ function stopHoverMarquee(host: HTMLElement): void {
   clearPendingMarquee(label);
   label.classList.remove("hover-marquee--scrolling");
   marqueeResizeObserver?.unobserve(label);
+  observedMarquees.delete(label);
+  marqueeWidths.delete(label);
 }
 
 export function startHoverMarqueeFromEvent(event: Event): void {
