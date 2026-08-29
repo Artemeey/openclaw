@@ -2908,6 +2908,35 @@ describe("runGatewayUpdate", () => {
     expect(calls).not.toContain(`git -C ${gitRoot} rev-parse @{upstream}`);
   });
 
+  it("reports probe workspace allocation failure before preparing a Git mutation", async () => {
+    await setupGitPackageManagerFixture();
+    const { calls, runCommand } = createDevGitRunner();
+    const beforeGitMutation = vi.fn(async () => {});
+    const createTemporaryDirectory = fs.mkdtemp;
+    const allocation = vi.spyOn(fs, "mkdtemp").mockImplementation(async (prefix) => {
+      if (prefix.includes("openclaw-update-pnpm-")) {
+        throw Object.assign(new Error("temporary storage unavailable"), { code: "EACCES" });
+      }
+      return createTemporaryDirectory(prefix);
+    });
+    try {
+      const result = await runWithCommand(runCommand, { channel: "dev", beforeGitMutation });
+      expect(result).toMatchObject({ status: "error", reason: "preferred-manager-unavailable" });
+      expect(result.steps).toContainEqual(
+        expect.objectContaining({
+          name: "preflight package manager (upstream)",
+          exitCode: 1,
+          stderrTail: "preferred-manager-unavailable",
+        }),
+      );
+      expect(beforeGitMutation).not.toHaveBeenCalled();
+      expect(calls).not.toContain("pnpm --version");
+      expect(calls).not.toContain("pnpm install");
+    } finally {
+      allocation.mockRestore();
+    }
+  });
+
   it("does not fall back to npm scripts when a pnpm repo cannot bootstrap pnpm", async () => {
     await setupGitPackageManagerFixture();
     const { calls, runCommand } = createDevGitRunner({

@@ -35,6 +35,28 @@ async function checkout(version: string) {
 }
 
 describe("resolveUpdateBuildManager", () => {
+  it.each(["require-preferred", "allow-fallback"] as const)(
+    "returns a structured result when the probe workspace cannot be allocated (%s)",
+    async (requirement) => {
+      const root = await checkout("12.0.0");
+      vi.spyOn(fs, "mkdtemp").mockRejectedValueOnce(
+        Object.assign(new Error("temporary storage unavailable"), { code: "EACCES" }),
+      );
+      const runCommand = vi.fn(async () => ({ stdout: "12.0.0", stderr: "", code: 0 }));
+      const result = await resolveUpdateBuildManager(runCommand, root, 5000, {}, requirement);
+      expect(result).toEqual(
+        requirement === "require-preferred"
+          ? { kind: "missing-required", preferred: "pnpm", reason: "preferred-manager-unavailable" }
+          : { kind: "resolved", manager: "npm", preferred: "pnpm", fallback: true, env: {} },
+      );
+      expect(runCommand.mock.calls).toEqual(
+        requirement === "require-preferred"
+          ? []
+          : [[["npm", "--version"], { timeoutMs: 5000, cwd: root, env: {} }]],
+      );
+    },
+  );
+
   it.each([
     { version: "12.0.0", hostVersion: "11.15.1", pathKey: "PATH", rootOverrides: [] },
     {

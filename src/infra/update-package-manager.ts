@@ -95,26 +95,27 @@ async function resolvePnpmBuildManager(params: {
   timeoutMs: number;
   baseEnv?: NodeJS.ProcessEnv;
 }): Promise<ResolvedBuildManager> {
-  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-update-pnpm-"));
-  const cleanup = async () => {
-    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
-  };
-  const targetEnv = createPnpmCommandEnv(params.baseEnv, params.root);
-  const probeOptions = {
-    timeoutMs: params.timeoutMs,
-    env: createPnpmCommandEnv(targetEnv, tempRoot),
-    cwd: tempRoot,
-  };
-  const resolved = {
-    kind: "resolved",
-    manager: "pnpm",
-    preferred: params.preferred,
-    fallback: params.preferred !== "pnpm",
-    env: targetEnv,
-  } as const;
+  let cleanup: (() => Promise<void>) | undefined;
   let retained = false;
   let reason: UpdatePackageManagerFailureReason = "preferred-manager-unavailable";
   try {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-update-pnpm-"));
+    cleanup = async () => {
+      await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+    };
+    const targetEnv = createPnpmCommandEnv(params.baseEnv, params.root);
+    const probeOptions = {
+      timeoutMs: params.timeoutMs,
+      env: createPnpmCommandEnv(targetEnv, tempRoot),
+      cwd: tempRoot,
+    };
+    const resolved = {
+      kind: "resolved",
+      manager: "pnpm",
+      preferred: params.preferred,
+      fallback: params.preferred !== "pnpm",
+      env: targetEnv,
+    } as const;
     // Even --version can switch pnpm and write the target lock. Both manifests
     // isolate the ambient launcher from ancestor workspace pins before selection.
     await fs.writeFile(path.join(tempRoot, "package.json"), JSON.stringify({ private: true }));
@@ -167,10 +168,10 @@ async function resolvePnpmBuildManager(params: {
       }
     }
   } catch {
-    // Preserve the failing bootstrap stage while releasing its owned prefix.
+    // Allocation and bootstrap failures share the visible failure result and cleanup owner.
   } finally {
     if (!retained) {
-      await cleanup();
+      await cleanup?.();
     }
   }
   return { kind: "missing-required", preferred: params.preferred, reason };
