@@ -51,24 +51,25 @@ suite.define(() => {
       );
       await active.waitFor();
       const geometry = await active.evaluate((row) => {
-        const section = row.closest<HTMLElement>(".sidebar-sessions");
         const scroller = row.closest<HTMLElement>(".sidebar-shell__body");
-        if (!section || !scroller) {
+        if (!scroller) {
           throw new Error("sidebar session geometry owner not found");
         }
         const rowRect = row.getBoundingClientRect();
-        const sectionRect = section.getBoundingClientRect();
         return {
-          inset: sectionRect.right - rowRect.right,
+          contentEdge:
+            scroller.getBoundingClientRect().right - (scroller.offsetWidth - scroller.clientWidth),
+          rowRight: rowRect.right,
           overflows: scroller.scrollHeight > scroller.clientHeight,
-          sectionPaddingEnd: Number.parseFloat(getComputedStyle(section).paddingRight),
+          scrollbarGutter: getComputedStyle(scroller).scrollbarGutter,
+          scrollbarWidth: scroller.offsetWidth - scroller.clientWidth,
         };
       });
 
       expect(geometry.overflows).toBe(true);
-      expect(geometry.inset, JSON.stringify(geometry)).toBeGreaterThanOrEqual(
-        geometry.sectionPaddingEnd,
-      );
+      expect(geometry.scrollbarGutter).toBe("stable");
+      expect(geometry.scrollbarWidth).toBeGreaterThan(0);
+      expect(geometry.contentEdge - geometry.rowRight, JSON.stringify(geometry)).toBeCloseTo(4, 1);
 
       if (captureProof) {
         await page.screenshot({
