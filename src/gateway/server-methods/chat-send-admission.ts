@@ -35,8 +35,8 @@ import {
 } from "../chat-abort.js";
 import { authorizeGatewaySessionCreation, resolveCreatorSandbox } from "../operator-role-policy.js";
 import { PENDING_CHAT_SEND_DEDUPE_PREFIX, type DedupeEntry } from "../server-shared.js";
+import { sessionToolOverridesEqual } from "../session-tool-overrides.js";
 import { loadSessionEntry } from "../session-utils.js";
-import { sessionToolOverridesEqual } from "../sessions-patch.js";
 import { formatForLog } from "../ws-log.js";
 import {
   buildAbortedChatSendPayload,
