@@ -197,9 +197,20 @@ describe("typed in-process agent authorization", () => {
     },
   );
 
-  it.each(["explicit", "scoped"])(
-    "carries a %s Gateway binding into the session mutation commit guard",
-    async (binding) => {
+  it.each(
+    ["explicit", "scoped"].flatMap((binding) =>
+      [
+        { method: "sessions.create", params: { agentId: "main" } },
+        {
+          method: "agent",
+          params: { message: "host-bound dispatch", idempotencyKey: "host-bound-dispatch" },
+        },
+        { method: "agent.wait", params: { runId: "host-bound-run" } },
+      ].map((entry) => ({ binding, ...entry })),
+    ),
+  )(
+    "dispatches $method through its $binding host and rejects replacement before commit",
+    async ({ binding, method, params }) => {
       const admitted = createContext();
       const replacement = createContext();
       let current = admitted;
@@ -209,7 +220,7 @@ describe("typed in-process agent authorization", () => {
       admitted.getGatewayMethodRegistry = () =>
         createGatewayMethodRegistry([
           {
-            name: "sessions.create",
+            name: method,
             scope: "operator.write",
             owner: { kind: "core", area: "sessions" },
             handler: async ({
@@ -232,17 +243,18 @@ describe("typed in-process agent authorization", () => {
           ...(binding === "scoped" ? { resolveGatewayContext: () => current } : {}),
         },
         () =>
-          dispatchGatewayMethodInProcess(
-            "sessions.create",
-            { agentId: "main" },
-            {
-              forceSyntheticClient: true,
-              ...(binding === "explicit" ? { resolveGatewayContext: () => current } : {}),
-              syntheticScopes: ["operator.write"],
-            },
-          ),
+          dispatchGatewayMethodInProcess(method, params, {
+            forceSyntheticClient: true,
+            ...(binding === "explicit" ? { resolveGatewayContext: () => current } : {}),
+            syntheticScopes: ["operator.write"],
+          }),
       );
-      await setupStarted.promise;
+      await Promise.race([
+        setupStarted.promise,
+        dispatch.then(() => {
+          throw new Error(`${method} did not invoke the host-owned handler`);
+        }),
+      ]);
       current = replacement;
       releaseSetup.resolve();
 

@@ -13,7 +13,9 @@ export const agentRunHandler: GatewayRequestHandlers["agent"] = async ({
   context,
   client,
   isWebchatConnect,
+  sessionMutationCommitGuard,
 }) => {
+  sessionMutationCommitGuard?.();
   const io = createAgentTurnIo(respond);
   if (
     !assertValidParams(params, validateAgentParams, "agent", (ok, payload, error, meta) =>
@@ -32,10 +34,12 @@ export const agentRunHandler: GatewayRequestHandlers["agent"] = async ({
     principal,
     registerToolEventRecipient: context.registerToolEventRecipient,
   });
-  await createAgentTurnService({ context, isWebchatConnect }).startTurn({
-    preflight,
-    principal,
-    io,
-    onRunObserved,
-  });
+  await createAgentTurnService({ context, isWebchatConnect }, sessionMutationCommitGuard).startTurn(
+    {
+      preflight,
+      principal,
+      io,
+      onRunObserved,
+    },
+  );
 };

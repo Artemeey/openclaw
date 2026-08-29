@@ -9,29 +9,12 @@ import type { GatewayRequestContext, GatewayRequestOptions } from "./server-meth
 type HandleGatewayRequestOptions = GatewayRequestOptions & {
   extraHandlers?: Record<string, unknown>;
 };
-type InternalAgentTurnFacadeOptions = {
-  client: NonNullable<GatewayRequestOptions["client"]>;
-};
 const handleGatewayRequest = vi.hoisted(() =>
   vi.fn(async (_opts: HandleGatewayRequestOptions) => {}),
 );
-const internalAgentTurnFacade = vi.hoisted(() => ({
-  create: vi.fn(),
-  dispatch: vi.fn(),
-  wait: vi.fn(),
-}));
 
 vi.mock("./server-methods.js", () => ({
   handleGatewayRequest,
-}));
-vi.mock("./agent-turn/internal-facade.runtime.js", () => ({
-  createInternalAgentTurnFacade: (options: InternalAgentTurnFacadeOptions) => {
-    internalAgentTurnFacade.create(options);
-    return {
-      dispatch: internalAgentTurnFacade.dispatch,
-      wait: internalAgentTurnFacade.wait,
-    };
-  },
 }));
 
 type ServerPluginsModule = typeof import("./server-plugins.js") & {
@@ -82,25 +65,19 @@ function lastAgentTurnRequest(): {
   client: NonNullable<GatewayRequestOptions["client"]>;
   params: Record<string, unknown>;
 } {
-  const params = internalAgentTurnFacade.dispatch.mock.calls.at(-1)?.[0] as
-    | Record<string, unknown>
-    | undefined;
-  const options = internalAgentTurnFacade.create.mock.calls.at(-1)?.[0] as
-    | InternalAgentTurnFacadeOptions
-    | undefined;
-  if (!params || !options) {
+  const options = handleGatewayRequest.mock.calls.findLast(
+    ([entry]) => entry.req.method === "agent",
+  )?.[0];
+  if (!options?.client || !options.req.params) {
     throw new Error("expected internal agent turn dispatch");
   }
-  return { client: options.client, params };
+  return { client: options.client, params: options.req.params as Record<string, unknown> };
 }
 
 beforeEach(() => {
-  internalAgentTurnFacade.create.mockReset();
-  internalAgentTurnFacade.dispatch.mockReset().mockResolvedValue({ runId: "plugin-run-1" });
-  internalAgentTurnFacade.wait.mockReset().mockResolvedValue({ status: "ok" });
   handleGatewayRequest.mockReset();
   handleGatewayRequest.mockImplementation(async (opts: HandleGatewayRequestOptions) => {
-    opts.respond(true, {});
+    opts.respond(true, opts.req.method === "agent" ? { runId: "plugin-run-1" } : { status: "ok" });
   });
 });
 
@@ -211,7 +188,7 @@ describe("createGatewaySubagentRuntime.run subagent_ended tracking (#59164)", ()
       }),
     ).rejects.toThrow(/requester-bound plugin hook invocation/);
 
-    expect(internalAgentTurnFacade.dispatch).not.toHaveBeenCalled();
+    expect(handleGatewayRequest).not.toHaveBeenCalled();
   });
 
   test("rejects unsupported runtime completion destinations", async () => {
@@ -230,7 +207,7 @@ describe("createGatewaySubagentRuntime.run subagent_ended tracking (#59164)", ()
       } as unknown as Parameters<typeof runtime.run>[0]),
     ).rejects.toThrow(/Unsupported plugin subagent completionDelivery/);
 
-    expect(internalAgentTurnFacade.dispatch).not.toHaveBeenCalled();
+    expect(handleGatewayRequest).not.toHaveBeenCalled();
   });
 
   test("preserves plugin identity on the tracked Gateway agent request", async () => {
@@ -296,7 +273,7 @@ describe("createGatewaySubagentRuntime.run subagent_ended tracking (#59164)", ()
       }),
     ).rejects.toThrow(/gateway request scope/);
 
-    expect(internalAgentTurnFacade.dispatch).not.toHaveBeenCalled();
+    expect(handleGatewayRequest).not.toHaveBeenCalled();
   });
 
   test("preserves the child session so the transcript stays readable until the plugin deletes it", async () => {
@@ -311,11 +288,15 @@ describe("createGatewaySubagentRuntime.run subagent_ended tracking (#59164)", ()
     const sessionStore = new Map<string, { messages: unknown[] }>([
       ["agent:main:subagent:plugin-readback", { messages: transcript }],
     ]);
-    internalAgentTurnFacade.dispatch.mockResolvedValue({ runId: "plugin-run-readback" });
-
     handleGatewayRequest.mockImplementation(async (opts: HandleGatewayRequestOptions) => {
       const req = opts.req as { method: string; params?: { key?: string } };
       switch (req.method) {
+        case "agent":
+          opts.respond(true, { runId: "plugin-run-readback" });
+          return;
+        case "agent.wait":
+          opts.respond(true, { status: "ok" });
+          return;
         case "sessions.get": {
           const key = req.params?.key ?? "";
           const stored = sessionStore.get(key);
@@ -405,7 +386,7 @@ describe("createGatewaySubagentRuntime.run subagent_ended tracking (#59164)", ()
     const serverPlugins = await loadServerPlugins();
     const runtime = serverPlugins.createGatewaySubagentRuntime(() => testGatewayContext);
     serverPlugins.setFallbackGatewayContext(createTestContext("plugin-wait", createTestCfg()));
-    internalAgentTurnFacade.wait.mockResolvedValue(result);
+    handleGatewayRequest.mockImplementationOnce(async (opts) => opts.respond(true, result));
 
     await expect(runtime.waitForRun({ runId: "plugin-run-wait" })).resolves.toEqual(expected);
   });

@@ -21,7 +21,9 @@ export const agentWaitHandler: GatewayRequestHandlers["agent.wait"] = async ({
   context,
   client,
   isWebchatConnect,
+  sessionMutationCommitGuard,
 }) => {
+  sessionMutationCommitGuard?.();
   if (!assertValidParams(params, validateAgentWaitParams, "agent.wait", respond)) {
     return;
   }

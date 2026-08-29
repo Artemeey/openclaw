@@ -7,7 +7,8 @@ import { toErrorObject as toLintErrorObject } from "@openclaw/normalization-core
 import { afterEach, describe, expect, it } from "vitest";
 import { clearRuntimeConfigSnapshot, type OpenClawConfig } from "../../../config/config.js";
 import { callGateway as realCallGateway } from "../../../gateway/call.js";
-import { GatewayClient } from "../../../gateway/client.js";
+import type { GatewayClient } from "../../../gateway/client.js";
+import { connectTestGatewayClient } from "../../../gateway/gateway-cli-backend.live-helpers.js";
 import { dispatchGatewayMethodInProcess as realDispatchGatewayMethodInProcess } from "../../../gateway/server-plugins.js";
 import { startGatewayServer, type GatewayServer } from "../../../gateway/server.js";
 import { extractPayloadText } from "../../../gateway/test-helpers.agent-results.js";
@@ -18,7 +19,6 @@ import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../../../test-utils/openclaw-test-state.js";
-import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../../../utils/message-channel.js";
 import { isLiveTestEnabled, readLiveTestConfig } from "../../live-test-helpers.js";
 import {
   resolveSubagentController,
@@ -228,20 +228,11 @@ function createGatewayClient(params: {
   token: string;
   onEvent?: ConstructorParameters<typeof GatewayClient>[0]["onEvent"];
 }): Promise<GatewayClient> {
-  return new Promise((resolve, reject) => {
-    const client = new GatewayClient({
-      url: `ws://127.0.0.1:${params.port}`,
-      token: params.token,
-      deviceIdentity: null,
-      clientName: GATEWAY_CLIENT_NAMES.GATEWAY_CLIENT,
-      mode: GATEWAY_CLIENT_MODES.BACKEND,
-      scopes: ["operator.admin"],
-      requestTimeoutMs: REQUEST_TIMEOUT_MS,
-      onEvent: params.onEvent,
-      onHelloOk: () => resolve(client),
-      onConnectError: reject,
-    });
-    client.start();
+  return connectTestGatewayClient({
+    url: `ws://127.0.0.1:${params.port}`,
+    token: params.token,
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+    onEvent: params.onEvent,
   });
 }
 
@@ -294,7 +285,7 @@ describeLive("subagent announce live", () => {
           OPENCLAW_SKIP_CRON: "1",
           OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: "1",
           OPENCLAW_SKIP_CANVAS_HOST: "1",
-          OPENCLAW_TEST_MINIMAL_GATEWAY: "1",
+          OPENCLAW_TEST_MINIMAL_GATEWAY: undefined,
           OPENCLAW_DISABLE_BUNDLED_PLUGINS: undefined,
           OPENCLAW_BUNDLED_PLUGINS_DIR: path.resolve("extensions"),
           OPENCLAW_TEST_TRUST_BUNDLED_PLUGINS_DIR: "1",
@@ -316,6 +307,7 @@ describeLive("subagent announce live", () => {
         auth: { mode: "token", token },
         controlUiEnabled: false,
       });
+      await server.startupSettled;
       client = await createGatewayClient({ port, token });
 
       let initialError: unknown;
@@ -487,7 +479,7 @@ describeLive("subagent announce live", () => {
           OPENCLAW_SKIP_CRON: "1",
           OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: "1",
           OPENCLAW_SKIP_CANVAS_HOST: "1",
-          OPENCLAW_TEST_MINIMAL_GATEWAY: "1",
+          OPENCLAW_TEST_MINIMAL_GATEWAY: undefined,
           OPENCLAW_DISABLE_BUNDLED_PLUGINS: undefined,
           OPENCLAW_BUNDLED_PLUGINS_DIR: path.resolve("extensions"),
           OPENCLAW_TEST_TRUST_BUNDLED_PLUGINS_DIR: "1",
@@ -508,6 +500,7 @@ describeLive("subagent announce live", () => {
         auth: { mode: "token", token },
         controlUiEnabled: false,
       });
+      await server.startupSettled;
       client = await createGatewayClient({ port, token });
 
       let initialError: unknown;
@@ -682,7 +675,7 @@ describeLive("subagent announce live", () => {
           OPENCLAW_SKIP_CRON: "1",
           OPENCLAW_SKIP_BROWSER_CONTROL_SERVER: "1",
           OPENCLAW_SKIP_CANVAS_HOST: "1",
-          OPENCLAW_TEST_MINIMAL_GATEWAY: "1",
+          OPENCLAW_TEST_MINIMAL_GATEWAY: undefined,
           OPENCLAW_DISABLE_BUNDLED_PLUGINS: undefined,
           OPENCLAW_BUNDLED_PLUGINS_DIR: path.resolve("extensions"),
           OPENCLAW_TEST_TRUST_BUNDLED_PLUGINS_DIR: "1",
@@ -724,6 +717,7 @@ describeLive("subagent announce live", () => {
         auth: { mode: "token", token },
         controlUiEnabled: false,
       });
+      await server.startupSettled;
       client = await createGatewayClient({ port, token });
 
       let initialError: unknown;
