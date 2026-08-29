@@ -159,8 +159,14 @@ function scheduleProviderUsageRefresh(params: {
     return active.promise;
   }
   const publishGeneration = cacheGeneration;
-  const load = () =>
-    loadProviderUsageSummary({
+  let refresh: ProviderUsageRefresh;
+  const load = () => {
+    // Profile work may wait behind the shared concurrency limit. Recheck its
+    // owner at dequeue time so a removed or replaced profile never reaches I/O.
+    if (params.authProfile && usageRefreshByAgentId.get(params.cacheOwnerKey) !== refresh) {
+      return Promise.resolve({ updatedAt: Date.now(), providers: [] });
+    }
+    return loadProviderUsageSummary({
       providers: params.providerIds,
       ...(params.authProfile ? { authProfile: params.authProfile } : {}),
       agentDir: params.agentDir,
@@ -169,6 +175,7 @@ function scheduleProviderUsageRefresh(params: {
       config: params.configRef,
       timeoutMs: PROVIDER_USAGE_TIMEOUT_MS,
     });
+  };
   const promise = (params.authProfile ? profileUsageRefreshLimit(load) : load())
     .then((freshUsage) => {
       const usage = retainLastGoodOnTimeout(freshUsage, params.lastGood);
@@ -202,7 +209,7 @@ function scheduleProviderUsageRefresh(params: {
         usageRefreshByAgentId.delete(params.cacheOwnerKey);
       }
     });
-  const refresh: ProviderUsageRefresh = {
+  refresh = {
     agentDir: params.agentDir,
     configRef: params.configRef,
     credentialKey: params.credentialKey,
@@ -303,7 +310,8 @@ export function readProfileUsageStaleWhileRevalidate(params: {
   const pendingProfileIds = new Set<string>();
   const ownerPrefix = `${params.agentId}\0profile\0`;
   const activeOwners = new Set(params.targets.map((target) => `${ownerPrefix}${target.profileId}`));
-  for (const ownerKey of usageCacheByAgentId.keys()) {
+  const knownOwners = new Set([...usageCacheByAgentId.keys(), ...usageRefreshByAgentId.keys()]);
+  for (const ownerKey of knownOwners) {
     if (ownerKey.startsWith(ownerPrefix) && !activeOwners.has(ownerKey)) {
       usageCacheByAgentId.delete(ownerKey);
       usageRefreshByAgentId.delete(ownerKey);

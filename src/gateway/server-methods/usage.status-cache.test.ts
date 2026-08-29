@@ -489,8 +489,9 @@ describe("usage.status provider usage cache", () => {
     ]);
   });
 
-  it("bounds concurrent account usage refreshes", async () => {
+  it("bounds account refreshes and cancels a queued profile removed before I/O", async () => {
     const profileIds = Array.from({ length: 6 }, (_, index) => `openai:profile-${index + 1}`);
+    const removedProfileId = profileIds.at(-1)!;
     store = {
       version: 1,
       profiles: Object.fromEntries(
@@ -502,10 +503,14 @@ describe("usage.status provider usage cache", () => {
     };
     let inFlight = 0;
     let maxInFlight = 0;
+    const startedProfileIds: string[] = [];
     const releases: Array<() => void> = [];
     mocks.loadProviderUsageSummary.mockImplementation(
       (options) =>
         new Promise((resolve) => {
+          const profileId = options.authProfile?.profileId;
+          expect(profileId).toBeTruthy();
+          startedProfileIds.push(profileId!);
           inFlight += 1;
           maxInFlight = Math.max(maxInFlight, inFlight);
           releases.push(() => {
@@ -521,7 +526,6 @@ describe("usage.status provider usage cache", () => {
               ],
             });
           });
-          expect(options.authProfile?.profileId).toBeTruthy();
         }),
     );
     const agentId = resolveDefaultAgentId(config);
@@ -529,27 +533,35 @@ describe("usage.status provider usage cache", () => {
     replaceRuntimeAuthProfileStoreSnapshots([{ agentDir, store }]);
     const snapshot = getProviderUsageRuntimeSnapshot({ config, agentId, agentDir, store });
 
-    readProfileUsageStaleWhileRevalidate({
+    const params = {
       agentId,
       agentDir,
       workspaceDir: "/tmp/workspace",
       authStore: store,
       configRef: config,
       credentialKey: snapshot.credentialKey,
-      targets: profileIds.map((profileId) => ({ profileId, providerId: "openai" })),
+      targets: profileIds.map((profileId) => ({ profileId, providerId: "openai" as const })),
       now,
-    });
+    };
+
+    readProfileUsageStaleWhileRevalidate(params);
 
     await vi.waitFor(() => expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(3));
     expect(maxInFlight).toBe(3);
+    readProfileUsageStaleWhileRevalidate({
+      ...params,
+      targets: params.targets.filter((target) => target.profileId !== removedProfileId),
+    });
     for (const release of releases.splice(0)) {
       release();
     }
-    await vi.waitFor(() => expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(6));
+    await vi.waitFor(() => expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(5));
     expect(maxInFlight).toBe(3);
     for (const release of releases.splice(0)) {
       release();
     }
     await vi.waitFor(() => expect(inFlight).toBe(0));
+
+    expect(startedProfileIds).not.toContain(removedProfileId);
   });
 });
