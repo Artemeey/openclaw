@@ -31,7 +31,7 @@ export function getProcessIdentity(pid: number): Result<ProcessIdentity, "unavai
     }
     if (process.platform === "darwin") {
       readDarwinIdentity ??= (() => {
-        // Koffi is a host dependency; load only when a Darwin process is inspected.
+        // SAFETY: Koffi's require export matches its typed default; load only on Darwin.
         const koffi = createRequire(import.meta.url)("koffi") as typeof import("koffi").default;
         const procPidInfo = koffi
           .load("/usr/lib/libproc.dylib")
