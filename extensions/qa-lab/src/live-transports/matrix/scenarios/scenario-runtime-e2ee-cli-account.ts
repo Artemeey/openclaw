@@ -385,6 +385,11 @@ export async function runMatrixQaE2eeCliEncryptionSetupBootstrapFailureScenario(
     if (faultHits.length === 0) {
       throw new Error("Matrix CLI encryption setup bootstrap-failure proxy was not exercised");
     }
+    if (!faultHits.some((hit) => hit.method === "POST")) {
+      throw new Error(
+        "Matrix CLI encryption setup did not attempt faulted room-key backup creation",
+      );
+    }
     const bootstrapError = payload.bootstrap?.error ?? "";
     if (!bootstrapError.toLowerCase().includes("room key backup")) {
       throw new Error(

@@ -34,6 +34,47 @@ export async function runPartialStreamingPreviewScenario(context: MatrixQaScenar
 }
 
 const MATRIX_REPLACEMENT_FAULT_RULE_ID = "matrix-streaming-replacement-failure";
+// matrix-js-sdk 42.2.0's scheduler rejects a 503 send after five failed attempts
+// (http-api/utils.ts calculateRetryBackoff), not after the first negative window.
+const MATRIX_REPLACEMENT_FAILURE_ATTEMPTS = 5;
+
+function observeReplacementStage(
+  context: MatrixQaScenarioContext,
+  stage: string,
+  since: string | undefined,
+  predicate: (event: MatrixQaObservedEvent) => boolean,
+  faultHits: () => number = () => 0,
+) {
+  let eventCount = 0;
+  const record = (event?: MatrixQaObservedEvent, matched?: boolean) => {
+    process.stderr.write(
+      `[matrix-replacement] ${JSON.stringify({
+        stage,
+        since,
+        observedCount: context.observedEvents.length,
+        faultHitCount: faultHits(),
+        ...(event
+          ? {
+              eventId: event.eventId,
+              kind: event.kind,
+              replacesEventId: event.replacesEventId,
+              redactsEventId: event.redactsEventId,
+              matched,
+            }
+          : {}),
+      })}\n`,
+    );
+  };
+  // Emit before waiting: the outer flow deadline can win before an inner wait rejects.
+  record();
+  return (event: MatrixQaObservedEvent) => {
+    const matched = predicate(event);
+    if (event.roomId === context.roomId && event.sender === context.sutUserId && eventCount++ < 8) {
+      record(event, matched);
+    }
+    return matched;
+  };
+}
 
 export async function runStreamingReplacementRetentionScenario(
   context: MatrixQaScenarioContext,
@@ -52,12 +93,17 @@ export async function runStreamingReplacementRetentionScenario(
   const firstPreview = await client
     .waitForRoomEvent({
       observedEvents: context.observedEvents,
-      predicate: (event) =>
-        event.roomId === context.roomId &&
-        event.sender === context.sutUserId &&
-        isMatrixQaMessageLikeKind(event.kind) &&
-        event.body?.includes(firstToken) === true &&
-        event.body !== firstText,
+      predicate: observeReplacementStage(
+        context,
+        "first-draft",
+        startSince,
+        (event) =>
+          event.roomId === context.roomId &&
+          event.sender === context.sutUserId &&
+          isMatrixQaMessageLikeKind(event.kind) &&
+          event.body?.includes(firstToken) === true &&
+          event.body !== firstText,
+      ),
       roomId: context.roomId,
       since: startSince,
       timeoutMs: context.timeoutMs,
@@ -72,30 +118,41 @@ export async function runStreamingReplacementRetentionScenario(
     id: MATRIX_REPLACEMENT_FAULT_RULE_ID,
     match: (request) =>
       request.bearerToken === context.sutAccessToken &&
-      request.path.includes("/send/m.room.message/"),
+      request.path.includes("/send/m.room.message/") &&
+      request.body.includes(firstToken) &&
+      !request.body.includes('"m.replace"'),
     response: () => ({
       body: { errcode: "M_UNKNOWN", error: "Matrix QA injected replacement failure" },
       status: 503,
     }),
   });
-  let firstWindow;
+  let firstWindow: Awaited<ReturnType<typeof client.waitForOptionalRoomEvent>> | undefined;
   try {
-    firstWindow = await client.waitForOptionalRoomEvent({
-      observedEvents: context.observedEvents,
-      predicate: (event) =>
+    const retainedPredicate = observeReplacementStage(
+      context,
+      "retain-faulted-draft",
+      firstPreview.since,
+      (event) =>
         event.roomId === context.roomId &&
         event.sender === context.sutUserId &&
         (event.redactsEventId === firstDraftEventId || event.body === firstText),
-      roomId: context.roomId,
-      since: firstPreview.since,
-      timeoutMs: Math.min(8_000, context.timeoutMs),
-    });
-    if (firstWindow.matched) {
-      throw new Error(`Matrix failed replacement did not retain draft ${firstDraftEventId}`);
-    }
-    if (faultRule.hits().length === 0) {
-      throw new Error("Matrix replacement fault rule did not observe a replacement request");
-    }
+      () => faultRule.hits().length,
+    );
+    do {
+      firstWindow = await client.waitForOptionalRoomEvent({
+        observedEvents: context.observedEvents,
+        predicate: retainedPredicate,
+        roomId: context.roomId,
+        since: firstWindow?.since ?? firstPreview.since,
+        timeoutMs: Math.min(8_000, context.timeoutMs),
+      });
+      if (firstWindow.matched) {
+        throw new Error(`Matrix failed replacement did not retain draft ${firstDraftEventId}`);
+      }
+      if (faultRule.hits().length === 0) {
+        throw new Error("Matrix replacement fault rule did not observe a replacement request");
+      }
+    } while (faultRule.hits().length < MATRIX_REPLACEMENT_FAILURE_ATTEMPTS);
   } finally {
     faultRule.remove();
   }
@@ -110,13 +167,19 @@ export async function runStreamingReplacementRetentionScenario(
   const secondPreview = await client
     .waitForRoomEvent({
       observedEvents: context.observedEvents,
-      predicate: (event) =>
-        event.roomId === context.roomId &&
-        event.sender === context.sutUserId &&
-        isMatrixQaMessageLikeKind(event.kind) &&
-        event.body?.includes(secondToken) === true &&
-        event.eventId !== firstPreview.event.eventId &&
-        event.body !== secondText,
+      predicate: observeReplacementStage(
+        context,
+        "second-draft",
+        firstWindow.since,
+        (event) =>
+          event.roomId === context.roomId &&
+          event.sender === context.sutUserId &&
+          isMatrixQaMessageLikeKind(event.kind) &&
+          event.body?.includes(secondToken) === true &&
+          event.eventId !== firstPreview.event.eventId &&
+          event.body !== secondText,
+        () => faultRule.hits().length,
+      ),
       roomId: context.roomId,
       since: firstWindow.since,
       timeoutMs: context.timeoutMs,
@@ -130,13 +193,19 @@ export async function runStreamingReplacementRetentionScenario(
   const secondReply = await client
     .waitForRoomEvent({
       observedEvents: context.observedEvents,
-      predicate: (event) =>
-        event.roomId === context.roomId &&
-        event.sender === context.sutUserId &&
-        isMatrixQaMessageLikeKind(event.kind) &&
-        event.body?.includes(secondToken) === true &&
-        event.eventId !== secondDraftEventId &&
-        event.replacesEventId === undefined,
+      predicate: observeReplacementStage(
+        context,
+        "healthy-replacement",
+        secondPreview.since,
+        (event) =>
+          event.roomId === context.roomId &&
+          event.sender === context.sutUserId &&
+          isMatrixQaMessageLikeKind(event.kind) &&
+          event.body?.includes(secondToken) === true &&
+          event.eventId !== secondDraftEventId &&
+          event.replacesEventId === undefined,
+        () => faultRule.hits().length,
+      ),
       roomId: context.roomId,
       since: secondPreview.since,
       timeoutMs: context.timeoutMs,
@@ -149,10 +218,16 @@ export async function runStreamingReplacementRetentionScenario(
   const secondRedaction = await client
     .waitForRoomEvent({
       observedEvents: context.observedEvents,
-      predicate: (event) =>
-        event.roomId === context.roomId &&
-        event.sender === context.sutUserId &&
-        event.kind === "redaction",
+      predicate: observeReplacementStage(
+        context,
+        "replacement-redaction",
+        secondReply.since,
+        (event) =>
+          event.roomId === context.roomId &&
+          event.sender === context.sutUserId &&
+          event.kind === "redaction",
+        () => faultRule.hits().length,
+      ),
       roomId: context.roomId,
       since: secondReply.since,
       timeoutMs: context.timeoutMs,
@@ -169,10 +244,16 @@ export async function runStreamingReplacementRetentionScenario(
   }
   const duplicateRedaction = await client.waitForOptionalRoomEvent({
     observedEvents: context.observedEvents,
-    predicate: (event) =>
-      event.roomId === context.roomId &&
-      event.sender === context.sutUserId &&
-      event.kind === "redaction",
+    predicate: observeReplacementStage(
+      context,
+      "no-duplicate-redaction",
+      secondRedaction.since,
+      (event) =>
+        event.roomId === context.roomId &&
+        event.sender === context.sutUserId &&
+        event.kind === "redaction",
+      () => faultRule.hits().length,
+    ),
     roomId: context.roomId,
     since: secondRedaction.since,
     timeoutMs: Math.min(8_000, context.timeoutMs),

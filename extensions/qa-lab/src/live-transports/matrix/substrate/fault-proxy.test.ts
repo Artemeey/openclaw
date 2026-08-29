@@ -2,6 +2,7 @@
 import { createServer, request } from "node:http";
 import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
+import { buildRoomKeyBackupUnavailableFaultRule } from "../scenarios/scenario-runtime-e2ee-room.js";
 import { startMatrixQaFaultProxy } from "./fault-proxy.js";
 
 type MatrixQaFaultProxy = Awaited<ReturnType<typeof startMatrixQaFaultProxy>>;
@@ -79,22 +80,7 @@ describe("Matrix QA fault proxy", () => {
     const target = await startTargetServer();
     proxy = await startMatrixQaFaultProxy({
       targetBaseUrl: target.baseUrl,
-      rules: [
-        {
-          id: "room-key-backup-version-unavailable",
-          match: (proxyRequest) =>
-            proxyRequest.method === "GET" &&
-            proxyRequest.path === "/_matrix/client/v3/room_keys/version" &&
-            proxyRequest.bearerToken === "driver-token",
-          response: () => ({
-            body: {
-              errcode: "M_NOT_FOUND",
-              error: "No current key backup",
-            },
-            status: 404,
-          }),
-        },
-      ],
+      rules: [buildRoomKeyBackupUnavailableFaultRule("driver-token")],
     });
 
     const faulted = await fetch(`${proxy.baseUrl}/_matrix/client/v3/room_keys/version`, {
@@ -105,6 +91,20 @@ describe("Matrix QA fault proxy", () => {
       errcode: "M_NOT_FOUND",
       error: "No current key backup",
     });
+
+    const creation = await fetch(`${proxy.baseUrl}/_matrix/client/v3/room_keys/version`, {
+      method: "POST",
+      headers: { authorization: "Bearer driver-token" },
+    });
+    expect(creation.status).toBe(503);
+    await expect(creation.json()).resolves.toMatchObject({ errcode: "M_UNKNOWN" });
+
+    const otherAccount = await fetch(`${proxy.baseUrl}/_matrix/client/v3/room_keys/version`, {
+      method: "POST",
+      headers: { authorization: "Bearer observer-token" },
+    });
+    expect(otherAccount.status).toBe(200);
+    await otherAccount.json();
 
     const forwarded = await fetch(`${proxy.baseUrl}/_matrix/client/v3/sync?timeout=0`, {
       body: JSON.stringify({ ok: true }),
@@ -123,8 +123,19 @@ describe("Matrix QA fault proxy", () => {
         path: "/_matrix/client/v3/room_keys/version",
         ruleId: "room-key-backup-version-unavailable",
       },
+      {
+        method: "POST",
+        path: "/_matrix/client/v3/room_keys/version",
+        ruleId: "room-key-backup-version-unavailable",
+      },
     ]);
     expect(target.requests).toEqual([
+      {
+        authorization: "Bearer observer-token",
+        body: "",
+        method: "POST",
+        url: "/_matrix/client/v3/room_keys/version",
+      },
       {
         authorization: "Bearer driver-token",
         body: '{"ok":true}',

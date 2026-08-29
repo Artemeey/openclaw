@@ -68,16 +68,15 @@ export function buildRoomKeyBackupUnavailableFaultRule(
   return {
     id: MATRIX_QA_ROOM_KEY_BACKUP_FAULT_RULE_ID,
     match: (request) =>
-      request.method === "GET" &&
+      (request.method === "GET" || request.method === "POST") &&
       request.path === MATRIX_QA_ROOM_KEY_BACKUP_VERSION_ENDPOINT &&
       request.bearerToken === accessToken,
-    response: () => ({
-      body: {
-        errcode: "M_NOT_FOUND",
-        error: "No current key backup",
-      },
-      status: 404,
-    }),
+    // The SDK can enable a newly created backup directly from its POST response.
+    // Discovery-only faults therefore still allow bootstrap to produce a usable backup.
+    response: (request) =>
+      request.method === "GET"
+        ? { body: { errcode: "M_NOT_FOUND", error: "No current key backup" }, status: 404 }
+        : { body: { errcode: "M_UNKNOWN", error: "Key backup creation unavailable" }, status: 503 },
   };
 }
 
@@ -255,6 +254,9 @@ export function assertMatrixQaExpectedBootstrapFailure(params: {
 }) {
   if (params.faultHits.length === 0) {
     throw new Error("Matrix E2EE bootstrap fault proxy was not exercised");
+  }
+  if (!params.faultHits.some((hit) => hit.method === "POST")) {
+    throw new Error("Matrix E2EE bootstrap did not attempt faulted room-key backup creation");
   }
   if (params.result.success) {
     throw new Error(
