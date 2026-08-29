@@ -1,12 +1,15 @@
 // OpenClaw test instance tests cover spawned test instance lifecycle.
-import { EventEmitter } from "node:events";
+import { spawn } from "node:child_process";
+import { EventEmitter, once } from "node:events";
 import fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { terminateManagedChild } from "../../scripts/lib/managed-child-process.mts";
 import { createOpenClawTestInstance, testing } from "./openclaw-test-instance.js";
-import { isProcessAlive } from "./process-wait.js";
+import { isProcessAlive, waitForDead } from "./process-wait.js";
+import { withTestTimeout } from "./promise.js";
 
 const MIGRATION_CONVERGENCE_REFUSAL =
   "OpenClaw plugin migration inputs changed during startup convergence;";
@@ -14,6 +17,7 @@ const RESTART_MARKER =
   "[openclaw-test-instance] restarting gateway after migration convergence refusal";
 const fakeInstances: Awaited<ReturnType<typeof createOpenClawTestInstance>>[] = [];
 const fakeRoots: string[] = [];
+const rawProcessOperations: Promise<void>[] = [];
 
 type FakeGatewayAttempt = {
   argv: string[];
@@ -25,6 +29,8 @@ type FakeGatewayAttempt = {
 };
 
 afterEach(async () => {
+  // A timed-out native proof still owns its raw group until cleanup joins.
+  await Promise.allSettled(rawProcessOperations.splice(0));
   await Promise.allSettled(fakeInstances.splice(0).map((instance) => instance.cleanup()));
   await Promise.allSettled(fakeRoots.splice(0).map((root) => fs.rm(root, { recursive: true })));
 });
@@ -61,9 +67,9 @@ const refusal = ${JSON.stringify(MIGRATION_CONVERGENCE_REFUSAL)};
 if (kind === "refuse") { process.stderr.write(refusal + " fixture\\n"); process.exit(1); }
 if (kind === "late-refuse") { spawn(process.execPath, ["-e", 'setTimeout(() => process.stderr.write(process.argv[1]), 50)', refusal + " delayed fixture\\n"], { stdio: ["ignore", "ignore", "inherit"] }); process.exit(1); }
 if (kind === "resist-after-exit") {
-  const resistant = spawn(process.execPath, ["-e", 'const fs = require("node:fs");fs.writeFileSync(process.argv[1], String(process.pid));process.on("SIGTERM", () => fs.appendFileSync(process.argv[2], "SIGTERM"));process.send("ready");setInterval(() => {}, 1_000);', tracePath + ".resistant-pid", tracePath + ".signals"], { stdio: ["ignore", "ignore", "inherit", "ipc"] });
+  const resistant = spawn(process.execPath, ["-e", 'const fs = require("node:fs");fs.writeFileSync(process.argv[1], String(process.pid));process.on("SIGTERM", () => { fs.appendFileSync(process.argv[2], "SIGTERM"); process.stderr.write("SIGTERM"); });process.send("ready");setInterval(() => {}, 1_000);', tracePath + ".resistant-pid", tracePath + ".signals"], { stdio: ["ignore", "ignore", "inherit", "ipc"] });
   await new Promise((resolve) => resistant.once("message", resolve));
-  process.stderr.write("unrelated startup failure\\n"); process.exit(1);
+  process.exit(1);
 }
 if (kind === "terminal-drain") {
   const draining = spawn(process.execPath, ["-e", 'const fs = require("node:fs");const release = process.argv[1];const deadline = Date.now() + 5_000;const timer = setInterval(() => { if (fs.existsSync(release) || Date.now() >= deadline) clearInterval(timer); }, 10);', tracePath + ".draining-release"], { detached: true, stdio: ["ignore", "ignore", "inherit"] });
@@ -151,11 +157,18 @@ describe("openclaw test instance", () => {
       expect({ ...attempts[0], pid: 0 }).toEqual({ ...attempts[1], pid: 0 });
       expect(instance.logs()).toContain(MIGRATION_CONVERGENCE_REFUSAL);
       expect(instance.logs()).toContain(RESTART_MARKER);
-      const readyPid = instance.child?.pid;
+      const readyChild = instance.child;
+      const readyPid = readyChild?.pid;
       expect(readyPid).toBeTypeOf("number");
       await instance.stopGateway();
       expect(instance.child).toBeUndefined();
       expect(isProcessAlive(readyPid as number)).toBe(false);
+      expect(isProcessAlive(attempts[0]!.pid)).toBe(false);
+      expect(readyChild?.stdout.closed).toBe(true);
+      expect(readyChild?.stderr.closed).toBe(true);
+      await expect(fs.stat(instance.state.root)).resolves.toBeDefined();
+      await instance.cleanup();
+      await expectPathMissing(instance.state.root);
     },
   );
 
@@ -164,9 +177,16 @@ describe("openclaw test instance", () => {
     async (action) => {
       const { instance, readAttempts } = await createFakeGateway(`${action},ready`);
       await expect(instance.startGateway()).rejects.toThrow("gateway exited before readiness");
-      expect(await readAttempts()).toHaveLength(1);
+      const attempts = await readAttempts();
+      expect(attempts).toHaveLength(1);
       expect(instance.logs()).not.toContain(RESTART_MARKER);
       expect(instance.child).toBeUndefined();
+      expect(isProcessAlive(attempts[0]!.pid)).toBe(false);
+      await expect(fs.stat(instance.state.root)).resolves.toBeDefined();
+      await instance.stopGateway();
+      await expect(fs.stat(instance.state.root)).resolves.toBeDefined();
+      await instance.cleanup();
+      await expectPathMissing(instance.state.root);
     },
   );
 
@@ -191,55 +211,275 @@ describe("openclaw test instance", () => {
   });
 
   it.runIf(process.platform !== "win32")(
-    "SIGKILLs a TERM-resistant gateway group before releasing state",
-    async () => {
+    "SIGKILLs a TERM-resistant group with inherited stderr after leader exit",
+    async ({ signal }) => {
       const { instance, tracePath } = await createFakeGateway("resist-after-exit", 500, 40);
-      const stateRoot = instance.state.root;
-      const startedAt = Date.now();
-      await expect(instance.startGateway()).rejects.toThrow("gateway exited before readiness");
-      const resistantPid = Number(await fs.readFile(`${tracePath}.resistant-pid`, "utf8"));
-      expect(await fs.readFile(`${tracePath}.signals`, "utf8")).toBe("SIGTERM");
-      expect(instance.child).toBeUndefined();
-      expect(Date.now() - startedAt).toBeLessThan(500);
-      await expect.poll(() => isProcessAlive(resistantPid), { timeout: 500 }).toBe(false);
-      await expect(fs.stat(stateRoot)).resolves.toBeDefined();
-      await instance.cleanup();
-      await expectPathMissing(stateRoot);
+      const exerciseGroup = async () => {
+        // Preparation is outside policy time. Existing instance cases own slot/state;
+        // this proves native delivery and pipe closure after the IPC-ready leader exits.
+        const leader = spawn(process.execPath, await instance.entrypoint(), {
+          cwd: path.dirname(tracePath),
+          env: instance.env,
+          detached: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const exited = once(leader, "exit");
+        const closed = once(leader, "close");
+        // Spawn errors reject both promises; the bounded joins below own them.
+        void closed.catch(() => undefined);
+        const abortGroup = () => {
+          terminateManagedChild(leader, "SIGKILL");
+        };
+        signal.addEventListener("abort", abortGroup, { once: true });
+        if (signal.aborted) {
+          abortGroup();
+        }
+        let resistantPid: number | undefined;
+        const verifySignals = async () => {
+          await exited;
+          expect(leader.exitCode).toBe(1);
+          expect(leader.signalCode).toBeNull();
+          resistantPid = Number(await fs.readFile(`${tracePath}.resistant-pid`, "utf8"));
+          expect(leader.stderr.closed).toBe(false);
+          expect(isProcessAlive(resistantPid)).toBe(true);
+
+          const termReceipt = once(leader.stderr, "data");
+          terminateManagedChild(leader, "SIGTERM");
+          const [receipt] = await withTestTimeout(termReceipt, 500, "fixture did not receive TERM");
+          expect(String(receipt)).toBe("SIGTERM");
+          expect(await fs.readFile(`${tracePath}.signals`, "utf8")).toBe("SIGTERM");
+          expect(isProcessAlive(resistantPid)).toBe(true);
+          expect(leader.stderr.closed).toBe(false);
+
+          terminateManagedChild(leader, "SIGKILL");
+          await withTestTimeout(closed, 500, "fixture pipes did not close after SIGKILL");
+          expect(leader.stdout.closed).toBe(true);
+          expect(leader.stderr.closed).toBe(true);
+          await waitForDead(resistantPid, 500);
+        };
+        const reapGroup = async () => {
+          terminateManagedChild(leader, "SIGKILL");
+          if (resistantPid && isProcessAlive(resistantPid)) {
+            process.kill(resistantPid, "SIGKILL");
+          }
+          await withTestTimeout(closed, 500, "fixture pipes did not close after SIGKILL");
+          if (resistantPid) {
+            await waitForDead(resistantPid, 500);
+          }
+        };
+        const [proof] = await Promise.allSettled([verifySignals()]);
+        const [cleanup] = await Promise.allSettled([reapGroup()]);
+        signal.removeEventListener("abort", abortGroup);
+        // Join before afterEach removes roots; retain state and both errors when
+        // last-resort cleanup cannot prove that the owned group is gone.
+        if (cleanup.status === "rejected") {
+          fakeInstances.splice(fakeInstances.indexOf(instance), 1);
+          fakeRoots.splice(fakeRoots.indexOf(path.dirname(tracePath)), 1);
+        }
+        const failures = [proof, cleanup].flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        );
+        if (failures.length === 1) {
+          throw failures[0];
+        }
+        if (failures.length > 1) {
+          throw new AggregateError(failures, "native process proof and cleanup failed");
+        }
+      };
+      const operation = exerciseGroup();
+      rawProcessOperations.push(operation);
+      await operation;
     },
   );
 
   it.runIf(process.platform !== "win32")(
     "reaps terminal children with inherited stdio before starting a new gateway",
     async () => {
+      const stopTimeoutMs = 100;
       const { instance, readAttempts, tracePath } = await createFakeGateway(
         "terminal-drain,ready",
         300,
-        100,
+        stopTimeoutMs,
       );
+      const exerciseDrain = async () => {
+        const startup = instance.startGateway();
+        let retainedChild: typeof instance.child;
+        let ownedDrainingPid: number | undefined;
+        const verifyDrain = async () => {
+          const startupError = await startup.catch((error: unknown) => error);
+          const firstChild = instance.child;
+          retainedChild = firstChild;
+          expect(startupError).toBeInstanceOf(Error);
+          expect((startupError as Error).message).toContain(
+            "gateway exited before readiness (code=7 signal=null)",
+          );
+          expect((startupError as Error).message).toContain("terminal startup failure");
+          expect(firstChild?.exitCode).toBe(7);
+          expect(firstChild?.stderr.closed).toBe(false);
+          if (!firstChild) {
+            throw new Error("terminal fixture lost its process owner");
+          }
+          const firstAttempt = (await readAttempts())[0];
+          const drainingPid = Number(await fs.readFile(`${tracePath}.draining-pid`, "utf8"));
+          ownedDrainingPid = drainingPid;
+          expect(isProcessAlive(drainingPid)).toBe(true);
 
-      const startupError = await instance.startGateway().catch((error: unknown) => error);
-      expect(startupError).toBeInstanceOf(Error);
-      expect((startupError as Error).message).toContain(
-        "gateway exited before readiness (code=7 signal=null)",
-      );
-      expect((startupError as Error).message).toContain("terminal startup failure");
-      expect(instance.child?.exitCode).toBe(7);
-      expect(instance.child?.stderr.closed).toBe(false);
-      const firstAttempt = (await readAttempts())[0];
-      const drainingPid = Number(await fs.readFile(`${tracePath}.draining-pid`, "utf8"));
-      expect(isProcessAlive(drainingPid)).toBe(true);
+          // A complete failed restart proves stale pipe ownership blocks admission;
+          // eventual startup after release alone cannot establish that ordering.
+          await expect(instance.startGateway()).rejects.toThrow(
+            new Error(`gateway process did not close before restart deadline\n${instance.logs()}`),
+          );
+          expect(instance.child).toBe(firstChild);
+          expect(firstChild.stderr.closed).toBe(false);
+          expect(isProcessAlive(drainingPid)).toBe(true);
+          expect(await readAttempts()).toHaveLength(1);
 
-      await fs.writeFile(`${tracePath}.draining-release`, "");
-      await instance.startGateway();
+          // Observe before release and charge produced closure to the stop budget,
+          // leaving the unchanged startup budget for the replacement itself.
+          const closed = once(firstChild, "close");
+          void closed.catch(() => undefined);
+          await fs.writeFile(`${tracePath}.draining-release`, "");
+          await withTestTimeout(
+            closed,
+            stopTimeoutMs * 2,
+            "terminal fixture did not close after release",
+          );
+          expect(firstChild.stdout.closed).toBe(true);
+          expect(firstChild.stderr.closed).toBe(true);
+          await instance.startGateway();
 
-      const attempts = await readAttempts();
-      expect(attempts).toHaveLength(2);
-      expect(attempts[1]?.pid).not.toBe(firstAttempt?.pid);
-      expect(instance.child?.pid).toBe(attempts[1]?.pid);
-      await instance.stopGateway();
-      expect(instance.child).toBeUndefined();
-      expect(isProcessAlive(attempts[1]?.pid as number)).toBe(false);
-      await expect.poll(() => isProcessAlive(drainingPid), { timeout: 500 }).toBe(false);
+          const attempts = await readAttempts();
+          expect(attempts).toHaveLength(2);
+          expect(attempts[1]?.pid).not.toBe(firstAttempt?.pid);
+          expect(instance.child?.pid).toBe(attempts[1]?.pid);
+          const readyChild = instance.child;
+          await instance.stopGateway();
+          expect(instance.child).toBeUndefined();
+          expect(isProcessAlive(attempts[1]?.pid as number)).toBe(false);
+          await expect.poll(() => isProcessAlive(drainingPid), { timeout: 500 }).toBe(false);
+          expect(readyChild?.stdout.closed).toBe(true);
+          expect(readyChild?.stderr.closed).toBe(true);
+          await expect(fs.stat(instance.state.root)).resolves.toBeDefined();
+          await instance.cleanup();
+          await expectPathMissing(instance.state.root);
+        };
+        const reapDrain = async () => {
+          await Promise.allSettled([startup]);
+          const target = retainedChild ?? instance.child;
+          const closed: Promise<unknown> =
+            target && (!target.stdout.closed || !target.stderr.closed)
+              ? once(target, "close")
+              : Promise.resolve();
+          void closed.catch(() => undefined);
+          const [release] = await Promise.allSettled([
+            fs.writeFile(`${tracePath}.draining-release`, ""),
+          ]);
+          const reapDescendant = async () => {
+            // An earlier assertion can precede PID capture; only this fixture's
+            // positive recorded PID may receive the last-resort cleanup signal.
+            const pid =
+              ownedDrainingPid ??
+              Number.parseInt(await fs.readFile(`${tracePath}.draining-pid`, "utf8"), 10);
+            if (!Number.isSafeInteger(pid) || pid <= 0) {
+              throw new Error("terminal fixture did not record its draining child PID");
+            }
+            if (isProcessAlive(pid)) {
+              process.kill(pid, "SIGKILL");
+            }
+            await waitForDead(pid, 500);
+          };
+          const outcomes = await Promise.allSettled([
+            instance.stopGateway(),
+            withTestTimeout(closed, stopTimeoutMs * 2, "terminal fixture cleanup did not close"),
+            reapDescendant(),
+          ]);
+          const failures = [release, ...outcomes].flatMap((result) =>
+            result.status === "rejected" ? [result.reason] : [],
+          );
+          if (failures.length > 0) {
+            throw new AggregateError(failures, "terminal fixture cleanup failed");
+          }
+        };
+        const [proof] = await Promise.allSettled([verifyDrain()]);
+        const [cleanup] = await Promise.allSettled([reapDrain()]);
+        if (cleanup.status === "rejected") {
+          fakeInstances.splice(fakeInstances.indexOf(instance), 1);
+          fakeRoots.splice(fakeRoots.indexOf(path.dirname(tracePath)), 1);
+        }
+        const failures = [proof, cleanup].flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        );
+        if (failures.length === 1) {
+          throw failures[0];
+        }
+        if (failures.length > 1) {
+          throw new AggregateError(failures, "terminal process proof and cleanup failed");
+        }
+      };
+      const operation = exerciseDrain();
+      rawProcessOperations.push(operation);
+      await operation;
+    },
+  );
+
+  it.each([true, false])(
+    "bounds TERM/KILL cleanup and waits for inherited pipes (close=%s)",
+    async (closePipes) => {
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      const directKill = vi.fn(() => true);
+      const child = {
+        exitCode: 1,
+        kill: directKill,
+        pid: 12345,
+        signalCode: null,
+        stderr,
+        stdout,
+      } as unknown as Parameters<typeof testing.stopGatewayProcess>[0];
+      const originalKill = process.kill.bind(process);
+      const signalTimes: number[] = [];
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+        if (pid !== -12345) {
+          return originalKill(pid, signal);
+        }
+        signalTimes.push(Date.now());
+        if (signal === "SIGKILL" && closePipes) {
+          stdout.destroy();
+          setTimeout(() => stderr.destroy(), 1);
+        }
+        return true;
+      });
+      try {
+        // Policy time is independent of OS scheduling; the native group proof
+        // verifies native signal delivery and inherited-pipe closure separately.
+        const startedAt = Date.now();
+        const completion = testing
+          .stopGatewayProcess(child, startedAt + 80, 40, { platform: "linux" })
+          .then((stopped) => ({
+            stopped,
+            pipesClosed: stdout.closed && stderr.closed,
+            elapsedMs: Date.now() - startedAt,
+          }));
+        const [result] = await Promise.all([completion, vi.runAllTimersAsync()]);
+        expect(result.stopped).toBe(closePipes);
+        expect(result.pipesClosed).toBe(closePipes);
+        expect(result.elapsedMs).toBeLessThanOrEqual(80);
+        expect(kill.mock.calls.filter(([pid]) => pid === -12345)).toEqual([
+          [-12345, "SIGTERM"],
+          [-12345, "SIGKILL"],
+        ]);
+        const termGraceMs = signalTimes[1]! - signalTimes[0]!;
+        expect(termGraceMs).toBeGreaterThan(0);
+        expect(termGraceMs).toBeLessThanOrEqual(40);
+        expect(directKill).not.toHaveBeenCalled();
+      } finally {
+        stdout.destroy();
+        stderr.destroy();
+        vi.clearAllTimers();
+        kill.mockRestore();
+        vi.useRealTimers();
+      }
     },
   );
 
