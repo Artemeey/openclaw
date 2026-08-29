@@ -205,6 +205,7 @@ export async function startOrResumeThread(
         restrictedToolSurfaceInheritedMcpServerNames,
         shellEnvironment: params.shellEnvironment,
         disableLoginShell: params.disableLoginShell,
+        projectDocsHandledByOpenClaw: params.projectDocsHandledByOpenClaw,
         environmentSelection: params.environmentSelection,
         provisionalAppIds: pluginThreadConfig?.provisionalAppIds,
         signal: params.signal,

@@ -65,6 +65,7 @@ type PendingSupervisionMaterializationParams = {
   dynamicTools: CodexDynamicToolSpec[];
   appServer: CodexAppServerRuntimeOptions;
   developerInstructions?: string;
+  projectDocsHandledByOpenClaw?: boolean;
   config?: JsonObject;
   shellEnvironment?: Readonly<Record<string, string>>;
   disableLoginShell?: boolean;
@@ -231,6 +232,7 @@ export async function materializePendingSupervisionBranch(
         params.restrictedToolSurfaceInheritedMcpServerNames,
       shellEnvironment: params.shellEnvironment,
       disableLoginShell: params.disableLoginShell,
+      projectDocsHandledByOpenClaw: params.projectDocsHandledByOpenClaw,
     });
     assertExactSupervisionModelSelection(startParams, {
       model: nativeModel,

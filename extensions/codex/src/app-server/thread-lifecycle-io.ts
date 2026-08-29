@@ -186,6 +186,7 @@ export async function resumeExistingCodexThread(
         restrictedToolSurfaceInheritedMcpServerNames,
         shellEnvironment: params.shellEnvironment,
         disableLoginShell: params.disableLoginShell,
+        projectDocsHandledByOpenClaw: params.projectDocsHandledByOpenClaw,
       }),
     );
     const requestModelProvider =
@@ -475,6 +476,7 @@ export async function startFreshCodexThread(
       restrictedToolSurfaceInheritedMcpServerNames,
       shellEnvironment: params.shellEnvironment,
       disableLoginShell: params.disableLoginShell,
+      projectDocsHandledByOpenClaw: params.projectDocsHandledByOpenClaw,
     }),
   );
   const requestModelProvider =
