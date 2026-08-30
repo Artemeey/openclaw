@@ -486,7 +486,6 @@ export function resolveSlackReplyBlockResolution(
   });
   let authoredTextPlacement = resolveSlackAuthoredTextPlacement({
     text: payload.text,
-    interactive: payload.interactive,
     renderedTextFragments,
   });
   const text = normalizeOptionalString(payload.text);

@@ -917,6 +917,18 @@ describe("slackOutbound sendPayload", () => {
     ]);
   });
 
+  it("recognizes whitespace at actual portable chunk boundaries", async () => {
+    const text = "a ".repeat(100) + "x".repeat(5_799) + " z";
+    const { client } = await sendThroughRealSlack({
+      payload: { text, presentation: { blocks: [{ type: "text", text }] } },
+      renderText: text,
+    });
+    expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+    const sections = postedSlackMessage(client, 0).blocks?.map((block) => block.text?.text);
+    expect(sections).toHaveLength(3);
+    expect(sections?.join("")).toBe(text);
+  });
+
   it.each(["inline", "fenced"])("preserves distinct authored %s code whitespace", async (kind) => {
     const wrap = (text: string) => (kind === "inline" ? `\`${text}\`` : `\`\`\`\n${text}\n\`\`\``);
     const authored = wrap("printf 'a  b'");

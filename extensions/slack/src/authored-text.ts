@@ -1,31 +1,34 @@
-// Slack-private authored text placement after block compilation.
 import type { LegacyInteractiveReply } from "openclaw/plugin-sdk/interactive-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 
 export type SlackAuthoredTextPlacement = "none" | "blocks" | "outside-blocks";
+
+// Project producer plans the same way so trimmed chunk seams cannot duplicate authored text.
+function normalizeSlackAuthoredTextFragments(fragments: readonly string[]): string[] {
+  return fragments.map((fragment) => fragment.trim()).filter(Boolean);
+}
 
 function isSlackAuthoredTextRepresentedInFragments(
   text: string,
   rawFragments: readonly string[],
   authoredChunkPlans: readonly (readonly string[])[] = [],
 ): boolean {
-  const target = text.trim();
-  const fragments = rawFragments.map((fragment) => fragment.trim()).filter(Boolean);
-  if (
-    authoredChunkPlans.some(
-      (plan) =>
-        plan.length > 0 &&
-        fragments.some((_, start) =>
-          plan.every((fragment, index) => fragment === fragments[start + index]),
-        ),
-    )
-  ) {
-    return true;
+  const fragments = normalizeSlackAuthoredTextFragments(rawFragments);
+  for (const rawPlan of authoredChunkPlans) {
+    const plan = normalizeSlackAuthoredTextFragments(rawPlan);
+    if (
+      plan.length > 0 &&
+      fragments.some((_, start) =>
+        plan.every((fragment, index) => fragment === fragments[start + index]),
+      )
+    ) {
+      return true;
+    }
   }
   // Legacy inline controls may split authored whitespace at fragment boundaries.
   // Consume only those separators; code/literal interiors and chunk seams stay exact.
   for (let start = 0; start < fragments.length; start += 1) {
-    let remaining = target;
+    let remaining = text;
     for (const fragment of fragments.slice(start)) {
       if (!remaining.startsWith(fragment)) {
         break;
