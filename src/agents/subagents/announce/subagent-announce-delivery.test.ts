@@ -4367,6 +4367,26 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
   } as const;
 
   it.each([
+    ...[undefined, { channel: "webchat" }].flatMap((origin) =>
+      [
+        { name: "visible final", payload: { text: "The consolidated answer." }, delivered: true },
+        { name: "silent final", payload: { text: "NO_REPLY" }, delivered: false },
+        { name: "error", payload: { text: "failed", isError: true }, delivered: false },
+        { name: "reasoning", payload: { text: "thinking", isReasoning: true }, delivered: false },
+        { name: "commentary", payload: { text: "working", isCommentary: true }, delivered: false },
+        {
+          name: "status notice",
+          payload: { text: "waiting", isStatusNotice: true },
+          delivered: false,
+        },
+      ].map(({ name, payload, delivered }) => ({
+        name: `settles a yielded ${origin?.channel ?? "local"} requester only for a visible final: ${name}`,
+        response: { result: { payloads: [payload] } },
+        requireVisibleReply: true,
+        origin,
+        expected: delivered ? deliveredRequesterFinal : missingRequesterFinal,
+      })),
+    ),
     {
       name: "preserves an ordinary non-yielded direct settle turn",
       response: {},
@@ -4644,14 +4664,18 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
       requireVisibleReply: true,
       expected: deliveredRequesterFinal,
     },
-  ])("$name", async ({ response, requireVisibleReply, expected }) => {
+  ])("$name", async (testCase) => {
+    const { response, requireVisibleReply, expected } = testCase;
     const callGateway = createGatewayMock(response);
     const queueEmbeddedAgentMessageWithOutcome = createQueueOutcomeMock(true);
-    const origin = {
-      channel: "discord",
-      to: "dm:U123",
-      accountId: "acct-1",
-    };
+    const external = !("origin" in testCase);
+    const origin =
+      "origin" in testCase
+        ? testCase.origin
+        : { channel: "discord", to: "dm:U123", accountId: "acct-1" };
+    const requesterSessionKey = external
+      ? "agent:main:discord:dm:U123"
+      : "agent:main:local-session";
     testing.setDepsForTest({
       callGateway,
       getRequesterSessionActivity: () => ({
@@ -4663,8 +4687,8 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
     });
 
     const result = await deliverSubagentAnnouncement({
-      requesterSessionKey: "agent:main:discord:dm:U123",
-      targetRequesterSessionKey: "agent:main:discord:dm:U123",
+      requesterSessionKey,
+      targetRequesterSessionKey: requesterSessionKey,
       triggerMessage: "all spawned subagents settled",
       steerMessage: "all spawned subagents settled",
       requesterOrigin: origin,
@@ -4681,12 +4705,14 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
     expect(result).toMatchObject(expected);
     expect(queueEmbeddedAgentMessageWithOutcome).not.toHaveBeenCalled();
     const agentParams = expectGatewayAgentParams(callGateway, {
-      deliver: true,
-      channel: "discord",
-      accountId: "acct-1",
-      to: "dm:U123",
+      deliver: external,
+      channel: origin?.channel,
+      accountId: external ? "acct-1" : undefined,
+      to: external ? "dm:U123" : undefined,
     });
-    expect(agentParams.sourceReplyDeliveryMode).toBe(requireVisibleReply ? "automatic" : undefined);
+    expect(agentParams.sourceReplyDeliveryMode).toBe(
+      requireVisibleReply && external ? "automatic" : undefined,
+    );
   });
 
   it.each([
