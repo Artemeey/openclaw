@@ -1,6 +1,7 @@
 // Test-project planning helpers used by scripts/run-vitest.mts,
 // scripts/test-projects.mts, and focused tests. Exports are intentionally
 // granular so project selection stays testable without spawning Vitest.
+// CI preflight imports this closure before install; execution owners stay outside it.
 import { spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -104,6 +105,7 @@ import {
   listGatewayServerTestTargets,
   splitTestTargetChunks as splitTargetChunks,
 } from "./lib/gateway-server-test-plan.mts";
+import { resolveVitestCliEntry } from "./lib/vitest-build-prerequisites.mts";
 import {
   isCiLikeEnv,
   resolveLocalFullSuiteProfile,
@@ -112,9 +114,8 @@ import {
 import {
   DEFAULT_VITEST_NO_OUTPUT_HEARTBEAT_MS,
   resolveDefaultVitestNoOutputTimeoutMs,
-  resolveVitestCliEntry,
   resolveVitestNodeArgs,
-} from "./run-vitest.mts";
+} from "./lib/vitest-process-env.mts";
 
 type VitestRunPlan = {
   config: string;

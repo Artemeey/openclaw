@@ -9,24 +9,21 @@ import { formatMs } from "./lib/check-timing-summary.mts";
 import {
   prepareE2eVitestRuntime,
   prepareVitestRuntime,
+  resolveVitestCliEntry,
 } from "./lib/vitest-build-prerequisites.mts";
 import {
   isCiLikeEnv,
   resolveLocalFullSuiteProfile,
   resolveLocalVitestEnv,
 } from "./lib/vitest-local-scheduling.mts";
+import { resolveVitestNodeArgs } from "./lib/vitest-process-env.mts";
 import { createVitestReportOwner, type VitestReportOwner } from "./lib/vitest-report-owner.mts";
 import {
   createShardTimingSample,
   readShardTimings,
   writeShardTimings,
 } from "./lib/vitest-shard-timings.mts";
-import {
-  resolveVitestCliEntry,
-  resolveVitestNodeArgs,
-  resolveVitestSpawnParams,
-  spawnWatchedVitestProcess,
-} from "./run-vitest.mts";
+import { resolveVitestSpawnParams, spawnWatchedVitestProcess } from "./run-vitest.mts";
 import {
   applyDefaultMultiSpecVitestCachePaths,
   applyDefaultVitestNoOutputTimeout,

@@ -1,13 +1,9 @@
 // Runs Vitest through repo project selection, local scheduling policy, output
 // watchdogs, and process-group cleanup.
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import { constants as osConstants } from "node:os";
 import path from "node:path";
-import {
-  agentVitestProjectOwners,
-  embeddedAgentVitestProjectOwners,
-} from "../test/vitest/vitest.agents-paths.mjs";
+import { agentVitestProjectOwners } from "../test/vitest/vitest.agents-paths.mjs";
 import { toolingIsolatedTestFiles } from "../test/vitest/vitest.tooling-isolated-paths.mjs";
 import { isUiTestTarget } from "../test/vitest/vitest.ui-paths.mjs";
 import { boundaryTestFiles } from "../test/vitest/vitest.unit-paths.mjs";
@@ -20,10 +16,20 @@ import { resolveRepoRoot } from "./lib/repo-root.mjs";
 import { spawnTestProjectsRunner } from "./lib/test-projects-delegation.mts";
 import {
   prepareE2eVitestRuntime,
+  resolveVitestCliEntry,
   resolveVitestRuntimeCliSelections,
   prepareVitestRuntime,
 } from "./lib/vitest-build-prerequisites.mts";
-import { resolveVitestProcessEnv } from "./lib/vitest-process-env.mts";
+import {
+  DEFAULT_VITEST_NO_OUTPUT_HEARTBEAT_MS,
+  matchesVitestConfigPath,
+  normalizeVitestConfigPath,
+  resolveDefaultVitestNoOutputTimeoutMs,
+  resolveVitestConfigArg,
+  resolveVitestConfigNoOutputTimeoutMs,
+  resolveVitestNodeArgs,
+  resolveVitestProcessEnv,
+} from "./lib/vitest-process-env.mts";
 import { spawnOwnedVitestProcess } from "./lib/vitest-process.mts";
 import {
   createVitestUnhandledErrorDetector,
@@ -38,10 +44,6 @@ import {
   terminateVitestProcessGroupForTimeout,
 } from "./vitest-process-group.mts";
 
-type VitestFs = {
-  existsSync(path: string): boolean;
-  symlinkSync?(target: string, path: string, type: "dir" | "junction"): void;
-};
 type VitestPathFs = Pick<typeof fs, "existsSync" | "statSync">;
 type VitestProcessHandle = Omit<ReturnType<typeof spawnWatchedVitestProcess>, "teardown">;
 type WatchdogStream = {
@@ -59,62 +61,14 @@ type VitestOutputTarget = {
 };
 
 const SUPPRESSED_VITEST_STDERR_PATTERNS = ["[PLUGIN_TIMINGS]"];
-/** Default watchdog timeout for Vitest runs that stop producing output. */
-const DEFAULT_VITEST_NO_OUTPUT_TIMEOUT_MS = 120_000;
-/** Default heartbeat interval while waiting on silent Vitest output. */
-export const DEFAULT_VITEST_NO_OUTPUT_HEARTBEAT_MS = 30_000;
-/** Longer watchdog timeout for known long-running Vitest configs. */
-export const DEFAULT_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS = 300_000;
-/** Extra-long watchdog timeout for broad configs that can stay silent on macOS. */
-export const DEFAULT_EXTRA_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS = 2_400_000;
 const VITEST_NO_OUTPUT_TIMEOUT_ENV_KEY = "OPENCLAW_VITEST_NO_OUTPUT_TIMEOUT_MS";
 const VITEST_NO_OUTPUT_HEARTBEAT_ENV_KEY = "OPENCLAW_VITEST_NO_OUTPUT_HEARTBEAT_MS";
 const UI_VITEST_CONFIG = "test/vitest/vitest.ui.config.ts";
 const TOOLING_DOCKER_VITEST_CONFIG = "test/vitest/vitest.tooling-docker.config.ts";
 const TOOLING_VITEST_CONFIG = "test/vitest/vitest.tooling.config.ts";
-const GATEWAY_CORE_VITEST_CONFIG = "test/vitest/vitest.gateway-core.config.ts";
 const GATEWAY_SERVER_VITEST_CONFIG = "test/vitest/vitest.gateway-server.config.ts";
 const E2E_VITEST_CONFIG = "test/vitest/vitest.e2e.config.ts";
 const E2E_TEST_PROCESS_COUNT = 4;
-const GATEWAY_VITEST_CONFIG = "test/vitest/vitest.gateway.config.ts";
-export const VITEST_CONFIG_NO_OUTPUT_TIMEOUT_MS = new Map([
-  ["test/vitest/vitest.e2e.config.ts", DEFAULT_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS],
-  ["test/vitest/vitest.tui-pty.config.ts", DEFAULT_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS],
-  [GATEWAY_VITEST_CONFIG, DEFAULT_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS],
-  ["test/vitest/vitest.ui-e2e.config.ts", DEFAULT_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS],
-  ["test/vitest/vitest.full-agentic.config.ts", DEFAULT_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS],
-  [
-    "test/vitest/vitest.full-core-contracts.config.ts",
-    DEFAULT_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS,
-  ],
-  [
-    "test/vitest/vitest.contracts-plugin.config.ts",
-    DEFAULT_EXTRA_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS,
-  ],
-  ["test/vitest/vitest.infra.config.ts", DEFAULT_EXTRA_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS],
-  // Largest extension shard: silent transform/import startup was measured at
-  // ~210s on a loaded macOS host, so the 120s default kills healthy runs (#123025).
-  [
-    "test/vitest/vitest.extension-discord.config.ts",
-    DEFAULT_EXTRA_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS,
-  ],
-  // Codex extension shard: 168 serial files run ~6min total with silent
-  // stretches beyond 300s under the default reporter (measured 61s import +
-  // 293s testing while the worker burned ~95% CPU); the 300s CI window kills
-  // healthy runs and flips with incidental flake output (#125825).
-  [
-    "test/vitest/vitest.extension-codex.config.ts",
-    DEFAULT_EXTRA_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS,
-  ],
-  [GATEWAY_CORE_VITEST_CONFIG, DEFAULT_EXTRA_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS],
-  [GATEWAY_SERVER_VITEST_CONFIG, DEFAULT_EXTRA_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS],
-]);
-for (const owner of embeddedAgentVitestProjectOwners) {
-  VITEST_CONFIG_NO_OUTPUT_TIMEOUT_MS.set(
-    owner.config,
-    DEFAULT_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS,
-  );
-}
 export const TOOLING_EXCLUDED_TESTS = new Set([
   ...boundaryTestFiles,
   "test/scripts/docker-build-helper.test.ts",
@@ -189,7 +143,6 @@ const UNBOUNDED_CONFIG_ONLY_OPTIONS = [
   "--root",
   "--shard",
 ];
-const require = createRequire(import.meta.url);
 
 function parsePositiveInt(value: string | undefined): number | null {
   const text = value?.trim();
@@ -198,17 +151,6 @@ function parsePositiveInt(value: string | undefined): number | null {
   }
   const parsed = Number(text);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-/**
- * Resolves default Node flags for Vitest, including the local Maglev opt-in.
- */
-export function resolveVitestNodeArgs(env: NodeJS.ProcessEnv = process.env): string[] {
-  if (parsePermissiveBooleanToken(env.OPENCLAW_VITEST_ENABLE_MAGLEV) === true) {
-    return [];
-  }
-
-  return ["--no-maglev"];
 }
 
 function isErrorWithCode(error: unknown, code: string): error is NodeJS.ErrnoException {
@@ -228,168 +170,6 @@ function normalizeNodeSignal(signal: string | null): NodeSignal | null {
     throw new Error(unknownSignalMessage);
   }
   return signal;
-}
-
-function isMissingVitestResolveError(error: unknown): error is NodeJS.ErrnoException {
-  return (
-    isErrorWithCode(error, "MODULE_NOT_FOUND") && error.message.includes("vitest/package.json")
-  );
-}
-
-/**
- * Builds the actionable dependency-install message when Vitest is unavailable.
- */
-export function resolveMissingVitestDependencyMessage(
-  baseDir = resolveRepoRoot(import.meta.url),
-  fsImpl: Pick<VitestFs, "existsSync"> = fs,
-): string {
-  const hasNodeModules = fsImpl.existsSync(path.join(baseDir, "node_modules"));
-  const reason = hasNodeModules
-    ? "[vitest] Vitest is not installed in node_modules."
-    : "[vitest] node_modules is missing; Vitest cannot be resolved.";
-  return [
-    reason,
-    "Install dependencies before running scripts/run-vitest.mjs:",
-    "  pnpm install --frozen-lockfile",
-    "For raw Crabbox/AWS macOS source syncs, hydrate or install dependencies before this runner.",
-  ].join("\n");
-}
-
-function resolvePathFromBase(value: string, baseDir: string): string {
-  return path.isAbsolute(value) ? value : path.resolve(baseDir, value);
-}
-
-function resolvePnpmModulesDir(env: NodeJS.ProcessEnv): string {
-  return env.PNPM_CONFIG_MODULES_DIR?.trim() || env.npm_config_modules_dir?.trim() || "";
-}
-
-function resolveHydratedVitestPackageJson({
-  baseDir,
-  env,
-  fsImpl,
-}: {
-  baseDir: string;
-  env: NodeJS.ProcessEnv;
-  fsImpl: Pick<VitestFs, "existsSync">;
-}): string | null {
-  const modulesDir = resolvePnpmModulesDir(env);
-  if (!modulesDir) {
-    return null;
-  }
-  const packageJsonPath = path.join(
-    resolvePathFromBase(modulesDir, baseDir),
-    "vitest",
-    "package.json",
-  );
-  return fsImpl.existsSync(packageJsonPath) ? packageJsonPath : null;
-}
-
-function ensureHydratedNodeModulesSelfLink({
-  hydratedNodeModulesPath,
-  fsImpl,
-  platform,
-}: {
-  hydratedNodeModulesPath: string;
-  fsImpl: VitestFs;
-  platform: NodeJS.Platform;
-}): boolean {
-  if (platform !== "win32") {
-    return true;
-  }
-  const selfLinkPath = path.join(hydratedNodeModulesPath, "node_modules");
-  if (fsImpl.existsSync(selfLinkPath)) {
-    return true;
-  }
-  if (!fsImpl.symlinkSync) {
-    return false;
-  }
-  try {
-    fsImpl.symlinkSync(hydratedNodeModulesPath, selfLinkPath, "junction");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function resolveHydratedVitestCliEntry({
-  baseDir,
-  env,
-  fsImpl,
-  platform,
-}: {
-  baseDir: string;
-  env: NodeJS.ProcessEnv;
-  fsImpl: VitestFs;
-  platform: NodeJS.Platform;
-}): string | null {
-  const hydratedVitestPackageJson = resolveHydratedVitestPackageJson({ baseDir, env, fsImpl });
-  if (!hydratedVitestPackageJson) {
-    return null;
-  }
-  const hydratedNodeModulesPath = path.dirname(path.dirname(hydratedVitestPackageJson));
-  if (!ensureHydratedNodeModulesSelfLink({ hydratedNodeModulesPath, fsImpl, platform })) {
-    return null;
-  }
-  const nodeModulesPath = path.join(baseDir, "node_modules");
-  if (fsImpl.existsSync(nodeModulesPath)) {
-    const workspaceVitestCliEntry = path.join(nodeModulesPath, "vitest", "vitest.mjs");
-    return fsImpl.existsSync(workspaceVitestCliEntry) ? workspaceVitestCliEntry : null;
-  }
-  if (!fsImpl.symlinkSync) {
-    return null;
-  }
-  try {
-    fsImpl.symlinkSync(
-      hydratedNodeModulesPath,
-      nodeModulesPath,
-      platform === "win32" ? "junction" : "dir",
-    );
-  } catch {
-    return null;
-  }
-  return path.join(nodeModulesPath, "vitest", "vitest.mjs");
-}
-
-/**
- * Resolves the Vitest CLI entry from normal or hydrated node_modules layouts.
- */
-export function resolveVitestCliEntry({
-  baseDir = resolveRepoRoot(import.meta.url),
-  env = process.env,
-  fsImpl = fs,
-  platform = process.platform,
-  requireResolve = require.resolve.bind(require),
-}: {
-  baseDir?: string;
-  env?: NodeJS.ProcessEnv;
-  fsImpl?: VitestFs;
-  platform?: NodeJS.Platform;
-  requireResolve?: (specifier: string, options?: { paths?: string[] }) => string;
-} = {}): string {
-  const hydratedVitestCliEntry = resolveHydratedVitestCliEntry({
-    baseDir,
-    env,
-    fsImpl,
-    platform,
-  });
-  if (hydratedVitestCliEntry) {
-    return hydratedVitestCliEntry;
-  }
-
-  let vitestPackageJson: string;
-  try {
-    vitestPackageJson = requireResolve("vitest/package.json");
-  } catch (error) {
-    if (isMissingVitestResolveError(error)) {
-      const wrappedError: NodeJS.ErrnoException = new Error(
-        resolveMissingVitestDependencyMessage(baseDir, fsImpl),
-      );
-      wrappedError.code = "OPENCLAW_MISSING_VITEST";
-      throw wrappedError;
-    }
-    throw error;
-  }
-  return path.join(path.dirname(vitestPackageJson), "vitest.mjs");
 }
 
 /**
@@ -549,53 +329,6 @@ export function resolveRunVitestSpawnEnv(
       ? { [VITEST_NO_OUTPUT_HEARTBEAT_ENV_KEY]: String(DEFAULT_VITEST_NO_OUTPUT_HEARTBEAT_MS) }
       : {}),
   };
-}
-
-/**
- * Chooses the default watchdog timeout from the selected Vitest config.
- */
-export function resolveDefaultVitestNoOutputTimeoutMs(argv: string[] = []): number {
-  const config = resolveVitestConfigArg(argv);
-  return config === null
-    ? DEFAULT_VITEST_NO_OUTPUT_TIMEOUT_MS
-    : (resolveVitestConfigNoOutputTimeoutMs(config) ?? DEFAULT_VITEST_NO_OUTPUT_TIMEOUT_MS);
-}
-
-function resolveVitestConfigArg(argv: string[]): string | null {
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === undefined) {
-      break;
-    }
-    if (arg === "--") {
-      return null;
-    }
-    if (arg === "--config" || arg === "-c") {
-      return argv[index + 1] ?? null;
-    }
-    if (arg.startsWith("--config=")) {
-      return arg.slice("--config=".length);
-    }
-  }
-  return null;
-}
-
-function resolveVitestConfigNoOutputTimeoutMs(config: string): number | null {
-  const normalized = normalizeVitestConfigPath(config);
-  for (const [candidate, timeoutMs] of VITEST_CONFIG_NO_OUTPUT_TIMEOUT_MS) {
-    if (matchesVitestConfigPath(normalized, candidate)) {
-      return timeoutMs;
-    }
-  }
-  return null;
-}
-
-function normalizeVitestConfigPath(config: string): string {
-  return path.normalize(config).replaceAll(path.sep, "/").replace(/^\.\//u, "");
-}
-
-function matchesVitestConfigPath(normalized: string, candidate: string): boolean {
-  return normalized === candidate || normalized.endsWith("/" + candidate);
 }
 
 function hasVitestOption(argv: string[], option: string): boolean {
@@ -1041,7 +774,7 @@ export function resolveTestProjectsDelegationArgs(
 export function resolveMissingExplicitTestFiles(
   argv: string[],
   cwd = process.cwd(),
-  fsImpl: Pick<VitestFs, "existsSync"> = fs,
+  fsImpl: { existsSync(path: string): boolean } = fs,
 ): string[] {
   if (hasExplicitVitestConfigArg(argv) || hasAlternateVitestRootArg(argv)) {
     return [];

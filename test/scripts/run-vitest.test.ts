@@ -12,27 +12,31 @@ import {
   resolveTestProjectsRunnerSpawnParams,
 } from "../../scripts/lib/test-projects-delegation.mts";
 import {
+  resolveMissingVitestDependencyMessage,
+  resolveVitestCliEntry,
+} from "../../scripts/lib/vitest-build-prerequisites.mts";
+import {
+  DEFAULT_EXTRA_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS,
+  DEFAULT_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS,
+  VITEST_CONFIG_NO_OUTPUT_TIMEOUT_MS,
+  resolveDefaultVitestNoOutputTimeoutMs,
+  resolveVitestNodeArgs,
+} from "../../scripts/lib/vitest-process-env.mts";
+import {
   createVitestUnhandledErrorDetector,
   writeVitestUnhandledErrorSummary,
 } from "../../scripts/lib/vitest-unhandled-errors.mts";
 import {
-  DEFAULT_EXTRA_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS,
-  DEFAULT_LONG_RUNNING_VITEST_NO_OUTPUT_TIMEOUT_MS,
   TOOLING_EXCLUDED_TESTS,
-  VITEST_CONFIG_NO_OUTPUT_TIMEOUT_MS,
   installVitestNoOutputWatchdog,
   resolveBoundedVitestInvocations,
-  resolveDefaultVitestNoOutputTimeoutMs,
   resolveDirectNodeVitestArgs,
   resolveExplicitTestFileNoPassArgs,
   resolveImplicitVitestArgs,
-  resolveMissingVitestDependencyMessage,
   resolveMissingExplicitTestFiles,
   resolveRunVitestSpawnEnv,
   resolveTestProjectsDelegationArgs,
-  resolveVitestCliEntry,
   resolveVitestNoOutputHeartbeatMs,
-  resolveVitestNodeArgs,
   resolveVitestNoOutputTimeoutMs,
   resolveVitestSpawnParams,
   spawnWatchedVitestProcess,
