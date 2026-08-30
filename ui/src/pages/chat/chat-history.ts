@@ -435,11 +435,8 @@ function runProjectionsUnchanged(
   current: ReturnType<typeof getChatSessionProjection>["runs"],
   continuingRunId?: string,
 ): boolean {
-  const previousEntries = Object.entries(previous).filter(([runId]) => runId !== continuingRunId);
-  return (
-    previousEntries.length ===
-      Object.keys(current).filter((runId) => runId !== continuingRunId).length &&
-    previousEntries.every(([runId, run]) => current[runId] === run)
+  return [...new Set([...Object.keys(previous), ...Object.keys(current)])].every(
+    (runId) => runId === continuingRunId || previous[runId] === current[runId],
   );
 }
 
@@ -584,7 +581,7 @@ function applyHistoryRunSnapshot(params: {
   const snapshotStartedAt =
     typeof run.startedAt === "number" && Number.isFinite(run.startedAt) ? run.startedAt : null;
   const liveText = mergeInFlightAssistantText(
-    resolveInFlightAssistantText(extractText(projectedInFlightRun?.message)),
+    resolveInFlightAssistantText(extractText(runProjectionsBeforeApply[inFlightRunId]?.message)),
     retainsLiveStream ? activeStreamBeforeReset : null,
   );
   state.chatStream = mergeInFlightAssistantText(resolveInFlightAssistantText(run.text), liveText);
@@ -2050,8 +2047,8 @@ async function loadChatHistoryUncached(
       throw new Error("chat history page request returned a cursor reset");
     }
     const res = response;
-    // Fence concurrent run lifecycle before applying the response. A remount
-    // may replace the map itself, so compare its canonical run entries.
+    // Capture live run facts before history can reseed a different leaf.
+    // Compare canonical identities to fence concurrent lifecycle changes.
     const runProjectionsBeforeApply = readChatRunProjections(state, sessionKey, requestAgentId);
     const messages = Array.isArray(res.messages) ? res.messages : [];
     const nextPagination = resolveChatHistoryPagination(res);

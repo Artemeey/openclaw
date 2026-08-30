@@ -367,23 +367,53 @@ suite.define(() => {
           ...activeRunSnapshot(nextRun, nextPrompt, nextText).messages,
         ],
       });
+      await gateway.deferNext("chat.startup");
       await gateway.setOnline(true);
       await gateway.waitForRequest("chat.startup", { after: startupCount });
-      await gateway.waitForRequest("sessions.messages.subscribe", { after: subscriptionCount });
       await waitForGatewayConnected(page);
+      await gateway.emitGatewayEvent("agent", {
+        runId: nextRun,
+        seq: 2,
+        stream: "compaction",
+        ts: 1_100,
+        sessionKey: "main",
+        data: { phase: "start" },
+      });
+      const compaction = page.locator(".compaction-indicator--active");
+      await expect(compaction).toBeVisible();
+      await gateway.resolveDeferred("chat.startup");
+      await gateway.waitForRequest("sessions.messages.subscribe", { after: subscriptionCount });
       await assertActiveTurnVisible(page, nextText);
+      await expect(compaction).toBeVisible();
       await expect(
         page.locator(".chat-thread").getByText(previousText, { exact: true }),
       ).toHaveCount(0);
 
-      const liveText = `${nextText} New live progress.`;
+      const nextProgress = "New live progress.";
+      const liveText = `${nextText} ${nextProgress}`;
       await gateway.emitGatewayEvent("chat", {
         runId: nextRun,
         sessionKey: "main",
         state: "delta",
         message: { role: "assistant", content: liveText },
       });
-      await assertActiveTurnVisible(page, liveText);
+      await assertActiveTurnVisible(page, nextProgress);
+      // Replayed tool activity separates the recovered prefix from later cumulative deltas.
+      const visibleOrder = await page.locator(".chat-thread-inner").evaluate(
+        (element, texts) =>
+          Array.from(element.querySelectorAll(".chat-bubble")).flatMap((bubble) => {
+            const text = bubble.textContent?.trim();
+            if (text === texts.prefix) {
+              return ["prefix"];
+            }
+            if (bubble.querySelector(".chat-tool-row--running")) {
+              return ["tool"];
+            }
+            return text === texts.tail ? ["tail"] : [];
+          }),
+        { prefix: nextText, tail: nextProgress },
+      );
+      expect(visibleOrder).toEqual(["prefix", "tool", "tail"]);
       await capture(page, "10-turnover-after");
       await page.getByRole("button", { name: "Stop generating" }).click();
       const abort = await gateway.waitForRequest("chat.abort");
