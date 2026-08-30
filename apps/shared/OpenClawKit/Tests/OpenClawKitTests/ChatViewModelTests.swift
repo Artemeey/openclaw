@@ -81,22 +81,6 @@ extension [OpenClawChatMessage] {
     }
 }
 
-extension OpenClawChatViewModel {
-    fileprivate func waitForPendingSessionSettings(
-        in sessionKey: String,
-        canonicalSessionKey: String? = nil,
-        agentID: String? = nil,
-        sessionRoutingContract: String? = nil) async
-    {
-        let target = self.sessionSettingsPatchTarget(
-            in: sessionKey,
-            canonicalSessionKey: canonicalSessionKey,
-            agentID: agentID,
-            sessionRoutingContract: sessionRoutingContract)
-        await self.waitForPendingSessionSettings(for: target)
-    }
-}
-
 private func historyPayload(
     sessionKey: String = "main",
     sessionId: String? = "sess-main",
