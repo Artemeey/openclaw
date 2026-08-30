@@ -981,12 +981,18 @@ function threadStartResult(threadId = "thread-1") {
   };
 }
 
-function nativeThreadResult(threadId: string, model: string, modelProvider: string) {
+function nativeThreadResult(
+  threadId: string,
+  model: string,
+  modelProvider: string,
+  reasoningEffort: string | null = null,
+) {
   const response = threadStartResult(threadId);
   return {
     ...response,
     model,
     modelProvider,
+    reasoningEffort,
     thread: { ...response.thread, modelProvider },
   };
 }
@@ -3707,7 +3713,7 @@ describe("Codex app-server supervised branch lifecycle", () => {
     },
   );
 
-  it("materializes a model-locked canonical branch with frozen agent instructions", async () => {
+  it("materializes a frozen model branch while preserving its native effort", async () => {
     const sourceThreadId = "thread-source";
     const probeThreadId = "thread-probe";
     const finalThreadId = "thread-final";
@@ -3715,6 +3721,13 @@ describe("Codex app-server supervised branch lifecycle", () => {
     const agentWorkspaceDeveloperInstructions = "Follow the frozen supervised AGENTS guidance.";
     const workspaceDir = path.join(tempDir, "workspace");
     const attempt = createThreadLifecycleParams(path.join(tempDir, "session.jsonl"), workspaceDir);
+    attempt.thinkLevel = "max";
+    attempt.model = {
+      ...attempt.model,
+      compat: {
+        supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+      } as never,
+    } as never;
     attempt.modelId = "outer-global-default";
     const identity = await seedPendingSupervisionBinding({
       attempt,
@@ -3756,10 +3769,26 @@ describe("Codex app-server supervised branch lifecycle", () => {
         };
       }
       if (method === "thread/fork") {
-        return nativeThreadResult(probeThreadId, "native-effective", "native-provider");
+        return nativeThreadResult(probeThreadId, "native-effective", "native-provider", "low");
       }
-      if (method === "thread/start" || method === "thread/resume") {
-        return nativeThreadResult(finalThreadId, "native-effective", "native-provider");
+      if (method === "thread/start") {
+        const response: Record<string, unknown> = nativeThreadResult(
+          finalThreadId,
+          "native-effective",
+          "native-provider",
+        );
+        delete response.reasoningEffort;
+        return response;
+      }
+      if (method === "thread/resume") {
+        const config = (requestParams as { config?: Record<string, unknown> }).config;
+        const reasoningEffort = config?.model_reasoning_effort;
+        return nativeThreadResult(
+          finalThreadId,
+          "native-effective",
+          "native-provider",
+          typeof reasoningEffort === "string" ? reasoningEffort : null,
+        );
       }
       if (method === "thread/inject_items" || method === "thread/unsubscribe") {
         return {};
@@ -3785,6 +3814,7 @@ describe("Codex app-server supervised branch lifecycle", () => {
       shellEnvironment: { GH_TOKEN: "", GITHUB_TOKEN: "" },
       disableLoginShell: true,
       appServer: createThreadLifecycleAppServerOptions(),
+      config: { model_reasoning_effort: "high" },
       appServerRuntimeFingerprint: "codex-runtime-v1",
     };
 
@@ -3832,6 +3862,7 @@ describe("Codex app-server supervised branch lifecycle", () => {
       config: {
         project_doc_max_bytes: 131_072,
         allow_login_shell: false,
+        model_reasoning_effort: "high",
         shell_environment_policy: {
           experimental_use_profile: false,
           set: { GH_TOKEN: "", GITHUB_TOKEN: "" },
@@ -3866,6 +3897,7 @@ describe("Codex app-server supervised branch lifecycle", () => {
       threadId: finalThreadId,
       model: "native-effective",
       modelProvider: "native-provider",
+      reasoningEffort: "low",
       preserveNativeModel: true,
       agentWorkspaceDeveloperInstructions,
       conversationSourceTransferComplete: true,
@@ -3877,6 +3909,7 @@ describe("Codex app-server supervised branch lifecycle", () => {
       threadId: finalThreadId,
       model: "native-effective",
       modelProvider: "native-provider",
+      reasoningEffort: "low",
       preserveNativeModel: true,
       agentWorkspaceDeveloperInstructions,
       conversationSourceTransferComplete: true,
@@ -3886,6 +3919,7 @@ describe("Codex app-server supervised branch lifecycle", () => {
     request.mockClear();
     const resumed = await startOrResumeThread({
       ...commonParams,
+      config: undefined,
       appServerRuntimeFingerprint: "codex-runtime-v2",
     });
 
@@ -3896,14 +3930,17 @@ describe("Codex app-server supervised branch lifecycle", () => {
     expect(request.mock.calls[1]?.[1]).toMatchObject({
       developerInstructions: agentWorkspaceDeveloperInstructions,
     });
+    expect(request.mock.calls[1]?.[1]).not.toHaveProperty("config.model_reasoning_effort");
     expect(resumed).toMatchObject({
       threadId: finalThreadId,
+      reasoningEffort: null,
       preserveNativeModel: true,
       conversationSourceTransferComplete: true,
       lifecycle: { action: "resumed" },
     });
     await expect(testCodexAppServerBindingStore.read(identity)).resolves.toMatchObject({
       appServerRuntimeFingerprint: buildCodexAppServerConnectionFingerprint(commonParams.appServer),
+      reasoningEffort: null,
     });
   });
 

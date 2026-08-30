@@ -1,7 +1,7 @@
 /**
  * Best-effort cleanup helpers for Codex app-server startup attempts and turns.
  */
-import { embeddedAgentLog } from "openclaw/plugin-sdk/agent-harness-runtime";
+import { embeddedAgentLog, formatErrorMessage } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { unsubscribeCodexAppServerLiveThread } from "./client-runtime.js";
 import { CodexAppServerRpcError, type CodexAppServerClient } from "./client.js";
 import { retireSharedCodexAppServerClientIfCurrent } from "./shared-client.js";
@@ -199,6 +199,39 @@ export async function unsubscribeCodexThreadBestEffort(
     params.assertCurrent?.();
     embeddedAgentLog.debug("codex app-server thread unsubscribe cleanup failed", {
       threadId: params.threadId,
+      error,
+    });
+    return false;
+  }
+}
+
+/** Archives a temporary supervision thread, falling back to subscription cleanup. */
+export async function archiveCodexSupervisionThreadBestEffort(
+  client: CodexAppServerClient,
+  threadId: string,
+): Promise<boolean> {
+  try {
+    await client.request(
+      "thread/archive",
+      { threadId },
+      { timeoutMs: CODEX_APP_SERVER_UNSUBSCRIBE_TIMEOUT_MS },
+    );
+    return true;
+  } catch (error) {
+    const message = formatErrorMessage(error).toLowerCase();
+    if (
+      message.includes("no rollout found for thread id") ||
+      message.includes("thread not found") ||
+      message.includes("already archived")
+    ) {
+      return true;
+    }
+    await unsubscribeCodexThreadBestEffort(client, {
+      threadId,
+      timeoutMs: CODEX_APP_SERVER_UNSUBSCRIBE_TIMEOUT_MS,
+    });
+    embeddedAgentLog.warn("failed to archive temporary Codex supervision thread", {
+      threadId,
       error,
     });
     return false;

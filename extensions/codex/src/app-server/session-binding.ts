@@ -231,6 +231,9 @@ const threadBindingSchema = z
       .pipe(z.string().min(1))
       .optional()
       .catch(undefined),
+    // Native thread responses own this effective setting; supervised turn
+    // requests intentionally carry no duplicate override.
+    reasoningEffort: z.string().nullable().optional().catch(undefined),
     // Legacy rows may contain the retired two-field permission overlay. Keep
     // parsing it so the rest of the binding survives; SessionEntry owns live policy.
     approvalPolicy: z
@@ -1713,6 +1716,14 @@ export function normalizeCodexAppServerBindingModelProvider(params: {
     return undefined;
   }
   return modelProvider;
+}
+
+/** Preserves the last observed native effort when Codex omits the optional response field. */
+export function resolveCodexBindingReasoningEffort(
+  responseEffort: string | null | undefined,
+  previousEffort: string | null | undefined,
+): string | null | undefined {
+  return responseEffort === undefined ? previousEffort : responseEffort;
 }
 
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */
