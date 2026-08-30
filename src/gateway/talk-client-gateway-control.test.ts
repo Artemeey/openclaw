@@ -3,6 +3,7 @@ import type { RealtimeVoiceBridge } from "../talk/provider-types.js";
 import {
   closeTalkClientGatewayControlSession,
   createTalkClientGatewayControlOwner,
+  createTalkRealtimeRunControlOwner,
 } from "./talk-client-gateway-control.js";
 import { cleanupTalkConnection } from "./talk-session-registry.js";
 
@@ -29,6 +30,27 @@ function controlContext(
 }
 
 describe("Talk client Gateway control owner", () => {
+  it("waits for a relay target captured during run registration", async () => {
+    const targetReady = deferred<string | undefined>();
+    const applied = vi.fn();
+    const execute = vi.fn(async (_args: unknown, target: Promise<string | undefined>) => {
+      applied(await target);
+      return { message: "ok", speak: false, suppress: false };
+    });
+    const owner = createTalkRealtimeRunControlOwner({
+      hasActiveRun: () => true,
+      capture: () => targetReady.promise,
+      execute,
+      speak: vi.fn(),
+      warn: vi.fn(),
+    });
+
+    expect(owner.enqueue({ text: "cancel" })).toBe(true);
+    await Promise.resolve();
+    expect(applied).not.toHaveBeenCalled();
+    targetReady.resolve("exact-relay-target");
+    await vi.waitFor(() => expect(applied).toHaveBeenCalledWith("exact-relay-target"));
+  });
   it.each(["failed", "incomplete"] as const)(
     "keeps Gateway-controlled browser Talk reusable after a %s response",
     async (status) => {

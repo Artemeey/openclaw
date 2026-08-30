@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { resolveExpiresAtMsFromDurationMs } from "@openclaw/normalization-core/number-coercion";
+import type { EmbeddedAgentMessageInjectionTarget } from "../agents/embedded-agent.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import { createDeferredCore } from "../shared/deferred.js";
 import { REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME } from "../talk/agent-consult-tool.js";
 import { buildRealtimeVoiceAgentCancelProviderResult } from "../talk/agent-run-control-shared.js";
 import { resolveTalkSessionAgentId } from "../talk/agent-target.js";
@@ -157,6 +159,7 @@ export function createTalkRealtimeRelaySession(
           }),
       })
     : undefined;
+  let pendingControlTarget: Promise<EmbeddedAgentMessageInjectionTarget | undefined> | undefined;
   const runAgentConsult = async ({ prompt, signal }: { prompt: string; signal?: AbortSignal }) => {
     if (!getActiveRelay()) {
       throw new Error("Realtime gateway-relay session is closed");
@@ -164,18 +167,29 @@ export function createTalkRealtimeRelaySession(
     if (!consultRunner) {
       throw new Error("Realtime gateway-relay agent consult requires a pinned session key");
     }
-    return await consultRunner.runPrompt({ prompt, signal });
+    const targetReady = createDeferredCore<EmbeddedAgentMessageInjectionTarget | undefined>();
+    pendingControlTarget = targetReady.promise;
+    try {
+      return await consultRunner.runArgs({ question: prompt }, signal, targetReady.resolve);
+    } finally {
+      targetReady.resolve(undefined);
+      if (pendingControlTarget === targetReady.promise) {
+        pendingControlTarget = undefined;
+      }
+    }
   };
   const runControl = createTalkRealtimeRunControlOwner({
     hasActiveRun: () => {
       const relay = getActiveRelay();
       return Boolean(relay && pruneInactiveRelayAgentRuns(relay) > 0);
     },
-    capture: () =>
-      captureTalkRealtimeRelayAgentRunControlTarget({
+    capture: () => {
+      const target = captureTalkRealtimeRelayAgentRunControlTarget({
         relaySessionId,
         connId: params.connId,
-      }),
+      });
+      return target ? Promise.resolve(target) : pendingControlTarget;
+    },
     execute: async (args, controlTarget) => {
       const relay = getActiveRelay();
       if (!relay || !args || typeof args !== "object" || Array.isArray(args)) {
@@ -189,7 +203,7 @@ export function createTalkRealtimeRelaySession(
         relaySessionId,
         connId: params.connId,
         text,
-        controlTarget,
+        controlTarget: await controlTarget,
       });
     },
     speak: (message) => bridgeRef.current?.sendUserMessage?.(message),
