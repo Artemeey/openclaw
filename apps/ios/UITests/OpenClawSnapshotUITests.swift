@@ -583,7 +583,9 @@ final class OpenClawSnapshotUITests: XCTestCase {
         XCTAssertTrue(inlineNonDefaultModel.waitForExistence(timeout: 3))
         self.attachScreenshot(named: "chat-composer-model")
         inlineNonDefaultModel.tap()
-        inlineModel.tap()
+        let updatedInlineModel = app.buttons["chat-composer-inline-model"]
+        XCTAssertTrue(updatedInlineModel.waitForExistence(timeout: 3))
+        updatedInlineModel.tap()
         let selectedInlineModel = app.buttons["anthropic/claude-opus-4-1, Selected"]
         XCTAssertTrue(selectedInlineModel.waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["openai/gpt-5.6-sol"].exists)
