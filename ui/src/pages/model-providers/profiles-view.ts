@@ -62,7 +62,9 @@ function renderProfileUsage(profile: ProviderProfile) {
       usage.summary ||
       usage.error)
   ) {
-    return html`${renderProviderUsageDetails(usage)}${profile.usageRefreshPending
+    return html`${renderProviderUsageDetails(usage, {
+      compactWindowLabels: true,
+    })}${profile.usageRefreshPending
       ? html`<span class="model-providers__profile-usage-refreshing"
           >${t("common.refreshing")}</span
         >`
@@ -211,8 +213,8 @@ function startPointerDrag(params: {
       candidate.dataset.profileId === params.sourceId
     ) {
       target = null;
-      for (const row of rowsIn(section, `.${DROP_BEFORE_CLASS}, .${DROP_AFTER_CLASS}`)) {
-        row.classList.remove(DROP_BEFORE_CLASS, DROP_AFTER_CLASS);
+      for (const markedRow of rowsIn(section, `.${DROP_BEFORE_CLASS}, .${DROP_AFTER_CLASS}`)) {
+        markedRow.classList.remove(DROP_BEFORE_CLASS, DROP_AFTER_CLASS);
       }
       return;
     }

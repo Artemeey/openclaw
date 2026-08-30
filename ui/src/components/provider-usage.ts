@@ -12,6 +12,26 @@ export type ProviderUsageDetails = Pick<
   "windows" | "billing" | "costHistory" | "summary" | "error"
 >;
 
+type ProviderUsageDetailsOptions = {
+  compactWindowLabels?: boolean;
+};
+
+function splitCompactWindowLabel(label: string) {
+  const separator = label.lastIndexOf(" · ");
+  if (separator < 0) {
+    return { scope: "", cadence: label };
+  }
+  const prefix = label.slice(0, separator);
+  const cadence = label.slice(separator + 3);
+  const scopeBreak = prefix.lastIndexOf(" ");
+  return scopeBreak < 0
+    ? { scope: "", cadence: label }
+    : {
+        scope: prefix.slice(0, scopeBreak),
+        cadence: `${prefix.slice(scopeBreak + 1)} · ${cadence}`,
+      };
+}
+
 function formatProviderAmount(amount: number, unit: string): string {
   const normalizedUnit = unit.trim().toUpperCase();
   if (["USD", "EUR", "GBP", "CNY", "JPY"].includes(normalizedUnit)) {
@@ -185,7 +205,10 @@ function renderProviderCostHistory(snapshot: ProviderUsageDetails) {
  * bars, billing rows, provider cost history, and the provider summary line.
  * The surrounding card header (name, plan badge, icon) stays surface-owned.
  */
-export function renderProviderUsageDetails(snapshot: ProviderUsageDetails) {
+export function renderProviderUsageDetails(
+  snapshot: ProviderUsageDetails,
+  options: ProviderUsageDetailsOptions = {},
+) {
   if (snapshot.error) {
     return html`<div class="provider-usage-error">${formatUiExternalText(snapshot.error)}</div>`;
   }
@@ -197,10 +220,27 @@ export function renderProviderUsageDetails(snapshot: ProviderUsageDetails) {
               const used = Math.max(0, Math.min(100, window.usedPercent));
               const remaining = Math.max(0, 100 - used);
               const reset = formatProviderReset(window.resetAt);
+              const compactLabel = options.compactWindowLabels
+                ? splitCompactWindowLabel(window.label)
+                : null;
               return html`
                 <div class="provider-usage-window">
                   <div class="provider-usage-window__meta">
-                    <span>${window.label}</span>
+                    ${compactLabel
+                      ? html`
+                          <span
+                            class="provider-usage-window__compact-label"
+                            aria-label=${window.label}
+                          >
+                            <span class="provider-usage-window__scope" aria-hidden="true"
+                              >${compactLabel.scope}</span
+                            >
+                            <span class="provider-usage-window__cadence" aria-hidden="true"
+                              >${compactLabel.cadence}</span
+                            >
+                          </span>
+                        `
+                      : html`<span>${window.label}</span>`}
                     <strong
                       >${t("usage.providerUsage.remaining", {
                         percent: remaining.toFixed(0),

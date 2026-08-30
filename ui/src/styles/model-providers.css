@@ -234,6 +234,39 @@
   grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
 }
 
+.model-providers__profile-usage .provider-usage-window__meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--space-2);
+}
+
+.model-providers__profile-usage .provider-usage-window__compact-label {
+  display: contents;
+}
+
+.model-providers__profile-usage .provider-usage-window__scope,
+.model-providers__profile-usage .provider-usage-window__cadence {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-providers__profile-usage .provider-usage-window__scope {
+  grid-column: 1 / -1;
+  min-height: 1lh;
+}
+
+.model-providers__profile-usage .provider-usage-window__cadence {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.model-providers__profile-usage .provider-usage-window__meta strong {
+  grid-column: 2;
+  grid-row: 2;
+  white-space: nowrap;
+}
+
 .model-providers__profile-usage .provider-usage-error {
   overflow-wrap: anywhere;
 }
