@@ -590,7 +590,7 @@ describe("renderModelProviders", () => {
     expect(text(metrics)).toContain("12 credits");
   });
 
-  it("gives compact account quota labels a consistent two-line structure", () => {
+  it("gives compact account quota labels a consistent three-line structure", () => {
     const container = mount(
       props({
         cards: [
@@ -623,23 +623,23 @@ describe("renderModelProviders", () => {
     expect(text(labels[0]?.querySelector(".provider-usage-window__scope") ?? null)).toBe(
       "Normal limit",
     );
+    expect(text(labels[0]?.querySelector(".provider-usage-window__variant") ?? null)).toBe("");
     expect(text(labels[0]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe("168h");
     expect(text(labels[1]?.querySelector(".provider-usage-window__scope") ?? null)).toBe(
       "Normal limit",
     );
+    expect(text(labels[1]?.querySelector(".provider-usage-window__variant") ?? null)).toBe("");
     expect(text(labels[1]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe("5h");
     expect(text(labels[2]?.querySelector(".provider-usage-window__scope") ?? null)).toBe(
       "GPT 5.3 Codex",
     );
-    expect(text(labels[2]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe(
-      "Spark · 5h",
-    );
+    expect(text(labels[2]?.querySelector(".provider-usage-window__variant") ?? null)).toBe("Spark");
+    expect(text(labels[2]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe("5h");
     expect(text(labels[3]?.querySelector(".provider-usage-window__scope") ?? null)).toBe(
       "GPT 5.3 Codex",
     );
-    expect(text(labels[3]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe(
-      "Spark · Week",
-    );
+    expect(text(labels[3]?.querySelector(".provider-usage-window__variant") ?? null)).toBe("Spark");
+    expect(text(labels[3]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe("Week");
   });
 
   it("keeps provider-scoped usage beside OAuth usage without an inference API key", () => {
