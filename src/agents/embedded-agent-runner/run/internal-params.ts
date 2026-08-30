@@ -18,9 +18,9 @@ export type EmbeddedContextAccountingEvent = Readonly<
   | { kind: "model"; contextTokens: number | undefined }
 >;
 
-/** Each fact carries the latest context (undefined means unknown), never authority to resume. */
+/** Writer identity survives absent telemetry; unknown snapshots invalidate old usage, never authorize resume. */
 export type CompactionAccountingFact = Readonly<
-  { count: number; currentContextTokens?: number } & (
+  { count: number; currentContextSnapshot?: Readonly<{ tokens: number | undefined }> } & (
     | { kind: "durable"; target: CompactionAccountingTarget }
     | { kind: "presentation-only" }
   )

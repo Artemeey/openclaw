@@ -36,9 +36,9 @@ registerAgentCommandCompactionTestHooks();
 
 async function commitAttemptCompaction(
   params: Parameters<typeof state.runAgentAttemptMock>[0],
-  accounting: Pick<CompactionAccountingFact, "count" | "currentContextTokens"> = {
+  accounting: Pick<CompactionAccountingFact, "count" | "currentContextSnapshot"> = {
     count: 1,
-    currentContextTokens: 42,
+    currentContextSnapshot: { tokens: 42 },
   },
 ) {
   const target = params.sessionTarget;
@@ -228,7 +228,10 @@ describe("agentCommand compaction transcript rotation", () => {
       });
       const usage = { input: 100_000, output: 3_000, cacheRead: 20_000, cacheWrite: 1_000 };
       state.runAgentAttemptMock.mockImplementationOnce(async (params) => {
-        const accepted = await commitAttemptCompaction(params, { count: 1, currentContextTokens });
+        const accepted = await commitAttemptCompaction(params, {
+          count: 1,
+          currentContextSnapshot: { tokens: currentContextTokens },
+        });
         await appendTranscriptMessage(accepted.sessionTarget, {
           message: { role: "assistant", content: "first answer after rotation", timestamp: 1 },
         });
@@ -299,7 +302,7 @@ describe("agentCommand compaction transcript rotation", () => {
       params.onCompactionAccounting?.({
         kind: "durable",
         count: 0,
-        currentContextTokens: 95_000,
+        currentContextSnapshot: { tokens: 95_000 },
         target: {
           ...params.sessionTarget,
           lifecycleRevision: entry.lifecycleRevision,
@@ -355,7 +358,7 @@ describe("agentCommand compaction transcript rotation", () => {
           released = true;
         },
       });
-      await commitAttemptCompaction(params, { count: 2, currentContextTokens: 42 });
+      await commitAttemptCompaction(params, { count: 2, currentContextSnapshot: { tokens: 42 } });
       controller.abort(aborted);
       throw aborted;
     });

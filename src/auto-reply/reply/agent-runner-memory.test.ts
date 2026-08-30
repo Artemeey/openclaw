@@ -383,7 +383,7 @@ async function commitMemoryCompaction(params: {
   params.run?.onCompactionAccounting?.({
     kind: "durable",
     count: 1,
-    currentContextTokens: 42,
+    currentContextSnapshot: { tokens: 42 },
     target: {
       ...accepted.sessionTarget,
       lifecycleRevision: accepted.entry.lifecycleRevision,
@@ -695,100 +695,103 @@ describe("runMemoryFlushIfNeeded", () => {
     expect(persisted.memoryFlush).toEqual({ kind: "succeeded", compactionCount: 1 });
   });
 
-  it("accounts accepted memory compaction once after a model-only fallback refreshes context", async () => {
-    const storePath = path.join(rootDir, "sessions.json");
-    const sessionKey = "main";
-    const sessionEntry = createFlushSessionEntry({ lifecycleRevision: "memory-generation" });
-    const sessionStore = { [sessionKey]: sessionEntry };
-    await writeTestSessionStore(storePath, sessionKey, sessionEntry);
-    incrementCompactionCountMock.mockImplementation(incrementCompactionCount);
-    const primaryError = new Error("primary failed after accepted compaction");
-    let accepted: Awaited<ReturnType<typeof commitMemoryCompaction>> | undefined;
-    let admission: PreparedAgentRunAdmission | undefined;
-    let admittedContext: AdmittedRunContext | undefined;
-    runEmbeddedAgentMock
-      .mockImplementationOnce(async (params: EmbeddedAgentParams) => {
-        admission = params.preparedRunAdmission;
-        if (!admission) {
-          throw new Error("expected the memory turn's prepared admission");
-        }
-        admittedContext = await admission.admit("embedded");
-        expect(getAdmittedRunDelegatedAuthority(admittedContext)).toBeDefined();
-        accepted = await commitMemoryCompaction({ sessionKey, storePath, run: params });
-        throw primaryError;
-      })
-      .mockImplementationOnce(async (params: EmbeddedAgentParams) => {
-        if (!accepted || !admission || !admittedContext) {
-          throw new Error("expected the first candidate's accepted successor and admission");
-        }
-        expect(params.preparedRunAdmission).toBe(admission);
-        expect(await admission.admit("embedded")).toBe(admittedContext);
-        expect(getAdmittedRunDelegatedAuthority(admittedContext)).toBeDefined();
-        expect(params).toMatchObject({ sessionId: "session-rotated", sessionFile: sessionKey });
-        expect(incrementCompactionCountMock).not.toHaveBeenCalled();
-        expect(loadMainSessionEntry(storePath).compactionCount).toBe(1);
-        params.onCompactionAccounting?.({
-          kind: "durable",
-          count: 0,
-          currentContextTokens: 120,
-          target: {
-            ...accepted.sessionTarget,
-            lifecycleRevision: accepted.entry.lifecycleRevision,
-            activeWriterRunId: accepted.entry.activeWriterRunId,
-          },
-        });
-        return {
-          payloads: [],
-          meta: {
-            agentMeta: {
-              sessionId: "session-rotated",
-              compactionCount: 0,
-              compactionTokensAfter: 42,
-              lastCallUsage: { input: 999 },
+  it.each([true, false])(
+    "accounts memory compaction once after a fallback with observed context=%s",
+    async (observed) => {
+      const storePath = path.join(rootDir, "sessions.json");
+      const sessionKey = "main";
+      const sessionEntry = createFlushSessionEntry({ lifecycleRevision: "memory-generation" });
+      const sessionStore = { [sessionKey]: sessionEntry };
+      await writeTestSessionStore(storePath, sessionKey, sessionEntry);
+      incrementCompactionCountMock.mockImplementation(incrementCompactionCount);
+      const primaryError = new Error("primary failed after accepted compaction");
+      let accepted: Awaited<ReturnType<typeof commitMemoryCompaction>> | undefined;
+      let admission: PreparedAgentRunAdmission | undefined;
+      let admittedContext: AdmittedRunContext | undefined;
+      runEmbeddedAgentMock
+        .mockImplementationOnce(async (params: EmbeddedAgentParams) => {
+          admission = params.preparedRunAdmission;
+          if (!admission) {
+            throw new Error("expected the memory turn's prepared admission");
+          }
+          admittedContext = await admission.admit("embedded");
+          expect(getAdmittedRunDelegatedAuthority(admittedContext)).toBeDefined();
+          accepted = await commitMemoryCompaction({ sessionKey, storePath, run: params });
+          throw primaryError;
+        })
+        .mockImplementationOnce(async (params: EmbeddedAgentParams) => {
+          if (!accepted || !admission || !admittedContext) {
+            throw new Error("expected the first candidate's accepted successor and admission");
+          }
+          expect(params.preparedRunAdmission).toBe(admission);
+          expect(await admission.admit("embedded")).toBe(admittedContext);
+          expect(getAdmittedRunDelegatedAuthority(admittedContext)).toBeDefined();
+          expect(params).toMatchObject({ sessionId: "session-rotated", sessionFile: sessionKey });
+          expect(incrementCompactionCountMock).not.toHaveBeenCalled();
+          expect(loadMainSessionEntry(storePath).compactionCount).toBe(1);
+          params.onCompactionAccounting?.({
+            kind: "durable",
+            count: 0,
+            ...(observed ? { currentContextSnapshot: { tokens: 120 } } : {}),
+            target: {
+              ...accepted.sessionTarget,
+              lifecycleRevision: accepted.entry.lifecycleRevision,
+              activeWriterRunId: accepted.entry.activeWriterRunId,
             },
-          },
+          });
+          return {
+            payloads: [],
+            meta: {
+              agentMeta: {
+                sessionId: "session-rotated",
+                compactionCount: 0,
+                compactionTokensAfter: 42,
+                lastCallUsage: { input: 999 },
+              },
+            },
+          };
+        });
+      runWithModelFallbackMock.mockImplementationOnce(async (params: ModelFallbackParams) => {
+        await expect(
+          params.run("anthropic", "claude", {
+            modelRoutingProvenance: modelRoutingProvenance("anthropic", "claude"),
+          }),
+        ).rejects.toBe(primaryError);
+        return {
+          result: await params.run("anthropic", "fallback", {
+            modelRoutingProvenance: modelRoutingProvenance("anthropic", "claude", "fallback"),
+          }),
+          provider: "anthropic",
+          model: "fallback",
+          attempts: [],
         };
       });
-    runWithModelFallbackMock.mockImplementationOnce(async (params: ModelFallbackParams) => {
-      await expect(
-        params.run("anthropic", "claude", {
-          modelRoutingProvenance: modelRoutingProvenance("anthropic", "claude"),
-        }),
-      ).rejects.toBe(primaryError);
-      return {
-        result: await params.run("anthropic", "fallback", {
-          modelRoutingProvenance: modelRoutingProvenance("anthropic", "claude", "fallback"),
-        }),
-        provider: "anthropic",
-        model: "fallback",
-        attempts: [],
-      };
-    });
 
-    const result = await runDefaultMemoryFlush(sessionEntry, {
-      sessionStore,
-      sessionKey,
-      storePath,
-    });
+      const result = await runDefaultMemoryFlush(sessionEntry, {
+        sessionStore,
+        sessionKey,
+        storePath,
+      });
 
-    expect(result.outcome).toBe("completed");
-    expect(runEmbeddedAgentMock).toHaveBeenCalledTimes(2);
-    expect(incrementCompactionCountMock).toHaveBeenCalledOnce();
-    expect(loadMainSessionEntry(storePath)).toMatchObject({
-      sessionId: "session-rotated",
-      lifecycleRevision: "memory-generation",
-      compactionCount: 2,
-      totalTokens: 120,
-      totalTokensFresh: true,
-      memoryFlush: { kind: "succeeded", compactionCount: 1 },
-    });
-    expect(result.sessionEntry).toEqual(loadMainSessionEntry(storePath));
-    expect(refreshQueuedFollowupSessionMock).toHaveBeenCalledOnce();
-    if (!admittedContext) {
-      throw new Error("expected the memory turn to have admitted its first candidate");
-    }
-    expect(getAdmittedRunDelegatedAuthority(admittedContext)).toBeUndefined();
-  });
+      expect(result.outcome).toBe("completed");
+      expect(runEmbeddedAgentMock).toHaveBeenCalledTimes(2);
+      expect(incrementCompactionCountMock).toHaveBeenCalledOnce();
+      expect(loadMainSessionEntry(storePath)).toMatchObject({
+        sessionId: "session-rotated",
+        lifecycleRevision: "memory-generation",
+        compactionCount: 2,
+        totalTokens: observed ? 120 : sessionEntry.totalTokens,
+        totalTokensFresh: observed,
+        memoryFlush: { kind: "succeeded", compactionCount: 1 },
+      });
+      expect(result.sessionEntry).toEqual(loadMainSessionEntry(storePath));
+      expect(refreshQueuedFollowupSessionMock).toHaveBeenCalledOnce();
+      if (!admittedContext) {
+        throw new Error("expected the memory turn to have admitted its first candidate");
+      }
+      expect(getAdmittedRunDelegatedAuthority(admittedContext)).toBeUndefined();
+    },
+  );
 
   it("does not rotate or increment for an incomplete projected compaction end", async () => {
     const { followupRun, result, storePath } = await runProjectedCompaction(false);

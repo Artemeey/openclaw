@@ -5,7 +5,7 @@ import type { AgentTurnCompaction } from "./agent-runner-execution.types.js";
 export function invalidateTurnCompactionContext(compaction: AgentTurnCompaction): void {
   compaction.durable = compaction.durable.map((fact) => ({
     ...fact,
-    currentContextTokens: undefined,
+    currentContextSnapshot: { tokens: undefined },
   }));
 }
 
@@ -36,5 +36,9 @@ export function recordTurnCompaction(
   if (previous) {
     compaction.durable.splice(index, 1);
   }
-  compaction.durable.push({ ...fact, count: (previous?.count ?? 0) + fact.count });
+  compaction.durable.push({
+    ...fact,
+    count: (previous?.count ?? 0) + fact.count,
+    currentContextSnapshot: fact.currentContextSnapshot ?? previous?.currentContextSnapshot,
+  });
 }

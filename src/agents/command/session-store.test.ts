@@ -224,7 +224,7 @@ describe("updateSessionStoreAfterAgentRun", () => {
               compactionAccounting: {
                 kind: "durable",
                 count: 0,
-                currentContextTokens: 42,
+                currentContextSnapshot: { tokens: 42 },
                 target: {
                   agentId: "main",
                   sessionId: owner.sessionId,
@@ -1163,52 +1163,55 @@ describe("updateSessionStoreAfterAgentRun", () => {
     });
   });
 
-  it("preserves previous totalTokens when provider returns no usage data (#67667)", async () => {
-    await withTempSessionStore(async ({ storePath }) => {
-      const cfg = {} as OpenClawConfig;
-      const sessionKey = "agent:main:explicit:test-no-usage";
-      const sessionId = "test-session";
+  it.each([21_225, 0])(
+    "marks previous totalTokens=%i stale without provider usage (#67667)",
+    async (totalTokens) => {
+      await withTempSessionStore(async ({ storePath }) => {
+        const cfg = {} as OpenClawConfig;
+        const sessionKey = "agent:main:explicit:test-no-usage";
+        const sessionId = "test-session";
 
-      const sessionStore: Record<string, SessionEntry> = {
-        [sessionKey]: {
-          sessionId,
-          updatedAt: 1,
-          totalTokens: 21225,
-          totalTokensFresh: true,
-        },
-      };
-      await seedSessionStore(storePath, sessionStore);
-
-      const result: EmbeddedAgentRunResult = {
-        meta: {
-          durationMs: 500,
-          agentMeta: {
+        const sessionStore: Record<string, SessionEntry> = {
+          [sessionKey]: {
             sessionId,
-            provider: "minimax",
-            model: "MiniMax-M2.7",
+            updatedAt: 1,
+            totalTokens,
+            totalTokensFresh: true,
           },
-        },
-      };
+        };
+        await seedSessionStore(storePath, sessionStore);
 
-      await updateSessionStoreAfterAgentRun({
-        cfg,
-        sessionId,
-        sessionKey,
-        storePath,
-        sessionStore,
-        defaultProvider: "minimax",
-        defaultModel: "MiniMax-M2.7",
-        result,
+        const result: EmbeddedAgentRunResult = {
+          meta: {
+            durationMs: 500,
+            agentMeta: {
+              sessionId,
+              provider: "minimax",
+              model: "MiniMax-M2.7",
+            },
+          },
+        };
+
+        await updateSessionStoreAfterAgentRun({
+          cfg,
+          sessionId,
+          sessionKey,
+          storePath,
+          sessionStore,
+          defaultProvider: "minimax",
+          defaultModel: "MiniMax-M2.7",
+          result,
+        });
+
+        expect(sessionStore[sessionKey]?.totalTokens).toBe(totalTokens);
+        expect(sessionStore[sessionKey]?.totalTokensFresh).toBe(false);
+
+        const persisted = loadPersistedSessionStore(storePath);
+        expect(persisted[sessionKey]?.totalTokens).toBe(totalTokens);
+        expect(persisted[sessionKey]?.totalTokensFresh).toBe(false);
       });
-
-      expect(sessionStore[sessionKey]?.totalTokens).toBe(21225);
-      expect(sessionStore[sessionKey]?.totalTokensFresh).toBe(false);
-
-      const persisted = loadPersistedSessionStore(storePath);
-      expect(persisted[sessionKey]?.totalTokens).toBe(21225);
-      expect(persisted[sessionKey]?.totalTokensFresh).toBe(false);
-    });
-  });
+    },
+  );
 
   it("persists estimated context budget status without marking stale usage fresh", async () => {
     await withTempSessionStore(async ({ storePath }) => {
@@ -1454,88 +1457,95 @@ describe("updateSessionStoreAfterAgentRun", () => {
     { observation: "zero-token compaction", tokens: 0, count: 1 },
     { observation: "unknown context", tokens: undefined, count: 1 },
     { observation: "model-only initial writer", tokens: 95_000, count: 0 },
-  ])("persists private $observation independently of billing usage", async ({ tokens, count }) => {
-    await withTempSessionStore(async ({ storePath }) => {
-      const sessionKey = "agent:main:explicit:ordered-context";
-      const sessionId = "ordered-context-session";
-      const sessionStore: Record<string, SessionEntry> = {
-        [sessionKey]: {
-          sessionId,
-          updatedAt: 1,
-          totalTokens: 180_000,
-          totalTokensFresh: true,
-          compactionCount: 3,
-          estimatedCostUsd: 1.25,
-          lifecycleRevision: "lifecycle",
-          activeWriterRunId: "previous-writer",
-        },
-      };
-      await seedSessionStore(storePath, {
-        [sessionKey]: { ...sessionStore[sessionKey]!, activeWriterRunId: "current-writer" },
-      });
-      const usage = { input: 100_000, output: 3_000, cacheRead: 20_000, cacheWrite: 1_000 };
-      const lastCallUsage = { input: 91_000, output: 1_000, cacheRead: 4_000 };
-      const result: EmbeddedAgentRunResult = {
-        meta: {
-          durationMs: 1,
-          agentMeta: {
+    { observation: "native terminal usage", tokens: 95_000, count: 0 },
+    { observation: "model-only unknown", tokens: undefined, count: 0 },
+  ])(
+    "persists private $observation independently of billing usage",
+    async ({ observation, tokens, count }) => {
+      await withTempSessionStore(async ({ storePath }) => {
+        const sessionKey = "agent:main:explicit:ordered-context";
+        const sessionId = "ordered-context-session";
+        const sessionStore: Record<string, SessionEntry> = {
+          [sessionKey]: {
             sessionId,
-            provider: "openai",
-            model: "gpt-5.6-luna",
-            usage,
-            lastCallUsage,
-            promptTokens: 95_000,
-            compactionCount: 99,
-            compactionTokensAfter: 80_000,
-          },
-        },
-      };
-
-      await updateSessionStoreAfterAgentRun({
-        cfg: {},
-        sessionId,
-        sessionKey,
-        storePath,
-        sessionStore,
-        defaultProvider: "openai",
-        defaultModel: "gpt-5.6-luna",
-        compactionAccounting: {
-          kind: "durable",
-          count,
-          currentContextTokens: tokens,
-          target: {
-            agentId: "main",
-            sessionId,
-            sessionKey,
-            storePath,
+            updatedAt: 1,
+            totalTokens: 180_000,
+            totalTokensFresh: true,
+            compactionCount: 3,
+            estimatedCostUsd: 1.25,
             lifecycleRevision: "lifecycle",
-            activeWriterRunId: "current-writer",
+            activeWriterRunId: "previous-writer",
           },
-        },
-        result,
-      });
-
-      for (const entry of [
-        sessionStore[sessionKey],
-        loadPersistedSessionEntry(storePath, sessionKey),
-      ]) {
-        expect(entry).toMatchObject({
-          inputTokens: usage.input,
-          outputTokens: usage.output,
-          cacheRead: usage.cacheRead,
-          cacheWrite: usage.cacheWrite,
-          estimatedCostUsd: 1.25,
-          compactionCount: 3,
-          activeWriterRunId: "current-writer",
-          totalTokensFresh: tokens !== undefined,
+        };
+        await seedSessionStore(storePath, {
+          [sessionKey]: { ...sessionStore[sessionKey]!, activeWriterRunId: "current-writer" },
         });
-        expect(entry?.totalTokens).toBe(tokens);
-        expect(resolveFreshSessionTotalTokens(entry)).toBe(tokens);
-      }
-      expect(result.meta.agentMeta?.usage).toEqual(usage);
-      expect(result.meta.agentMeta?.lastCallUsage).toEqual(lastCallUsage);
-    });
-  });
+        const usage = { input: 100_000, output: 3_000, cacheRead: 20_000, cacheWrite: 1_000 };
+        const lastCallUsage = { input: 91_000, output: 1_000, cacheRead: 4_000 };
+        const result: EmbeddedAgentRunResult = {
+          meta: {
+            durationMs: 1,
+            agentMeta: {
+              sessionId,
+              provider: "openai",
+              model: "gpt-5.6-luna",
+              usage,
+              lastCallUsage,
+              promptTokens: 95_000,
+              compactionCount: 99,
+              compactionTokensAfter: 80_000,
+            },
+          },
+        };
+
+        await updateSessionStoreAfterAgentRun({
+          cfg: {},
+          sessionId,
+          sessionKey,
+          storePath,
+          sessionStore,
+          defaultProvider: "openai",
+          defaultModel: "gpt-5.6-luna",
+          compactionAccounting: {
+            kind: "durable",
+            count,
+            ...(observation === "native terminal usage"
+              ? {}
+              : { currentContextSnapshot: { tokens } }),
+            target: {
+              agentId: "main",
+              sessionId,
+              sessionKey,
+              storePath,
+              lifecycleRevision: "lifecycle",
+              activeWriterRunId: "current-writer",
+            },
+          },
+          result,
+        });
+
+        for (const entry of [
+          sessionStore[sessionKey],
+          loadPersistedSessionEntry(storePath, sessionKey),
+        ]) {
+          expect(entry).toMatchObject({
+            inputTokens: usage.input,
+            outputTokens: usage.output,
+            cacheRead: usage.cacheRead,
+            cacheWrite: usage.cacheWrite,
+            estimatedCostUsd: 1.25,
+            compactionCount: 3,
+            activeWriterRunId: "current-writer",
+            totalTokensFresh: tokens !== undefined,
+          });
+          expect(entry?.totalTokens).toBe(tokens);
+          expect(resolveFreshSessionTotalTokens(entry)).toBe(tokens);
+        }
+        expect(result.meta.agentMeta?.usage).toEqual(usage);
+        expect(result.meta.agentMeta?.lastCallUsage).toEqual(lastCallUsage);
+      });
+    },
+  );
 
   it.each(["missing", "replaced"] as const)(
     "does not write through a private fact whose owner is %s",
@@ -1571,7 +1581,7 @@ describe("updateSessionStoreAfterAgentRun", () => {
           compactionAccounting: {
             kind: "durable",
             count: 0,
-            currentContextTokens: 42,
+            currentContextSnapshot: { tokens: 42 },
             target: {
               agentId: "main",
               sessionId,
@@ -1670,7 +1680,7 @@ describe("updateSessionStoreAfterAgentRun", () => {
           compactionAccounting: {
             kind: "durable",
             count: 1,
-            currentContextTokens: tokens,
+            currentContextSnapshot: { tokens },
             target: {
               agentId: "main",
               sessionId,

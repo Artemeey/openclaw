@@ -37,7 +37,7 @@ export function createCommandCompactionAccounting(params: {
     beginCandidate() {
       if (accounting) {
         // Only an ordered fact from this candidate can restore current context.
-        accounting = { ...accounting, currentContextTokens: undefined };
+        accounting = { ...accounting, currentContextSnapshot: { tokens: undefined } };
       }
       let candidateFact: CompactionAccountingFact | undefined;
       return {
@@ -64,7 +64,11 @@ export function createCommandCompactionAccounting(params: {
           const carriedCount = hasSameCompactionWriter(accounting?.target, fact.target)
             ? (accounting?.count ?? 0)
             : 0;
-          accounting = { ...fact, count: carriedCount + fact.count };
+          // A writer-only fallback cannot refresh context after an earlier compaction.
+          const currentContextSnapshot =
+            fact.currentContextSnapshot ??
+            (carriedCount > 0 ? accounting?.currentContextSnapshot : undefined);
+          accounting = { ...fact, count: carriedCount + fact.count, currentContextSnapshot };
           if (fact.count > 0 && params.persistCounts) {
             await incrementCompactionCount({
               agentId: fact.target.agentId,
@@ -74,7 +78,7 @@ export function createCommandCompactionAccounting(params: {
               storePath: fact.target.storePath,
               expectedSession: fact.target,
               amount: fact.count,
-              tokensAfter: fact.currentContextTokens,
+              tokensAfter: fact.currentContextSnapshot?.tokens,
             });
             params.refreshSessionEntry(fact.target.sessionKey);
           }

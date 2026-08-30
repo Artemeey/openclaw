@@ -141,7 +141,7 @@ describe("recovery cancellation through the public run owner", () => {
         } else {
           expect(onCompactionAccounting).toHaveBeenCalledExactlyOnceWith(
             committed
-              ? { kind: "presentation-only", count: 1, currentContextTokens: 40 }
+              ? { kind: "presentation-only", count: 1, currentContextSnapshot: { tokens: 40 } }
               : undefined,
           );
         }
@@ -323,9 +323,15 @@ describe("recovery cancellation through the public run owner", () => {
     { order: "compaction-then-model", currentContextTokens: 120, count: 1 },
     { order: "compaction-then-unknown", currentContextTokens: undefined, count: 1 },
     { order: "model-only", currentContextTokens: 120, count: 0 },
+    { order: "opaque-native", currentContextTokens: undefined, count: 0 },
   ] as const)("carries producer chronology through the run owner ($order)", async (testCase) => {
     session = await createSharedRunIntegrationSession();
     const { runParams } = session;
+    const initialEntry = sessionAccessor.loadSessionEntry(runParams.sessionTarget);
+    if (!initialEntry) {
+      throw new Error("expected the pre-admission session row");
+    }
+    const sessionStore = { [runParams.sessionTarget.sessionKey]: { ...initialEntry } };
     const facts = vi.fn<(fact: CompactionAccountingFact | undefined) => void>();
     mockedBuildEmbeddedRunPayloads.mockReturnValue([{ text: "Done." }]);
     const { createSubscribedSessionHarness } =
@@ -375,7 +381,7 @@ describe("recovery cancellation through the public run owner", () => {
             },
           });
         }
-        if (testCase.order !== "model-then-compaction") {
+        if (testCase.order !== "model-then-compaction" && testCase.order !== "opaque-native") {
           emitModel();
         }
         await harness.subscription.waitForPendingEvents();
@@ -398,10 +404,35 @@ describe("recovery cancellation through the public run owner", () => {
     });
 
     expect(result.payloads).toEqual([{ text: "Done." }]);
+    if (testCase.order === "opaque-native") {
+      // Native harnesses return usage without the private subscription callback.
+      // Compose real settlement with command persistence using the pre-claim cache.
+      const { updateSessionStoreAfterAgentRun } = await import("../command/session-store.js");
+      const fact = facts.mock.calls[0]?.[0];
+      await updateSessionStoreAfterAgentRun({
+        cfg: {},
+        agentDir: runParams.workspaceDir,
+        sessionId: runParams.sessionId,
+        sessionKey: runParams.sessionTarget.sessionKey,
+        storePath: runParams.sessionTarget.storePath,
+        sessionStore,
+        defaultProvider: "openai",
+        defaultModel: "gpt-5.6-luna",
+        result,
+        compactionAccounting: fact?.kind === "durable" ? fact : undefined,
+      });
+      expect(sessionAccessor.loadSessionEntry(runParams.sessionTarget)).toMatchObject({
+        activeWriterRunId: runParams.runId,
+        totalTokens: 120,
+        totalTokensFresh: true,
+      });
+    }
     expect(facts).toHaveBeenCalledExactlyOnceWith({
       kind: "durable",
       count: testCase.count,
-      currentContextTokens: testCase.currentContextTokens,
+      ...(testCase.order === "opaque-native"
+        ? {}
+        : { currentContextSnapshot: { tokens: testCase.currentContextTokens } }),
       target: {
         ...runParams.sessionTarget,
         lifecycleRevision: undefined,

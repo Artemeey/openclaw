@@ -58,7 +58,7 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     const fact: CompactionAccountingFact = {
       kind: "durable",
       count: 1,
-      currentContextTokens: 40,
+      currentContextSnapshot: { tokens: 40 },
       target: { ...compactionTarget, sessionId: "accepted-successor" },
     };
     const sessionId = "session";
@@ -543,31 +543,32 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
     { name: "same-owner unknown", owner: "same", currentContextTokens: undefined },
     { name: "unrelated writer", owner: "different", currentContextTokens: 999 },
     { name: "opaque candidate", owner: "opaque", currentContextTokens: undefined },
+    { name: "writer-only candidate", owner: "writer-only", currentContextTokens: undefined },
   ] as const)(
     "aggregates fallback counts without borrowing $name context",
     async ({ owner, currentContextTokens }) => {
       const first: CompactionAccountingFact = {
         kind: "durable",
         count: 1,
-        currentContextTokens: 80,
+        currentContextSnapshot: { tokens: 80 },
         target: compactionTarget,
       };
       const successor: CompactionAccountingFact = {
         kind: "durable",
         count: 3,
-        currentContextTokens: 40,
+        currentContextSnapshot: { tokens: 40 },
         target: { ...compactionTarget, sessionId: "successor" },
       };
       const otherWriter: CompactionAccountingFact = {
         kind: "durable",
         count: 1,
-        currentContextTokens: 20,
+        currentContextSnapshot: { tokens: 20 },
         target: { ...compactionTarget, sessionId: "successor", activeWriterRunId: "other-writer" },
       };
       const latest: CompactionAccountingFact = {
         kind: "durable",
         count: 1,
-        currentContextTokens: 10,
+        currentContextSnapshot: { tokens: 10 },
         target: { ...compactionTarget, sessionId: "latest-successor" },
       };
       const modelOnly: CompactionAccountingFact | undefined =
@@ -576,7 +577,9 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
           : {
               kind: "durable",
               count: 0,
-              currentContextTokens,
+              ...(owner === "writer-only"
+                ? {}
+                : { currentContextSnapshot: { tokens: currentContextTokens } }),
               target: {
                 ...latest.target,
                 activeWriterRunId:
@@ -627,11 +630,11 @@ describe("executeAgentTurn: run lifecycle and ownership", () => {
       expect(result.outcome.compaction).toEqual({
         count: 8,
         durable: [
-          { ...otherWriter, currentContextTokens: undefined },
+          { ...otherWriter, currentContextSnapshot: { tokens: undefined } },
           {
             ...latest,
             count: 5,
-            currentContextTokens: owner === "same" ? currentContextTokens : undefined,
+            currentContextSnapshot: { tokens: owner === "same" ? currentContextTokens : undefined },
           },
         ],
       });

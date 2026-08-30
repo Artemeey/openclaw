@@ -214,7 +214,7 @@ async function createFixture() {
     const fact: CompactionAccountingFact = {
       kind: "durable",
       count: 1,
-      currentContextTokens: params.currentContextTokens,
+      currentContextSnapshot: { tokens: params.currentContextTokens },
       target: {
         agentId: "main",
         sessionKey,

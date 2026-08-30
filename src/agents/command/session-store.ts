@@ -219,8 +219,9 @@ export async function updateSessionStoreAfterAgentRun(params: {
     }
   }
   if (!preserveUserFacingRunState) {
-    const totalTokens = params.compactionAccounting
-      ? params.compactionAccounting.currentContextTokens
+    const currentContextSnapshot = params.compactionAccounting?.currentContextSnapshot;
+    const totalTokens = currentContextSnapshot
+      ? currentContextSnapshot.tokens
       : hasUsage
         ? deriveSessionTotalTokens({ lastCallUsage, contextTokens, promptTokens })
         : undefined;
@@ -228,16 +229,11 @@ export async function updateSessionStoreAfterAgentRun(params: {
       next.totalTokens = totalTokens;
       next.totalTokensFresh = true;
       next.totalTokensVersion = SESSION_TOTAL_TOKENS_VERSION;
-    } else if (params.compactionAccounting || hasUsage) {
-      next.totalTokens = undefined;
-      next.totalTokensFresh = false;
-      next.totalTokensVersion = undefined;
-    } else if (
-      typeof entry.totalTokens === "number" &&
-      Number.isFinite(entry.totalTokens) &&
-      entry.totalTokens > 0
-    ) {
-      next.totalTokens = entry.totalTokens;
+    } else {
+      if (currentContextSnapshot || hasUsage) {
+        next.totalTokens = undefined;
+      }
+      // Empty-session zero is no longer current after a turn without usage.
       next.totalTokensFresh = false;
       next.totalTokensVersion = undefined;
     }
