@@ -158,6 +158,8 @@ export async function runPreparedModelCatalogWorkerRequest(
         resolveAmbientAgentCredentialsForDiscovery({
           config: value.input.config,
           env: value.input.env,
+          authoritativeSyntheticAuthProviderRefs:
+            prepared.pluginGeneration.pluginMetadataSnapshot.owners.cliBackends.keys(),
           syntheticAuthProviderRefs: scopeSyntheticAuthProviderRefs(
             resolveRuntimeSyntheticAuthProviderRefs(),
             value.providerIds,

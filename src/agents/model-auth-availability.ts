@@ -15,6 +15,8 @@ import type {
   ProviderModelRouteResolution,
   ProviderModelRouteSource,
 } from "../plugin-sdk/provider-model-types.js";
+import { normalizePluginsConfig } from "../plugins/config-state.js";
+import { passesManifestOwnerBasePolicy } from "../plugins/manifest-owner-policy.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { isValidSecretRef } from "../secrets/ref-contract.js";
 import type { PreparedAgentCredentialModes } from "./agent-auth-credential-modes.js";
@@ -62,6 +64,7 @@ import {
 } from "./model-auth-provider-config.js";
 import { resolveManagedSecretRefRuntimeProviderAuth } from "./model-auth-runtime-config.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
+import { resolveCliRuntimeExecutionProvider } from "./model-runtime-aliases.js";
 import {
   createOpenAIModelRoutesResolver,
   resolveConfiguredOpenAIAuthMode,
@@ -115,6 +118,9 @@ export type ModelAuthAvailabilityEvaluation = {
 };
 export type ModelAuthAvailabilityResolver = {
   providerDiscoveryProviderIds: readonly string[];
+  resolvePreparedRuntimeAuthMode(
+    provider: string,
+  ): PreparedAgentCredentialModes[string] | undefined;
   evaluateModelAuth(
     provider: string,
     ref?: ModelAuthAvailabilityRef,
@@ -125,6 +131,68 @@ export type ModelAuthAvailabilityResolver = {
   ): ModelAuthAvailability;
   hasSyntheticAuth(provider: string): boolean;
 };
+
+export function applyCliRuntimeModelAuthAvailability(params: {
+  authResolver: ModelAuthAvailabilityResolver;
+  evaluation: ModelAuthAvailabilityEvaluation;
+  cfg: OpenClawConfig;
+  agentId?: string;
+  metadataSnapshot?: PluginMetadataSnapshot;
+  provider: string;
+  modelId?: string;
+}): ModelAuthAvailabilityEvaluation {
+  if (
+    params.evaluation.routeResolution !== null ||
+    normalizeProviderId(params.provider) === "openai"
+  ) {
+    return params.evaluation;
+  }
+  const runtimeProvider = resolveCliRuntimeExecutionProvider({
+    provider: params.provider,
+    cfg: params.cfg,
+    agentId: params.agentId,
+    modelId: params.modelId,
+    metadataSnapshot: params.metadataSnapshot,
+  });
+  if (
+    !runtimeProvider ||
+    normalizeProviderId(runtimeProvider) === normalizeProviderId(params.provider)
+  ) {
+    return params.evaluation;
+  }
+  const runtimeOwners = params.metadataSnapshot?.owners?.cliBackends.get(
+    normalizeProviderId(runtimeProvider),
+  );
+  if (runtimeOwners?.length) {
+    const normalizedPluginConfig = normalizePluginsConfig(params.cfg.plugins);
+    if (
+      !runtimeOwners.some((pluginId) =>
+        passesManifestOwnerBasePolicy({
+          plugin: { id: pluginId },
+          normalizedConfig: normalizedPluginConfig,
+        }),
+      )
+    ) {
+      return {
+        ...params.evaluation,
+        availability: false,
+        unavailableReason: "missing-auth",
+        unavailableUntil: undefined,
+      };
+    }
+  }
+  const runtimeAuthMode = params.authResolver.resolvePreparedRuntimeAuthMode(runtimeProvider);
+  // The prepared native-runtime result is authoritative for this route. Provider
+  // credentials cannot prove that the separately authenticated CLI is usable.
+  return runtimeAuthMode
+    ? {
+        availability: true,
+        routeResolution: null,
+        selectedAuthMode: runtimeAuthMode,
+        evidence: "runtime",
+      }
+    : { availability: undefined, routeResolution: null };
+}
 type CreateModelAuthAvailabilityResolverParams = {
   cfg: OpenClawConfig;
   authStore: AuthProfileStore;
@@ -1266,6 +1334,8 @@ export function createModelAuthAvailabilityResolver(
       left.localeCompare(right),
     ),
     evaluateModelAuth,
+    resolvePreparedRuntimeAuthMode: (provider) =>
+      params.preparedRuntimeAuthModes?.[normalizeProviderIdForAuth(provider)],
     resolveProviderAuthAvailability,
     hasSyntheticAuth: (provider) =>
       synthetic.has(normalizeProviderIdForAuth(provider)) ||

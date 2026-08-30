@@ -5,12 +5,12 @@ import { resolveExternalCliAuthScopeFromConfig } from "../../agents/auth-profile
 import type { RuntimeAuthMaterialization } from "../../agents/auth-profiles/runtime-materializations.js";
 import type { AuthProfileStore } from "../../agents/auth-profiles/types.js";
 import {
+  applyCliRuntimeModelAuthAvailability,
   createModelAuthAvailabilityResolver,
   type ModelAuthAvailabilityEvaluation,
   type ModelAuthAvailabilityResolver,
 } from "../../agents/model-auth-availability.js";
 import type { ModelCatalogEntry } from "../../agents/model-catalog.types.js";
-import { resolveCliRuntimeExecutionProvider } from "../../agents/model-runtime-aliases.js";
 import {
   createOpenAIModelRoutesResolver,
   openAIModelCatalogRoutePolicy,
@@ -94,26 +94,15 @@ export function createModelsListEntryEvaluator(params: {
           baseUrl: variant.baseUrl,
         })),
       });
-      if (
-        evaluation.availability !== true &&
-        evaluation.routeResolution === null &&
-        provider !== "openai"
-      ) {
-        const runtimeProvider = resolveCliRuntimeExecutionProvider({
-          provider: entry.provider,
-          cfg: params.cfg,
-          agentId: params.agentId,
-          modelId: entry.id,
-          metadataSnapshot: params.metadataSnapshot,
-        });
-        if (runtimeProvider && normalizeProviderId(runtimeProvider) !== provider) {
-          // The native runtime owns the remaining auth decision, including whether
-          // credentials are absent or simply have not been read yet.
-          evaluation = params.authResolver.evaluateModelAuth(runtimeProvider, {
-            modelId: entry.id,
-          });
-        }
-      }
+      evaluation = applyCliRuntimeModelAuthAvailability({
+        authResolver: params.authResolver,
+        evaluation,
+        cfg: params.cfg,
+        agentId: params.agentId,
+        metadataSnapshot: params.metadataSnapshot,
+        provider: entry.provider,
+        modelId: entry.id,
+      });
       // Stored credentials prove presence, not acceptance. Apply the live rejection only to the
       // profile discovery tested; widening it would hide routes backed by another valid profile.
       return params.providerOutcomes?.some(
