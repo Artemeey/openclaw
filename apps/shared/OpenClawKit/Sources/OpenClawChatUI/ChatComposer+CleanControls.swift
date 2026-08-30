@@ -148,6 +148,7 @@ extension OpenClawChatComposer {
         } label: {
             self.cleanInlineModelLabel(compact: compact)
         }
+        .id(self.viewModel.modelSelectionID)
         .menuIndicator(.hidden)
         .tint(OpenClawChatTheme.muted)
         .disabled(
