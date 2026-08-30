@@ -339,7 +339,7 @@ public struct OpenClawChatTransportRouteLease: Sendable {
         idempotencyKey: String,
         attachments: [OpenClawChatAttachmentPayload]) async throws -> OpenClawChatSendResponse
     {
-        return try await self.sendTargetedContextMessageImpl(
+        try await self.sendTargetedContextMessageImpl(
             sessionKey,
             OpenClawChatSendContext(agentID: agentID),
             message,
