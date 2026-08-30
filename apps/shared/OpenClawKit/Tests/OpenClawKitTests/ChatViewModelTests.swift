@@ -4,6 +4,22 @@ import OpenClawProtocol
 import Testing
 @testable import OpenClawChatUI
 
+extension OpenClawChatViewModel {
+    fileprivate func waitForPendingSessionSettings(
+        in sessionKey: String,
+        canonicalSessionKey: String? = nil,
+        agentID: String? = nil,
+        sessionRoutingContract: String? = nil) async
+    {
+        let target = self.sessionSettingsPatchTarget(
+            in: sessionKey,
+            canonicalSessionKey: canonicalSessionKey,
+            agentID: agentID,
+            sessionRoutingContract: sessionRoutingContract)
+        await self.waitForPendingSessionSettings(for: target)
+    }
+}
+
 private func chatTextMessage(
     role: String,
     text: String,
@@ -7709,7 +7725,7 @@ struct ChatViewModelTests {
                     code: "INVALID_REQUEST",
                     message: "Session settings changed before send. Retry.",
                     details: [
-                        "reason": AnyCodable(OpenClawChatSessionSettingsContract.changedErrorReason),
+                        "reason": AnyCodable("session-settings-changed"),
                     ])
             })
         try await loadAndWaitBootstrap(vm: vm, sessionId: "sess-main")

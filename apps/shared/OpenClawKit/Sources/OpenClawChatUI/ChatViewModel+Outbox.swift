@@ -1148,7 +1148,7 @@ extension OpenClawChatViewModel {
                 let parked = await self.parkOutboxCommandForChangedTarget(command, outbox: outbox)
                 return parked ? .continueFlush : .stop
             }
-            if error.detailsReason == OpenClawChatSessionSettingsContract.changedErrorReason {
+            if error.detailsReason == Self.sessionSettingsChangedErrorReason {
                 let parked = await self.parkOutboxCommandForChangedTarget(
                     command,
                     outbox: outbox,
@@ -1332,6 +1332,7 @@ extension OpenClawChatViewModel {
     }
 
     private static let activeLeafChangedErrorReason = "active-leaf-changed"
+    private static let sessionSettingsChangedErrorReason = "session-settings-changed"
 
     private func parkOutboxCommandForChangedTarget(
         _ command: OpenClawChatOutboxCommand,
@@ -1343,17 +1344,6 @@ extension OpenClawChatViewModel {
             outbox: outbox,
             retryCount: command.retryCount,
             reason: lastError) != .unavailable
-    }
-
-    private func parkOutboxCommandForChangedSettings(
-        _ command: OpenClawChatOutboxCommand,
-        outbox: any OpenClawChatCommandOutbox) async -> Bool
-    {
-        await self.failOutboxCommand(
-            command,
-            outbox: outbox,
-            retryCount: command.retryCount,
-            reason: OpenClawChatSQLiteTranscriptCache.outboxSettingsChangedError) != .unavailable
     }
 
     /// Gateway rejections ("error"/"timeout" send acks) burn a retry attempt
