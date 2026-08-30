@@ -130,6 +130,7 @@ function runPluginSummary(params: {
   runDocker: boolean;
   runExtensions: boolean;
   runNode: boolean;
+  runNpmSecurity: boolean;
   runStatic: boolean;
   static: string;
 }) {
@@ -151,6 +152,7 @@ function runPluginSummary(params: {
       RUN_DOCKER: String(params.runDocker),
       RUN_EXTENSIONS: String(params.runExtensions),
       RUN_NODE: String(params.runNode),
+      RUN_NPM_SECURITY: String(params.runNpmSecurity),
       RUN_STATIC: String(params.runStatic),
       SECURITY_RESULT: "success",
       STATIC_RESULT: params.static,
@@ -371,7 +373,10 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
     const source = readFileSync(".github/workflows/plugin-prerelease.yml", "utf8");
 
     expect(securityPlan.needs).toEqual(["preflight"]);
+    expect(securityPlan.if).toBe("inputs.phase != 'candidate'");
     expect(securityPackage.needs).toEqual(["preflight", "plugin-npm-security-plan"]);
+    expect(securityPackage.if).toBe("needs.plugin-npm-security-plan.result == 'success'");
+    expect(securityPackage.strategy["max-parallel"]).toBe(8);
     expect(securityScan).toMatchObject({
       name: "plugin-npm-security-scan",
       needs: ["preflight", "plugin-npm-security-plan", "plugin-npm-security-package"],
@@ -384,8 +389,18 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
         (step: WorkflowStep) => step.name === "Scan supplemental inert plugin inputs",
       )?.run,
     ).toContain("node scripts/plugin-npm-security-scan-runner.mjs");
+    expect(
+      securityScan.steps.find(
+        (step: WorkflowStep) => step.name === "Scan supplemental inert plugin inputs",
+      )?.run,
+    ).toContain('--target-context-ref "$TARGET_CONTEXT_REF"');
     expect(source).not.toContain("npm-install-security-scan.release.test.ts");
-    expect(source).not.toContain("node_test_exclude_patterns_json");
+    expect(workflow.on.workflow_dispatch.inputs.target_context_ref).toEqual({
+      default: "",
+      description: "Canonical release context for an exact-SHA frozen-target validation",
+      required: false,
+      type: "string",
+    });
   });
 
 
@@ -794,7 +809,7 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
     ).toContain("plugin-prerelease-inspector advisory result");
     expect(
       suite.steps.find((step: WorkflowStep) => step.name === "Verify plugin prerelease suite").run,
-    ).toContain('check_required "plugin-npm-security-scan" "true" "$SECURITY_RESULT"');
+    ).toContain('check_required "plugin-npm-security-scan" "$RUN_NPM_SECURITY" "$SECURITY_RESULT"');
   });
 
   it.each([
@@ -870,6 +885,7 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
       runDocker: false,
       runExtensions: true,
       runNode: true,
+      runNpmSecurity: true,
       runStatic: true,
       static: "success",
     });
@@ -880,6 +896,7 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
       runDocker: true,
       runExtensions: false,
       runNode: false,
+      runNpmSecurity: false,
       runStatic: false,
       static: "failure",
     });
@@ -890,6 +907,7 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
       runDocker: true,
       runExtensions: false,
       runNode: false,
+      runNpmSecurity: false,
       runStatic: false,
       static: "skipped",
     });

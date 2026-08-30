@@ -21,6 +21,7 @@ type ParsedArgs = {
   outputPath: string;
   preDownloadErrors: string[];
   preDownloadRejectedPackageNames: string[];
+  targetContextRef: string;
   toolingSha: string;
 };
 
@@ -39,6 +40,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   const candidateSha = values.get("--candidate-sha") ?? "";
   const expectedPackagesJson = values.get("--expected-packages-json") ?? "";
   const outputPath = values.get("--report") ?? "";
+  const targetContextRef = values.get("--target-context-ref") ?? "";
   const toolingSha = values.get("--tooling-sha") ?? "";
   if (!artifactRoot) {
     throw new Error("--artifact-root is required.");
@@ -86,6 +88,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     outputPath: resolve(outputPath),
     preDownloadErrors: preDownload.errors,
     preDownloadRejectedPackageNames: preDownload.rejectedPackageNames,
+    targetContextRef,
     toolingSha,
   };
 }
@@ -142,6 +145,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       expectedPackages: args.expectedPackages,
       preDownloadErrors: args.preDownloadErrors,
       preDownloadRejectedPackageNames: args.preDownloadRejectedPackageNames,
+      targetContextRef: args.targetContextRef,
       toolingDir: process.cwd(),
       toolingSha: args.toolingSha,
     });

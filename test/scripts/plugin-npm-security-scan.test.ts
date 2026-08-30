@@ -148,10 +148,6 @@ function currentLayoutFindings(): string[] {
   return [
     "@openclaw/codex:dangerous-exec:src/app-server/sandbox-exec-server/sandbox-child.ts",
     "@openclaw/codex:dangerous-exec:src/app-server/transport-process-snapshot.ts",
-    ...Array.from(
-      { length: 13 },
-      () => "@openclaw/codex:dangerous-exec:src/app-server/transport.process.test.ts",
-    ),
   ];
 }
 
@@ -173,7 +169,7 @@ function syntheticResult(
 }
 
 describe("scripts/lib/plugin-npm-security-scan.mts", () => {
-  it("accepts only the complete current and frozen-legacy source layouts", () => {
+  it("selects the complete reviewed layout from the canonical release context", () => {
     const current = currentLayoutFindings();
     const frozenLegacy = [
       "@openclaw/codex:dangerous-exec:src/app-server/sandbox-exec-server/http.ts",
@@ -184,8 +180,14 @@ describe("scripts/lib/plugin-npm-security-scan.mts", () => {
     ];
 
     expect(resolveReviewedSourceLayout(current)?.id).toBe("current");
-    expect(resolveReviewedSourceLayout(frozenLegacy)?.id).toBe("frozen-legacy");
-    expect(resolveReviewedSourceLayout(frozenLegacy.slice(0, -1))).toBeUndefined();
+    expect(resolveReviewedSourceLayout(frozenLegacy)).toBeUndefined();
+    expect(resolveReviewedSourceLayout(frozenLegacy, "extended-stable/2026.6.33")?.id).toBe(
+      "extended-stable-2026.6.33",
+    );
+    expect(
+      resolveReviewedSourceLayout(frozenLegacy.slice(0, -1), "extended-stable/2026.6.33"),
+    ).toBeUndefined();
+    expect(resolveReviewedSourceLayout(current, "extended-stable/2026.6.33")).toBeUndefined();
     expect(resolveReviewedSourceLayout([...current, frozenLegacy[0]!])).toBeUndefined();
     expect(resolveReviewedSourceLayout([...current, current[0]!])).toBeUndefined();
   });

@@ -15,6 +15,11 @@ on:
         required: false
         default: ""
         type: string
+      target_context_ref:
+        description: Canonical release context for an exact-SHA frozen-target validation
+        required: false
+        default: ""
+        type: string
       full_release_validation:
         description: Enable release-only Docker prerelease lanes from Full Release Validation
         required: false
@@ -29,6 +34,11 @@ on:
           - all
           - independent
           - candidate
+      node_test_exclude_patterns_json:
+        description: Full Release Validation-only exact plugin test paths omitted for a frozen target
+        required: false
+        default: "[]"
+        type: string
       dispatch_id:
         description: Optional parent workflow dispatch identifier
         required: false
@@ -374,6 +384,7 @@ jobs:
       contents: read
     name: Plan plugin npm security artifacts
     needs: [preflight]
+    if: inputs.phase != 'candidate'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -424,11 +435,12 @@ jobs:
       contents: read
     name: Package ${{ matrix.package_name }}
     needs: [preflight, plugin-npm-security-plan]
+    if: needs.plugin-npm-security-plan.result == 'success'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 24
+      max-parallel: 8
       matrix: ${{ fromJson(needs.plugin-npm-security-plan.outputs.matrix) }}
     steps:
       - name: Checkout trusted packaging tooling
@@ -576,6 +588,7 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ needs.preflight.outputs.checkout_revision }}
           EXPECTED_PACKAGES_JSON: ${{ needs.plugin-npm-security-plan.outputs.packages_json }}
+          TARGET_CONTEXT_REF: ${{ inputs.target_context_ref }}
           TOOLING_SHA: ${{ github.sha }}
         shell: bash
         run: |
@@ -587,6 +600,7 @@ jobs:
             --artifact-root "$RUNNER_TEMP/plugin-npm-security-packages" \
             --candidate-sha "$CANDIDATE_SHA" \
             --expected-packages-json "$EXPECTED_PACKAGES_JSON" \
+            --target-context-ref "$TARGET_CONTEXT_REF" \
             --tooling-sha "$TOOLING_SHA" \
             --report "$report"
 
@@ -1021,6 +1035,7 @@ jobs:
           RUN_NODE: ${{ needs.preflight.outputs.run_plugin_prerelease_node }}
           RUN_EXTENSIONS: ${{ needs.preflight.outputs.run_plugin_prerelease_extensions }}
           RUN_DOCKER: ${{ needs.preflight.outputs.run_plugin_prerelease_docker }}
+          RUN_NPM_SECURITY: ${{ inputs.phase != 'candidate' && 'true' || 'false' }}
           SECURITY_RESULT: ${{ needs.plugin-npm-security-scan.result }}
           STATIC_RESULT: ${{ needs.plugin-prerelease-static-shard.result }}
           NODE_RESULT: ${{ needs.plugin-prerelease-node-shard.result }}
@@ -1044,7 +1059,7 @@ jobs:
             fi
           }
 
-          check_required "plugin-npm-security-scan" "true" "$SECURITY_RESULT"
+          check_required "plugin-npm-security-scan" "$RUN_NPM_SECURITY" "$SECURITY_RESULT"
           check_required "plugin-prerelease-static" "$RUN_STATIC" "$STATIC_RESULT"
           check_required "plugin-prerelease-node" "$RUN_NODE" "$NODE_RESULT"
           check_required "plugin-prerelease-extensions" "$RUN_EXTENSIONS" "$EXTENSIONS_RESULT"
