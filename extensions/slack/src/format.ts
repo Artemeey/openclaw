@@ -150,7 +150,7 @@ function isUnsafeSlackEmphasisBoundary(character: string): boolean {
   return SLACK_MRKDWN_SYMBOL_RE.test(character) || isSlackCjkPunctuation(character);
 }
 
-function makeSlackEmphasisStylesSafe(ir: MarkdownIR): MarkdownIR {
+export function makeSlackEmphasisStylesSafe(ir: MarkdownIR): MarkdownIR {
   const styles = ir.styles.filter((span) => {
     if (span.style !== "italic" && span.style !== "bold") {
       return true;
@@ -207,22 +207,15 @@ function tokenizeSlackMrkdwn(text: string): string[] {
         continue;
       }
     }
-    const codePoint = text.codePointAt(index);
-    if (codePoint === undefined) {
-      break;
-    }
-    const character = String.fromCodePoint(codePoint);
+    const character = getCodePointAt(text, index);
     index += character.length;
     if (character === "\\" && index < text.length) {
-      const escapedCodePoint = text.codePointAt(index);
-      if (escapedCodePoint !== undefined) {
-        const escapedCharacter = String.fromCodePoint(escapedCodePoint);
-        tokens.push(character + escapedCharacter);
-        index += escapedCharacter.length;
-        continue;
-      }
+      const escapedCharacter = getCodePointAt(text, index);
+      tokens.push(character + escapedCharacter);
+      index += escapedCharacter.length;
+    } else {
+      tokens.push(character);
     }
-    tokens.push(character);
   }
   return tokens;
 }
@@ -231,11 +224,8 @@ function resolveSlackCodeMarkerTransition(
   active: SlackCodeMarker | undefined,
   token: string,
 ): SlackCodeMarker | undefined | null {
-  if (token === "```" && active !== "`") {
-    return active === "```" ? undefined : "```";
-  }
-  if (token === "`" && active !== "```") {
-    return active === "`" ? undefined : "`";
+  if ((token === "```" && active !== "`") || (token === "`" && active !== "```")) {
+    return active === token ? undefined : token;
   }
   return null;
 }
@@ -266,7 +256,7 @@ function scanSlackMrkdwn(text: string) {
       const start = opened.get(token.text);
       if (start && eligible(before, after)) {
         ranges.push([start.offset, offset + token.text.length]);
-        start.token.marker = token.marker = true;
+        start.token.marker = token.marker = offset > start.offset + token.text.length;
         opened.delete(token.text);
       } else if (eligible(after, before)) {
         // A literal delimiter must not consume the opener of a later real span.
@@ -483,66 +473,71 @@ export function chunkSlackMrkdwnText(text: string, limit: number): string[] {
     return [text];
   }
   const { tokens } = scanSlackMrkdwn(text);
-  if (!tokens.some((token) => token.marker || token.text.length > 1)) {
-    return chunkTextForOutbound(text, limit, { preserveWhitespace: true });
-  }
-
   const chunks: string[] = [];
-  const opened = new Map<string, boolean>();
-  let active: string[] = [];
+  const opened = new Map<string, string>();
+  const active = () => [...opened.values()].filter(Boolean);
+  let rendered: string[] = [];
   let content = "";
-  const close = () => active.toReversed().join("");
+  let whitespace = "";
+  const close = (markers: string[]) => markers.toReversed().join("");
   const flush = () => {
-    if (content && content !== active.join("")) {
-      chunks.push(content + close());
+    if (content || whitespace) {
+      chunks.push(content + close(rendered) + whitespace);
     }
-    content = "";
+    content = whitespace = "";
+    rendered = [];
+  };
+  const pending = () => {
+    const next = active();
+    const mismatch = rendered.findIndex((marker, index) => marker !== next[index]);
+    const shared = mismatch < 0 ? rendered.length : mismatch;
+    return close(rendered.slice(shared)) + whitespace + next.slice(shared).join("");
   };
 
   for (const { text: token, marker } of tokens) {
-    let next = active;
-    const closing = marker && opened.has(token);
     if (marker) {
-      const enabled = closing
-        ? opened.get(token)
-        : (active.join("").length + token.length) * 2 < limit;
-      if (closing) {
+      if (opened.has(token)) {
         opened.delete(token);
       } else {
-        opened.set(token, Boolean(enabled));
+        opened.set(token, (active().join("").length + token.length) * 2 < limit ? token : "");
       }
-      if (!enabled) {
-        continue;
-      }
-      next = closing ? active.filter((value) => value !== token) : [...active, token];
-    }
-    const nextOverhead = next.join("").length;
-    if (content && content.length + token.length + nextOverhead > limit) {
-      flush();
-    }
-    const prefix = active.join("");
-    active = next;
-    if (!content && closing) {
       continue;
     }
-    const contentLimit = limit - prefix.length - nextOverhead;
+    const inCode = opened.has("`") || opened.has("```");
+    // Emit styles with content, keeping chunk-edge whitespace outside emphasis without losing bytes.
+    if (!inCode && /^\s+$/u.test(token)) {
+      if (content.length + close(rendered).length + whitespace.length + token.length > limit) {
+        flush();
+      }
+      whitespace += token;
+      continue;
+    }
+    if (
+      (content || whitespace) &&
+      content.length + pending().length + token.length + close(active()).length > limit
+    ) {
+      flush();
+    }
+    const markers = active();
+    const prefix = markers.join("");
+    const contentLimit = limit - prefix.length * 2;
     if (token.length > contentLimit) {
       flush();
-      const inCode = opened.has("`") || opened.has("```");
-      if (inCode && isAllowedSlackAngleToken(token)) {
-        const value = active.length ? token : escapeSlackMrkdwnSegment(token);
-        chunks.push(
-          ...chunkTextForOutbound(value, Math.max(1, Math.floor(contentLimit)), {
-            preserveWhitespace: true,
-          }).map((fragment) => prefix + fragment + close()),
-        );
-      } else {
-        chunks.push(...(token.length <= limit ? [token] : chunkTextForOutbound(token, limit)));
-      }
+      const codeAngle = inCode && isAllowedSlackAngleToken(token);
+      const value = codeAngle && !markers.length ? escapeSlackMrkdwnSegment(token) : token;
+      const fragments = chunkTextForOutbound(
+        value,
+        codeAngle ? Math.max(1, Math.floor(contentLimit)) : limit,
+        codeAngle ? { preserveWhitespace: true } : undefined,
+      );
+      chunks.push(
+        ...fragments.map((fragment) => (codeAngle ? prefix + fragment + close(markers) : fragment)),
+      );
       continue;
     }
-    content ||= prefix;
-    content += token;
+    content += pending() + token;
+    rendered = markers;
+    whitespace = "";
   }
   flush();
   return chunks;

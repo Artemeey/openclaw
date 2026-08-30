@@ -351,6 +351,49 @@ describe("Slack authored presentation delivery", () => {
 
   it.each([
     {
+      name: "nested intraword styles",
+      authored: "\\*A\\_B\\_\\*",
+      rendered: "*A_B_*",
+      elements: [
+        {
+          type: "rich_text_section",
+          elements: [
+            { type: "text", text: "A", style: { bold: true } },
+            { type: "text", text: "B", style: { bold: true, italic: true } },
+          ],
+        },
+      ],
+    },
+    {
+      name: "crossing style ranges",
+      authored: "\\*A\\_BC\\_",
+      rendered: "*A_BC_",
+      elements: [
+        {
+          type: "rich_text_section",
+          elements: [
+            { type: "text", text: "A", style: { bold: true } },
+            { type: "text", text: "B", style: { bold: true, italic: true } },
+            { type: "text", text: "C", style: { italic: true } },
+          ],
+        },
+      ],
+    },
+    {
+      name: "link label whitespace",
+      authored: "First[Second](https://example.com)",
+      rendered: "First<https://example.com|Second>",
+      elements: [
+        {
+          type: "rich_text_section",
+          elements: [
+            { type: "text", text: "First" },
+            { type: "link", text: " Second", url: "https://example.com" },
+          ],
+        },
+      ],
+    },
+    {
       name: "adjacent bold leaves",
       authored: "**Overview**",
       elements: [
@@ -451,6 +494,27 @@ describe("Slack authored presentation delivery", () => {
         : []),
     ]);
   });
+
+  it.each(["x".repeat(2_997) + " *y*", "*" + "x".repeat(2_997) + " y*"])(
+    "preserves valid native emphasis at a full chunk boundary %#",
+    async (text) => {
+      const { client } = await sendThroughRealSlack({
+        payload: { presentation: { blocks: [{ type: "text", text }] } },
+      });
+      const fragments =
+        postedSlackMessage(client, 0).blocks?.map((block) => block.text?.text ?? "") ?? [];
+      expect(fragments.map((fragment) => fragment.replaceAll("*", "")).join("")).toBe(
+        text.replaceAll("*", ""),
+      );
+      for (const fragment of fragments) {
+        expect(fragment.length).toBeLessThanOrEqual(3_000);
+        expect(fragment).not.toContain("**");
+        for (const span of fragment.matchAll(/\*([^*]*)\*/gu)) {
+          expect(span[1]?.trim()).toBe(span[1]);
+        }
+      }
+    },
+  );
 
   it.each([
     {

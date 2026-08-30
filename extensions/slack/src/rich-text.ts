@@ -9,7 +9,11 @@ import {
   type MarkdownIR,
   type MarkdownStyle,
 } from "openclaw/plugin-sdk/text-chunking";
-import { escapeSlackMrkdwnSegment, SLACK_RENDER_OPTIONS } from "./format.js";
+import {
+  escapeSlackMrkdwnSegment,
+  makeSlackEmphasisStylesSafe,
+  SLACK_RENDER_OPTIONS,
+} from "./format.js";
 import { escapeSlackMrkdwn } from "./monitor/mrkdwn.js";
 
 const styledRenderOptions = { ...SLACK_RENDER_OPTIONS, escapeText: (text: string) => text };
@@ -28,25 +32,6 @@ const references: Record<string, readonly [string, string]> = {
   usergroup: ["usergroup_id", "!subteam^"],
   broadcast: ["range", "!"],
 };
-
-function appendRichText(target: MarkdownIR, value: MarkdownIR, separator = "") {
-  if (!value.text) {
-    return;
-  }
-  if (target.text) {
-    target.text += separator;
-  }
-  const offset = target.text.length;
-  target.text += value.text;
-  for (const span of value.styles) {
-    const previous = target.styles.findLast((candidate) => candidate.style === span.style);
-    if (previous?.end === offset + span.start) {
-      previous.end = offset + span.end;
-    } else {
-      target.styles.push({ ...span, start: span.start + offset, end: span.end + offset });
-    }
-  }
-}
 
 function projectRichText(
   value: unknown,
@@ -94,7 +79,22 @@ function projectRichText(
       if (!part) {
         return undefined;
       }
-      appendRichText(result, part, type === "rich_text_list" ? "\n" : "");
+      if (!part.text) {
+        continue;
+      }
+      if (result.text && type === "rich_text_list") {
+        result.text += "\n";
+      }
+      const offset = result.text.length;
+      result.text += part.text;
+      for (const span of part.styles) {
+        const previous = result.styles.findLast((candidate) => candidate.style === span.style);
+        if (previous?.end === offset + span.start) {
+          previous.end = offset + span.end;
+        } else {
+          result.styles.push({ ...span, start: span.start + offset, end: span.end + offset });
+        }
+      }
     }
     if (styled && type === "rich_text_preformatted") {
       if (result.text.includes("```")) {
@@ -111,11 +111,7 @@ function projectRichText(
       : code
         ? escapeSlackMrkdwnSegment
         : escapeSlackMrkdwn;
-  const reference =
-    options.format === "plain" || styled || options.preserveReferences
-      ? (text: string) => text
-      : escapeSlackMrkdwn;
-  const label = read(element.text);
+  const label = styled && typeof element.text === "string" ? element.text : read(element.text);
   if (type === "text" && typeof element.text === "string") {
     result.text = literal(element.text);
   } else if (options.format === "plain" && label) {
@@ -134,7 +130,8 @@ function projectRichText(
   } else {
     const [field, prefix] = references[String(type)] ?? [];
     const id = field ? read(element[field]) : undefined;
-    result.text = id ? reference(`<${prefix}${id}>`) : "";
+    const token = id ? `<${prefix}${id}>` : "";
+    result.text = styled || options.preserveReferences ? token : literal(token);
   }
   result.styles = supportedStyles.map(([, kind]) => ({
     start: 0,
@@ -151,7 +148,14 @@ export function renderSlackRichTextFragments(
 ): (string | null)[] {
   return (Array.isArray(value) ? value : []).flatMap((element) => {
     const ir = projectRichText(element, options);
-    if (!ir) {
+    // Native styles must satisfy Slack's flanks and the marker renderer's nested-span contract.
+    if (
+      !ir ||
+      makeSlackEmphasisStylesSafe(ir) !== ir ||
+      ir.styles.some((a) =>
+        ir.styles.some((b) => a.start < b.start && b.start < a.end && a.end < b.end),
+      )
+    ) {
       return [null];
     }
     const rendered =
