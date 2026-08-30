@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/synology-chat",
-  "version": "2026.8.1-beta.4",
+  "version": "2026.8.1",
   "description": "Synology Chat channel plugin for OpenClaw channels and direct messages.",
   "repository": {
     "type": "git",
@@ -75,9 +75,7 @@
               "flags": "--use-env",
               "description": "Use Synology Chat environment credentials"
             },
-            "envVars": [
-              "SYNOLOGY_CHAT_TOKEN"
-            ]
+            "envVars": ["SYNOLOGY_CHAT_TOKEN"]
           }
         ]
       }
@@ -88,10 +86,10 @@
       "minHostVersion": ">=2026.4.10"
     },
     "compat": {
-      "pluginApi": ">=2026.8.1-beta.4"
+      "pluginApi": ">=2026.8.1"
     },
     "build": {
-      "openclawVersion": "2026.8.1-beta.4"
+      "openclawVersion": "2026.8.1"
     },
     "release": {
       "publishToClawHub": true,
