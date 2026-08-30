@@ -42,6 +42,7 @@ import { registerChatAbortController } from "./chat-abort.js";
 import { ADMIN_SCOPE, WRITE_SCOPE } from "./operator-scopes.js";
 import type { GatewayRequestContext } from "./server-methods/shared-types.js";
 import { formatError } from "./server-utils.js";
+import { createPendingTalkConsult, type PendingConsult } from "./talk-client-pending-consult.js";
 import { registerTalkConnectionCleanup } from "./talk-session-registry.js";
 
 type GatewayControlOwner = {
@@ -242,7 +243,7 @@ export function boundTalkClientRealtimeInitialItems(
   return newestFirst.toReversed();
 }
 
-export function createTalkClientAgentConsultRunner(params: {
+export function createTalkClientAgentConsultRunner<CapturedControl = undefined>(params: {
   config: OpenClawConfig;
   context: Pick<GatewayRequestContext, "chatAbortControllers" | "logGateway">;
   agentId: string;
@@ -254,10 +255,15 @@ export function createTalkClientAgentConsultRunner(params: {
   runIdPrefix?: string;
   surface?: string;
   registerRun?: (params: { runId: string }) => void;
+  captureRunControl?: () => CapturedControl | undefined;
 }) {
   const authority = params.authority ?? resolveTalkAgentConsultAuthority(undefined);
   let agentRuntime: ReturnType<typeof createPluginRuntime>["agent"] | undefined;
-  const runArgs = async (args: unknown, signal?: AbortSignal) => {
+  const runArgs = async (
+    args: unknown,
+    signal?: AbortSignal,
+    onRunControlReady?: (captured: CapturedControl | undefined) => void,
+  ) => {
     const parsedArgs = parseRealtimeVoiceAgentConsultArgs(args);
     const voiceSessionId = params.getVoiceSessionId();
     if (!voiceSessionId) {
@@ -332,6 +338,7 @@ export function createTalkClientAgentConsultRunner(params: {
           controlUiVisible: false,
           kind: "chat-send",
         });
+        onRunControlReady?.(params.captureRunControl?.());
         return { abortSignal: registration.controller.signal, cleanup: registration.cleanup };
       },
     });
@@ -350,7 +357,11 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
   connId: string;
   context: Pick<GatewayRequestContext, "broadcastToConnIds" | "logGateway">;
   assertConnectionOpen?: () => void;
-  runAgentConsult: (args: unknown, signal: AbortSignal) => Promise<{ text: string }>;
+  runAgentConsult: (
+    args: unknown,
+    signal: AbortSignal,
+    onRunControlReady?: (captured: CapturedControl | undefined) => void,
+  ) => Promise<{ text: string }>;
   appendTranscript: (entry: {
     entryId: string;
     role: "user" | "assistant";
@@ -358,7 +369,7 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
   }) => Promise<void>;
   flushTranscript: () => Promise<void>;
   closeLogicalSession: () => Promise<void>;
-  captureAgentRunControl?: () => CapturedControl;
+  captureAgentRunControl?: () => CapturedControl | undefined;
   controlAgentRun?: (
     params: { sessionKey: string; text: string; mode?: unknown },
     captured: CapturedControl | undefined,
@@ -372,7 +383,7 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
   let transcriptSequence = 0;
   const entryPrefix = `gateway-${randomUUID()}`;
   const consultQueue = createRealtimeControlQueue();
-  const consultControllers = new Map<string, AbortController>();
+  const consultControllers = new Map<string, PendingConsult<CapturedControl>>();
   const warn = (message: string) => params.context.logGateway.warn(message);
   const talkPayload = () => ({ voiceSessionId: params.voiceSessionId });
   const harness = createRealtimeVoiceSessionHarness({
@@ -419,8 +430,8 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
       ? await params.controlAgentRun(controlParams, captured)
       : await controlRealtimeVoiceAgentRun(controlParams);
     if (result.mode === "cancel" && result.ok) {
-      for (const controller of consultControllers.values()) {
-        controller.abort(new Error("Realtime voice consult cancelled"));
+      for (const consult of consultControllers.values()) {
+        consult.controller.abort(new Error("Realtime voice consult cancelled"));
       }
     }
     return result;
@@ -428,12 +439,17 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
 
   const runConsult = async (
     event: RealtimeVoiceToolCallEvent,
-    controller: AbortController,
+    consult: PendingConsult<CapturedControl>,
   ): Promise<void> => {
+    const { controller } = consult;
     try {
       controller.signal.throwIfAborted();
       await params.flushTranscript();
-      const result = await params.runAgentConsult(event.args, controller.signal);
+      const result = await params.runAgentConsult(
+        event.args,
+        controller.signal,
+        consult.resolveControlTarget,
+      );
       if (signal.aborted) {
         return;
       }
@@ -447,7 +463,8 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
         : { error: formatError(error) };
       await submit(event.callId, result);
     } finally {
-      if (consultControllers.get(event.callId) === controller) {
+      consult.resolveControlTarget(undefined);
+      if (consultControllers.get(event.callId) === consult) {
         consultControllers.delete(event.callId);
       }
     }
@@ -455,8 +472,17 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
 
   const runControl = createTalkRealtimeRunControlOwner({
     hasActiveRun: () => consultControllers.size > 0,
-    ...(params.captureAgentRunControl ? { capture: params.captureAgentRunControl } : {}),
-    execute: applyControl,
+    ...(params.captureAgentRunControl
+      ? {
+          capture: () => {
+            const target = params.captureAgentRunControl?.();
+            return target
+              ? Promise.resolve(target)
+              : consultControllers.values().next().value?.controlTarget;
+          },
+        }
+      : {}),
+    execute: async (args, captured) => await applyControl(args, await captured),
     speak: (message) => bridge?.sendUserMessage?.(message),
     warn,
   });
@@ -466,9 +492,11 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
       return;
     }
     if (event.name === REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME) {
-      const controller = new AbortController();
-      consultControllers.set(event.callId, controller);
-      const admission = consultQueue.enqueue(() => runConsult(event, controller));
+      // Controls accepted during consult startup bind to this consult's eventual
+      // exact target; they never re-resolve whichever run happens to be current later.
+      const consult = createPendingTalkConsult<CapturedControl>();
+      consultControllers.set(event.callId, consult);
+      const admission = consultQueue.enqueue(() => runConsult(event, consult));
       if (!admission.accepted) {
         consultControllers.delete(event.callId);
         void submit(event.callId, { error: "Realtime Talk consult queue is full" });
@@ -642,8 +670,8 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
           owners.delete(params.voiceSessionId);
         }
         if (!options?.preserveRuns) {
-          for (const controller of consultControllers.values()) {
-            controller.abort(new Error("Realtime voice session closed"));
+          for (const consult of consultControllers.values()) {
+            consult.controller.abort(new Error("Realtime voice session closed"));
           }
         }
         consultQueue.seal();

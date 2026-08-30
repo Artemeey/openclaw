@@ -336,6 +336,76 @@ describe("Talk client Gateway control owner", () => {
     await owner.close();
   });
 
+  it("binds control admitted before run registration to that consult's exact target", async () => {
+    const registration = deferred<void>();
+    const consultResult = deferred<{ text: string }>();
+    const target = { id: "registered" };
+    let currentTarget: typeof target | undefined;
+    const controlAgentRun = vi.fn(
+      async (_params: unknown, _captured: typeof target | undefined) => ({
+        ok: true,
+        mode: "steer" as const,
+        sessionKey: "agent:main:main",
+        active: true,
+        queued: true,
+        message: "queued",
+        speak: false,
+        show: true,
+        suppress: false,
+      }),
+    );
+    const bridge = {
+      connect: vi.fn(async () => undefined),
+      close: vi.fn(),
+      sendAudio: vi.fn(),
+      setMediaTimestamp: vi.fn(),
+      submitToolResult: vi.fn(async () => undefined),
+      acknowledgeMark: vi.fn(),
+      isConnected: vi.fn(() => true),
+    } satisfies RealtimeVoiceBridge;
+    const owner = createTalkClientGatewayControlOwner({
+      voiceSessionId: "voice-starting",
+      sessionKey: "agent:main:main",
+      connId: "conn-starting",
+      context: controlContext(),
+      runAgentConsult: async (_args, _signal, onRunControlReady) => {
+        await registration.promise;
+        currentTarget = target;
+        onRunControlReady?.(target);
+        return await consultResult.promise;
+      },
+      captureAgentRunControl: () => currentTarget,
+      controlAgentRun,
+      appendTranscript: vi.fn(async () => undefined),
+      flushTranscript: vi.fn(async () => undefined),
+      closeLogicalSession: vi.fn(async () => undefined),
+    });
+    owner.control.bindBridge(bridge);
+    owner.control.onToolCall?.({
+      itemId: "item-consult",
+      callId: "call-consult",
+      name: "openclaw_agent_consult",
+      args: { question: "inspect startup" },
+    });
+    owner.control.onToolCall?.({
+      itemId: "item-control",
+      callId: "call-control",
+      name: "openclaw_agent_control",
+      args: { text: "steer" },
+    });
+
+    expect(controlAgentRun).not.toHaveBeenCalled();
+    registration.resolve();
+    await vi.waitFor(() => expect(controlAgentRun).toHaveBeenCalledOnce());
+    expect(controlAgentRun.mock.calls[0]?.[1]).toBe(target);
+
+    consultResult.resolve({ text: "done" });
+    await vi.waitFor(() =>
+      expect(bridge.submitToolResult).toHaveBeenCalledWith("call-consult", { result: "done" }),
+    );
+    await owner.close();
+  });
+
   it("closes the provider and logical session when the owning client disconnects", async () => {
     const closeProvider = vi.fn(async () => undefined);
     const closeLogicalSession = vi.fn(async () => undefined);

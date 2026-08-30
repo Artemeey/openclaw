@@ -244,6 +244,12 @@ export const createTalkClient: GatewayRequestHandler = async ({
         );
         return;
       }
+      const captureAgentRunControl = () =>
+        resolveOwnedActiveTalkClientInjectionTarget({
+          context,
+          clientConnId: ownerConnId,
+          sessionKey,
+        });
       const consultRunner = createTalkClientAgentConsultRunner({
         config: runtimeConfig,
         context,
@@ -253,6 +259,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
         authority: resolveTalkAgentConsultAuthority(client?.connect?.scopes),
         getVoiceSessionId: () => activeVoiceSessionId,
         initialItems,
+        captureRunControl: captureAgentRunControl,
       });
       const gatewayControlOwner = ownsProvider
         ? createTalkClientGatewayControlOwner({
@@ -270,12 +277,7 @@ export const createTalkClient: GatewayRequestHandler = async ({
               }
             },
             runAgentConsult: consultRunner.runArgs,
-            captureAgentRunControl: () =>
-              resolveOwnedActiveTalkClientInjectionTarget({
-                context,
-                clientConnId: ownerConnId,
-                sessionKey,
-              }),
+            captureAgentRunControl,
             controlAgentRun: async (controlParams, target) => {
               return controlOwnedRealtimeVoiceAgentRun(controlParams, target);
             },
