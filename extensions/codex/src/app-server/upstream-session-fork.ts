@@ -241,6 +241,7 @@ export async function forkCodexUpstreamSession(
                 pendingSupervisionBranch: createdBinding.pending,
                 cwd: forkedThread.cwd ?? "",
                 model: response.model,
+                reasoningEffort: response.reasoningEffort,
                 modelProvider: response.modelProvider ?? undefined,
                 historyCoveredThrough: new Date().toISOString(),
               },
