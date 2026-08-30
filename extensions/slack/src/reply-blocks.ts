@@ -24,7 +24,11 @@ import {
   type SlackBlock,
   type SlackBlockRenderOptions,
 } from "./blocks-render.js";
-import { markdownToSlackMrkdwnChunks } from "./format.js";
+import {
+  chunkSlackMrkdwnText,
+  markdownToSlackMrkdwnChunks,
+  normalizeSlackOutboundText,
+} from "./format.js";
 import {
   appendSlackNativeDataFallbackText,
   buildSlackNativeDataAccessibilityText,
@@ -486,19 +490,25 @@ export function resolveSlackReplyBlockResolution(
     renderedTextFragments,
   });
   const text = normalizeOptionalString(payload.text);
-  if (options.materializeAuthoredText && text && authoredTextPlacement === "outside-blocks") {
+  if (text && authoredTextPlacement === "outside-blocks") {
     const textBlocks = buildSlackAuthoredTextBlocks(text);
-    const compiledText = renderSlackAuthoredTextFragments(textBlocks).join(" ");
-    const compiledPlacement = resolveSlackAuthoredTextPlacement({
-      text: compiledText,
+    const renderedText = normalizeSlackOutboundText(text);
+    authoredTextPlacement = resolveSlackAuthoredTextPlacement({
+      text: renderedText,
       renderedTextFragments,
+      // Authored Markdown and portable mrkdwn have different code-fence chunkers.
+      // Compare their emitted plans exactly; joining them changes command bytes.
+      authoredChunkPlans: [
+        renderSlackAuthoredTextFragments(textBlocks),
+        chunkSlackMrkdwnText(renderedText, SLACK_SECTION_TEXT_MAX),
+      ],
     });
-    if (compiledPlacement !== "blocks") {
+    if (options.materializeAuthoredText && authoredTextPlacement === "outside-blocks") {
       // Decide from rendered content, then repack missing text through the same
       // compiler so authored ordering, native-data budgets, and control ids stay aligned.
       segments = compileSlackReplyBlockSegments(payload, [...channelBlocks, ...textBlocks]);
+      authoredTextPlacement = "blocks";
     }
-    authoredTextPlacement = "blocks";
   }
   // All transports consume this compact shape, after placement has used the original fragments.
   const compacted: SlackReplyBlockSegment[] = [];

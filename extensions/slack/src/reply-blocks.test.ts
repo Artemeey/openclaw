@@ -355,6 +355,26 @@ describe("renderSlackMessagePresentationFallbackText", () => {
     ).toEqual({ mode: "split", fallbackText: text });
   });
 
+  it.each([
+    { text: "First\n\nSecond", placement: "blocks" },
+    { text: "FirstSecond", placement: "outside-blocks" },
+  ])(
+    "preserves actual authored separators across legacy text fragments: $placement",
+    ({ text, placement }) => {
+      const result = resolveSlackReplyBlockResolution({
+        text,
+        interactive: {
+          blocks: [
+            { type: "text", text: "First" },
+            { type: "buttons", buttons: [{ label: "Continue", value: "continue" }] },
+            { type: "text", text: "Second" },
+          ],
+        },
+      });
+      expect(result.authoredTextPlacement).toBe(placement);
+    },
+  );
+
   it("materializes authored text blocks as verbatim mrkdwn", () => {
     const resolution = resolveSlackReplyBlockResolution(
       {

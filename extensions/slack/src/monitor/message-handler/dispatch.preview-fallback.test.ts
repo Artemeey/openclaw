@@ -910,7 +910,8 @@ vi.mock("../../draft-stream.js", () => ({
   createSlackDraftStream: createSlackDraftStreamMock,
 }));
 
-vi.mock("../../format.js", () => ({
+vi.mock("../../format.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../format.js")>()),
   markdownToSlackMrkdwnChunks: (value: string) => [value],
   normalizeSlackOutboundText: normalizeSlackOutboundTextMock,
 }));
@@ -1739,7 +1740,9 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
       blocks: mockedSlackReplyBlocks,
       threadTs: THREAD_TS,
     });
-    expect(normalizeSlackOutboundTextMock).not.toHaveBeenCalled();
+    expect(
+      normalizeSlackOutboundTextMock.mock.calls.every(([text]) => text === "Quarterly results"),
+    ).toBe(true);
     expectMockCallArgFields(emitSlackMessageSentHooksMock, 0, "chart preview message_sent", {
       content: accessibleText,
       success: true,
@@ -1777,7 +1780,9 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
 
     await dispatchPreparedSlackMessage(createPreparedSlackMessage());
 
-    expect(normalizeSlackOutboundTextMock).toHaveBeenCalledTimes(1);
+    expect(
+      normalizeSlackOutboundTextMock.mock.calls.every(([text]) => text === "**Summary**"),
+    ).toBe(true);
     expect(normalizeSlackOutboundTextMock).toHaveBeenCalledWith("**Summary**", {
       tableMode: "code",
     });
@@ -5164,7 +5169,9 @@ describe("dispatchPreparedSlackMessage preview fallback", () => {
       text: "Spoken answer\n\nRevenue (bar chart)\n- &lt;@U123&gt;: Q1: 12; Q2: 18",
       blocks: mockedSlackReplyBlocks,
     });
-    expect(normalizeSlackOutboundTextMock).not.toHaveBeenCalled();
+    expect(
+      normalizeSlackOutboundTextMock.mock.calls.every(([text]) => text === "Spoken answer"),
+    ).toBe(true);
 
     const delivered = requireRecord(
       requireMockCall(deliverRepliesMock, 0, "deliver replies")[0],

@@ -4,37 +4,40 @@ import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runti
 
 export type SlackAuthoredTextPlacement = "none" | "blocks" | "outside-blocks";
 
-function normalizeComparableSlackText(text: string): string {
-  return text.trim().replace(/\s+/g, " ");
-}
-
-function isSlackAuthoredTextRepresentedInInteractive(
-  text: string,
-  interactive?: LegacyInteractiveReply,
-): boolean {
-  return isSlackAuthoredTextRepresentedInFragments(
-    text,
-    interactive?.blocks.flatMap((block) => (block.type === "text" ? [block.text] : [])) ?? [],
-  );
-}
-
 function isSlackAuthoredTextRepresentedInFragments(
   text: string,
   rawFragments: readonly string[],
+  authoredChunkPlans: readonly (readonly string[])[] = [],
 ): boolean {
-  const target = normalizeComparableSlackText(text);
-  const fragments = rawFragments.map(normalizeComparableSlackText).filter(Boolean);
-  // Legacy inline controls split surrounding text into multiple interactive text blocks.
+  const target = text.trim();
+  const fragments = rawFragments.map((fragment) => fragment.trim()).filter(Boolean);
+  if (
+    authoredChunkPlans.some(
+      (plan) =>
+        plan.length > 0 &&
+        fragments.some((_, start) =>
+          plan.every((fragment, index) => fragment === fragments[start + index]),
+        ),
+    )
+  ) {
+    return true;
+  }
+  // Legacy inline controls may split authored whitespace at fragment boundaries.
+  // Consume only those separators; code/literal interiors and chunk seams stay exact.
   for (let start = 0; start < fragments.length; start += 1) {
-    let combined = "";
-    for (let end = start; end < fragments.length; end += 1) {
-      combined = normalizeComparableSlackText(`${combined} ${fragments[end]}`);
-      if (combined === target) {
-        return true;
-      }
-      if (combined.length > target.length) {
+    let remaining = target;
+    for (const fragment of fragments.slice(start)) {
+      if (!remaining.startsWith(fragment)) {
         break;
       }
+      remaining = remaining.slice(fragment.length);
+      if (!remaining) {
+        return true;
+      }
+      if (!/^\s/u.test(remaining)) {
+        break;
+      }
+      remaining = remaining.trimStart();
     }
   }
   return false;
@@ -46,14 +49,19 @@ export function resolveSlackAuthoredTextPlacement(params: {
   interactive?: LegacyInteractiveReply;
   renderedInBlocks?: boolean;
   renderedTextFragments?: readonly string[];
+  authoredChunkPlans?: readonly (readonly string[])[];
 }): SlackAuthoredTextPlacement {
   const text = normalizeOptionalString(params.text);
   if (!text) {
     return "none";
   }
+  // Rendered facts own placement; raw legacy text is only a pre-render metadata source.
+  const fragments =
+    params.renderedTextFragments ??
+    params.interactive?.blocks.flatMap((block) => (block.type === "text" ? [block.text] : [])) ??
+    [];
   const isRepresentedInBlocks =
     params.renderedInBlocks ||
-    isSlackAuthoredTextRepresentedInFragments(text, params.renderedTextFragments ?? []) ||
-    isSlackAuthoredTextRepresentedInInteractive(text, params.interactive);
+    isSlackAuthoredTextRepresentedInFragments(text, fragments, params.authoredChunkPlans);
   return isRepresentedInBlocks ? "blocks" : "outside-blocks";
 }

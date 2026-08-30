@@ -894,6 +894,45 @@ describe("slackOutbound sendPayload", () => {
     },
   );
 
+  it("recognizes rendered authored Markdown split across native sections", async () => {
+    const text = "**First** Second";
+    const { client } = await sendThroughRealSlack({
+      payload: {
+        text,
+        channelData: {
+          slack: {
+            blocks: [
+              { type: "section", text: { type: "mrkdwn", text: "*First*" } },
+              { type: "section", text: { type: "mrkdwn", text: "Second" } },
+            ],
+          },
+        },
+      },
+      renderText: text,
+    });
+    expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(postedSlackMessage(client, 0).blocks?.map((block) => block.text?.text)).toEqual([
+      "*First*",
+      "Second",
+    ]);
+  });
+
+  it.each(["inline", "fenced"])("preserves distinct authored %s code whitespace", async (kind) => {
+    const wrap = (text: string) => (kind === "inline" ? `\`${text}\`` : `\`\`\`\n${text}\n\`\`\``);
+    const authored = wrap("printf 'a  b'");
+    const presented = wrap("printf 'a b'");
+    const { client } = await sendThroughRealSlack({
+      payload: { text: authored, presentation: { blocks: [{ type: "text", text: presented }] } },
+      renderText: authored,
+    });
+
+    expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(postedSlackMessage(client, 0).blocks?.map((block) => block.text?.text)).toEqual([
+      authored,
+      presented,
+    ]);
+  });
+
   it("sends authored text represented by adjacent fallbacks once", async () => {
     const title = "x".repeat(151);
     const { client } = await sendThroughRealSlack({

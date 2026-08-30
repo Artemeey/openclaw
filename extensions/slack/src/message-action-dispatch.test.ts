@@ -12,8 +12,8 @@ import { renderSlackMessagePresentationFallbackText } from "./presentation-fallb
 
 function createInvokeSpy() {
   return vi.fn(async (action: Record<string, unknown>, _cfg?: unknown, _toolContext?: unknown) => ({
-    ok: true,
-    content: action,
+    content: [],
+    details: { ok: true, action },
   }));
 }
 
@@ -384,6 +384,34 @@ describe("handleSlackMessageAction", () => {
       content: `${title}\n\n- Status: \`/status\``,
       blocks: undefined,
     });
+  });
+
+  it.each(
+    ["text", "context"].flatMap((type) => [
+      { type, format: "plain", text: "x".repeat(3_001) },
+      { type, format: "inline code", text: `\`${"x".repeat(3_001)}\`` },
+      { type, format: "fenced code", text: `\`\`\`\n${"x".repeat(3_001)}\n\`\`\`` },
+    ]),
+  )("deduplicates chunked $format $type before the edit byte limit", async ({ type, text }) => {
+    const invoke = createInvokeSpy();
+    await handleSlackMessageAction({
+      providerId: "slack",
+      ctx: {
+        action: "edit",
+        channel: "slack",
+        params: {
+          channelId: "C123",
+          messageId: "123.456",
+          message: text,
+          presentation: { blocks: [{ type, text }] },
+        },
+        cfg: slackConfig(),
+      },
+      normalizeChannelId: (value) => value,
+      invoke,
+    });
+    expect(firstAction(invoke)).toMatchObject({ action: "editMessage", content: text });
+    expect(firstAction(invoke).blocks).toBeUndefined();
   });
 
   it("keeps oversized notification fallback for visibly rendered block edits", async () => {
