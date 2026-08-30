@@ -1490,6 +1490,68 @@ describe("models.authStatus", () => {
     expect(mocks.loadProviderUsageSummary).not.toHaveBeenCalled();
   });
 
+  it("queries account usage for API-key credentials issued by a provider login", async () => {
+    const profile = createApiKeyProfile("openrouter");
+    setPreparedAuthStore({
+      version: 1,
+      profiles: {
+        [profile.profileId]: {
+          type: "api_key",
+          provider: "openrouter",
+          key: "sk-or-v1-test",
+          displayName: "OpenRouter user-1",
+          metadata: { authFlow: "oauth-pkce", userId: "user-1" },
+        },
+      },
+    });
+    const plugin = {
+      id: "openrouter",
+      origin: "bundled",
+      contracts: { usageProviders: ["openrouter"] },
+    };
+    setPreparedMetadataSnapshot({
+      index: { plugins: [] },
+      manifestRegistry: { plugins: [plugin] },
+      plugins: [plugin],
+    });
+    mocks.buildAuthHealthSummary.mockReturnValue({
+      now: 0,
+      warnAfterMs: 0,
+      profiles: [profile],
+      providers: [{ provider: "openrouter", status: "static", profiles: [profile] }],
+    });
+    mocks.loadProviderUsageSummary.mockResolvedValue({
+      updatedAt: 0,
+      providers: [
+        {
+          provider: "openrouter",
+          displayName: "OpenRouter",
+          windows: [{ label: "Monthly key budget", usedPercent: 25 }],
+        },
+      ],
+    });
+
+    const first = await readAuthStatus();
+    expect(first.providers[0]?.profiles[0]?.usageRefreshPending).toBe(true);
+    expect(mocks.loadProviderUsageSummary).toHaveBeenCalledWith({
+      providers: ["openrouter"],
+      authProfile: { provider: "openrouter", profileId: profile.profileId },
+      agentDir: "/tmp/agent",
+      workspaceDir: "/tmp/workspace",
+      authStore: preparedAuthStore,
+      config: expect.any(Object),
+      timeoutMs: 5_000,
+    });
+
+    await waitForFast(async () => {
+      const refreshed = await readAuthStatus();
+      expect(refreshed.providers[0]?.usageScope).toBe("account");
+      expect(refreshed.providers[0]?.profiles[0]?.usage?.windows).toEqual([
+        { label: "Monthly key budget", usedPercent: 25 },
+      ]);
+    });
+  });
+
   it("routes claude-cli OAuth profiles to Anthropic usage with plan and billing", async () => {
     const runtimeConfig = {};
     const plugins = [

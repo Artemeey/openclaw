@@ -807,6 +807,11 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
         env: process.env,
         plugins: preparedSnapshot.metadataSnapshot.plugins,
       });
+      const accountUsageProviderIds = new Set(
+        preparedSnapshot.metadataSnapshot.plugins.flatMap((plugin) =>
+          (plugin.contracts?.usageProviders ?? []).map(normalizeProviderId).filter(Boolean),
+        ),
+      );
       const storedProviderWideCandidates = [
         ...new Set(
           authHealth.profiles
@@ -886,13 +891,22 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
               if (externalCliProfileIds.has(profile.profileId)) {
                 return [];
               }
-              if (profile.type !== "oauth" && profile.type !== "token") {
-                return [];
-              }
               const providerId = resolveUsageProviderId(profile.provider, {
                 credentialType: profile.type,
               });
-              return providerId ? [{ profileId: profile.profileId, providerId }] : [];
+              if (!providerId) {
+                return [];
+              }
+              const credential = store.profiles[profile.profileId];
+              const isAccountLoginApiKey =
+                profile.type === "api_key" &&
+                credential?.type === "api_key" &&
+                Boolean(credential.metadata?.authFlow) &&
+                accountUsageProviderIds.has(providerId);
+              if (profile.type !== "oauth" && profile.type !== "token" && !isAccountLoginApiKey) {
+                return [];
+              }
+              return [{ profileId: profile.profileId, providerId }];
             }),
             now,
           })
