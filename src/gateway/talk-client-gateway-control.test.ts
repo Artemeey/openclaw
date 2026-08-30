@@ -33,9 +33,18 @@ describe("Talk client Gateway control owner", () => {
   it("waits for a relay target captured during run registration", async () => {
     const targetReady = deferred<string | undefined>();
     const applied = vi.fn();
-    const execute = vi.fn(async (_args: unknown, target: Promise<string | undefined>) => {
+    const execute = vi.fn(async (_args: unknown, target?: Promise<string | undefined>) => {
       applied(await target);
-      return { message: "ok", speak: false, suppress: false };
+      return {
+        ok: true,
+        mode: "cancel" as const,
+        sessionKey: "agent:main:main",
+        active: true,
+        message: "ok",
+        speak: false,
+        show: false,
+        suppress: false,
+      };
     });
     const owner = createTalkRealtimeRunControlOwner({
       hasActiveRun: () => true,
