@@ -45,7 +45,7 @@ export function createEventWebPushBroadcastHarness() {
   const delivery = createEventWebPushDelivery({ getRuntimeConfig: () => ({}) });
   const broadcaster = createGatewayBroadcaster({
     clients: new Set(),
-    onBroadcast: delivery.handleEvent,
+    onBroadcast: (event, payload, opts) => delivery.handleEvent(event, payload, opts),
   });
   return {
     ...broadcaster,

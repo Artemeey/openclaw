@@ -55,28 +55,21 @@ function resolveCurrentWebPushTarget(params: {
   if (cfg.gateway?.roles && !rolePolicy) {
     return null;
   }
-  const tokenAllows = roleScopesAllow({
+  const scopeCeilings = [operatorToken.scopes, ...(rolePolicy ? [rolePolicy.scopes] : [])];
+  // Visibility owners need effective admin authority, not just delivery scopes.
+  // Intersect grants by implication so neither device nor profile can elevate the other.
+  const scopes = [...new Set(scopeCeilings.flat())].filter((scope) =>
+    scopeCeilings.every((allowedScopes) =>
+      roleScopesAllow({ role: OPERATOR_ROLE, requestedScopes: [scope], allowedScopes }),
+    ),
+  );
+  return roleScopesAllow({
     role: OPERATOR_ROLE,
     requestedScopes: params.requiredScopes,
-    allowedScopes: operatorToken.scopes,
-  });
-  const profileAllows =
-    !rolePolicy ||
-    roleScopesAllow({
-      role: OPERATOR_ROLE,
-      requestedScopes: params.requiredScopes,
-      allowedScopes: rolePolicy.scopes,
-    });
-  if (!tokenAllows || !profileAllows) {
-    return null;
-  }
-  return {
-    subscription,
-    // Project only the authority required by this delivery. This preserves
-    // scope implications without widening the synthetic visibility client.
-    scopes: [...new Set(params.requiredScopes)],
-    userProfileId,
-  };
+    allowedScopes: scopes,
+  })
+    ? { subscription, scopes, userProfileId }
+    : null;
 }
 
 /** Reads every mutable authority fact in the caller's network-I/O continuation. */
