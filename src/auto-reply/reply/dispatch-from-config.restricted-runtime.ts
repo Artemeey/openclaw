@@ -4,7 +4,7 @@ import type { PrepareDispatchOperationReadyState } from "./dispatch-from-config.
 import type { InternalGetReplyOptions } from "./get-reply.types.js";
 import type { ReplyDispatchKind } from "./reply-dispatcher.types.js";
 
-export const RESTRICTED_RUNTIME_TAKEOVER_ERROR =
+const RESTRICTED_RUNTIME_TAKEOVER_ERROR =
   "This session's bound runtime cannot enforce its permission or tool policy; use an embedded runtime for this restricted conversation.";
 
 export function runtimeTakeoverHooksAllowed(
