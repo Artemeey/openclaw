@@ -193,7 +193,7 @@ extension OpenClawChatComposer {
     }
 
     private func cleanInlineModelOption(title: String, selectionID: String) -> some View {
-        let isSelected = self.viewModel.modelSelectionID == selectionID
+        let isSelected = self.viewModel.isSelectedModel(selectionID)
         let optionTitle = isSelected ? "\(title), \(String(localized: "Selected"))" : title
         return Button {
             self.viewModel.selectModel(selectionID)

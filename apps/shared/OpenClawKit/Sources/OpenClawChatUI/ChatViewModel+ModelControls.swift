@@ -69,10 +69,31 @@ extension OpenClawChatViewModel {
         let label = if self.modelSelectionID == Self.defaultModelSelectionID {
             self.defaultModelLabel.replacingOccurrences(of: "Default: ", with: "")
         } else {
-            self.modelChoices.first { $0.selectionID == self.modelSelectionID }?.displayLabel ??
+            self.modelChoices.first { self.isSelectedModel($0.selectionID) }?.displayLabel ??
                 self.modelSelectionID
         }
         return label.split(separator: "/").last.map(String.init) ?? label
+    }
+
+    public func isSelectedModel(_ selectionID: String) -> Bool {
+        Self.modelSelectionMatches(
+            selectionID: selectionID,
+            currentSelectionID: self.modelSelectionID,
+            choices: self.modelChoices)
+    }
+
+    static func modelSelectionMatches(
+        selectionID: String,
+        currentSelectionID: String,
+        choices: [OpenClawChatModelChoice]) -> Bool
+    {
+        if selectionID == defaultModelSelectionID {
+            return currentSelectionID == defaultModelSelectionID
+        }
+        guard let choice = choices.first(where: { $0.selectionID == selectionID }) else {
+            return currentSelectionID == selectionID
+        }
+        return currentSelectionID == choice.selectionID || currentSelectionID == choice.modelID
     }
 
     public var composerInlineEffortLabel: String {
