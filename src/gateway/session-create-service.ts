@@ -1332,6 +1332,7 @@ export async function createGatewaySession(params: {
           cfg: params.cfg,
           provider: childModel.provider,
           model: childModel.model,
+          agentId: target.agentId,
           modelContextTokens: childCatalogEntry?.contextTokens,
           modelContextWindow: childContextWindow.contextTokens,
           allowAsyncLoad: false,
