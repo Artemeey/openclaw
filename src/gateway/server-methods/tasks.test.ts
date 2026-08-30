@@ -140,6 +140,7 @@ async function runTaskHandler(
   params: Record<string, unknown>,
   config: Record<string, unknown> = {},
   client: GatewayClient | null = null,
+  context = createContext(config),
 ) {
   const { calls, respond } = captureRespond();
   await expectDefined(
@@ -149,7 +150,7 @@ async function runTaskHandler(
     req: { type: "req", id: `req-${method}`, method },
     params,
     respond,
-    context: createContext(config),
+    context,
     client,
     isWebchatConnect: () => false,
   });
@@ -273,7 +274,6 @@ describe("tasks gateway handlers", () => {
 
     expect(
       listTaskRecordPage({
-        offset: 0,
         limit: 10,
         sessionKey: "global",
         sessionAgentId: "ops",
@@ -282,7 +282,6 @@ describe("tasks gateway handlers", () => {
     ).toEqual([task.taskId]);
     expect(
       listTaskRecordPage({
-        offset: 0,
         limit: 10,
         sessionKey: "global",
         sessionAgentId: "research",
@@ -405,43 +404,46 @@ describe("tasks gateway handlers", () => {
     expect(byId.get("task-later-completion")?.updatedAt).toBe(base - 500);
   });
 
-  it("preserves activity ordering across cursor pages", async () => {
-    const created = [500, 100, 700, 300, 500].map((lastEventAt, index) =>
-      createTaskRecord({
-        runtime: "cli",
-        requesterSessionKey: "agent:main:main",
-        ownerKey: "agent:main:main",
-        scopeKind: "session",
-        runId: `run-page-${index}`,
-        task: `Paged task ${index}`,
-        status: "succeeded",
-        deliveryStatus: "not_applicable",
-        lastEventAt,
-      }),
-    );
-    const expectedIds = created
-      .toSorted((left, right) => {
-        const updatedDiff = (right.lastEventAt ?? 0) - (left.lastEventAt ?? 0);
-        if (updatedDiff !== 0) {
-          return updatedDiff;
-        }
-        return left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0;
-      })
-      .map((task) => task.taskId);
+  it.each([
+    ["an unreturned task moves above the boundary", 3, 500, [0, 1, 3, 2]],
+    ["an emitted task moves below the boundary", 0, 50, [0, 1, 2, 3]],
+  ] as const)(
+    "does not repeat or omit tasks when %s",
+    async (_label, movedIndex, movedAt, order) => {
+      const context = createContext();
+      const created = [400, 300, 200, 100].map((lastEventAt, index) =>
+        createTaskRecord({
+          runtime: "cli",
+          requesterSessionKey: "agent:main:main",
+          ownerKey: "agent:main:main",
+          scopeKind: "session",
+          runId: `run-page-${index}`,
+          task: `Paged task ${index}`,
+          status: "succeeded",
+          deliveryStatus: "not_applicable",
+          lastEventAt,
+        }),
+      );
+      const page1 = await runTaskHandler("tasks.list", { limit: 2 }, {}, null, context);
+      const page1Ids = page1.payload?.tasks?.map((task) => task.id) ?? [];
 
-    const page1 = await runTaskHandler("tasks.list", { limit: 2 });
-    expect(page1.calls[0]?.[0]).toBe(true);
-    expect(page1.payload?.tasks?.map((task) => task.id)).toEqual(expectedIds.slice(0, 2));
-    expect(page1.payload?.nextCursor).toBe("2");
+      recordTaskProgressByRunId({
+        runId: created[movedIndex]?.runId ?? "",
+        lastEventAt: movedAt,
+      });
 
-    const page2 = await runTaskHandler("tasks.list", { limit: 2, cursor: "2" });
-    expect(page2.payload?.tasks?.map((task) => task.id)).toEqual(expectedIds.slice(2, 4));
-    expect(page2.payload?.nextCursor).toBe("4");
-
-    const page3 = await runTaskHandler("tasks.list", { limit: 2, cursor: "4" });
-    expect(page3.payload?.tasks?.map((task) => task.id)).toEqual(expectedIds.slice(4));
-    expect(page3.payload?.nextCursor).toBeUndefined();
-  });
+      const page2 = await runTaskHandler(
+        "tasks.list",
+        { limit: 2, cursor: page1.payload?.nextCursor },
+        {},
+        null,
+        context,
+      );
+      expect([...page1Ids, ...(page2.payload?.tasks?.map((task) => task.id) ?? [])]).toEqual(
+        order.map((index) => created[index]?.taskId),
+      );
+    },
+  );
 
   it("uses task id as the stable activity-order tie break", async () => {
     const sharedActivityAt = 5_000;
@@ -487,7 +489,7 @@ describe("tasks gateway handlers", () => {
       const { payload } = await runTaskHandler("tasks.list", { limit: 2 });
 
       expect(payload?.tasks).toHaveLength(2);
-      expect(payload?.nextCursor).toBe("2");
+      expect(payload?.nextCursor).toEqual(expect.any(String));
       expect(cloneSpy).toHaveBeenCalledTimes(2);
     } finally {
       cloneSpy.mockRestore();
@@ -549,7 +551,7 @@ describe("tasks gateway handlers", () => {
       expect(list.payload?.tasks?.map((task) => task.taskId)).toEqual([
         visibleForeign ? taskId : own.taskId,
       ]);
-      expect(list.payload?.nextCursor).toBe(visibleForeign ? "1" : undefined);
+      expect(list.payload?.nextCursor).toEqual(visibleForeign ? expect.any(String) : undefined);
       const get = await runTaskHandler("tasks.get", { taskId }, config, viewer);
       if (visibleForeign) {
         expect(get.payload?.task?.taskId).toBe(taskId);
@@ -601,7 +603,7 @@ describe("tasks gateway handlers", () => {
       detail: { nested: { value: "original" } },
     });
 
-    const page = listTaskRecordPage({ offset: 0, limit: 1 });
+    const page = listTaskRecordPage({ limit: 1 });
     const detail = page.tasks[0]?.detail as { nested: { value: string } } | undefined;
     expect(detail).toBeDefined();
     if (detail) {

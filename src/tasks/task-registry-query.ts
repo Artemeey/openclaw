@@ -115,8 +115,8 @@ function taskUpdatedAt(task: TaskRecord): number {
 }
 
 export function listTaskRecordPage(params: {
-  offset: number;
   limit: number;
+  excludedTaskIds?: ReadonlySet<string>;
   statuses?: readonly TaskStatus[];
   agentId?: string;
   sessionKey?: string;
@@ -133,6 +133,7 @@ export function listTaskRecordPage(params: {
   const matching = [...tasks.values()]
     .filter(
       (task) =>
+        !params.excludedTaskIds?.has(task.taskId) &&
         (!statuses || statuses.has(task.status)) &&
         taskMatchesAgent(task, agentId, params.cfg) &&
         taskMatchesRelatedSession(task, sessionKey, params.sessionAgentId, params.cfg) &&
@@ -145,10 +146,10 @@ export function listTaskRecordPage(params: {
       }
       return left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0;
     });
-  const selected = matching.slice(params.offset, params.offset + params.limit);
+  const selected = matching.slice(0, params.limit);
   return {
     tasks: selected.map((task) => cloneTaskRecord(task)),
-    hasMore: params.offset + selected.length < matching.length,
+    hasMore: selected.length < matching.length,
   };
 }
 
@@ -158,7 +159,7 @@ export function listTaskRecords(filter?: (task: Readonly<TaskRecord>) => boolean
   return (filter ? records.filter(filter) : records)
     .map((task, insertionIndex) => Object.assign({}, cloneTaskRecord(task), { insertionIndex }))
     .toSorted(compareTasksNewestFirst)
-    .map(({ insertionIndex: _, ...task }) => task);
+    .map(({ insertionIndex: _insertionIndex, ...task }) => task);
 }
 
 export function hasActiveTaskForChildSessionKey(params: {
@@ -220,7 +221,7 @@ function listTasksFromIndex(index: Map<string, Set<string>>, key: string): TaskR
       } => Boolean(task),
     )
     .toSorted(compareTasksNewestFirst)
-    .map(({ insertionIndex: _, ...task }) => task);
+    .map(({ insertionIndex: _insertionIndex, ...task }) => task);
 }
 
 export function listTasksForSessionKey(sessionKey: string): TaskRecord[] {
@@ -273,7 +274,7 @@ export function listFreshTasksForOwnerKey(ownerKey: string): TaskRecord[] {
       return [...merged.values()]
         .map((task, insertionIndex) => Object.assign({}, task, { insertionIndex }))
         .toSorted(compareTasksNewestFirst)
-        .map(({ insertionIndex: _, ...task }) => task);
+        .map(({ insertionIndex: _insertionIndex, ...task }) => task);
     } catch (error) {
       taskRegistryLog.warn("Failed to read fresh owner task registry records", {
         ownerKey: key,

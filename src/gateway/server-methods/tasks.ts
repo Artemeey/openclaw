@@ -26,8 +26,15 @@ import { assertValidParams } from "./validation.js";
 
 const DEFAULT_TASKS_LIST_LIMIT = 100;
 const MAX_TASKS_LIST_LIMIT = 500;
+const MAX_TASKS_LIST_TRAVERSALS = 256;
 
 type TaskLedgerStatus = TaskSummary["status"];
+type TaskListTraversal = {
+  emittedTaskIds: Set<string>;
+  queryKey: string;
+};
+
+const taskListTraversalsByContext = new WeakMap<object, Map<string, TaskListTraversal>>();
 
 const LEDGER_STATUS_TO_TASK_STATUSES: Record<TaskLedgerStatus, TaskStatus[]> = {
   queued: ["queued"],
@@ -46,17 +53,55 @@ function normalizeTaskStatusFilter(status: TasksListParams["status"]): Set<TaskS
   return new Set(statuses.flatMap((value) => LEDGER_STATUS_TO_TASK_STATUSES[value] ?? []));
 }
 
-// Cursor strings are offsets, not opaque tokens; reject malformed values so a
-// client cannot silently restart pagination at the first page.
-function parseCursor(cursor: string | undefined): number | null {
-  if (!cursor) {
-    return 0;
+function taskListQueryKey(params: {
+  statuses: readonly TaskStatus[] | undefined;
+  agentId: string | undefined;
+  sessionKey: string | undefined;
+  sessionAgentId: string | undefined;
+}): string {
+  return JSON.stringify([
+    params.statuses?.toSorted() ?? null,
+    normalizeOptionalString(params.agentId) ?? null,
+    params.sessionKey ?? null,
+    params.sessionAgentId ?? null,
+  ]);
+}
+
+function takeTaskListTraversal(
+  traversals: Map<string, TaskListTraversal>,
+  cursor: string | undefined,
+  queryKey: string,
+): TaskListTraversal | null {
+  if (cursor === undefined) {
+    return { emittedTaskIds: new Set(), queryKey };
   }
-  if (!/^\d+$/.test(cursor.trim())) {
+  const traversal = traversals.get(cursor);
+  if (!traversal || traversal.queryKey !== queryKey) {
     return null;
   }
-  const parsed = Number(cursor);
-  return Number.isSafeInteger(parsed) ? parsed : null;
+  traversals.delete(cursor);
+  return traversal;
+}
+
+function storeTaskListTraversal(
+  traversals: Map<string, TaskListTraversal>,
+  traversal: TaskListTraversal,
+): string {
+  // Keep abandoned traversals bounded without capping pages in an active one.
+  // Single-use tokens make retries fail visibly instead of skipping a page.
+  while (traversals.size >= MAX_TASKS_LIST_TRAVERSALS) {
+    const oldestCursor = traversals.keys().next().value;
+    if (oldestCursor === undefined) {
+      break;
+    }
+    traversals.delete(oldestCursor);
+  }
+  let cursor = crypto.randomUUID();
+  while (traversals.has(cursor)) {
+    cursor = crypto.randomUUID();
+  }
+  traversals.set(cursor, traversal);
+  return cursor;
 }
 
 // Control UI task methods expose the stable gateway protocol shape; helpers
@@ -66,16 +111,8 @@ export const tasksHandlers: GatewayRequestHandlers = {
     if (!assertValidParams(params, validateTasksListParams, "tasks.list", respond)) {
       return;
     }
-    const cursor = parseCursor(params.cursor);
-    if (cursor === null) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, "invalid tasks.list cursor"),
-      );
-      return;
-    }
     const statusFilter = normalizeTaskStatusFilter(params.status);
+    const statuses = statusFilter ? [...statusFilter] : undefined;
     const limit = Math.min(params.limit ?? DEFAULT_TASKS_LIST_LIMIT, MAX_TASKS_LIST_LIMIT);
     const requestedSessionKey = normalizeOptionalString(params.sessionKey);
     const cfg = context.getRuntimeConfig();
@@ -98,23 +135,49 @@ export const tasksHandlers: GatewayRequestHandlers = {
         sessionKey: requestedSessionKey,
       });
     }
+    const agentId = sessionKey ? undefined : normalizeOptionalString(params.agentId);
+    const queryKey = taskListQueryKey({
+      statuses,
+      agentId,
+      sessionKey,
+      sessionAgentId,
+    });
+    let traversals = taskListTraversalsByContext.get(context);
+    if (!traversals) {
+      traversals = new Map();
+      taskListTraversalsByContext.set(context, traversals);
+    }
+    const traversal = takeTaskListTraversal(traversals, params.cursor, queryKey);
+    if (!traversal) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          "invalid or expired tasks.list cursor; restart pagination without a cursor",
+        ),
+      );
+      return;
+    }
     // The ledger pages by last activity so an old long-running task that just
     // finished still surfaces first. Selection stays inside the registry so
     // only the bounded wire page pays for defensive record cloning.
     const page = listTaskRecordPage({
-      offset: cursor,
       limit,
-      statuses: statusFilter ? [...statusFilter] : undefined,
-      agentId: sessionKey ? undefined : params.agentId,
+      excludedTaskIds: traversal.emittedTaskIds,
+      statuses,
+      agentId,
       sessionKey,
       sessionAgentId,
       cfg,
       filter: (task) => canAccessTaskRequesterSession({ cfg, client, task }),
     });
-    const nextOffset = cursor + page.tasks.length;
+    for (const task of page.tasks) {
+      traversal.emittedTaskIds.add(task.taskId);
+    }
     respond(true, {
       tasks: page.tasks.map((task) => mapTaskSummary(task)),
-      ...(page.hasMore ? { nextCursor: String(nextOffset) } : {}),
+      ...(page.hasMore ? { nextCursor: storeTaskListTraversal(traversals, traversal) } : {}),
     });
   },
   "tasks.get": ({ params, respond, context, client }) => {
