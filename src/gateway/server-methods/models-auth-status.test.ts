@@ -1450,6 +1450,9 @@ describe("models.authStatus", () => {
       profiles: [oauthProfile],
       providers: [{ provider: "openrouter", status: "ok", profiles: [oauthProfile] }],
     });
+    mocks.listProviderUsagePluginDescriptors.mockReturnValueOnce([
+      { provider: "openrouter", displayName: "OpenRouter" },
+    ]);
     mocks.loadProviderUsageSummary.mockImplementationOnce(async () => {
       await usageBlocked;
       usageFinished = true;
@@ -1490,6 +1493,42 @@ describe("models.authStatus", () => {
     expect(mocks.loadProviderUsageSummary).not.toHaveBeenCalled();
   });
 
+  it("does not query profile usage for disabled provider plugins", async () => {
+    const profile = expectDefined(
+      createOpenAiCodexOauthHealthSummary().profiles[0],
+      "OpenAI OAuth profile",
+    );
+    setPreparedAuthStore({
+      version: 1,
+      profiles: {
+        [profile.profileId]: {
+          type: "oauth",
+          provider: "openai",
+          access: "access",
+          refresh: "refresh",
+          expires: 1_000_000,
+        },
+      },
+    });
+    const plugin = {
+      id: "openai",
+      origin: "bundled",
+      contracts: { usageProviders: ["openai"] },
+    };
+    setPreparedMetadataSnapshot({
+      index: { plugins: [] },
+      manifestRegistry: { plugins: [plugin] },
+      plugins: [plugin],
+    });
+    mocks.listProviderUsagePluginDescriptors.mockReturnValueOnce([]);
+    mocks.buildAuthHealthSummary.mockReturnValue(createOpenAiCodexOauthHealthSummary());
+
+    const result = await readAuthStatus();
+
+    expect(mocks.loadProviderUsageSummary).not.toHaveBeenCalled();
+    expect(result.providers[0]?.profiles[0]?.usageRefreshPending).toBeUndefined();
+  });
+
   it("queries account usage for API-key credentials issued by a provider login", async () => {
     const profile = createApiKeyProfile("openrouter");
     setPreparedAuthStore({
@@ -1514,6 +1553,9 @@ describe("models.authStatus", () => {
       manifestRegistry: { plugins: [plugin] },
       plugins: [plugin],
     });
+    mocks.listProviderUsagePluginDescriptors.mockReturnValueOnce([
+      { provider: "openrouter", displayName: "OpenRouter" },
+    ]);
     mocks.buildAuthHealthSummary.mockReturnValue({
       now: 0,
       warnAfterMs: 0,
