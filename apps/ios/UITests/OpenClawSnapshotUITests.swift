@@ -576,18 +576,16 @@ final class OpenClawSnapshotUITests: XCTestCase {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
 
         inlineModel.tap()
-        let inlineDefaultModel = app.buttons["Default: openai/gpt-5.6-sol"]
+        let inlineDefaultModel = app.buttons["Default: openai/gpt-5.6-sol, Selected"]
         XCTAssertTrue(inlineDefaultModel.waitForExistence(timeout: 3))
-        XCTAssertEqual(inlineDefaultModel.value as? String, "Selected")
         let inlineNonDefaultModel = app.buttons["anthropic/claude-opus-4-1"]
         XCTAssertTrue(inlineNonDefaultModel.waitForExistence(timeout: 3))
         self.attachScreenshot(named: "chat-composer-model")
         inlineNonDefaultModel.tap()
         inlineModel.tap()
-        let selectedInlineModel = app.buttons["anthropic/claude-opus-4-1"]
+        let selectedInlineModel = app.buttons["anthropic/claude-opus-4-1, Selected"]
         XCTAssertTrue(selectedInlineModel.waitForExistence(timeout: 3))
-        XCTAssertEqual(selectedInlineModel.value as? String, "Selected")
-        XCTAssertEqual(app.buttons["Default: openai/gpt-5.6-sol"].value as? String, "")
+        XCTAssertTrue(app.buttons["Default: openai/gpt-5.6-sol"].exists)
         app.buttons["Default: openai/gpt-5.6-sol"].tap()
 
         inlineEffort.tap()

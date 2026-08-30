@@ -203,8 +203,7 @@ extension OpenClawChatComposer {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
             }
         }
-        .accessibilityLabel(title)
-        .accessibilityValue(isSelected ? String(localized: "Selected") : "")
+        .accessibilityLabel(isSelected ? "\(title), \(String(localized: "Selected"))" : title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
