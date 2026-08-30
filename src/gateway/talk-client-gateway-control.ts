@@ -79,8 +79,6 @@ const loadTalkAgentExecution = createLazyRuntimeModule(async () => {
   ]);
   return {
     runEmbeddedAgent: embeddedAgent.runEmbeddedAgent,
-    observeEmbeddedAgentMessageInjectionTarget:
-      embeddedAgent.observeEmbeddedAgentMessageInjectionTarget,
     createOperationalRunInstanceRef: admission.createOperationalRunInstanceRef,
     prepareAgentRunAdmission: admission.prepareAgentRunAdmission,
   };
@@ -97,7 +95,6 @@ function createTalkClientAgentRuntime(params: {
     runParams.abortSignal?.throwIfAborted();
     const execution = await loadTalkAgentExecution();
     runParams.abortSignal?.throwIfAborted();
-    let stopObserving = () => {};
     const preparedRunAdmission = execution.prepareAgentRunAdmission({
       cfg: params.config,
       operationalRunInstance: execution.createOperationalRunInstanceRef(runParams.runId),
@@ -111,14 +108,6 @@ function createTalkClientAgentRuntime(params: {
           ...(params.rawSourceRef ? { rawSourceRef: params.rawSourceRef } : {}),
         },
       },
-      onAdmitted: (context) => {
-        if (params.onControlTargetReady) {
-          stopObserving = execution.observeEmbeddedAgentMessageInjectionTarget(
-            context,
-            params.onControlTargetReady,
-          );
-        }
-      },
     });
     let closed = false;
     const close = () => {
@@ -131,9 +120,12 @@ function createTalkClientAgentRuntime(params: {
     runParams.abortSignal?.addEventListener("abort", close, { once: true });
     try {
       runParams.abortSignal?.throwIfAborted();
-      return await execution.runEmbeddedAgent({ ...runParams, preparedRunAdmission });
+      return await execution.runEmbeddedAgent({
+        ...runParams,
+        preparedRunAdmission,
+        onActiveRunOwner: params.onControlTargetReady,
+      });
     } finally {
-      stopObserving();
       runParams.abortSignal?.removeEventListener("abort", close);
       close();
     }

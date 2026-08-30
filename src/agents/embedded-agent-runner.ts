@@ -13,7 +13,6 @@ export {
   isEmbeddedAgentRunActive,
   isEmbeddedAgentRunHandleActive,
   isEmbeddedAgentRunStreaming,
-  observeEmbeddedAgentMessageInjectionTarget,
   queueEmbeddedAgentMessageWithOutcome,
   resolveActiveEmbeddedRunSessionIdBySessionFile,
   waitForEmbeddedAgentRunEnd,

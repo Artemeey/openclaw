@@ -10,10 +10,10 @@ import { createTestUserTurnTranscriptTarget } from "../../sessions/user-turn-tra
 import {
   clearActiveEmbeddedRun,
   formatEmbeddedAgentQueueFailureSummary,
-  observeEmbeddedAgentMessageInjectionTarget,
   preemptAndDrainEmbeddedHeartbeatRun,
   queueEmbeddedAgentMessageWithOutcome,
   queueEmbeddedAgentMessageWithOutcomeAsync,
+  resolveActiveEmbeddedRunOwnerByRunId,
   setActiveEmbeddedRun,
   type EmbeddedAgentQueueHandle,
 } from "./runs.js";
@@ -29,17 +29,15 @@ describe("embedded-agent active-run steering", () => {
   });
 
   it("projects authority only into the exact captured run", async () => {
-    const context = {
-      operationalRunInstance: { instanceId: "instance-talk", runId: "run-first" },
-    };
-    const observer = vi.fn();
-    observeEmbeddedAgentMessageInjectionTarget(context, observer);
     const firstQueue = vi.fn(async () => {});
     const first = createEmbeddedRunHandle({ queueMessage: firstQueue });
     Object.assign(first, { runId: "run-first", toolAuthorityFingerprint: "authority-first" });
-    setActiveEmbeddedRun("session-talk", first, "agent:main:main", undefined, context);
-    expect(observer).toHaveBeenCalledOnce();
-    const target = observer.mock.calls[0]![0];
+    setActiveEmbeddedRun("session-talk", first, "agent:main:main");
+    const target = resolveActiveEmbeddedRunOwnerByRunId("run-first");
+    expect(target).toBeDefined();
+    if (!target) {
+      throw new Error("expected active run owner");
+    }
 
     await expect(
       target.queueMessage("steer", {

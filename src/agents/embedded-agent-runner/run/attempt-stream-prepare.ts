@@ -50,6 +50,7 @@ import { ACTIVE_EMBEDDED_RUNS, setActiveEmbeddedRunLifecycleGeneration } from ".
 import {
   clearActiveEmbeddedRun,
   type EmbeddedAgentQueueHandle,
+  resolveActiveEmbeddedRunOwnerByRunId,
   setActiveEmbeddedRun,
 } from "../runs.js";
 import {
@@ -565,13 +566,11 @@ export function prepareEmbeddedAttemptStream(input: {
     queueHandle,
     attempt.lifecycleGeneration ?? captureAgentRunLifecycleGeneration(attempt.runId),
   );
-  setActiveEmbeddedRun(
-    attempt.sessionId,
-    queueHandle,
-    attempt.sessionKey,
-    attempt.sessionFile,
-    attempt.admittedRunContext,
-  );
+  setActiveEmbeddedRun(attempt.sessionId, queueHandle, attempt.sessionKey, attempt.sessionFile);
+  const activeOwner = resolveActiveEmbeddedRunOwnerByRunId(attempt.runId);
+  if (activeOwner) {
+    attempt.onActiveRunOwner?.(activeOwner);
+  }
   if (attempt.deferTerminalLifecycle && attempt.onDeferredLifecycleOwner) {
     deferredLifecycleOwner = createEmbeddedAttemptDeferredLifecycleOwner({
       runId: attempt.runId,
