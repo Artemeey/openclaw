@@ -454,14 +454,14 @@ async function resolveProviderUsageAuthViaPlugin(params: {
         resolveProviderApiKeyFromConfigAndStore({
           state: params.state,
           providerIds: options?.providerIds ?? [params.provider],
-          envDirect: options?.envDirect,
+          envDirect: params.authProfileId ? undefined : options?.envDirect,
           ...(params.authProfileId ? { profileIds: [params.authProfileId] } : {}),
         }),
       resolveApiKeyCandidatesFromConfigAndStore: (options) =>
         resolveProviderApiKeyCandidatesFromConfigAndStore({
           state: params.state,
           providerIds: options?.providerIds ?? [params.provider],
-          envDirect: options?.envDirect,
+          envDirect: params.authProfileId ? undefined : options?.envDirect,
           ...(params.authProfileId ? { profileIds: [params.authProfileId] } : {}),
         }),
       resolveOAuthToken: async (options) => {

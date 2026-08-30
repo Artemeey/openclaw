@@ -216,6 +216,47 @@ describe("resolveProviderAuths plugin boundary", () => {
     );
   });
 
+  it("does not substitute an ambient key for account-scoped plugin usage", async () => {
+    const profileId = "openrouter:account";
+    const store = {
+      profiles: {
+        [profileId]: {
+          type: "api_key",
+          provider: "openrouter",
+          key: "saved-account-key",
+        },
+      },
+    };
+    resolveProviderUsageAuthWithPluginMock.mockImplementationOnce(async (rawParams) => {
+      const params = rawParams as {
+        context: {
+          env: NodeJS.ProcessEnv;
+          resolveApiKeyFromConfigAndStore: (options: {
+            envDirect: Array<string | undefined>;
+          }) => string | undefined;
+        };
+      };
+      const token = params.context.resolveApiKeyFromConfigAndStore({
+        envDirect: [params.context.env.OPENROUTER_API_KEY],
+      });
+      return token ? { token } : null;
+    });
+
+    await expect(
+      resolveProviderProfileUsageAuth({
+        provider: "openrouter",
+        profileId,
+        store: store as never,
+        config: {},
+        env: { OPENROUTER_API_KEY: "ambient-provider-key" },
+      }),
+    ).resolves.toEqual({
+      provider: "openrouter",
+      token: "saved-account-key",
+      authProfileId: profileId,
+    });
+  });
+
   it("optionally reports the saved profile selected by unscoped auth", async () => {
     const profileId = "openai:first";
     const store = {
