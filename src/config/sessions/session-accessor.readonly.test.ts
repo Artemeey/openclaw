@@ -72,9 +72,15 @@ describe("session accessor readonly listing", () => {
 
     expect(listSessionEntriesReadOnly(listScope)).toEqual(writableEntries);
     expect(openSessionEntryReadView(listScope).entries()).toEqual(writableEntries);
-    expect(readSessionStoreSummaryReadOnly(listScope, { recentLimit: 2 })).toEqual({
+    expect(
+      readSessionStoreSummaryReadOnly(listScope, {
+        recentLimit: 2,
+        agentIds: [listScope.agentId],
+      }),
+    ).toEqual({
       count: 2,
       recent: writableEntries.toReversed(),
+      byAgent: new Map([[listScope.agentId, { count: 2, recent: writableEntries.toReversed() }]]),
     });
     expect(isOpenClawAgentDatabaseOpen(resolveOpenClawAgentSqlitePath(listScope))).toBe(false);
   });
@@ -88,9 +94,18 @@ describe("session accessor readonly listing", () => {
 
     expect(listSessionEntriesReadOnly({ agentId, env })).toEqual([]);
     expect(openSessionEntryReadView({ agentId, env }).entries()).toEqual([]);
-    expect(readSessionStoreSummaryReadOnly({ agentId, env }, { recentLimit: 10 })).toEqual({
+    expect(
+      readSessionStoreSummaryReadOnly(
+        { agentId, env },
+        {
+          recentLimit: 10,
+          agentIds: [agentId],
+        },
+      ),
+    ).toEqual({
       count: 0,
       recent: [],
+      byAgent: new Map([[agentId, { count: 0, recent: [] }]]),
     });
     expect(fs.existsSync(databasePath)).toBe(false);
     expect(countRegisteredAgentDatabases(env)).toBe(0);
@@ -147,12 +162,12 @@ describe("session accessor readonly listing", () => {
       "agent:main:ordinary:internal-session-effects:visible",
       "agent:main:zero",
     ];
-    const options = { recentLimit: 3, excludeSessionKeys: ["global", "unknown"] };
+    const options = { recentLimit: 3, agentIds: [scope.agentId] };
 
     const listed = listSessionEntriesReadOnly({ ...scope, readConsistency: "latest" });
     expect(
       listed
-        .filter(({ sessionKey }) => !options.excludeSessionKeys.includes(sessionKey))
+        .filter(({ sessionKey }) => !["global", "unknown"].includes(sessionKey))
         .map(({ sessionKey }) => sessionKey)
         .toSorted(),
     ).toEqual(expectedKeys.toSorted());
@@ -168,6 +183,7 @@ describe("session accessor readonly listing", () => {
     expect(readSessionStoreSummaryReadOnly(scope, { ...options, recentLimit: 0 })).toEqual({
       count: 5,
       recent: [],
+      byAgent: new Map([[scope.agentId, { count: 5, recent: [] }]]),
     });
 
     closeOpenClawAgentDatabasesForTest();

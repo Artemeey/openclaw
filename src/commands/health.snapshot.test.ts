@@ -4,8 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelAccountSnapshot, ChannelPlugin } from "../channels/plugins/types.public.js";
+import { isInternalSessionEffectsKey } from "../config/sessions/internal-session-key.js";
 import type { HealthSummary } from "../gateway/health/types.js";
 import { createPluginRecord } from "../plugins/status.test-fixtures.js";
+import { parseAgentSessionKey } from "../routing/session-key.js";
 import {
   createLegacyHealthSnapshotCollector,
   type LegacyHealthSnapshotParams,
@@ -79,16 +81,30 @@ async function loadFreshHealthModulesForTest() {
     ) => {
       listHealthSessionEntriesCalls.push(scope);
       const entries = Object.entries(testStore)
-        .filter(([sessionKey]) => !options.excludeSessionKeys?.includes(sessionKey))
+        .filter(
+          ([sessionKey]) =>
+            parseAgentSessionKey(sessionKey) !== null && !isInternalSessionEffectsKey(sessionKey),
+        )
         .map(([sessionKey, entry]) => ({
           sessionKey,
           entry: { sessionId: sessionKey, updatedAt: 0, ...entry },
-        }));
+        }))
+        .toSorted(
+          (left, right) =>
+            right.entry.updatedAt - left.entry.updatedAt ||
+            (left.sessionKey < right.sessionKey ? -1 : 1),
+        );
       return {
         count: entries.length,
-        recent: entries
-          .toSorted((left, right) => right.entry.updatedAt - left.entry.updatedAt)
-          .slice(0, options.recentLimit),
+        recent: entries.slice(0, options.recentLimit),
+        byAgent: new Map(
+          options.agentIds.map((agentId) => {
+            const owned = entries.filter(
+              ({ sessionKey }) => parseAgentSessionKey(sessionKey)?.agentId === agentId,
+            );
+            return [agentId, { count: owned.length, recent: owned.slice(0, options.recentLimit) }];
+          }),
+        ),
       };
     },
   }));
@@ -487,6 +503,8 @@ describe("collectGatewayHealthSnapshot", () => {
   });
 
   beforeEach(() => {
+    // Freeze payload time; collector.deadline.test.ts owns deadline advancement.
+    vi.useFakeTimers({ toFake: ["Date"] });
     setActiveDegradedPlugins([]);
     buildTelegramHealthSummaryForTest = buildTelegramHealthSummary;
     probeTelegramAccountForTestOverride = undefined;
@@ -500,6 +518,7 @@ describe("collectGatewayHealthSnapshot", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
@@ -601,8 +620,8 @@ describe("collectGatewayHealthSnapshot", () => {
     testStore = {
       global: { updatedAt: Date.now() },
       unknown: { updatedAt: Date.now() },
-      main: { updatedAt: 1000 },
-      foo: { updatedAt: 2000 },
+      "agent:main:main": { updatedAt: 1000 },
+      "agent:main:foo": { updatedAt: 2000 },
     };
     vi.stubEnv("TELEGRAM_BOT_TOKEN", "");
     vi.stubEnv("DISCORD_BOT_TOKEN", "");
@@ -617,7 +636,7 @@ describe("collectGatewayHealthSnapshot", () => {
     expect(telegram.configured).toBe(false);
     expect(telegram.probe).toBeUndefined();
     expect(snap.sessions.count).toBe(2);
-    expect(snap.sessions.recent[0]?.key).toBe("foo");
+    expect(snap.sessions.recent[0]?.key).toBe("agent:main:foo");
   });
 
   it("probes telegram getMe + webhook info when configured", async () => {

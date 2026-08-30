@@ -3,9 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { getAgentLocalStatuses } from "../commands/status.agent-local.js";
 import { clearRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import { resolveSessionStorePathCore } from "../config/sessions/paths.js";
+import * as sessionAccessor from "../config/sessions/session-accessor.js";
 import {
+  replaceSessionEntry,
   replaceSessionEntrySync,
   upsertSessionEntryCore,
 } from "../config/sessions/session-accessor.js";
@@ -98,46 +101,79 @@ describe("getStatusSummary read-only session access", () => {
     },
   );
 
-  it("reports and aggregates fixed logical stores by their physical SQLite targets", async () => {
-    const tempDir = tempDirs.make("openclaw-status-session-stores-");
-    const storePath = path.join(tempDir, "sessions.json");
-    const config = {
-      agents: {
-        defaults: { systemAgent: { agentId: "main" } },
-        list: [{ id: "main", default: true }, { id: "ops" }],
-      },
-      session: { store: storePath },
-    };
+  it.each(["sessions.json", "shared.sqlite"])(
+    "reports each agent's activity and reads each physical session store once for %s",
+    async (fileName) => {
+      const tempDir = tempDirs.make("openclaw-status-session-stores-");
+      const storePath = path.join(tempDir, fileName);
+      const config = {
+        agents: {
+          defaults: { systemAgent: { agentId: "main" } },
+          list: [{ id: "main", default: true }, { id: "ops" }],
+        },
+        session: { store: storePath },
+      };
 
-    try {
-      for (const agentId of ["main", "ops"]) {
-        const logicalPath = resolveSessionStorePathCore(config.session.store, { agentId });
-        await upsertSessionEntryCore(
-          { agentId, sessionKey: `agent:${agentId}:main`, storePath: logicalPath },
-          { sessionId: `${agentId}-session`, updatedAt: 10 },
+      try {
+        for (const agentId of ["main", "ops"]) {
+          const logicalPath = resolveSessionStorePathCore(config.session.store, { agentId });
+          await replaceSessionEntry(
+            { agentId, sessionKey: `agent:${agentId}:main`, storePath: logicalPath },
+            { sessionId: `${agentId}-session`, updatedAt: agentId === "main" ? 10 : 20 },
+          );
+        }
+        closeOpenClawAgentDatabasesForTest();
+
+        const expectedPaths = ["main", "ops"].map(
+          (agentId) => resolveSqliteTargetFromSessionStorePath(storePath, { agentId }).path,
         );
+        const uniquePaths = [...new Set(expectedPaths)];
+        const readSummary = vi.spyOn(sessionAccessor, "readSessionStoreSummaryReadOnly");
+        const now = vi.spyOn(Date, "now").mockReturnValue(100);
+        try {
+          const summary = await getStatusSummary({ includeChannelSummary: false, config });
+
+          expect(summary.sessions.count).toBe(2);
+          expect(summary.sessions.paths).toEqual(uniquePaths);
+          expect(
+            summary.sessions.byAgent.map((agent) => [
+              agent.agentId,
+              agent.path,
+              agent.count,
+              agent.recent.map((session) => [session.agentId, session.key]),
+            ]),
+          ).toEqual([
+            ["main", expectedPaths[0], 1, [["main", "agent:main:main"]]],
+            ["ops", expectedPaths[1], 1, [["ops", "agent:ops:main"]]],
+          ]);
+          expect(readSummary).toHaveBeenCalledTimes(uniquePaths.length);
+
+          readSummary.mockClear();
+          const local = await getAgentLocalStatuses(config);
+          expect(local.totalSessions).toBe(2);
+          expect(
+            local.agents.map((agent) => [
+              agent.id,
+              agent.sessionsCount,
+              agent.lastUpdatedAt,
+              agent.lastActiveAgeMs,
+            ]),
+          ).toEqual([
+            ["main", 1, 10, 90],
+            ["ops", 1, 20, 80],
+          ]);
+          expect(readSummary).toHaveBeenCalledTimes(uniquePaths.length);
+          expect(uniquePaths.every((databasePath) => fs.existsSync(databasePath))).toBe(true);
+        } finally {
+          readSummary.mockRestore();
+          now.mockRestore();
+        }
+      } finally {
+        closeOpenClawAgentDatabasesForTest();
+        closeOpenClawStateDatabaseForTest();
       }
-      closeOpenClawAgentDatabasesForTest();
-
-      const summary = await getStatusSummary({ includeChannelSummary: false, config });
-      const expectedPaths = ["main", "ops"].map(
-        (agentId) => resolveSqliteTargetFromSessionStorePath(storePath, { agentId }).path,
-      );
-
-      expect(summary.sessions.count).toBe(2);
-      expect(summary.sessions.paths).toEqual(expectedPaths);
-      expect(
-        summary.sessions.byAgent.map((agent) => [agent.agentId, agent.path, agent.count]),
-      ).toEqual([
-        ["main", expectedPaths[0], 1],
-        ["ops", expectedPaths[1], 1],
-      ]);
-      expect(expectedPaths.every((databasePath) => fs.existsSync(databasePath))).toBe(true);
-    } finally {
-      closeOpenClawAgentDatabasesForTest();
-      closeOpenClawStateDatabaseForTest();
-    }
-  });
+    },
+  );
 
   it("does not reread ambient config while projecting prepared session runtime state", async () => {
     await withOpenClawTestState(
@@ -188,9 +224,13 @@ describe("getStatusSummary read-only session access", () => {
       }
       await getStatusSummary({ config, includeChannelSummary: false });
       const clone = vi.spyOn(globalThis, "structuredClone");
+      const parse = vi.spyOn(JSON, "parse");
+      const parsedSessionPayloads = () =>
+        parse.mock.calls.filter(([json]) => json.includes('"sessionId":"status-history-'));
       try {
         const summary = await getStatusSummary({ config, includeChannelSummary: false });
 
+        expect(parsedSessionPayloads()).toHaveLength(10);
         expect(summary.sessions.count).toBe(24);
         expect(summary.sessions.byAgent[0]?.count).toBe(24);
         expect(summary.sessions.recent.map(({ key }) => key)).toEqual(
@@ -202,7 +242,17 @@ describe("getStatusSummary read-only session access", () => {
             return typeof sessionId === "string" && sessionId.startsWith("status-history-");
           }),
         ).toHaveLength(0);
+
+        parse.mockClear();
+        const hidden = await getStatusSummary({
+          config,
+          includeChannelSummary: false,
+          includeSensitive: false,
+        });
+        expect(hidden.sessions.count).toBe(24);
+        expect(parsedSessionPayloads()).toHaveLength(0);
       } finally {
+        parse.mockRestore();
         clone.mockRestore();
       }
     });

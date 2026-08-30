@@ -13,7 +13,7 @@ export function registerStatusSummarySessionRowCases(params: {
   setSessions: (store: SessionStore) => void;
 }): void {
   describe("status summary session rows", () => {
-    it("hydrates only recent session rows while preserving total counts", async () => {
+    it("projects only recent session rows while preserving total counts", async () => {
       params.setSessions(
         Object.fromEntries(
           Array.from({ length: 12 }, (_, index) => {
@@ -56,7 +56,7 @@ export function registerStatusSummarySessionRowCases(params: {
       expect(hydratedKeys).not.toContain("agent:main:session-2");
     });
 
-    it("preserves store order for tied recent session timestamps", async () => {
+    it("preserves canonical key order for tied recent session timestamps", async () => {
       params.setSessions(
         Object.fromEntries(
           Array.from({ length: 11 }, (_, index) => {
@@ -76,6 +76,8 @@ export function registerStatusSummarySessionRowCases(params: {
 
       expect(summary.sessions.recent.map((session) => session.key)).toEqual([
         "agent:main:session-1",
+        "agent:main:session-10",
+        "agent:main:session-11",
         "agent:main:session-2",
         "agent:main:session-3",
         "agent:main:session-4",
@@ -83,8 +85,6 @@ export function registerStatusSummarySessionRowCases(params: {
         "agent:main:session-6",
         "agent:main:session-7",
         "agent:main:session-8",
-        "agent:main:session-9",
-        "agent:main:session-10",
       ]);
       expect(summary.sessions.byAgent[0]?.recent.map((session) => session.key)).toEqual(
         summary.sessions.recent.map((session) => session.key),

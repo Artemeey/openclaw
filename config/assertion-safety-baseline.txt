@@ -759,7 +759,6 @@ extensions/memory-core/src/memory/manager-embedding-cache.ts	1
 extensions/memory-core/src/memory/manager-embedding-errors.ts	2
 extensions/memory-core/src/memory/manager-embedding-ops.ts	2
 extensions/memory-core/src/memory/manager-keyword-retrieval.ts	1
-extensions/memory-core/src/memory/manager-reindex-lock.ts	1
 extensions/memory-core/src/memory/manager-search-orchestration.ts	3
 extensions/memory-core/src/memory/manager-search.ts	12
 extensions/memory-core/src/memory/manager-source-state.ts	2
@@ -1959,7 +1958,7 @@ src/agents/run-termination.ts	3
 src/agents/run-timeout-attribution.ts	1
 src/agents/run-wait.ts	8
 src/agents/runtime-plan/build.ts	4
-src/agents/runtime-plan/tools.ts	5
+src/agents/runtime-plan/tools.ts	4
 src/agents/runtime/proxy.ts	7
 src/agents/sandbox-paths.ts	1
 src/agents/sandbox-tool-policy.ts	1
@@ -2446,7 +2445,7 @@ src/cli/update-cli/update-command-plugins.ts	1
 src/cli/update-cli/update-command-post-update.ts	2
 src/cli/users-cli.ts	1
 src/commands/agent-exec.ts	6
-src/commands/agent-via-gateway.ts	11
+src/commands/agent-via-gateway.ts	7
 src/commands/agents.commands.bind.ts	5
 src/commands/agents.commands.identity.ts	1
 src/commands/agents.config.ts	1
@@ -3669,7 +3668,7 @@ src/sessions/session-upstream-links.ts	2
 src/sessions/session-upstream-monitor.ts	2
 src/sessions/user-turn-transcript-runtime-context.ts	2
 src/sessions/user-turn-transcript.media-normalize.ts	2
-src/sessions/user-turn-transcript.ts	11
+src/sessions/user-turn-transcript.ts	5
 src/shared/account-enabled.ts	1
 src/shared/assistant-error-format.ts	3
 src/shared/bounded-serial-queue.ts	1
@@ -3898,7 +3897,7 @@ ui/src/app/theme.ts	4
 ui/src/app/update-schedule-dto.ts	2
 ui/src/app/update-success-notice.ts	1
 ui/src/app/user-profile.ts	2
-ui/src/app/web-push.runtime.ts	3
+ui/src/app/web-push.runtime.ts	2
 ui/src/components/agent-select.ts	3
 ui/src/components/app-sidebar-agent-menu.ts	2
 ui/src/components/app-sidebar-nav-menus.ts	6

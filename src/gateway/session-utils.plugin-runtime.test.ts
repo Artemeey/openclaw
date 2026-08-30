@@ -81,82 +81,76 @@ describe("gateway session list plugin runtime normalization", () => {
     expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
   });
 
-  it.each(["listSessionsFromStore", "listSessionsFromStoreAsync"] as const)(
-    "skips provider runtime normalization for %s list rows",
-    async (listMethod) => {
-      const cfg = {
-        agents: {
-          defaults: { model: { primary: "custom-provider/custom-legacy-model" } },
-        },
-      } as OpenClawConfig;
-      const store = Object.fromEntries(
-        Array.from({ length: 3 }, (_value, index) => [
-          `session-${index}`,
-          { sessionId: `session-${index}`, updatedAt: 1_000 - index } satisfies SessionEntry,
-        ]),
-      );
+  it("skips provider runtime normalization for async list rows", async () => {
+    const cfg = {
+      agents: {
+        defaults: { model: { primary: "custom-provider/custom-legacy-model" } },
+      },
+    } as OpenClawConfig;
+    const store = Object.fromEntries(
+      Array.from({ length: 3 }, (_value, index) => [
+        `session-${index}`,
+        { sessionId: `session-${index}`, updatedAt: 1_000 - index } satisfies SessionEntry,
+      ]),
+    );
 
-      const listed = await withPreparedPluginMetadata(cfg, () =>
-        sessionUtils[listMethod]({
-          cfg,
-          storePath: "",
-          store,
-          opts: {},
-        }),
-      );
+    const listed = await withPreparedPluginMetadata(cfg, () =>
+      sessionUtils.listSessionsFromStoreAsync({
+        cfg,
+        storePath: "",
+        store,
+        opts: {},
+      }),
+    );
 
-      expect(listed.sessions.map((session) => session.model)).toEqual([
-        "custom-legacy-model",
-        "custom-legacy-model",
-        "custom-legacy-model",
-      ]);
-      expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
-    },
-  );
+    expect(listed.sessions.map((session) => session.model)).toEqual([
+      "custom-legacy-model",
+      "custom-legacy-model",
+      "custom-legacy-model",
+    ]);
+    expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
+  });
 
-  it.each(["listSessionsFromStore", "listSessionsFromStoreAsync"] as const)(
-    "keeps literal configured ids separate in the %s row cache",
-    async (listMethod) => {
-      const models = ["custom-provider/shared", "shared"];
-      const cfg: OpenClawConfig = {
-        agents: { defaults: { model: "custom-provider/shared" } },
-        models: {
-          providers: {
-            "custom-provider": {
-              baseUrl: "https://custom-provider.test/v1",
-              models: models.map((id) => ({
-                id,
-                name: id,
-                reasoning: false,
-                input: ["text"],
-                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                contextWindow: 4096,
-                maxTokens: 1024,
-              })),
-            },
+  it("keeps literal configured ids separate in the async row cache", async () => {
+    const models = ["custom-provider/shared", "shared"];
+    const cfg: OpenClawConfig = {
+      agents: { defaults: { model: "custom-provider/shared" } },
+      models: {
+        providers: {
+          "custom-provider": {
+            baseUrl: "https://custom-provider.test/v1",
+            models: models.map((id) => ({
+              id,
+              name: id,
+              reasoning: false,
+              input: ["text"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 4096,
+              maxTokens: 1024,
+            })),
           },
         },
-      };
-      const store = Object.fromEntries(
-        models.map((modelOverride, index) => [
-          `agent:main:literal-${index}`,
-          {
-            sessionId: `literal-${index}`,
-            updatedAt: 2 - index,
-            providerOverride: "custom-provider",
-            modelOverride,
-          } satisfies SessionEntry,
-        ]),
-      );
+      },
+    };
+    const store = Object.fromEntries(
+      models.map((modelOverride, index) => [
+        `agent:main:literal-${index}`,
+        {
+          sessionId: `literal-${index}`,
+          updatedAt: 2 - index,
+          providerOverride: "custom-provider",
+          modelOverride,
+        } satisfies SessionEntry,
+      ]),
+    );
 
-      const listed = await withPreparedPluginMetadata(cfg, () =>
-        sessionUtils[listMethod]({ cfg, storePath: "", store, opts: {} }),
-      );
+    const listed = await withPreparedPluginMetadata(cfg, () =>
+      sessionUtils.listSessionsFromStoreAsync({ cfg, storePath: "", store, opts: {} }),
+    );
 
-      expect(listed.sessions.map((session) => session.model)).toEqual(models);
-      expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
-    },
-  );
+    expect(listed.sessions.map((session) => session.model)).toEqual(models);
+    expect(normalizeProviderModelIdWithPluginMock).not.toHaveBeenCalled();
+  });
 
   it("keeps raw, resolved, and lightweight selections separate in a shared row cache", () => {
     normalizeProviderModelIdWithPluginMock.mockImplementation(

@@ -27,7 +27,7 @@ describe("collectGatewayHealthSnapshot plugin state", () => {
       resolveSessionStorePathCore: () => "/tmp/sessions.json",
     }));
     vi.doMock("../config/sessions/session-accessor.js", () => ({
-      readSessionStoreSummaryReadOnly: () => ({ count: 0, recent: [] }),
+      readSessionStoreSummaryReadOnly: () => ({ count: 0, recent: [], byAgent: new Map() }),
     }));
     vi.doMock("../channels/plugins/read-only.js", () => ({
       listReadOnlyChannelPluginsForConfig: () => [],

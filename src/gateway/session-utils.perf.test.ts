@@ -23,7 +23,7 @@ import * as titleReader from "./session-transcript-title-reader.js";
 import { resolveEstimatedSessionCostUsd } from "./session-utils-core.js";
 import { resolveGatewaySessionThinkingProjectionInternal } from "./session-utils-model.js";
 import { buildSessionListRowMetadataContext } from "./session-utils-projection.js";
-import { listSessionsFromStore, listSessionsFromStoreAsync } from "./session-utils.js";
+import { listSessionsFromStoreAsync } from "./session-utils.js";
 
 /**
  * Regression smoke for the per-list rowContext resolver cache. The bug we are
@@ -36,7 +36,7 @@ import { listSessionsFromStore, listSessionsFromStoreAsync } from "./session-uti
  * CI runners cannot give a stable wall-time signal, and call-count regressions
  * are the actual scaling failure mode we care about.
  */
-describe("listSessionsFromStore resolver cache", () => {
+describe("session list resolver cache", () => {
   test("collapses request-local resolver work to O(unique provider/model tuples)", () => {
     const cfg: OpenClawConfig = {
       agents: {
@@ -228,7 +228,7 @@ describe("listSessionsFromStore resolver cache", () => {
         expect(acpSelects).toBe(3);
 
         acpSelects = 0;
-        const result = listSessionsFromStore({
+        const result = await listSessionsFromStoreAsync({
           cfg,
           storePath: path.join(stateDir, "agents", "default", "sessions", "sessions.json"),
           store: {

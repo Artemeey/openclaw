@@ -8,6 +8,7 @@ import {
   setActiveDegradedSecretOwners,
 } from "../secrets/runtime-degraded-state.js";
 import type { TaskAuditFinding } from "../tasks/task-registry.audit.js";
+import { createEmptyTaskRegistrySummary } from "../tasks/task-registry.summary.js";
 import type { TaskRecord, TaskRegistrySummary } from "../tasks/task-registry.types.js";
 import { normalizeSessionDeliveryState } from "../utils/delivery-context.shared.js";
 import { registerStatusSummarySessionRowCases } from "./status.summary.test-support.js";
@@ -151,22 +152,37 @@ vi.mock("../config/sessions/paths.js", () => ({
 vi.mock("../config/sessions/session-accessor.js", () => ({
   loadExactSessionEntryReadOnly: statusSummaryMocks.loadExactSessionEntryReadOnly,
   readSessionStoreSummaryReadOnly: (
-    ...[scope, options]: Parameters<
+    scope: Parameters<
       typeof import("../config/sessions/session-accessor.js").readSessionStoreSummaryReadOnly
-    >
+    >[0],
+    options: Parameters<
+      typeof import("../config/sessions/session-accessor.js").readSessionStoreSummaryReadOnly
+    >[1],
   ) => {
     const entries = statusSummaryMocks
       .listSessionEntriesCore(scope)
-      .filter(({ sessionKey }) => !options.excludeSessionKeys?.includes(sessionKey))
+      .filter(({ sessionKey }) => sessionKey.startsWith("agent:"))
       .map(({ sessionKey, entry }) => ({
         sessionKey,
         entry: { sessionId: sessionKey, updatedAt: 0, ...entry },
-      }));
+      }))
+      .toSorted(
+        (left, right) =>
+          right.entry.updatedAt - left.entry.updatedAt ||
+          (left.sessionKey < right.sessionKey ? -1 : left.sessionKey > right.sessionKey ? 1 : 0),
+      );
+    const summarize = (rows: typeof entries) => ({
+      count: rows.length,
+      recent: rows.slice(0, options.recentLimit),
+    });
     return {
-      count: entries.length,
-      recent: entries
-        .toSorted((left, right) => right.entry.updatedAt - left.entry.updatedAt)
-        .slice(0, options.recentLimit),
+      ...summarize(entries),
+      byAgent: new Map(
+        options.agentIds.map((agentId) => [
+          agentId,
+          summarize(entries.filter(({ sessionKey }) => sessionKey.startsWith(`agent:${agentId}:`))),
+        ]),
+      ),
     };
   },
 }));
@@ -239,27 +255,7 @@ describe("getStatusSummary", () => {
     setActiveDegradedPlugins([]);
     clearActiveCredentialDegradedOwner("account", "telegram:work");
     setActiveDegradedSecretOwners([]);
-    statusSummaryMocks.taskRegistrySummary = {
-      total: 0,
-      active: 0,
-      terminal: 0,
-      failures: 0,
-      byStatus: {
-        queued: 0,
-        running: 0,
-        succeeded: 0,
-        failed: 0,
-        timed_out: 0,
-        cancelled: 0,
-        lost: 0,
-      },
-      byRuntime: {
-        subagent: 0,
-        acp: 0,
-        cli: 0,
-        cron: 0,
-      },
-    };
+    statusSummaryMocks.taskRegistrySummary = createEmptyTaskRegistrySummary();
     statusSummaryMocks.taskRegistryReadOnlyState = "ready";
     statusSummaryMocks.inspectableTasks = [];
     statusSummaryMocks.taskAuditFindings = [
@@ -323,24 +319,27 @@ describe("getStatusSummary", () => {
       statusSummaryMocks.listSessionEntriesCore.mockReturnValue(toSessionEntrySummaries(store)),
   });
 
-  it("includes runtimeVersion in the status payload", async () => {
-    const summary = await getStatusSummary();
+  it.each([true, false])(
+    "keeps public summary fields with includeSensitive=%s",
+    async (includeSensitive) => {
+      const summary = await getStatusSummary({ includeSensitive });
 
-    expect(summary.runtimeVersion).toBe("2026.3.8");
-    expect(summary.heartbeat.defaultAgentId).toBe("main");
-    expect(summary.heartbeat.agents).toEqual([
-      {
-        agentId: "main",
-        enabled: true,
-        every: "30m",
-        everyMs: 1_800_000,
-        waitingForRoute: true,
-      },
-    ]);
-    expect(summary.channelSummary).toEqual(["ok"]);
-    expect(summary.tasks.active).toBe(0);
-    expect(summary.taskAudit.warnings).toBe(1);
-  });
+      expect(summary.runtimeVersion).toBe("2026.3.8");
+      expect(summary.heartbeat.defaultAgentId).toBe("main");
+      expect(summary.heartbeat.agents).toEqual([
+        {
+          agentId: "main",
+          enabled: true,
+          every: "30m",
+          everyMs: 1_800_000,
+          waitingForRoute: true,
+        },
+      ]);
+      expect(summary.channelSummary).toEqual(["ok"]);
+      expect(summary.tasks).toEqual(statusSummaryMocks.taskRegistrySummary);
+      expect(summary.taskAudit.warnings).toBe(1);
+    },
+  );
 
   // waitingForRoute must follow the session the runner actually reads
   // (heartbeat.session when set), not always the agent main session.
@@ -404,32 +403,7 @@ describe("getStatusSummary", () => {
     },
   );
 
-  it("reuses one physical session-store snapshot for agent and aggregate counts", async () => {
-    vi.mocked(listGatewayAgentsBasic).mockReturnValue({
-      defaultId: "main",
-      mainKey: "main",
-      scope: "per-sender",
-      agents: [{ id: "main" }, { id: "ops" }],
-    });
-    vi.mocked(resolveSessionStorePathCore).mockReturnValue("/tmp/shared-status.sqlite");
-    statusSummaryMocks.loadExactSessionEntryReadOnly.mockReturnValue(undefined);
-    let reads = 0;
-    statusSummaryMocks.listSessionEntriesCore.mockImplementation(() => {
-      reads += 1;
-      return Array.from({ length: reads }, (_, index) => ({
-        sessionKey: `agent:main:session-${index}`,
-        entry: { sessionId: `session-${index}`, updatedAt: index },
-      }));
-    });
-
-    const summary = await getStatusSummary({ includeChannelSummary: false });
-
-    expect(summary.sessions.count).toBe(1);
-    expect(summary.sessions.byAgent.map(({ count }) => count)).toEqual([1, 1]);
-    expect(reads).toBe(1);
-  });
-
-  it("redacts collected session details when sensitive output is disabled", async () => {
+  it("skips session model discovery and projection when sensitive output is disabled", async () => {
     statusSummaryMocks.listSessionEntriesCore.mockReturnValue([
       {
         sessionKey: "agent:main:main",
@@ -445,7 +419,11 @@ describe("getStatusSummary", () => {
 
     const summary = await getStatusSummary({ includeSensitive: false });
 
-    expect(summary.sessions).toMatchObject({
+    expect(statusSummaryRuntime.waitForContextWindowCacheLoad).not.toHaveBeenCalled();
+    expect(statusSummaryRuntime.resolveConfiguredStatusModelRef).not.toHaveBeenCalled();
+    expect(statusSummaryRuntime.resolveSessionRuntime).not.toHaveBeenCalled();
+    expect(statusSummaryMocks.resolveProviderStaticModel).not.toHaveBeenCalled();
+    expect(summary.sessions).toEqual({
       paths: [],
       count: 1,
       defaults: { model: null, contextTokens: null },
@@ -833,10 +811,10 @@ describe("getStatusSummary", () => {
     statusSummaryMocks.listSessionEntriesCore.mockImplementation((scope) =>
       scope?.agentId === "ops"
         ? toSessionEntrySummaries({
-            main: { sessionId: "ops-session", updatedAt: 2 },
+            "agent:ops:main": { sessionId: "ops-session", updatedAt: 2 },
           })
         : toSessionEntrySummaries({
-            main: { sessionId: "main-session", updatedAt: 1 },
+            "agent:main:main": { sessionId: "main-session", updatedAt: 1 },
           }),
     );
 
@@ -1070,7 +1048,7 @@ describe("getStatusSummary", () => {
       toSessionEntrySummaries({
         "agent:ops:main": { sessionId: "ops-session", updatedAt: 3 },
         "agent:research:main": { sessionId: "research-session", updatedAt: 2 },
-        main: { sessionId: "global-session", updatedAt: 1 },
+        "agent:main:main": { sessionId: "global-session", updatedAt: 1 },
       }),
     );
 
@@ -1078,5 +1056,8 @@ describe("getStatusSummary", () => {
     const selected = summary.sessions.recent.map(({ selectedModel }) => selectedModel);
 
     expect(selected).toEqual(["openai/ops", "openai/research", "openai/global"]);
+    expect(summary.sessions.count).toBe(3);
+    expect(summary.sessions.byAgent[0]?.count).toBe(1);
+    expect(summary.sessions.byAgent[0]?.recent.map(({ key }) => key)).toEqual(["agent:main:main"]);
   });
 });

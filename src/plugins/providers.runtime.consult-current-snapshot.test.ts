@@ -18,11 +18,12 @@ import { resolveCronSession } from "../cron/isolated-agent/session.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import {
   makePluginMetadataIndex,
+  makePluginMetadataManifestRegistry,
   setCurrentPluginMetadataSnapshot,
 } from "./current-plugin-metadata.test-support.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
 import * as pluginLoader from "./loader.js";
-import type { PluginManifestRecord, PluginManifestRegistry } from "./manifest-registry.js";
+import type { PluginManifestRegistry } from "./manifest-registry.js";
 import { clearPluginMetadataLifecycleCaches } from "./plugin-metadata-lifecycle.js";
 import {
   loadPluginMetadataSnapshot,
@@ -63,21 +64,12 @@ import { isPluginProvidersLoadInFlight, resolvePluginProvidersCore } from "./pro
 const WORKSPACE = "/workspace/a";
 
 function makeManifestRegistry(pluginId = "demo"): PluginManifestRegistry {
-  const plugin: PluginManifestRecord = {
-    id: pluginId,
-    name: pluginId,
-    channels: [],
-    providers: [pluginId],
-    cliBackends: [],
-    skills: [],
-    hooks: [],
-    commandAliases: [],
-    rootDir: `/plugins/${pluginId}`,
-    source: `/plugins/${pluginId}/index.js`,
-    manifestPath: `/plugins/${pluginId}/openclaw.plugin.json`,
-    origin: "global",
-  };
-  return { plugins: [plugin], diagnostics: [] };
+  const registry = makePluginMetadataManifestRegistry(pluginId);
+  // Provider fixtures intentionally declare no command aliases.
+  for (const plugin of registry.plugins) {
+    plugin.commandAliases = [];
+  }
+  return registry;
 }
 
 // Build a snapshot from a provided index (no disk) and register it as the

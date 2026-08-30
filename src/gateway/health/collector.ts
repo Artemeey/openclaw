@@ -10,7 +10,7 @@ import type { ChannelPlugin } from "../../channels/plugins/types.plugin.js";
 import type { ChannelAccountSnapshot } from "../../channels/plugins/types.public.js";
 import { tryResolveLegacyCompatibilityAgentId } from "../../config/legacy.default-agent-owner.js";
 import { resolveSessionStorePathCore } from "../../config/sessions/paths.js";
-import { resolveSqliteTargetFromSessionStorePath } from "../../config/sessions/session-sqlite-target.js";
+import type { SessionEntrySummary } from "../../config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { isDiagnosticFlagEnabled } from "../../infra/diagnostic-flags.js";
 import { formatErrorMessage } from "../../infra/errors.js";
@@ -108,34 +108,65 @@ export function resolveHealthAgentOrder(cfg: OpenClawConfig) {
   return { defaultAgentId, ordered };
 }
 
-export async function buildHealthSessionSummary(storePath: string, agentId?: string) {
-  const databasePath = resolveSqliteTargetFromSessionStorePath(storePath, { agentId }).path;
+async function createHealthSessionStoreReader(agentIds: readonly string[]) {
+  const { createStatusSessionStoreReader } = await import("../../status/session-stores.js");
   const { readSessionStoreSummaryReadOnly } =
     await import("../../config/sessions/session-accessor.js");
   const { isTransientSqliteError } = await import("../../infra/unhandled-rejections.js");
-  let summary: ReturnType<typeof readSessionStoreSummaryReadOnly>;
-  try {
-    summary = readSessionStoreSummaryReadOnly(
-      { ...(agentId ? { agentId } : {}), storePath },
-      { recentLimit: HEALTH_RECENT_SESSION_LIMIT, excludeSessionKeys: ["global", "unknown"] },
-    );
-  } catch (error) {
-    if (!isTransientSqliteError(error)) {
-      throw error;
+  return createStatusSessionStoreReader(agentIds, HEALTH_RECENT_SESSION_LIMIT, (scope, options) => {
+    try {
+      return readSessionStoreSummaryReadOnly(scope, options);
+    } catch (error) {
+      if (!isTransientSqliteError(error)) {
+        throw error;
+      }
+      // Health is best-effort: one empty snapshot beats repeated transient lock failures.
+      return { count: 0, recent: [], byAgent: new Map() };
     }
-    // Health is best-effort: an empty snapshot beats failing on a transient lock.
-    summary = { count: 0, recent: [] };
-  }
-  const recent = summary.recent.map(({ sessionKey, entry }) => ({
-    key: sessionKey,
+  });
+}
+
+function projectHealthSessions(
+  path: string,
+  summary: { count: number; recent: SessionEntrySummary[] },
+) {
+  const recent = summary.recent.map(({ sessionKey: key, entry }) => ({
+    key,
     updatedAt: entry.updatedAt || null,
     age: entry.updatedAt ? Date.now() - entry.updatedAt : null,
   }));
   return {
-    path: databasePath,
+    path,
     count: summary.count,
     recent,
   } satisfies HealthSummary["sessions"];
+}
+
+async function buildHealthSessionSummary(storePath: string, agentId?: string) {
+  const reader = await createHealthSessionStoreReader(agentId ? [agentId] : []);
+  const store = reader.read(storePath, agentId);
+  return projectHealthSessions(store.path, store);
+}
+
+/** Shares one bounded session snapshot across every configured agent in this collection. */
+export async function buildHealthAgentSummaries(
+  cfg: OpenClawConfig,
+  { defaultAgentId, ordered }: ReturnType<typeof resolveHealthAgentOrder>,
+): Promise<AgentHealthSummary[]> {
+  const reader = await createHealthSessionStoreReader(ordered.map((entry) => entry.id));
+  return ordered.map((entry) => {
+    const store = reader.read(
+      resolveSessionStorePathCore(cfg.session?.store, { agentId: entry.id }),
+      entry.id,
+    );
+    return {
+      agentId: entry.id,
+      name: entry.name,
+      isDefault: entry.id === defaultAgentId,
+      heartbeat: resolveHeartbeatSummary(cfg, entry.id),
+      sessions: projectHealthSessions(store.path, store),
+    };
+  });
 }
 
 function buildPluginHealthSummary(): PluginHealthSummary | undefined {
@@ -480,18 +511,7 @@ export async function collectGatewayHealthSnapshot(params: {
   const cfg = await readRuntimeHealthConfig();
   const { defaultAgentId, ordered } = resolveHealthAgentOrder(cfg);
   const channelBindings = buildChannelAccountBindings(cfg);
-  const agents: AgentHealthSummary[] = [];
-  for (const entry of ordered) {
-    const storePath = resolveSessionStorePathCore(cfg.session?.store, { agentId: entry.id });
-    const sessions = await buildHealthSessionSummary(storePath, entry.id);
-    agents.push({
-      agentId: entry.id,
-      name: entry.name,
-      isDefault: entry.id === defaultAgentId,
-      heartbeat: resolveHeartbeatSummary(cfg, entry.id),
-      sessions,
-    });
-  }
+  const agents = await buildHealthAgentSummaries(cfg, { defaultAgentId, ordered });
   const summaryAgent = agents.find((agent) => agent.isDefault) ?? agents[0];
   const configuredHeartbeatAgentId = normalizeOptionalString(
     cfg.agents?.defaults?.heartbeat?.agentId,

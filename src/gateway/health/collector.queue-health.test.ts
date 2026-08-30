@@ -12,7 +12,7 @@ vi.mock("../../config/sessions/paths.js", () => ({
 }));
 
 vi.mock("../../config/sessions/session-accessor.js", () => ({
-  readSessionStoreSummaryReadOnly: () => ({ count: 0, recent: [] }),
+  readSessionStoreSummaryReadOnly: () => ({ count: 0, recent: [], byAgent: new Map() }),
 }));
 
 vi.mock("../../channels/plugins/read-only.js", () => ({
