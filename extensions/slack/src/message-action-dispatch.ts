@@ -14,6 +14,7 @@ import {
   normalizeOptionalString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolveDefaultSlackAccountId, resolveSlackMarkdownOptions } from "./accounts.js";
+import type { SlackActionContext } from "./action-runtime.js";
 import { normalizeSlackOutboundText } from "./format.js";
 import { SLACK_EDIT_TEXT_MAX_BYTES } from "./limits.js";
 import { renderSlackMessagePresentationFallbackText } from "./presentation-fallback.js";
@@ -21,7 +22,6 @@ import { SLACK_SECTION_TEXT_MAX } from "./presentation.js";
 import {
   resolveSlackReplyBlockResolution,
   resolveSlackReplyDeliveryMessages,
-  type SlackReplyDeliveryMessage,
 } from "./reply-blocks.js";
 import { resolveSlackThreadTsValue } from "./thread-ts.js";
 import { countSlackTextUtf8Bytes } from "./truncate.js";
@@ -29,7 +29,7 @@ import { countSlackTextUtf8Bytes } from "./truncate.js";
 type SlackActionInvoke = (
   action: Record<string, unknown>,
   cfg: ChannelMessageActionContext["cfg"],
-  toolContext?: ChannelMessageActionContext["toolContext"],
+  toolContext?: SlackActionContext,
 ) => Promise<AgentToolResult<unknown>>;
 
 function readSlackForceDocument(params: Record<string, unknown>): boolean {
@@ -100,7 +100,7 @@ export async function handleSlackMessageAction(params: {
       preparedMessages.length > 0
         ? {
             ...ctx.toolContext,
-            preparedMessages: preparedMessages satisfies readonly SlackReplyDeliveryMessage[],
+            preparedMessages,
           }
         : ctx.toolContext;
     return await invoke(

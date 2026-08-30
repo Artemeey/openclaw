@@ -162,7 +162,7 @@ describe("editSlackMessage blocks", () => {
           botToken: "xoxb-test",
           markdown: { tables: "off" },
           accounts: { work: { markdown: { tables: mode } } },
-          channels: { C123: { allow: true } },
+          channels: { C123: { enabled: true } },
         },
       },
     };
@@ -214,7 +214,7 @@ describe("editSlackMessage blocks", () => {
           target: "channel:C123",
           token: "xoxb-test",
           accountId: "work",
-          runtime: {},
+          runtime: { log: () => {}, error: () => {}, exit: () => {} },
           textLimit: 4000,
           replyToMode: "off",
           eventScope: { teamId: "T123", client },
@@ -329,7 +329,7 @@ describe("editSlackMessage blocks", () => {
                 slack: {
                   botToken: "xoxb-test",
                   markdown: { tables: mode },
-                  channels: { C123: { allow: true } },
+                  channels: { C123: { enabled: true } },
                 },
               },
             },

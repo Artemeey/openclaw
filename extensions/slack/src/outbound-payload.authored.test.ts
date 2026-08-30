@@ -270,6 +270,68 @@ describe("Slack authored presentation delivery", () => {
     ]);
   });
 
+  it.each([
+    {
+      name: "context bold",
+      type: "context",
+      authored: "**First Second**",
+      rendered: "*First Second*",
+      fragments: ["*First", "Second*"],
+    },
+    {
+      name: "context code",
+      type: "context",
+      authored: "`a b`",
+      rendered: "`a b`",
+      fragments: ["`a", "b`"],
+    },
+    {
+      name: "section code",
+      type: "section",
+      authored: "```\na\nb\n```",
+      rendered: "```\na\nb\n```",
+      fragments: ["```\na", "b\n```"],
+    },
+    {
+      name: "section bold",
+      type: "section",
+      authored: "**First\nSecond**",
+      rendered: "*First\nSecond*",
+      fragments: ["*First", "Second*"],
+    },
+    {
+      name: "complete context formatting",
+      type: "context",
+      authored: "**First** Second",
+      rendered: undefined,
+      fragments: ["*First*", "Second"],
+    },
+    {
+      name: "complete section code",
+      type: "section",
+      authored: "`a`\nb",
+      rendered: undefined,
+      fragments: ["`a`", "b"],
+    },
+  ])(
+    "preserves text-object boundaries inside $name",
+    async ({ type, authored, rendered, fragments }) => {
+      const objects = fragments.map((text) => ({ type: "mrkdwn", text }));
+      const block = type === "context" ? { type, elements: objects } : { type, fields: objects };
+      const { client } = await sendThroughRealSlack({
+        payload: { text: authored, channelData: { slack: { blocks: [block] } } },
+        renderText: authored,
+      });
+      expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+      expect(postedSlackMessage(client, 0).blocks).toEqual([
+        block,
+        ...(rendered
+          ? [{ type: "section", text: { type: "mrkdwn", text: rendered, verbatim: true } }]
+          : []),
+      ]);
+    },
+  );
+
   it.each(["inline", "fenced"])("preserves distinct authored %s code whitespace", async (kind) => {
     const wrap = (text: string) => (kind === "inline" ? `\`${text}\`` : `\`\`\`\n${text}\n\`\`\``);
     const authored = wrap("printf 'a  b'");

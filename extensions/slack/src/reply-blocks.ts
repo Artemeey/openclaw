@@ -14,7 +14,7 @@ import {
   resolveSlackAuthoredTextPlacement,
   type SlackAuthoredTextPlacement,
 } from "./authored-text.js";
-import { buildSlackBlocksFallbackText, renderSlackBlockFallbackText } from "./blocks-fallback.js";
+import { buildSlackBlocksFallbackText, renderSlackBlockTextFragments } from "./blocks-fallback.js";
 import { parseSlackBlocksInput, SLACK_MAX_BLOCKS } from "./blocks-input.js";
 import {
   buildSlackInteractiveBlocks,
@@ -226,9 +226,7 @@ function renderSlackAuthoredTextFragments(segments: readonly SlackReplyBlockSegm
     }
     return segment.blocks
       .filter((block) => block.type !== "actions")
-      .flatMap(
-        (block) => renderSlackBlockFallbackText(block, { nativeDataFormat: "mrkdwn-safe" }) ?? [],
-      );
+      .flatMap(renderSlackBlockTextFragments);
   });
 }
 
