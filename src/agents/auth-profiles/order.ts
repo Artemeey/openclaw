@@ -38,17 +38,17 @@ type AuthProfileEligibility = {
   reasonCode: AuthProfileEligibilityReasonCode;
 };
 
-function isCredentialProviderCompatibleWithAuthProvider(params: {
+function isProfileProviderCompatibleWithAuthProvider(params: {
   cfg?: OpenClawConfig;
   authAliasLookupParams?: ProviderAuthAliasLookupParams;
   providerAuthKey: string;
-  credential: AuthProfileCredential;
+  provider: string;
 }): boolean {
-  const credentialProviderKey = resolveProviderIdForAuth(params.credential.provider, {
+  const providerKey = resolveProviderIdForAuth(params.provider, {
     config: params.cfg,
     ...params.authAliasLookupParams,
   });
-  return credentialProviderKey === params.providerAuthKey;
+  return providerKey === params.providerAuthKey;
 }
 
 /** Returns true when a stored credential can authenticate the requested provider. */
@@ -58,28 +58,15 @@ export function isStoredCredentialCompatibleWithAuthProvider(params: {
   provider: string;
   credential: AuthProfileCredential;
 }): boolean {
-  return isCredentialProviderCompatibleWithAuthProvider({
+  return isProfileProviderCompatibleWithAuthProvider({
     cfg: params.cfg,
     authAliasLookupParams: params.authAliasLookupParams,
     providerAuthKey: resolveProviderIdForAuth(params.provider, {
       config: params.cfg,
       ...params.authAliasLookupParams,
     }),
-    credential: params.credential,
+    provider: params.credential.provider,
   });
-}
-
-function isConfiguredProfileCompatibleWithAuthProvider(params: {
-  cfg?: OpenClawConfig;
-  authAliasLookupParams?: ProviderAuthAliasLookupParams;
-  providerAuthKey: string;
-  provider: string;
-}): boolean {
-  const configProviderKey = resolveProviderIdForAuth(params.provider, {
-    config: params.cfg,
-    ...params.authAliasLookupParams,
-  });
-  return configProviderKey === params.providerAuthKey;
 }
 
 function listProfilesCompatibleWithAuthProvider(params: {
@@ -90,11 +77,11 @@ function listProfilesCompatibleWithAuthProvider(params: {
 }): string[] {
   return Object.entries(params.store.profiles)
     .filter(([, credential]) =>
-      isCredentialProviderCompatibleWithAuthProvider({
+      isProfileProviderCompatibleWithAuthProvider({
         cfg: params.cfg,
         authAliasLookupParams: params.authAliasLookupParams,
         providerAuthKey: params.providerAuthKey,
-        credential,
+        provider: credential.provider,
       }),
     )
     .map(([profileId]) => profileId);
@@ -172,11 +159,11 @@ export function resolveAuthProfileEligibility(params: {
     return { eligible: false, reasonCode: "profile_missing" };
   }
   if (
-    !isCredentialProviderCompatibleWithAuthProvider({
+    !isProfileProviderCompatibleWithAuthProvider({
       cfg: params.cfg,
       authAliasLookupParams: params.authAliasLookupParams,
       providerAuthKey,
-      credential: cred,
+      provider: cred.provider,
     })
   ) {
     return { eligible: false, reasonCode: "provider_mismatch" };
@@ -184,7 +171,7 @@ export function resolveAuthProfileEligibility(params: {
   const profileConfig = params.cfg?.auth?.profiles?.[params.profileId];
   if (profileConfig) {
     if (
-      !isConfiguredProfileCompatibleWithAuthProvider({
+      !isProfileProviderCompatibleWithAuthProvider({
         cfg: params.cfg,
         authAliasLookupParams: params.authAliasLookupParams,
         providerAuthKey,
@@ -278,7 +265,7 @@ export function resolveAuthProfileOrderWithMetadata(
   const explicitProfiles = cfg?.auth?.profiles
     ? Object.entries(cfg.auth.profiles)
         .filter(([, profile]) =>
-          isConfiguredProfileCompatibleWithAuthProvider({
+          isProfileProviderCompatibleWithAuthProvider({
             cfg,
             authAliasLookupParams: params.authAliasLookupParams,
             providerAuthKey,
