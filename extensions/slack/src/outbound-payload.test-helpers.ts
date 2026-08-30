@@ -5,7 +5,7 @@ import { sendMessageSlack } from "./send.js";
 
 type SlackTestBlock = {
   block_id?: string;
-  elements?: Array<{ action_id?: string }>;
+  elements?: Array<{ action_id?: string; text?: string }>;
   text?: { text?: string; type?: string };
   type?: string;
 };

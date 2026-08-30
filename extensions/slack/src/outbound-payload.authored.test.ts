@@ -206,6 +206,252 @@ describe("Slack authored presentation delivery", () => {
     expect(sections?.join("")).toBe(text);
   });
 
+  it.each(
+    [
+      { name: "bold", authoredMarker: "**", marker: "*" },
+      { name: "italic", authoredMarker: "*", marker: "_" },
+      { name: "strike", authoredMarker: "~~", marker: "~" },
+    ].flatMap((style) => (["text", "context"] as const).map((type) => ({ style, type }))),
+  )(
+    "preserves long $style.name in portable $type chunks",
+    async ({ style: { authoredMarker, marker }, type }) => {
+      const content = "x".repeat(3_001);
+      const text = `${authoredMarker}${content}${authoredMarker}`;
+      const { client } = await sendThroughRealSlack({
+        payload: {
+          text,
+          presentation: { blocks: [{ type, text: `${marker}${content}${marker}` }] },
+        },
+        renderText: text,
+      });
+      expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+      const blocks = postedSlackMessage(client, 0).blocks ?? [];
+      const fragments = blocks.flatMap((block) =>
+        block.type === "context"
+          ? (block.elements?.map((element) => element.text) ?? [])
+          : [block.text?.text],
+      );
+      expect(fragments).toHaveLength(2);
+      for (const fragment of fragments) {
+        expect(fragment?.startsWith(marker)).toBe(true);
+        expect(fragment?.endsWith(marker)).toBe(true);
+        expect(fragment?.length).toBeLessThanOrEqual(3_000);
+      }
+      expect(
+        fragments.map((fragment) => fragment?.slice(marker.length, -marker.length)).join(""),
+      ).toBe(content);
+    },
+  );
+
+  it.each([
+    { style: "bold", authored: "**Overview**" },
+    { style: "italic", authored: "*Overview*" },
+    { style: "strike", authored: "~~Overview~~" },
+    { style: "code", authored: "`Overview`" },
+  ])(
+    "recognizes native rich-text $style without duplicating authored text",
+    async ({ style, authored }) => {
+      const block = {
+        type: "rich_text",
+        elements: [
+          {
+            type: "rich_text_section",
+            elements: [{ type: "text", text: "Overview", style: { [style]: true } }],
+          },
+        ],
+      };
+      const { client } = await sendThroughRealSlack({
+        payload: { text: authored, channelData: { slack: { blocks: [block] } } },
+        renderText: authored,
+      });
+      expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+      expect(postedSlackMessage(client, 0).blocks).toEqual([block]);
+    },
+  );
+
+  it.each(["*", "_"])("preserves literal native %s markers at chunk boundaries", async (marker) => {
+    const text = `prefix${marker}${"x".repeat(3_001)}${marker}suffix`;
+    const { client } = await sendThroughRealSlack({
+      payload: { presentation: { blocks: [{ type: "text", text }] } },
+    });
+    const fragments = postedSlackMessage(client, 0).blocks?.map((block) => block.text?.text);
+    expect(fragments?.join("")).toBe(text);
+  });
+
+  it("preserves a valid long span after a literal delimiter", async () => {
+    const prefix = "cost * 2 ";
+    const content = "x".repeat(3_001);
+    const { client } = await sendThroughRealSlack({
+      payload: { presentation: { blocks: [{ type: "text", text: `${prefix}*${content}*` }] } },
+    });
+    const fragments = postedSlackMessage(client, 0).blocks?.map((block) => block.text?.text) ?? [];
+    expect(fragments).toHaveLength(2);
+    expect(fragments[0]?.startsWith(prefix)).toBe(true);
+    const styled = [fragments[0]?.slice(prefix.length), fragments[1]];
+    for (const fragment of styled) {
+      expect(fragment?.startsWith("*")).toBe(true);
+      expect(fragment?.endsWith("*")).toBe(true);
+    }
+    expect(styled.map((fragment) => fragment?.slice(1, -1)).join("")).toBe(content);
+  });
+
+  it.each([
+    {
+      name: "color",
+      authored: "First Second",
+      elements: [
+        { type: "text", text: "First " },
+        { type: "color", value: "#00ff00" },
+        { type: "text", text: "Second" },
+      ],
+    },
+    {
+      name: "team",
+      authored: "First Second",
+      elements: [
+        { type: "text", text: "First " },
+        { type: "team", team_id: "T123" },
+        { type: "text", text: "Second" },
+      ],
+    },
+    {
+      name: "date",
+      authored: "First fallbackSecond",
+      elements: [
+        { type: "text", text: "First " },
+        { type: "date", timestamp: 1725019200, format: "{date_long}", fallback: "fallback" },
+        { type: "text", text: "Second" },
+      ],
+    },
+    {
+      name: "inline code delimiter",
+      authored: "`a`b`",
+      elements: [{ type: "text", text: "a`b", style: { code: true } }],
+    },
+    {
+      name: "fenced code delimiter",
+      authored: "```\na```b\n```",
+      type: "rich_text_preformatted",
+      elements: [{ type: "text", text: "a```b\n" }],
+    },
+  ])("retains authored text beside opaque native $name", async ({ authored, elements, type }) => {
+    const block = {
+      type: "rich_text",
+      elements: [{ type: type ?? "rich_text_section", elements }],
+    };
+    const { client } = await sendThroughRealSlack({
+      payload: { text: authored, channelData: { slack: { blocks: [block] } } },
+      renderText: authored,
+    });
+    expect(postedSlackMessage(client, 0).blocks).toEqual([
+      block,
+      { type: "section", text: { type: "mrkdwn", text: authored, verbatim: true } },
+    ]);
+  });
+
+  it.each([
+    {
+      name: "adjacent bold leaves",
+      authored: "**Overview**",
+      elements: [
+        {
+          type: "rich_text_section",
+          elements: [
+            { type: "text", text: "Over", style: { bold: true } },
+            { type: "text", text: "view", style: { bold: true } },
+          ],
+        },
+      ],
+    },
+    {
+      name: "mixed section styles",
+      authored: "See **Overview**",
+      elements: [
+        {
+          type: "rich_text_section",
+          elements: [
+            { type: "text", text: "See " },
+            { type: "text", text: "Overview", style: { bold: true } },
+          ],
+        },
+      ],
+    },
+    {
+      name: "combined styles",
+      authored: "***Overview***",
+      elements: [
+        {
+          type: "rich_text_section",
+          elements: [{ type: "text", text: "Overview", style: { bold: true, italic: true } }],
+        },
+      ],
+    },
+    {
+      name: "matching link",
+      authored: "[Overview](https://example.com)",
+      elements: [
+        {
+          type: "rich_text_section",
+          elements: [{ type: "link", text: "Overview", url: "https://example.com" }],
+        },
+      ],
+    },
+    {
+      name: "different link",
+      authored: "[Overview](https://other.example.com)",
+      rendered: "<https://other.example.com|Overview>",
+      elements: [
+        {
+          type: "rich_text_section",
+          elements: [{ type: "link", text: "Overview", url: "https://example.com" }],
+        },
+      ],
+    },
+    {
+      name: "literal markers",
+      authored: "**Overview**",
+      rendered: "*Overview*",
+      elements: [{ type: "rich_text_section", elements: [{ type: "text", text: "*Overview*" }] }],
+    },
+    {
+      name: "opaque style barrier",
+      authored: "First Second",
+      rendered: "First Second",
+      elements: [
+        { type: "rich_text_section", elements: [{ type: "text", text: "First" }] },
+        {
+          type: "rich_text_section",
+          elements: [{ type: "text", text: "hidden", style: { underline: true } }],
+        },
+        { type: "rich_text_section", elements: [{ type: "text", text: "Second" }] },
+      ],
+    },
+    {
+      name: "preformatted whitespace",
+      authored: "```\na  b\n```",
+      elements: [{ type: "rich_text_preformatted", elements: [{ type: "text", text: "a  b\n" }] }],
+    },
+    {
+      name: "native quote layout",
+      authored: "First",
+      rendered: "First",
+      elements: [{ type: "rich_text_quote", elements: [{ type: "text", text: "First" }] }],
+    },
+  ])("preserves structured rich-text $name", async ({ authored, rendered, elements }) => {
+    const block = { type: "rich_text", elements };
+    const { client } = await sendThroughRealSlack({
+      payload: { text: authored, channelData: { slack: { blocks: [block] } } },
+      renderText: authored,
+    });
+    expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(postedSlackMessage(client, 0).blocks).toEqual([
+      block,
+      ...(rendered
+        ? [{ type: "section", text: { type: "mrkdwn", text: rendered, verbatim: true } }]
+        : []),
+    ]);
+  });
+
   it.each([
     {
       name: "inline code",

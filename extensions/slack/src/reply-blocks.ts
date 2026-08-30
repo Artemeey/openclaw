@@ -219,7 +219,9 @@ export function hasSlackReplyStructuredContent(payload: ReplyPayload): boolean {
   );
 }
 
-function renderSlackAuthoredTextFragments(segments: readonly SlackReplyBlockSegment[]): string[] {
+function renderSlackAuthoredTextFragments(
+  segments: readonly SlackReplyBlockSegment[],
+): (string | null)[] {
   return segments.flatMap((segment) => {
     if (segment.kind === "text") {
       return [escapeSlackMrkdwn(segment.text)];

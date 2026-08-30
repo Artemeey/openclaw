@@ -4,9 +4,11 @@ import { slackMrkdwnTextBoundary } from "./format.js";
 
 export type SlackAuthoredTextPlacement = "none" | "blocks" | "outside-blocks";
 
-// Project producer plans the same way so trimmed chunk seams cannot duplicate authored text.
-function normalizeSlackAuthoredTextFragments(fragments: readonly string[]): string[] {
-  return fragments.map((fragment) => fragment.trim()).filter(Boolean);
+// Project producer plans alike; null barriers retain native content with no mrkdwn equivalent.
+function normalizeSlackAuthoredTextFragments(fragments: readonly (string | null)[]) {
+  return fragments
+    .map((fragment) => fragment?.trim() ?? null)
+    .filter((fragment) => fragment !== "");
 }
 
 /** Resolve placement from producer facts, before accessibility text changes the payload text. */
@@ -14,7 +16,7 @@ export function resolveSlackAuthoredTextPlacement(params: {
   text?: string;
   interactive?: LegacyInteractiveReply;
   renderedInBlocks?: boolean;
-  renderedTextFragments?: readonly string[];
+  renderedTextFragments?: readonly (string | null)[];
   authoredChunkPlans?: readonly (readonly string[])[];
 }): SlackAuthoredTextPlacement {
   const text = normalizeOptionalString(params.text);
@@ -47,7 +49,7 @@ export function resolveSlackAuthoredTextPlacement(params: {
   for (let start = 0; start < fragments.length; start += 1) {
     let remaining = text;
     for (const fragment of fragments.slice(start)) {
-      if (!remaining.startsWith(fragment)) {
+      if (fragment === null || !remaining.startsWith(fragment)) {
         break;
       }
       remaining = remaining.slice(fragment.length);
