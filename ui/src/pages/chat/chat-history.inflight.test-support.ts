@@ -3,9 +3,12 @@ import { extractText } from "../../lib/chat/message-extract.ts";
 import type { ChatHistoryResult, ChatState } from "./chat-history.ts";
 import { makeChatHost } from "./chat-host.test-support.ts";
 import { buildChatItems } from "./chat-thread-build.ts";
+import type { reconcileChatRunLifecycle } from "./run-lifecycle.ts";
 import type { handleAgentEvent, ToolStreamEntry } from "./tool-stream.ts";
 
-export type TestState = ChatState & Parameters<typeof handleAgentEvent>[0];
+export type TestState = ChatState &
+  Parameters<typeof handleAgentEvent>[0] &
+  Parameters<typeof reconcileChatRunLifecycle>[0];
 type TestSessions = NonNullable<ChatState["sessions"]> &
   Parameters<typeof handleAgentEvent>[0]["sessions"];
 
