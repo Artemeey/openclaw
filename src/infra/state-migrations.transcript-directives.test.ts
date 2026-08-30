@@ -1,11 +1,15 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanupTempDirs, makeTempDir } from "../../test/helpers/temp-dir.js";
 import { readSessionArchiveContentSync } from "../config/sessions/archive-compression.js";
 import { resolveSqliteTranscriptArchiveDirectory } from "../config/sessions/session-accessor.sqlite-scope.js";
 import { reconcileSessionTranscriptIndexInTransaction } from "../config/sessions/session-transcript-index.js";
+import {
+  claimOpenClawAgentDatabaseLease,
+  releaseOpenClawAgentDatabaseLease,
+} from "../state/openclaw-agent-db-lease.js";
 import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
@@ -153,6 +157,7 @@ function parseArchive(content: string): FixtureEvent[] {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   closeOpenClawAgentDatabasesForTest();
   closeOpenClawStateDatabaseForTest();
   cleanupTempDirs(tempDirs);
@@ -506,5 +511,69 @@ describe("historical transcript directive migration", () => {
     } finally {
       migrated.close();
     }
+  });
+
+  it("renews maintenance beyond its original lifetime and fences writers through final mutation", async () => {
+    vi.useFakeTimers();
+    const stateDir = makeTempDir(tempDirs, "transcript-directive-lease-renewal-");
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    const opened = openOpenClawAgentDatabase({ agentId: "main", env });
+    for (let index = 0; index <= 32; index += 1) {
+      insertSession(opened.db, {
+        events: [
+          messageEvent({
+            content: [{ type: "text", text: "[[reply_to_current]] Migrating" }],
+            id: `assistant-${index}`,
+            role: "assistant",
+            timestamp: index + 1,
+          }),
+        ],
+        generation: "before",
+        sessionId: `session-${String(index).padStart(2, "0")}`,
+      });
+    }
+    closeOpenClawAgentDatabasesForTest();
+
+    vi.spyOn(globalThis, "setImmediate").mockImplementationOnce(
+      (callback) => setTimeout(callback, 61_000) as unknown as NodeJS.Immediate,
+    );
+    let competingWriterError: unknown;
+    let competingLeaseId: string | undefined;
+    setTimeout(() => {
+      try {
+        competingLeaseId = claimOpenClawAgentDatabaseLease({
+          agentId: "competitor",
+          path: path.join(stateDir, "competitor.sqlite"),
+          env,
+        });
+      } catch (error) {
+        competingWriterError = error;
+      }
+    }, 60_500);
+
+    let migrationDone = false;
+    const migration = migrateHistoricalTranscriptDirectives({ env }).finally(() => {
+      migrationDone = true;
+    });
+    await vi.advanceTimersByTimeAsync(61_000);
+    for (let turn = 0; turn < 10; turn += 1) {
+      await vi.advanceTimersByTimeAsync(1);
+      if (migrationDone) {
+        break;
+      }
+    }
+    await expect(migration).resolves.toMatchObject({ warnings: [] });
+
+    expect(competingWriterError).toEqual(
+      expect.objectContaining({ message: expect.stringContaining("maintenance is in progress") }),
+    );
+    expect(competingLeaseId).toBeUndefined();
+    expect(readMigrationCursor(opened.path)).toEqual({ phase: "complete" });
+    const leaseId = claimOpenClawAgentDatabaseLease({
+      agentId: "competitor",
+      path: path.join(stateDir, "competitor.sqlite"),
+      env,
+    });
+    releaseOpenClawAgentDatabaseLease(leaseId, { env });
   });
 });

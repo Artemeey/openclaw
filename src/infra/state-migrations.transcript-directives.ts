@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { TranscriptEvent } from "../config/sessions/session-accessor.sqlite-contract.js";
 import { updateSqliteTranscriptEventJsonInTransaction } from "../config/sessions/session-accessor.sqlite-transcript-store.js";
+import { assertAgentDatabaseMaintenanceAuthority } from "../state/openclaw-agent-db-lease.js";
 import {
   assertOpenClawAgentDatabaseForMaintenance,
   migrateOpenClawAgentDatabaseForMaintenance,
@@ -214,19 +215,26 @@ function assertTranscriptSessionSourceUnchanged(
   }
 }
 
-function migrateTranscriptSessions(params: {
+async function yieldToMaintenanceHeartbeat(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
+async function migrateTranscriptSessions(params: {
   agentId: string;
   database: DatabaseSync;
   owner: OpenClawAgentDatabase;
   pathname: string;
   start: Extract<MigrationCursor, { phase: "transcripts" }>;
-}): number {
+}): Promise<number> {
   let rewrittenSessions = 0;
   let afterSessionId = params.start.sessionId;
   while (true) {
     const sessionIds = listTranscriptSessionBatch(params.database, afterSessionId);
     if (sessionIds.length === 0) {
       runSqliteImmediateTransactionSync(params.database, () => {
+        assertAgentDatabaseMaintenanceAuthority();
         writeMigrationCursor(params.database, params.agentId, {
           generation: "",
           phase: "archives",
@@ -241,6 +249,7 @@ function migrateTranscriptSessions(params: {
       runSqliteImmediateTransactionSync(
         params.database,
         () => {
+          assertAgentDatabaseMaintenanceAuthority();
           assertTranscriptSessionSourceUnchanged(params.database, sessionId, planned);
           updateSqliteTranscriptEventJsonInTransaction(
             params.owner,
@@ -264,13 +273,16 @@ function migrateTranscriptSessions(params: {
       rewrittenSessions += changedRows.length > 0 ? 1 : 0;
       afterSessionId = sessionId;
     }
+    // The persisted lease renews from the event loop. Yield after each bounded
+    // batch, then revalidate inside the next transaction before mutating state.
+    await yieldToMaintenanceHeartbeat();
   }
 }
 
-function migrateAgentDatabase(params: {
+async function migrateAgentDatabase(params: {
   agentId: string;
   pathname: string;
-}): DatabaseMigrationResult {
+}): Promise<DatabaseMigrationResult> {
   migrateOpenClawAgentDatabaseForMaintenance(params);
   const database = openNodeSqliteDatabase(params.pathname);
   try {
@@ -283,7 +295,7 @@ function migrateAgentDatabase(params: {
     const owner = createMigrationDatabaseHandle(database, params.agentId, params.pathname);
     const transcriptSessions =
       cursor.phase === "transcripts"
-        ? migrateTranscriptSessions({
+        ? await migrateTranscriptSessions({
             agentId: params.agentId,
             database,
             owner,
@@ -294,7 +306,7 @@ function migrateAgentDatabase(params: {
     const archiveCursor = readMigrationCursor(database, params.pathname);
     const archivedTranscripts =
       archiveCursor.phase === "archives"
-        ? migrateTranscriptDirectiveArchives({
+        ? await migrateTranscriptDirectiveArchives({
             agentId: params.agentId,
             database,
             pathname: params.pathname,
@@ -334,7 +346,10 @@ export async function migrateHistoricalTranscriptDirectives(
       });
       for (const target of targets) {
         try {
-          const result = migrateAgentDatabase({ agentId: target.agentId, pathname: target.path });
+          const result = await migrateAgentDatabase({
+            agentId: target.agentId,
+            pathname: target.path,
+          });
           if (result.transcriptSessions > 0 || result.archivedTranscripts > 0) {
             changes.push(
               `Migrated historical transcript directives in ${target.path}: ${result.transcriptSessions} active session(s), ${result.archivedTranscripts} archived transcript(s).`,
