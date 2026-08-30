@@ -1,7 +1,8 @@
 // Cron preparation, fallback, and nested admission retain one published owner through cleanup.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import { resolveAgentConfig, resolveAgentDir } from "../../agents/agent-scope.js";
 import { resolveLegacyInheritedAuthDir } from "../../agents/legacy-inherited-auth-dir.js";
 import { resolveModelCandidateChain } from "../../agents/model-fallback-candidates.js";
@@ -11,7 +12,10 @@ import {
   resolvePublishedModelCatalogOwner,
 } from "../../agents/prepared-model-catalog-owner.js";
 import { setPreparedModelRuntimeAuthStore } from "../../agents/prepared-model-runtime-auth.js";
-import { getPreparedModelRuntimePluginGeneration } from "../../agents/prepared-model-runtime-generation-scope.js";
+import {
+  getPreparedModelRuntimeBorrowedSnapshot,
+  getPreparedModelRuntimePluginGeneration,
+} from "../../agents/prepared-model-runtime-generation-scope.js";
 import { acquirePreparedModelRuntimeLeaseFromOwners } from "../../agents/prepared-model-runtime-lease.js";
 import {
   prepareModelRuntimeOwner,
@@ -24,6 +28,7 @@ import type {
   PreparedModelRuntimeSnapshot,
   PreparedReplyDispatchRuntime,
 } from "../../agents/prepared-model-runtime.types.js";
+import { loadAgentRuntimePluginRegistryHandle } from "../../agents/runtime-plugins.js";
 import { createPluginMetadataSnapshot } from "../../config/plugin-auto-enable.test-helpers.js";
 import {
   clearRuntimeConfigSnapshot,
@@ -42,6 +47,7 @@ import * as pluginMetadataSnapshotRuntime from "../../plugins/plugin-metadata-sn
 import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import { normalizeProviderModelIdWithPlugin } from "../../plugins/provider-model-normalization.runtime.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import type { PluginRegistry } from "../../plugins/registry-types.js";
 import { withPluginRuntimeRegistryScope } from "../../plugins/runtime/gateway-request-scope.js";
 import {
   createColdPluginFixture,
@@ -55,7 +61,8 @@ import {
   dispatchCronDeliveryMock,
   ensureAgentWorkspaceMock,
   isCliProviderMock,
-  loadAgentRuntimePluginRegistryHandleMock,
+  acquirePreparedModelRuntimeMock,
+  loadPublishedReplyDispatchRuntimeMock,
   loadModelCatalogOwnerMock,
   loadRunCronIsolatedAgentTurn,
   mockRunCronFallbackPassthrough,
@@ -67,16 +74,10 @@ import {
   runWithModelFallbackMock,
 } from "./run.test-harness.js";
 
-const preparedRuntimeMocks = vi.hoisted(() => ({
-  acquireRuntime: vi.fn(),
-  loadDispatchRuntime: vi.fn(),
-}));
-
-vi.mock("../../agents/prepared-model-runtime.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../agents/prepared-model-runtime.js")>()),
-  acquireAgentRunPreparedModelRuntime: preparedRuntimeMocks.acquireRuntime,
-  loadPublishedGatewayReplyDispatchRuntime: preparedRuntimeMocks.loadDispatchRuntime,
-}));
+const preparedRuntimeMocks = {
+  acquireRuntime: acquirePreparedModelRuntimeMock,
+  loadDispatchRuntime: loadPublishedReplyDispatchRuntimeMock,
+};
 
 const { PreparedModelRuntimeOwnerNotPublishedError } = await vi.importActual<
   typeof import("../../agents/prepared-model-runtime.errors.js")
@@ -92,8 +93,8 @@ function makePublishedFixture(
     workspaceDir,
     manifestRegistry: { plugins: [], diagnostics: [] },
   }),
+  pluginRegistry: PluginRegistry = createEmptyPluginRegistry(),
 ) {
-  const pluginRegistry = createEmptyPluginRegistry();
   const input = {
     config,
     agentId: "default",
@@ -134,14 +135,36 @@ function makePublishedFixture(
   return { snapshot, dispatch, release: vi.fn() };
 }
 
+function snapshotWithConfig(
+  snapshot: PreparedModelRuntimeSnapshot,
+  config: OpenClawConfig,
+  pluginRegistry = snapshot.pluginRegistry,
+): PreparedModelRuntimeSnapshot {
+  const projected = { ...snapshot, config, pluginRegistry };
+  setPreparedModelRuntimeAuthStore(projected, { version: 1, profiles: {} });
+  return projected;
+}
+
 function installPublishedFixture(fixture: ReturnType<typeof makePublishedFixture>) {
+  const preparationGeneration = { ...fixture.dispatch.pluginGeneration };
+  const selectedGeneration = {
+    ...preparationGeneration,
+    pluginRegistry: createEmptyPluginRegistry(),
+  };
+  const selectedRelease = vi.fn();
   preparedRuntimeMocks.loadDispatchRuntime.mockResolvedValue(fixture.dispatch);
-  preparedRuntimeMocks.acquireRuntime.mockResolvedValue({
-    snapshot: fixture.snapshot,
-    release: fixture.release,
+  preparedRuntimeMocks.acquireRuntime.mockImplementation(async (input) => {
+    const selected = input.runtimePluginSelections !== undefined;
+    const pluginGeneration = selected ? selectedGeneration : preparationGeneration;
+    return {
+      snapshot: snapshotWithConfig(fixture.snapshot, input.config, pluginGeneration.pluginRegistry),
+      pluginGeneration,
+      release: selected ? selectedRelease : fixture.release,
+    };
   });
   loadModelCatalogOwnerMock.mockResolvedValue(resolvePublishedModelCatalogOwner(fixture.snapshot));
   ensureAgentWorkspaceMock.mockResolvedValue({ dir: fixture.snapshot.workspaceDir });
+  return { preparationGeneration, selectedGeneration, selectedRelease };
 }
 
 function fixtureConfig(workspace: string): OpenClawConfig {
@@ -157,41 +180,84 @@ function fixtureConfig(workspace: string): OpenClawConfig {
 describe("runCronIsolatedAgentTurn plugin generation carry", () => {
   setupRunCronIsolatedAgentTurnSuite();
   beforeEach(() => {
-    preparedRuntimeMocks.acquireRuntime.mockReset();
-    preparedRuntimeMocks.loadDispatchRuntime.mockReset();
     cleanupBrowserSessionsForLifecycleEndMock.mockReset();
     cleanupBrowserSessionsForLifecycleEndMock.mockResolvedValue(undefined);
   });
 
-  it("retains the admitted generation through delivery and browser cleanup", async () => {
+  it("retains the selected generation through delivery and browser cleanup, then closes borrowing", async () => {
     await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
       const workspaceDir = state.path("workspace");
       const fixture = makePublishedFixture(fixtureConfig(workspaceDir), workspaceDir);
-      installPublishedFixture(fixture);
+      const { preparationGeneration, selectedGeneration, selectedRelease } =
+        installPublishedFixture(fixture);
+      resolveAgentConfigMock.mockImplementation(resolveAgentConfig);
       mockRunCronFallbackPassthrough();
-      runEmbeddedAgentMock.mockImplementation(async () => {
-        expect(getPreparedModelRuntimePluginGeneration()).toBe(fixture.dispatch.pluginGeneration);
+      const afterRun = createDeferred();
+      let borrowedAfterClose: Promise<unknown> | undefined;
+      runEmbeddedAgentMock.mockImplementation(async (params) => {
+        expect(params.config).toEqual(
+          preparedRuntimeMocks.acquireRuntime.mock.calls[1]?.[0].config,
+        );
+        expect(getPreparedModelRuntimePluginGeneration()).toBe(selectedGeneration);
+        expect(getPreparedModelRuntimeBorrowedSnapshot(selectedGeneration)?.config).toBe(
+          params.config,
+        );
+        borrowedAfterClose = afterRun.promise.then(() =>
+          getPreparedModelRuntimeBorrowedSnapshot(selectedGeneration),
+        );
         return { payloads: [{ text: "test output" }], meta: { agentMeta: {} } };
       });
       const deliver = dispatchCronDeliveryMock.getMockImplementation()!;
       dispatchCronDeliveryMock.mockImplementation((...args) => {
         expect(fixture.release).not.toHaveBeenCalled();
+        expect(selectedRelease).not.toHaveBeenCalled();
+        expect(getPreparedModelRuntimePluginGeneration()).toBe(selectedGeneration);
         return deliver(...args);
       });
       cleanupBrowserSessionsForLifecycleEndMock.mockImplementation(async () => {
         expect(fixture.release).not.toHaveBeenCalled();
-        expect(getPreparedModelRuntimePluginGeneration()).toBe(fixture.dispatch.pluginGeneration);
+        expect(selectedRelease).not.toHaveBeenCalled();
+        expect(getPreparedModelRuntimePluginGeneration()).toBe(selectedGeneration);
       });
 
       await expect(
-        runCronIsolatedAgentTurn(makeIsolatedAgentParamsFixture({ cfg: fixture.snapshot.config })),
+        runCronIsolatedAgentTurn(
+          makeIsolatedAgentParamsFixture({ cfg: fixture.snapshot.config, agentId: "default" }),
+        ),
       ).resolves.toMatchObject({ status: "ok" });
-      expect(preparedRuntimeMocks.loadDispatchRuntime).toHaveBeenCalledWith(
-        expect.objectContaining({ agentId: fixture.dispatch.agentId }),
+      const dispatchAdmission = preparedRuntimeMocks.loadDispatchRuntime.mock.calls[0]?.[0];
+      expect(dispatchAdmission).toMatchObject({
+        agentId: fixture.dispatch.agentId,
+        abortSignal: expect.any(AbortSignal),
+      });
+      expect(preparedRuntimeMocks.acquireRuntime).toHaveBeenCalledTimes(2);
+      expect(
+        preparedRuntimeMocks.acquireRuntime.mock.calls[0]?.[0].config.agents.defaults,
+      ).toMatchObject({ thinkingDefault: "off", verboseDefault: "on" });
+      expect(preparedRuntimeMocks.acquireRuntime.mock.calls[0]?.[1].pluginGeneration).toBe(
+        fixture.dispatch.pluginGeneration,
       );
+      expect(preparedRuntimeMocks.acquireRuntime.mock.calls[1]?.[0]).toMatchObject({
+        agentId: "default",
+        agentDir: fixture.snapshot.agentDir,
+        workspaceDir,
+        allowGatewaySubagentBinding: true,
+        runtimePluginSelections: [
+          { provider: "openai", modelId: "gpt-5.4", agentId: "default" },
+          { provider: "openai", modelId: "gpt-5.6-sol", agentId: "default" },
+        ],
+      });
+      expect(preparedRuntimeMocks.acquireRuntime.mock.calls[1]?.[1]).toEqual({
+        catalogMode: "static",
+        pluginGeneration: preparationGeneration,
+        abortSignal: dispatchAdmission.abortSignal,
+      });
       expect(dispatchCronDeliveryMock).toHaveBeenCalledOnce();
       expect(cleanupBrowserSessionsForLifecycleEndMock).toHaveBeenCalledOnce();
       expect(fixture.release).toHaveBeenCalledOnce();
+      expect(selectedRelease).toHaveBeenCalledOnce();
+      afterRun.resolve();
+      await expect(borrowedAfterClose).resolves.toBeUndefined();
       expect(getPreparedModelRuntimePluginGeneration()).toBeUndefined();
     });
   });
@@ -220,6 +286,18 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
             },
           },
         });
+        // Manifest aliases belong to this same provider owner. Metadata stays cold;
+        // the explicit startup load below imports its executable registration once.
+        await fs.writeFile(
+          fixture.runtimeSource,
+          `require("node:fs").appendFileSync(${JSON.stringify(fixture.runtimeMarker)}, "loaded\\n", "utf8");
+module.exports = {
+  id: ${JSON.stringify(pluginId)},
+  register(api) {
+    api.registerProvider({ id: "custom", label: "Cron fixture provider", auth: [] });
+  },
+};\n`,
+        );
         const config: OpenClawConfig = {
           ...fixtureConfig(workspaceDir),
           plugins: {
@@ -260,14 +338,35 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
       try {
         const capturedMetadata = metadataOwner.prepare({ config: captured.config });
         metadataOwner.publish(capturedMetadata, { config: captured.config });
-        const makeRuntime = (value: typeof captured, metadataSnapshot: PluginMetadataSnapshot) =>
-          makePublishedFixture(value.config, value.workspaceDir, metadataSnapshot);
-        const first = makeRuntime(
-          captured,
-          getPluginMetadataWorkspaceSnapshot(capturedMetadata, {
-            workspaceDir: captured.workspaceDir,
+        const makeRuntime = (
+          value: typeof captured,
+          metadataSnapshot: PluginMetadataSnapshot,
+          pluginRegistry?: PluginRegistry,
+        ) =>
+          makePublishedFixture(value.config, value.workspaceDir, metadataSnapshot, pluginRegistry);
+        const capturedSnapshot = getPluginMetadataWorkspaceSnapshot(capturedMetadata, {
+          workspaceDir: captured.workspaceDir,
+        });
+        expect([captured.fixture, ambient.fixture].some(isColdPluginRuntimeLoaded)).toBe(false);
+        const configuredRegistry = loadAgentRuntimePluginRegistryHandle({
+          config: captured.config,
+          workspaceDir: captured.workspaceDir,
+          metadataSnapshot: capturedSnapshot,
+          basePluginIds: [],
+          allowGatewaySubagentBinding: true,
+          selections: [
+            { provider: "custom", modelId: "captured-primary", agentId: "default" },
+            { provider: "custom", modelId: "captured-fallback", agentId: "default" },
+          ],
+        });
+        expect(configuredRegistry.providers).toEqual([
+          expect.objectContaining({
+            pluginId: captured.fixture.pluginId,
+            provider: expect.objectContaining({ id: "custom" }),
           }),
-        );
+        ]);
+        expect(await fs.readFile(captured.fixture.runtimeMarker, "utf8")).toBe("loaded\n");
+        const first = makeRuntime(captured, capturedSnapshot, configuredRegistry);
         const replacementMetadata = metadataOwner.prepare({ config: ambient.config });
         const next = makeRuntime(
           ambient,
@@ -280,12 +379,6 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
         // Finalization classifies the provider again, after the execution callback returns.
         isCliProviderMock.mockImplementation(classifyCliProvider);
         resolveConfiguredModelRefMock.mockReturnValue({ provider: "custom", model: "primary" });
-        loadAgentRuntimePluginRegistryHandleMock.mockReturnValue(first.snapshot.pluginRegistry);
-        preparedRuntimeMocks.acquireRuntime.mockImplementation(async (_input, options) => {
-          const fixture =
-            options.pluginGeneration === first.dispatch.pluginGeneration ? first : next;
-          return { snapshot: fixture.snapshot, release: fixture.release };
-        });
         const owners = new Map<string, PreparedModelRuntimeOwner>();
         const nextInput = normalizePreparedModelRuntimeInput({
           config: next.snapshot.config,
@@ -314,6 +407,27 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
           getPendingReplacement: () => undefined,
           prepareSnapshot,
         };
+        let retainedSnapshot: PreparedModelRuntimeSnapshot | undefined;
+        let selectedSnapshot: PreparedModelRuntimeSnapshot | undefined;
+        preparedRuntimeMocks.acquireRuntime.mockImplementation(async (input, options) => {
+          if (input.runtimePluginSelections === undefined) {
+            retainedSnapshot = snapshotWithConfig(first.snapshot, input.config);
+            return {
+              snapshot: retainedSnapshot,
+              pluginGeneration: first.dispatch.pluginGeneration,
+              release: first.release,
+            };
+          }
+          // A real selected admission after B publishes must borrow the exact projected A owner.
+          const lease = await acquirePreparedModelRuntimeLeaseFromOwners(
+            input,
+            "run",
+            leaseContext,
+            options,
+          );
+          selectedSnapshot = lease.snapshot;
+          return lease;
+        });
         const preparedLoads = loadSnapshot.mock.calls.length;
         ensureAgentWorkspaceMock.mockImplementation(async () => {
           metadataOwner.publish(replacementMetadata, { config: ambient.config });
@@ -373,13 +487,17 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
           "captured-primary",
           "captured-fallback",
         ]);
-        expect(nestedSnapshot).toBe(first.snapshot);
+        expect(retainedSnapshot?.config.agents?.defaults?.verboseDefault).toBe("on");
+        expect(captured.config.agents?.defaults?.verboseDefault).toBeUndefined();
+        expect(selectedSnapshot).toBe(retainedSnapshot);
+        expect(nestedSnapshot).toBe(retainedSnapshot);
         expect(owners.get(ownerKey(nextInput))?.snapshot).toBe(next.snapshot);
         expect(first.release).toHaveBeenCalledOnce();
         expect(next.release).not.toHaveBeenCalled();
         expect(prepareSnapshot).not.toHaveBeenCalled();
         expect(loadSnapshot.mock.calls.length).toBe(preparedLoads);
-        expect([captured.fixture, ambient.fixture].some(isColdPluginRuntimeLoaded)).toBe(false);
+        expect(await fs.readFile(captured.fixture.runtimeMarker, "utf8")).toBe("loaded\n");
+        expect(isColdPluginRuntimeLoaded(ambient.fixture)).toBe(false);
       } finally {
         clearRuntimeConfigSnapshot();
         loadSnapshot.mockRestore();
@@ -393,13 +511,14 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
     "preparation error",
     "model rejection",
     "preflight skip",
+    "continuation error",
     "execution error",
     "cleanup error",
   ])("releases the admitted owner after %s", async (failure) => {
     await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
       const workspaceDir = state.path("workspace");
       const fixture = makePublishedFixture(fixtureConfig(workspaceDir), workspaceDir);
-      installPublishedFixture(fixture);
+      const { selectedRelease } = installPublishedFixture(fixture);
       mockRunCronFallbackPassthrough();
       const error = new Error(`fixture ${failure}`);
       if (failure === "preparation error") {
@@ -411,6 +530,19 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
           status: "unavailable",
           reason: error.message,
         });
+      } else if (failure === "continuation error") {
+        const sessionState = await import("./run-session-state.js");
+        const initialize = vi
+          .spyOn(sessionState, "createCronRunContinuationSession")
+          .mockReturnValue({
+            initialize: async () => {
+              throw error;
+            },
+            sync: async () => {},
+            setCliExecutionProvider: async () => {},
+            seal: async () => {},
+          });
+        onTestFinished(() => initialize.mockRestore());
       } else if (failure === "execution error") {
         runEmbeddedAgentMock.mockRejectedValue(error);
       } else {
@@ -428,7 +560,11 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
             : {}),
         }),
       );
-      if (failure === "preparation error" || failure === "cleanup error") {
+      if (
+        failure === "preparation error" ||
+        failure === "continuation error" ||
+        failure === "cleanup error"
+      ) {
         await expect(run).rejects.toBe(error);
       } else {
         await expect(run).resolves.toMatchObject({
@@ -436,11 +572,14 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
         });
       }
       expect(fixture.release).toHaveBeenCalledOnce();
+      expect(selectedRelease).toHaveBeenCalledTimes(
+        ["continuation error", "execution error", "cleanup error"].includes(failure) ? 1 : 0,
+      );
       expect(getPreparedModelRuntimePluginGeneration()).toBeUndefined();
     });
   });
 
-  it("runs without a generation when no Gateway publication exists", async () => {
+  it("prepares a standalone generation without replacing the preparation-time ambient registry", async () => {
     const provider = "standalone-normalizer";
     const registry = createEmptyPluginRegistry();
     registry.providers.push({
@@ -466,7 +605,7 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
     preparedRuntimeMocks.loadDispatchRuntime.mockResolvedValue(undefined);
     mockRunCronFallbackPassthrough();
     runEmbeddedAgentMock.mockImplementation(async () => {
-      expect(getPreparedModelRuntimePluginGeneration()).toBeUndefined();
+      expect(getPreparedModelRuntimePluginGeneration()).toBeDefined();
       return { payloads: [{ text: "test output" }], meta: { agentMeta: {} } };
     });
     await expect(
@@ -474,7 +613,7 @@ describe("runCronIsolatedAgentTurn plugin generation carry", () => {
         runCronIsolatedAgentTurn(makeIsolatedAgentParamsFixture()),
       ),
     ).resolves.toMatchObject({ status: "ok" });
-    expect(preparedRuntimeMocks.acquireRuntime).not.toHaveBeenCalled();
+    expect(preparedRuntimeMocks.acquireRuntime).toHaveBeenCalledOnce();
   });
 
   it.each(["load", "acquire"])(

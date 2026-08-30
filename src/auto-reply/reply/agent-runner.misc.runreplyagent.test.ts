@@ -1,10 +1,10 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 // Tests miscellaneous run-reply-agent behaviors and artifact output.
 import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { testing as cliBackendsTesting } from "../../agents/cli-backends.test-support.js";
 import {
   abortEmbeddedAgentRun,
@@ -55,6 +55,9 @@ import { enqueueFollowupRun, scheduleFollowupDrain } from "./queue.js";
 import { createReplyOperation, replyRunRegistry } from "./reply-run-registry.js";
 import { testing as replyRunRegistryTesting } from "./reply-run-registry.test-support.js";
 import { createMockTypingController } from "./test-helpers.js";
+
+const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+let rootDir: string;
 
 function createCliBackendTestConfig() {
   return {};
@@ -304,8 +307,8 @@ function createBaseRun(options: BaseRunOptions = {}) {
       sessionId: "session",
       sessionKey,
       messageProvider,
-      sessionFile: "/tmp/session.jsonl",
-      workspaceDir: "/tmp",
+      sessionFile: path.join(rootDir, "session.jsonl"),
+      workspaceDir: rootDir,
       config: {},
       skillsSnapshot: {},
       provider: "anthropic",
@@ -407,6 +410,7 @@ function firstMockCallArg(mock: MockCallSource, label: string): unknown {
 }
 
 function setupAgentRunnerMocks(): void {
+  rootDir = tempDirs.make("openclaw-run-reply-agent-");
   vi.useRealTimers();
   registerCliBackendsForTest();
   clearRuntimeConfigSnapshot();
@@ -511,7 +515,7 @@ describe("runReplyAgent auto-compaction token update", () => {
     return createBaseRun({
       run: {
         agentId: "main",
-        agentDir: "/tmp/agent",
+        agentDir: path.join(rootDir, "agent"),
         config: options?.config ?? {},
         reasoningLevel: "on",
       },
@@ -531,7 +535,7 @@ describe("runReplyAgent auto-compaction token update", () => {
     tmpPrefix: string;
     workspaceDir?: string;
   }) {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), params.tmpPrefix));
+    const tmp = tempDirs.make(params.tmpPrefix);
     const storePath = path.join(tmp, "sessions.json");
     const sessionKey = "main";
     const sessionEntry = {
@@ -558,10 +562,10 @@ describe("runReplyAgent auto-compaction token update", () => {
     const baseRun = createBaseRun({
       run: {
         agentId: "main",
-        agentDir: "/tmp/agent",
+        agentDir: path.join(rootDir, "agent"),
         config: params.config ?? {},
         reasoningLevel: "on",
-        workspaceDir: params.workspaceDir ?? "/tmp",
+        workspaceDir: params.workspaceDir ?? rootDir,
       },
       reply: {
         sessionEntry,
@@ -598,7 +602,7 @@ describe("runReplyAgent auto-compaction token update", () => {
   }, 180_000);
 
   it("keeps an unarmed preflight drain visible instead of dropping the reply", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-preflight-drain-"));
+    const tmp = tempDirs.make("openclaw-preflight-drain-");
     const storePath = path.join(tmp, "sessions.json");
     const sessionKey = "agent:main:main";
     const sessionEntry = {
@@ -612,7 +616,7 @@ describe("runReplyAgent auto-compaction token update", () => {
     compactState.compactEmbeddedAgentSessionMock.mockRejectedValueOnce(new GatewayDrainingError());
 
     const result = await createBaseRun({
-      run: { agentId: "main", agentDir: "/tmp/agent", reasoningLevel: "on" },
+      run: { agentId: "main", agentDir: path.join(rootDir, "agent"), reasoningLevel: "on" },
       reply: {
         queueKey: sessionKey,
         sessionEntry,
@@ -627,7 +631,7 @@ describe("runReplyAgent auto-compaction token update", () => {
   });
 
   it("executes the next user turn in the default 32K early-flush interval without compaction", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-early-flush-"));
+    const tmp = tempDirs.make("openclaw-early-flush-");
     const storePath = path.join(tmp, "sessions.json");
     const sessionKey = "agent:main:main";
     const scope = { agentId: "main", sessionId: "session", sessionKey, storePath };
@@ -855,7 +859,7 @@ describe("runReplyAgent auto-compaction token update", () => {
     });
 
     const result = await createBaseRun({
-      run: { agentId: "main", agentDir: "/tmp/agent", reasoningLevel: "on" },
+      run: { agentId: "main", agentDir: path.join(rootDir, "agent"), reasoningLevel: "on" },
       reply: {
         queueKey: sessionKey,
         sessionEntry,
@@ -869,9 +873,7 @@ describe("runReplyAgent auto-compaction token update", () => {
   });
 
   it("loads post-compaction context before starting a queued followup drain", async () => {
-    const workspaceDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "openclaw-post-compaction-queued-followup-"),
-    );
+    const workspaceDir = tempDirs.make("openclaw-post-compaction-queued-followup-");
     try {
       await fs.writeFile(
         path.join(workspaceDir, "AGENTS.md"),
@@ -899,7 +901,7 @@ describe("runReplyAgent auto-compaction token update", () => {
       const baseRun = createBaseRun({
         run: {
           agentId: "main",
-          agentDir: "/tmp/agent",
+          agentDir: path.join(rootDir, "agent"),
           workspaceDir,
           reasoningLevel: "on",
           config: {
@@ -950,7 +952,7 @@ describe("runReplyAgent auto-compaction token update", () => {
     });
 
     const result = await createBaseRun({
-      run: { agentId: "main", agentDir: "/tmp/agent", reasoningLevel: "on" },
+      run: { agentId: "main", agentDir: path.join(rootDir, "agent"), reasoningLevel: "on" },
       reply: {
         queueKey: sessionKey,
         sessionEntry,
@@ -1022,7 +1024,7 @@ describe("runReplyAgent auto-compaction token update", () => {
       const baseRun = createBaseRun({
         run: {
           agentId: "main",
-          agentDir: "/tmp/agent",
+          agentDir: path.join(rootDir, "agent"),
           sessionKey,
           reasoningLevel: "on",
         },
@@ -1147,9 +1149,7 @@ describe("runReplyAgent auto-compaction token update", () => {
   });
 
   it("does not treat diagnostic compaction metadata as a context-refresh trigger", async () => {
-    const workspaceDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "openclaw-post-compaction-workspace-"),
-    );
+    const workspaceDir = tempDirs.make("openclaw-post-compaction-workspace-");
     await fs.writeFile(
       path.join(workspaceDir, "AGENTS.md"),
       [
@@ -1339,7 +1339,7 @@ describe("runReplyAgent Active Memory inline debug", () => {
   }
 
   async function runActiveMemoryDebugCase(sessionEntry: SessionEntry) {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-active-memory-inline-"));
+    const tmp = tempDirs.make("openclaw-active-memory-inline-");
     const storePath = path.join(tmp, "sessions.json");
     const sessionKey = "main";
     await replaceSessionEntry({ storePath, sessionKey }, sessionEntry);
@@ -1461,7 +1461,7 @@ describe("runReplyAgent Active Memory inline debug", () => {
   });
 
   it("appends raw trace payloads when trace raw is enabled", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-trace-raw-usage-"));
+    const tmp = tempDirs.make("openclaw-trace-raw-usage-");
     const storePath = path.join(tmp, "sessions.json");
     const sessionFile = path.join(tmp, "session.jsonl");
     const sessionKey = "main";
@@ -1643,7 +1643,7 @@ describe("runReplyAgent Active Memory inline debug", () => {
   });
 
   it("does not emit persisted trace output to an unauthorized sender", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-trace-raw-unauthorized-"));
+    const tmp = tempDirs.make("openclaw-trace-raw-unauthorized-");
     const storePath = path.join(tmp, "sessions.json");
     const sessionFile = path.join(tmp, "session.jsonl");
     const sessionKey = "main";
@@ -1686,7 +1686,7 @@ describe("runReplyAgent Active Memory inline debug", () => {
   });
 
   it("shows session and last-turn usage totals without per-call usage blocks", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-trace-raw-usage-"));
+    const tmp = tempDirs.make("openclaw-trace-raw-usage-");
     const storePath = path.join(tmp, "sessions.json");
     const sessionFile = path.join(tmp, "session.jsonl");
     const sessionKey = "main";
@@ -1742,7 +1742,7 @@ describe("runReplyAgent Active Memory inline debug", () => {
   });
 
   it("escapes markdown fence delimiters inside raw trace blocks", async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-trace-raw-fence-"));
+    const tmp = tempDirs.make("openclaw-trace-raw-fence-");
     const storePath = path.join(tmp, "sessions.json");
     const sessionFile = path.join(tmp, "session.jsonl");
     const sessionKey = "main";
@@ -2240,7 +2240,7 @@ describe("runReplyAgent fallback reasoning tags", () => {
     return createBaseRun({
       run: {
         agentId: "main",
-        agentDir: "/tmp/agent",
+        agentDir: path.join(rootDir, "agent"),
         sessionKey,
         config: createCliBackendTestConfig(),
       },
@@ -2329,7 +2329,7 @@ describe("runReplyAgent response usage footer", () => {
     return createBaseRun({
       run: {
         agentId: "main",
-        agentDir: "/tmp/agent",
+        agentDir: path.join(rootDir, "agent"),
         sessionKey: params.sessionKey,
         config: params.config ?? createCliBackendTestConfig(),
         provider: params.provider ?? "anthropic",
@@ -2664,7 +2664,7 @@ describe("runReplyAgent private message_tool_only final warning (#85714)", () =>
     replyOperation?: ReturnType<typeof createReplyOperation>;
     turnAdoptionLifecycle?: FollowupRun["turnAdoptionLifecycle"];
   }) {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-stranded-"));
+    const tmp = tempDirs.make("openclaw-stranded-");
     const storePath = path.join(tmp, "sessions.json");
     const sessionKey = "stranded";
     const sessionEntry = {
@@ -2725,11 +2725,11 @@ describe("runReplyAgent private message_tool_only final warning (#85714)", () =>
         : {}),
       run: {
         agentId: "main",
-        agentDir: "/tmp/agent",
+        agentDir: path.join(rootDir, "agent"),
         sessionId: "session",
         sessionKey,
         messageProvider: "whatsapp",
-        sessionFile: "/tmp/session.jsonl",
+        sessionFile: path.join(rootDir, "session.jsonl"),
         workspaceDir: tmp,
         // Carry the canonical tool-only run fact and keep downstream policy aligned,
         // so the private final is never eligible for automatic source delivery.

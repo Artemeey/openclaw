@@ -2,7 +2,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { tryResolveAmbientOwnerAgentId } from "../../agents/agent-scope.js";
 import { findModelInCatalog } from "../../agents/model-catalog-lookup.js";
-import { loadAgentRuntimePluginRegistryHandle } from "../../agents/runtime-plugins.js";
+import { acquireAgentRunPreparedModelRuntime } from "../../agents/prepared-model-runtime.js";
+import type { PreparedModelRuntimeLease } from "../../agents/prepared-model-runtime.types.js";
 import { resolveAgentModelPrimaryValue } from "../../config/model-input.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { resolveSessionWorkStartError } from "../../config/sessions/lifecycle.js";
@@ -10,7 +11,6 @@ import type { AgentDefaultsConfig } from "../../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveCreatorSandbox } from "../../gateway/operator-role-policy.js";
 import type { SourceDeliveryPlan } from "../../infra/outbound/source-delivery-plan.js";
-import type { PluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.types.js";
 import type { PluginRegistry } from "../../plugins/registry-types.js";
 import { isCronSessionKey, parseAgentSessionKey } from "../../routing/session-key.js";
 import {
@@ -133,7 +133,7 @@ export type PreparedCronRunContext = {
    */
   runTimeoutOverrideMs?: number;
   pluginRegistry?: PluginRegistry;
-  metadataSnapshot: PluginMetadataSnapshot;
+  preparedModelRuntimeLease: PreparedModelRuntimeLease;
   modelOwnerLease: CronModelSelectionOwnerLease;
 };
 
@@ -306,6 +306,7 @@ async function prepareCronRunContextWithModelOwner(
     },
   });
 
+  let preparedModelRuntimeLease: PreparedModelRuntimeLease | undefined;
   try {
     const persistCronSessionRow = async ({
       storePath,
@@ -618,24 +619,35 @@ async function prepareCronRunContextWithModelOwner(
       authProfileId: authSelection?.profileId,
       authProfileIdSource: authSelection?.source,
     };
-    const pluginRegistry = loadAgentRuntimePluginRegistryHandle({
-      config: cfgWithAgentDefaults,
-      workspaceDir,
-      allowGatewaySubagentBinding: true,
-      // The published owner already selected this run's metadata generation.
-      // Reloading it here re-hashes every installed plugin on each hook/cron run.
-      metadataSnapshot: modelOwner.metadataSnapshot,
-      selections: runtimePluginCandidates.map((candidate) => {
-        const runtime = resolveSessionRuntimeOverrideForProvider({
-          provider: candidate.provider,
-          entry: cronSession.sessionEntry,
-          cfg: cfgWithAgentDefaults,
-        });
-        return runtime
-          ? { provider: candidate.provider, modelId: candidate.model, runtime, agentId }
-          : { provider: candidate.provider, modelId: candidate.model, agentId };
-      }),
-    });
+    const pluginGeneration = modelOwnerLease.pluginGeneration;
+    preparedModelRuntimeLease = await acquireAgentRunPreparedModelRuntime(
+      {
+        config: cfgWithAgentDefaults,
+        agentId,
+        agentDir,
+        workspaceDir,
+        allowGatewaySubagentBinding: true,
+        runtimePluginSelections: runtimePluginCandidates.map((candidate) => {
+          const runtime = resolveSessionRuntimeOverrideForProvider({
+            provider: candidate.provider,
+            entry: cronSession.sessionEntry,
+            cfg: cfgWithAgentDefaults,
+          });
+          return runtime
+            ? { provider: candidate.provider, modelId: candidate.model, runtime, agentId }
+            : { provider: candidate.provider, modelId: candidate.model, agentId };
+        }),
+      },
+      {
+        catalogMode: "static",
+        // Selection derives from the retained owner, never a newer ambient publication.
+        ...(pluginGeneration
+          ? { pluginGeneration }
+          : { pluginMetadataSnapshot: modelOwner.metadataSnapshot }),
+        abortSignal: input.abortSignal ?? input.signal,
+      },
+    );
+    const pluginRegistry = preparedModelRuntimeLease.snapshot.pluginRegistry;
     const runContinuationSession = usesExactRunSession
       ? createCronRunContinuationSession({
           cronSession,
@@ -699,12 +711,13 @@ async function prepareCronRunContextWithModelOwner(
         timeoutMs,
         preflightDiagnostics,
         runTimeoutOverrideMs,
-        metadataSnapshot: modelOwner.metadataSnapshot,
+        preparedModelRuntimeLease,
         modelOwnerLease,
         ...(pluginRegistry ? { pluginRegistry } : {}),
       },
     };
   } catch (error) {
+    preparedModelRuntimeLease?.release();
     sessionWorkAdmission.release();
     throw error;
   }

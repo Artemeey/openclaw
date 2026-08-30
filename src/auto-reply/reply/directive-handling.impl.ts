@@ -325,20 +325,29 @@ export async function handleDirectiveOnly(
       "hasReasoningDirective",
     );
   }
-  if (directives.hasElevatedDirective && !directives.elevatedLevel) {
-    if (!directives.rawElevatedLevel) {
-      if (!elevatedEnabled || !elevatedAllowed) {
-        return acknowledgeIgnoredDirective(
-          {
-            text: formatElevatedUnavailableText({
-              runtimeSandboxed: runtimeIsSandboxed,
-              failures: params.elevatedFailures,
-              sessionKey: params.sessionKey,
-            }),
-          },
-          "hasElevatedDirective",
-        );
-      }
+  if (directives.hasElevatedDirective) {
+    // Invalid levels keep their diagnostic ahead of availability errors.
+    if (!directives.elevatedLevel && directives.rawElevatedLevel) {
+      return acknowledgeIgnoredDirective(
+        {
+          text: `Unrecognized elevated level "${directives.rawElevatedLevel}". Valid levels: off, on, ask, full.`,
+        },
+        "hasElevatedDirective",
+      );
+    }
+    if (!elevatedEnabled || !elevatedAllowed) {
+      return acknowledgeIgnoredDirective(
+        {
+          text: formatElevatedUnavailableText({
+            runtimeSandboxed: runtimeIsSandboxed,
+            failures: params.elevatedFailures,
+            sessionKey: params.sessionKey,
+          }),
+        },
+        "hasElevatedDirective",
+      );
+    }
+    if (!directives.elevatedLevel) {
       const level = currentElevatedLevel ?? "off";
       return acknowledgeIgnoredDirective(
         {
@@ -352,24 +361,6 @@ export async function handleDirectiveOnly(
         "hasElevatedDirective",
       );
     }
-    return acknowledgeIgnoredDirective(
-      {
-        text: `Unrecognized elevated level "${directives.rawElevatedLevel}". Valid levels: off, on, ask, full.`,
-      },
-      "hasElevatedDirective",
-    );
-  }
-  if (directives.hasElevatedDirective && (!elevatedEnabled || !elevatedAllowed)) {
-    return acknowledgeIgnoredDirective(
-      {
-        text: formatElevatedUnavailableText({
-          runtimeSandboxed: runtimeIsSandboxed,
-          failures: params.elevatedFailures,
-          sessionKey: params.sessionKey,
-        }),
-      },
-      "hasElevatedDirective",
-    );
   }
   if (directives.hasExecDirective) {
     const invalidExecMessage = directives.invalidExecHost
@@ -637,21 +628,27 @@ export async function handleDirectiveOnly(
       parts.push(formatElevatedRuntimeHint());
     }
   }
-  if (directives.hasExecDirective && directives.hasExecOptions && allowPrivilegedPersistence) {
-    const execParts = Object.entries({
-      host: directives.execHost,
-      security: directives.execSecurity,
-      ask: directives.execAsk,
-      node: directives.execNode,
-    })
-      .filter(([, value]) => Boolean(value))
-      .map(([key, value]) => `${key}=${value}`);
-    if (execParts.length > 0) {
-      parts.push(formatDirectiveAck(`Exec defaults set (${execParts.join(", ")}).`));
+  if (directives.hasExecDirective && directives.hasExecOptions) {
+    for (const [label, options] of [
+      [
+        allowPrivilegedPersistence && "Exec defaults set",
+        { host: directives.execHost, node: directives.execNode },
+      ],
+      [
+        "Exec policy for this run only",
+        { security: directives.execSecurity, ask: directives.execAsk },
+      ],
+    ] as const) {
+      const execParts = Object.entries(options)
+        .filter(([, value]) => Boolean(value))
+        .map(([key, value]) => `${key}=${value}`);
+      if (execParts.length > 0) {
+        const message = label
+          ? `${label} (${execParts.join(", ")}).`
+          : formatInternalExecPersistenceDeniedText();
+        parts.push(formatDirectiveAck(message));
+      }
     }
-  }
-  if (directives.hasExecDirective && directives.hasExecOptions && !allowPrivilegedPersistence) {
-    parts.push(formatDirectiveAck(formatInternalExecPersistenceDeniedText()));
   }
   if (modelSelection) {
     const label = `${modelSelection.provider}/${modelSelection.model}`;

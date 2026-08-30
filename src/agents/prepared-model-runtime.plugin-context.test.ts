@@ -6,12 +6,19 @@ import {
 import * as currentPluginMetadata from "../plugins/current-plugin-metadata-snapshot.js";
 import * as pluginMetadata from "../plugins/plugin-metadata-collection.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
+import * as pluginMetadataSnapshot from "../plugins/plugin-metadata-snapshot.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { createPreparedPluginMetadataFixture } from "../plugins/plugin-metadata.test-support.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
+import { withPluginRuntimeGenerationScope } from "../plugins/runtime/generation-scope.js";
+import { getPluginRuntimeGenerationRegistry } from "../plugins/runtime/generation-state.js";
 import { getPluginRuntimeLoadContext } from "../plugins/runtime/load-context.js";
+import { buildPreparedModelCatalogSnapshot } from "./model-catalog.js";
 import { prepareOwnedPluginLoadContext } from "./prepared-model-runtime.plugin-context.js";
-import { withPreparedPluginGenerationScope } from "./prepared-model-runtime.plugin-generation.js";
+import { buildPreparedPluginModelCatalog } from "./prepared-model-runtime.plugin-generation.js";
+import { AuthStorage, ModelRegistry } from "./sessions/index.js";
+
+vi.mock("./model-catalog.js", { spy: true });
 
 function operationMetadata(
   snapshot: PluginMetadataSnapshot,
@@ -27,7 +34,7 @@ describe("prepared model runtime plugin metadata ownership", () => {
     clearPluginMetadataLifecycleCaches();
   });
 
-  it("uses one explicit Gateway metadata generation across agent workspaces", () => {
+  it("keeps Gateway metadata authoritative across explicit and inherited workspace preparation", async () => {
     const config = { plugins: { allow: ["synthetic"] } };
     const gatewayWorkspace = "/tmp/gateway-plugin-workspace";
     const gatewaySnapshot = createPluginMetadataSnapshot({
@@ -45,12 +52,23 @@ describe("prepared model runtime plugin metadata ownership", () => {
       inlineProviderModels: [],
       pluginMetadataSnapshot: gatewaySnapshot,
     };
+    const modelRegistry = ModelRegistry.inMemory(AuthStorage.inMemory({}));
     const prepareMetadata = vi.spyOn(pluginMetadata, "preparePluginMetadata");
+    const resolveMetadata = vi.spyOn(pluginMetadataSnapshot, "resolvePluginMetadataSnapshot");
     const getCurrentMetadata = vi.spyOn(currentPluginMetadata, "getCurrentPluginMetadataSnapshot");
+    let selectedRegistry = createEmptyPluginRegistry();
+    const buildCatalog = vi
+      .mocked(buildPreparedModelCatalogSnapshot)
+      .mockImplementation(async ({ metadataSnapshot }) => {
+        expect(metadataSnapshot).toBe(gatewaySnapshot);
+        expect(getPluginRuntimeGenerationRegistry() === selectedRegistry).toBe(true);
+        return { entries: [], routeVariants: [] };
+      });
 
     try {
       for (const input of inputs) {
         const registry = createEmptyPluginRegistry();
+        selectedRegistry = registry;
         expect(
           prepareOwnedPluginLoadContext(input, process.env, registry, gatewaySnapshot, true),
         ).toBe(gatewaySnapshot);
@@ -58,16 +76,29 @@ describe("prepared model runtime plugin metadata ownership", () => {
           metadataSnapshot: gatewaySnapshot,
           preferBuiltPluginArtifacts: true,
         });
+        await buildPreparedPluginModelCatalog({
+          agentFacts: { input, credentials: {} },
+          catalogMode: "static",
+          modelRegistry,
+          pluginGeneration: { ...pluginGeneration, pluginRegistry: registry },
+        });
+      }
+      expect(getCurrentMetadata).not.toHaveBeenCalled();
+      expect(resolveMetadata).not.toHaveBeenCalled();
+      // Nested preparation intentionally reads the inherited scope; the explicit paths above do not.
+      for (const input of inputs) {
         expect(
-          withPreparedPluginGenerationScope({ input, pluginGeneration }, () =>
-            prepareOwnedPluginLoadContext(input, process.env, undefined),
+          withPluginRuntimeGenerationScope({ config, metadataSnapshot: gatewaySnapshot }, () =>
+            prepareOwnedPluginLoadContext(input, process.env),
           ),
         ).toBe(gatewaySnapshot);
       }
       expect(prepareMetadata).not.toHaveBeenCalled();
     } finally {
       getCurrentMetadata.mockRestore();
+      resolveMetadata.mockRestore();
       prepareMetadata.mockRestore();
+      buildCatalog.mockRestore();
     }
   });
 

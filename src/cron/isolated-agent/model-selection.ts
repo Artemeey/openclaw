@@ -7,6 +7,7 @@ import {
   acquireAgentRunPreparedModelRuntime,
   loadPublishedGatewayReplyDispatchRuntime,
 } from "../../agents/prepared-model-runtime.js";
+import type { PreparedModelRuntimePluginGeneration } from "../../agents/prepared-model-runtime.types.js";
 import {
   hasResolvedThinkingCatalogEntry,
   normalizeThinkingCatalogProviders,
@@ -122,6 +123,7 @@ function assertCronModelSelectionOwner(
 
 export type CronModelSelectionOwnerLease = {
   owner: ResolvedPublishedModelCatalogOwner;
+  pluginGeneration?: PreparedModelRuntimePluginGeneration;
   run<T>(operation: () => T): T;
   release(): void;
 };
@@ -145,9 +147,17 @@ export async function acquireCronModelSelectionOwner(
       release: () => {},
     };
   }
+  // Borrowing after reload requires the exact executable config. Model precedence still
+  // reads the captured source config so flattening defaults cannot change fallback inheritance.
+  const { cfgWithAgentDefaults } = resolveCronAgentConfig({
+    config: dispatch.config,
+    agentConfigOverride: params.requiredAgentId
+      ? resolveAgentConfig(dispatch.config, dispatch.agentId)
+      : undefined,
+  });
   const lease = await acquireAgentRunPreparedModelRuntime(
     {
-      config: dispatch.config,
+      config: cfgWithAgentDefaults,
       agentId: dispatch.agentId,
       agentDir: dispatch.agentDir,
       allowGatewaySubagentBinding: true,
@@ -161,15 +171,19 @@ export async function acquireCronModelSelectionOwner(
   );
   try {
     const owner = assertCronModelSelectionOwner(
-      resolvePublishedModelCatalogOwner(lease.snapshot),
+      Object.freeze({
+        ...resolvePublishedModelCatalogOwner(lease.snapshot),
+        config: dispatch.config,
+      }),
       params.requiredAgentId,
     );
     let active = true;
     return {
       owner,
+      pluginGeneration: lease.pluginGeneration,
       run: (operation) =>
         withPreparedModelRuntimePluginGenerationScope(
-          dispatch.pluginGeneration,
+          lease.pluginGeneration,
           () => withPluginRuntimeGenerationScope(lease.snapshot, operation),
           () => (active ? lease.snapshot : undefined),
         ),

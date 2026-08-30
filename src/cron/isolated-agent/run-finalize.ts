@@ -202,7 +202,7 @@ export async function finalizeCronRun(params: {
             agentId: prepared.agentId,
             agentDir: prepared.agentDir,
             workspaceDir: prepared.workspaceDir,
-            pluginMetadataSnapshot: prepared.metadataSnapshot,
+            pluginMetadataSnapshot: prepared.preparedModelRuntimeLease.snapshot.metadataSnapshot,
           })
         : undefined;
     const runEstimatedCostUsd =

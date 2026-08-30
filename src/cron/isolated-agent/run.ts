@@ -1,4 +1,5 @@
 import { retireSessionMcpRuntime } from "../../agents/agent-bundle-mcp-tools.js";
+import { withPreparedModelRuntimePluginGenerationScope } from "../../agents/prepared-model-runtime-generation-scope.js";
 import { createAgentRunRestartAbortError } from "../../agents/run-termination.js";
 import { cleanupBrowserSessionsForLifecycleEnd } from "../../browser-lifecycle-cleanup.js";
 import type { CliDeps } from "../../cli/outbound-send-deps.js";
@@ -123,6 +124,8 @@ export async function runCronIsolatedAgentTurn(params: {
   if (!prepared.ok) {
     return { ...prepared.result, admissionDisposition: "rejected" };
   }
+  const preparedRuntimeLease = prepared.context.preparedModelRuntimeLease;
+  let runtimeLeaseActive = true;
   const runPrepared = async (): Promise<RunCronAgentTurnResult> => {
     // Capture the stable run id before execution can rotate its persisted session.
     const initialSessionId = prepared.context.cronSession.sessionEntry.sessionId;
@@ -212,7 +215,7 @@ export async function runCronIsolatedAgentTurn(params: {
       );
       const { executeCronRun } = await cronExecutorRuntimeLoader.load();
       const executionParams: Parameters<typeof executeCronRun>[0] = {
-        cfg: prepared.context.modelOwnerLease.owner.config,
+        cfg: preparedRuntimeLease.snapshot.config,
         cfgWithAgentDefaults: prepared.context.cfgWithAgentDefaults,
         job: params.job,
         agentId: prepared.context.agentId,
@@ -388,18 +391,16 @@ export async function runCronIsolatedAgentTurn(params: {
     }
   };
   try {
-    return await prepared.context.modelOwnerLease.run(() =>
-      withPluginRuntimeGenerationScope(
-        {
-          config: prepared.context.cfgWithAgentDefaults,
-          metadataSnapshot: prepared.context.metadataSnapshot,
-          pluginRegistry: prepared.context.pluginRegistry,
-        },
-        runPrepared,
-      ),
+    return await withPreparedModelRuntimePluginGenerationScope(
+      preparedRuntimeLease.pluginGeneration,
+      () => withPluginRuntimeGenerationScope(preparedRuntimeLease.snapshot, runPrepared),
+      () => (runtimeLeaseActive ? preparedRuntimeLease.snapshot : undefined),
     );
   } finally {
-    // Finalization and cleanup can still classify providers using this generation's metadata.
+    // Delivery and cleanup retain the selected generation. Close borrowing before
+    // releasing either lease so callbacks retained past this run cannot reuse it.
+    runtimeLeaseActive = false;
+    preparedRuntimeLease.release();
     prepared.context.modelOwnerLease.release();
   }
 }

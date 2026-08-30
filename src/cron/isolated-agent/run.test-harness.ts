@@ -134,11 +134,15 @@ export const loadModelCatalogOwnerMock =
       params: LoadPreparedModelCatalogParams & { config: OpenClawConfig },
     ) => Promise<ResolvedPublishedModelCatalogOwner>
   >();
-export const loadAgentRuntimePluginRegistryHandleMock = createMock();
+export const preparedRunPluginRegistryMock = createMock();
+export const acquirePreparedModelRuntimeMock = createMock();
+export const loadPublishedReplyDispatchRuntimeMock = createMock();
 const getRemoteSkillEligibilityMock = createMock();
 
-vi.mock("../../agents/runtime-plugins.js", () => ({
-  loadAgentRuntimePluginRegistryHandle: loadAgentRuntimePluginRegistryHandleMock,
+vi.mock("../../agents/prepared-model-runtime.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../agents/prepared-model-runtime.js")>()),
+  acquireAgentRunPreparedModelRuntime: acquirePreparedModelRuntimeMock,
+  loadPublishedGatewayReplyDispatchRuntime: loadPublishedReplyDispatchRuntimeMock,
 }));
 
 vi.mock("./run.runtime.js", async () => ({
@@ -588,7 +592,32 @@ function resetRunConfigMocks(): void {
   resolveHookExternalContentSourceMock.mockReturnValue(undefined);
   getSkillsSnapshotVersionMock.mockReturnValue(42);
   loadModelCatalogMock.mockResolvedValue([]);
-  loadAgentRuntimePluginRegistryHandleMock.mockReturnValue(createEmptyPluginRegistry());
+  preparedRunPluginRegistryMock.mockReturnValue(createEmptyPluginRegistry());
+  loadPublishedReplyDispatchRuntimeMock.mockReset();
+  loadPublishedReplyDispatchRuntimeMock.mockResolvedValue(undefined);
+  acquirePreparedModelRuntimeMock.mockReset();
+  acquirePreparedModelRuntimeMock.mockImplementation(async (input, options) => {
+    const pluginRegistry = preparedRunPluginRegistryMock();
+    const metadataSnapshot =
+      options?.pluginGeneration?.pluginMetadataSnapshot ??
+      options?.pluginMetadataSnapshot ??
+      createPluginMetadataSnapshot({
+        config: input.config,
+        workspaceDir: input.workspaceDir,
+        manifestRegistry: { plugins: [], diagnostics: [] },
+      });
+    return {
+      snapshot: { ...input, metadataSnapshot, pluginRegistry },
+      pluginGeneration: {
+        configuredCatalogEntries: [],
+        inlineProviderModels: [],
+        ...options?.pluginGeneration,
+        pluginMetadataSnapshot: metadataSnapshot,
+        pluginRegistry,
+      },
+      release: vi.fn(),
+    };
+  });
   loadModelCatalogOwnerMock.mockImplementation(async (params) => {
     const agentId = params.agentId ?? "default";
     const workspaceDir =

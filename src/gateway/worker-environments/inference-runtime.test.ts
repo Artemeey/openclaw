@@ -225,7 +225,6 @@ function setup(
     agentDir?: string;
     agentRuntime?: string;
     authProfile?: string;
-    catalogWorkspace?: string;
     preparedModelRuntime?: boolean;
     prepareWorkspace?: string;
   } = {};
@@ -305,11 +304,16 @@ function setup(
   const releaseRuntime = vi.fn();
   const acquireRuntimeLease = vi.fn<Deps["acquireRuntimeLease"]>(async (runtimeParams) => {
     scope.agentDir = runtimeParams.agentDir;
-    scope.catalogWorkspace = WORKSPACE;
     const leased = { ...preparedModelRuntime, agentDir: runtimeParams.agentDir };
     leasedPreparedModelRuntime = leased;
     return {
       snapshot: leased,
+      pluginGeneration: {
+        configuredCatalogEntries: [],
+        inlineProviderModels: [],
+        pluginMetadataSnapshot: leased.metadataSnapshot,
+        pluginRegistry: leased.pluginRegistry,
+      },
       release: releaseRuntime,
     };
   });
@@ -619,7 +623,6 @@ describe("worker inference provider runtime", () => {
       agentDir: prepared?.agentDir,
       agentRuntime: "openclaw",
       authProfile: PROFILE,
-      catalogWorkspace: WORKSPACE,
       preparedModelRuntime: true,
       prepareWorkspace: WORKSPACE,
     });

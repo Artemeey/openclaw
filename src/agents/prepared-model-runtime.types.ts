@@ -103,6 +103,7 @@ export type PreparedModelRuntimeInput = {
 
 export type PreparedModelRuntimeLease = Readonly<{
   snapshot: PreparedModelRuntimeSnapshot;
+  pluginGeneration: PreparedModelRuntimePluginGeneration;
   release: () => void;
 }>;
 

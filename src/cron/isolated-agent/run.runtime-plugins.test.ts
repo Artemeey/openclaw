@@ -6,7 +6,7 @@ import { makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
 import { setupRunCronIsolatedAgentTurnSuite } from "./run.suite-helpers.js";
 import {
   ensureAgentWorkspaceMock,
-  loadAgentRuntimePluginRegistryHandleMock,
+  acquirePreparedModelRuntimeMock,
   loadModelCatalogOwnerMock,
   loadRunCronIsolatedAgentTurn,
   resolveSessionAuthSelectionMock,
@@ -44,24 +44,25 @@ describe("runCronIsolatedAgentTurn runtime plugin owner", () => {
       readOnly: true,
       allowGatewaySubagentBinding: true,
     });
-    expect(loadAgentRuntimePluginRegistryHandleMock).toHaveBeenCalledWith({
-      config: { agents: { defaults: {} } },
-      workspaceDir: "/tmp/workspace",
-      metadataSnapshot: (await loadModelCatalogOwnerMock.mock.results[0]?.value)?.metadataSnapshot,
-      allowGatewaySubagentBinding: true,
-      selections: [
-        {
-          provider: "openai",
-          modelId: "gpt-5.4",
-          agentId: "main",
-        },
-        {
-          provider: "anthropic",
-          modelId: "claude-sonnet-4-6",
-          agentId: "main",
-        },
-      ],
-    });
+    expect(acquirePreparedModelRuntimeMock).toHaveBeenCalledWith(
+      {
+        config: { agents: { defaults: {} } },
+        agentId: "main",
+        agentDir: "/tmp/agent-dir",
+        workspaceDir: "/tmp/workspace",
+        allowGatewaySubagentBinding: true,
+        runtimePluginSelections: [
+          { provider: "openai", modelId: "gpt-5.4", agentId: "main" },
+          { provider: "anthropic", modelId: "claude-sonnet-4-6", agentId: "main" },
+        ],
+      },
+      {
+        catalogMode: "static",
+        pluginMetadataSnapshot: (await loadModelCatalogOwnerMock.mock.results[0]?.value)
+          ?.metadataSnapshot,
+        abortSignal: expect.any(AbortSignal),
+      },
+    );
   });
 
   it("reuses the published owner metadata snapshot for auth and the run registry", async () => {
@@ -92,9 +93,9 @@ describe("runCronIsolatedAgentTurn runtime plugin owner", () => {
     const authParams = resolveSessionAuthSelectionMock.mock.calls[0]?.[0];
     expect(authParams.workspaceDir).toBe(workspaceDir);
     expect(authParams.pluginMetadataSnapshot).toBe(metadataSnapshot);
-    expect(loadAgentRuntimePluginRegistryHandleMock).toHaveBeenCalledOnce();
+    expect(acquirePreparedModelRuntimeMock).toHaveBeenCalledOnce();
     // Exact snapshot identity: a rebuilt copy would still re-hash every installed plugin.
-    expect(loadAgentRuntimePluginRegistryHandleMock.mock.calls[0]?.[0].metadataSnapshot).toBe(
+    expect(acquirePreparedModelRuntimeMock.mock.calls[0]?.[1].pluginMetadataSnapshot).toBe(
       metadataSnapshot,
     );
   });

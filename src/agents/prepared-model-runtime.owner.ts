@@ -12,14 +12,18 @@ import { isReservedSystemAgentId } from "../system-agent/agent-id.js";
 import {
   listAgentIds,
   resolveAgentDir,
-  resolveRunModelFallbacksOverride,
+  resolveSubagentSpawnModelFallbacksOverride,
   resolveAgentWorkspaceDir,
 } from "./agent-scope.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import { resolveSelectedAgentHarnessRuntime } from "./harness/runtime-plugin-load-plan.js";
 import { resolveLegacyInheritedAuthDir } from "./legacy-inherited-auth-dir.js";
 import { resolveModelCandidateChain } from "./model-fallback-candidates.js";
-import { resolveDefaultModelForAgent } from "./model-selection-config.js";
+import {
+  resolveDefaultModelForAgent,
+  resolveSubagentConfiguredModelSelection,
+} from "./model-selection-config.js";
+import { resolveConfiguredModelFallbacks } from "./model-selection-resolve.js";
 import { createModelManifestPluginContext } from "./model-selection-shared.js";
 import { preparePublishedModelCatalogOwnerIdentity } from "./prepared-model-catalog-owner.js";
 import { copyPreparedModelRuntimeAuthBindings } from "./prepared-model-runtime-auth.js";
@@ -458,6 +462,11 @@ function resolveConfiguredRuntimePluginSelections(
     manifestPluginContext.peek() === undefined
       ? { config, workspaceDir, manifestPlugins: [] }
       : manifestPluginContext.getContext();
+  const subagentModel = resolveSubagentConfiguredModelSelection({
+    cfg: config,
+    agentId,
+    includeAgentPrimary: false,
+  });
   return resolveModelCandidateChain({
     cfg: config,
     agentId,
@@ -466,7 +475,13 @@ function resolveConfiguredRuntimePluginSelections(
     provider: configured.provider || DEFAULT_PROVIDER,
     model: configured.model || DEFAULT_MODEL,
     requestedRouteResolution: "resolved",
-    fallbacksOverride: resolveRunModelFallbacksOverride({ cfg: config, agentId }),
+    // Session policy can narrow either configured chain after admission waits. Prepare
+    // their owners once so nested execution never expands an already frozen generation.
+    fallbacksOverride: [
+      ...resolveConfiguredModelFallbacks({ cfg: config, agentId }),
+      ...(subagentModel ? [subagentModel] : []),
+      ...(resolveSubagentSpawnModelFallbacksOverride(config, agentId) ?? []),
+    ],
   }).map((candidate) => ({
     provider: candidate.provider,
     modelId: candidate.model,
