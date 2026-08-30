@@ -341,6 +341,58 @@ suite.define(() => {
     }
   });
 
+  it("adopts a replacement run that started while the socket was offline", async () => {
+    const { context, page, gateway } = await openActiveTurn();
+    try {
+      const previousPrompt = "Start the first task.";
+      const previousText = "The first task is streaming.";
+      const previousRun = await startActiveTurn(page, gateway, previousPrompt, previousText);
+      await capture(page, "09-turnover-before");
+      const startupCount = (await gateway.getRequests("chat.startup")).length;
+      const subscriptionCount = (await gateway.getRequests("sessions.messages.subscribe")).length;
+      await gateway.setOnline(false);
+
+      const nextRun = "run-offline-replacement";
+      const nextPrompt = "Start the second task.";
+      const nextText = "The second task is streaming.";
+      await installActiveRunSnapshot(gateway, nextRun, nextPrompt, nextText, {
+        messages: [
+          ...activeRunSnapshot(previousRun, previousPrompt, previousText).messages,
+          {
+            __openclaw: { idempotencyKey: previousRun },
+            role: "assistant",
+            content: "The first task completed while offline.",
+            timestamp: 950,
+          },
+          ...activeRunSnapshot(nextRun, nextPrompt, nextText).messages,
+        ],
+      });
+      await gateway.setOnline(true);
+      await gateway.waitForRequest("chat.startup", { after: startupCount });
+      await gateway.waitForRequest("sessions.messages.subscribe", { after: subscriptionCount });
+      await waitForGatewayConnected(page);
+      await assertActiveTurnVisible(page, nextText);
+      await expect(
+        page.locator(".chat-thread").getByText(previousText, { exact: true }),
+      ).toHaveCount(0);
+
+      const liveText = `${nextText} New live progress.`;
+      await gateway.emitGatewayEvent("chat", {
+        runId: nextRun,
+        sessionKey: "main",
+        state: "delta",
+        message: { role: "assistant", content: liveText },
+      });
+      await assertActiveTurnVisible(page, liveText);
+      await capture(page, "10-turnover-after");
+      await page.getByRole("button", { name: "Stop generating" }).click();
+      const abort = await gateway.waitForRequest("chat.abort");
+      expect(abort.params).toMatchObject({ sessionKey: "main", runId: nextRun });
+    } finally {
+      await suite.closeBrowserContext(context);
+    }
+  });
+
   it("restores the active assistant and tool after a full reload", async () => {
     const { context, page, gateway } = await openActiveTurn();
     try {
