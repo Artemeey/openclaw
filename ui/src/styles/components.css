@@ -5950,11 +5950,13 @@ td.data-table-key-col {
   overflow: hidden;
   text-overflow: clip;
   white-space: nowrap;
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 16px), transparent);
   mask-image: linear-gradient(to right, black calc(100% - 16px), transparent);
   transition: text-indent 180ms ease-out;
 }
 
 .hover-marquee--scrolling {
+  -webkit-mask-image: none;
   mask-image: none;
   text-indent: var(--hover-marquee-shift, 0);
   transition-duration: var(--hover-marquee-duration, 600ms);
@@ -5962,10 +5964,12 @@ td.data-table-key-col {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hover-marquee--scrolling {
-    /* This operator-triggered transition is the only path to the clipped tail.
-       Keep its measured pace despite base.css's blanket motion suppression. */
-    transition-duration: var(--hover-marquee-duration, 600ms) !important;
+  .hover-marquee {
+    text-overflow: ellipsis;
+    text-indent: 0;
+    transition: none;
+    -webkit-mask-image: none;
+    mask-image: none;
   }
 }
 

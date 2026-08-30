@@ -5,10 +5,10 @@ import {
   captureUiProofEnabled,
   chatSessionListResponse,
   createChatFlowE2eSuite,
+  controlUiSessionUrl,
   expectDefined,
   expectRequestCountStable,
   installMockGateway,
-  pauseVirtualClock,
   requireRecord,
 } from "./chat-flow.test-support.ts";
 
@@ -79,7 +79,7 @@ suite.define(() => {
     });
 
     try {
-      await page.goto(`${suite.server.baseUrl}chat`);
+      await page.goto(controlUiSessionUrl(suite.server.baseUrl, firstKey));
       const secondRow = page.locator(`.sidebar-recent-session[data-session-key="${secondKey}"]`);
       await expect
         .poll(async () =>
@@ -191,7 +191,7 @@ suite.define(() => {
     });
 
     try {
-      await page.goto(`${suite.server.baseUrl}chat`);
+      await page.goto(controlUiSessionUrl(suite.server.baseUrl, key));
       const row = page.locator(`.sidebar-recent-session[data-session-key="${key}"]`);
       await row.getByText("Implementing the repair").waitFor();
       if (captureUiProofEnabled) {
@@ -239,7 +239,6 @@ suite.define(() => {
       viewport: { height: 900, width: 1280 },
     });
     const page = await context.newPage();
-    await page.clock.install();
     const sessions = chatSessionListResponse();
     const firstSession = expectDefined(sessions.sessions[0], "first chat session fixture");
     const secondSession = expectDefined(sessions.sessions[1], "second chat session fixture");
@@ -254,7 +253,7 @@ suite.define(() => {
     });
 
     try {
-      await page.goto(`${suite.server.baseUrl}chat`);
+      await page.goto(controlUiSessionUrl(suite.server.baseUrl, "agent:main:session-a"));
       const recentRow = page.locator(
         '.sidebar-recent-session[data-session-key="agent:main:session-b"]',
       );
@@ -269,30 +268,36 @@ suite.define(() => {
       }));
       expect(layout.scrollWidth, JSON.stringify(layout)).toBeGreaterThan(layout.clientWidth);
 
-      // Freeze the clock so the 500ms hover-intent delay elapses only via
-      // runFor; a ticking clock let slow runners start the marquee before the
-      // "not yet scrolling" asserts below.
-      await pauseVirtualClock(page);
-      await recentRow.dispatchEvent("mouseenter");
-      await page.clock.runFor(250);
+      const rowBox = await recentRow.boundingBox();
+      expect(rowBox).not.toBeNull();
+      if (!rowBox) {
+        return;
+      }
+      await page.mouse.move(rowBox.x + rowBox.width + 40, rowBox.y + rowBox.height / 2);
+      await page.mouse.move(rowBox.x + rowBox.width / 2, rowBox.y + rowBox.height / 2, {
+        steps: 12,
+      });
+      await page.waitForTimeout(250);
       expect(await recentLabel.evaluate((label) => label.classList.value)).not.toContain(
         "hover-marquee--scrolling",
       );
-      await recentRow.dispatchEvent("mouseleave");
+      await page.mouse.move(rowBox.x + rowBox.width + 40, rowBox.y + rowBox.height / 2, {
+        steps: 12,
+      });
       // 250 + 300 exceeds the hover delay: only the leave-cancel keeps it off.
-      await page.clock.runFor(300);
+      await page.waitForTimeout(300);
       expect(await recentLabel.evaluate((label) => label.classList.value)).not.toContain(
         "hover-marquee--scrolling",
       );
-      await recentRow.dispatchEvent("mouseenter");
-      await page.clock.runFor(500);
+      await page.mouse.move(rowBox.x + rowBox.width / 2, rowBox.y + rowBox.height / 2, {
+        steps: 12,
+      });
       await expect
         .poll(() => recentLabel.evaluate((label) => label.classList.value), { timeout: 1_500 })
         .toContain("hover-marquee--scrolling");
-      // Resume real time: the snap-back below is a compositor-driven CSS
-      // transition, not a fake-timer callback.
-      await page.clock.resume();
-      await recentRow.dispatchEvent("mouseleave");
+      await page.mouse.move(rowBox.x + rowBox.width + 40, rowBox.y + rowBox.height / 2, {
+        steps: 12,
+      });
       await expect
         .poll(
           () =>
@@ -302,7 +307,7 @@ suite.define(() => {
             })),
           { timeout: 1_500 },
         )
-        .toEqual({ textIndent: "0px", textOverflow: "ellipsis" });
+        .toEqual({ textIndent: "0px", textOverflow: "clip" });
 
       await recentRow.locator("a.sidebar-recent-session__link").dispatchEvent("click", {
         button: 0,
@@ -319,13 +324,13 @@ suite.define(() => {
           textIndent: getComputedStyle(label).textIndent,
           textOverflow: getComputedStyle(label).textOverflow,
         })),
-      ).toEqual({ textIndent: "0px", textOverflow: "ellipsis" });
+      ).toEqual({ textIndent: "0px", textOverflow: "clip" });
     } finally {
       await suite.closeBrowserContext(context);
     }
   });
 
-  it("reveals a long sidebar title through a physical hover with reduced motion enabled", async () => {
+  it("keeps a long sidebar title static with reduced motion enabled", async () => {
     const context = await suite.newBrowserContext({
       locale: "en-US",
       reducedMotion: "reduce",
@@ -343,7 +348,7 @@ suite.define(() => {
     });
 
     try {
-      await page.goto(`${suite.server.baseUrl}chat`);
+      await page.goto(controlUiSessionUrl(suite.server.baseUrl, "agent:main:session-a"));
       const row = page.locator('.sidebar-recent-session[data-session-key="agent:main:session-b"]');
       const label = row.locator(".sidebar-recent-session__name");
       await label.waitFor({ state: "visible", timeout: 10_000 });
@@ -355,13 +360,23 @@ suite.define(() => {
       await page.mouse.move(box.x + box.width + 40, box.y + box.height / 2);
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 12 });
 
-      await expect
-        .poll(
-          () =>
-            label.evaluate((element) => Number.parseFloat(getComputedStyle(element).textIndent)),
-          { timeout: 2_000 },
-        )
-        .toBeLessThan(-1);
+      await page.waitForTimeout(700);
+      expect(
+        await label.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return {
+            maskImage: style.maskImage,
+            textIndent: style.textIndent,
+            textOverflow: style.textOverflow,
+            webkitMaskImage: style.webkitMaskImage,
+          };
+        }),
+      ).toEqual({
+        maskImage: "none",
+        textIndent: "0px",
+        textOverflow: "ellipsis",
+        webkitMaskImage: "none",
+      });
     } finally {
       await suite.closeBrowserContext(context);
     }
@@ -440,7 +455,7 @@ suite.define(() => {
     });
 
     try {
-      await page.goto(`${suite.server.baseUrl}chat`);
+      await page.goto(controlUiSessionUrl(suite.server.baseUrl, busyKey));
       const busyRow = page.locator(`.sidebar-recent-session[data-session-key="${busyKey}"]`);
       const plainRow = page.locator(`.sidebar-recent-session[data-session-key="${plainKey}"]`);
       await busyRow.locator(".session-row-badges").waitFor();
@@ -703,7 +718,7 @@ suite.define(() => {
     });
 
     try {
-      await page.goto(`${suite.server.baseUrl}chat`);
+      await page.goto(controlUiSessionUrl(suite.server.baseUrl, "agent:main:session-a"));
       const documentMarker = await page.evaluate(() => {
         const marker = crypto.randomUUID();
         (window as Window & { __openclawAvatarTestDocument?: string })[
