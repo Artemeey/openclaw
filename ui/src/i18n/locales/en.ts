@@ -5002,6 +5002,7 @@ export const en: TranslationMap = {
       outputTokens: "{count} output",
       topModels: "Top models",
       costCategories: "Cost categories",
+      normalLimit: "Normal limit",
       remaining: "{percent}% left",
       resets: "Resets {date}",
     },

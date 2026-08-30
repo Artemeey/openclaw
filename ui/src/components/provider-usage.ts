@@ -19,7 +19,7 @@ type ProviderUsageDetailsOptions = {
 function splitCompactWindowLabel(label: string) {
   const separator = label.lastIndexOf(" · ");
   if (separator < 0) {
-    return { scope: "", cadence: label };
+    return { scope: t("usage.providerUsage.normalLimit"), cadence: label };
   }
   const prefix = label.slice(0, separator);
   const cadence = label.slice(separator + 3);

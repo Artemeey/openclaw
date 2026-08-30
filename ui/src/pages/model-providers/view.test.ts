@@ -603,8 +603,10 @@ describe("renderModelProviders", () => {
                 usage: {
                   providerId: "openai",
                   windows: [
+                    { label: "168h", usedPercent: 5 },
                     { label: "5h", usedPercent: 10 },
-                    { label: "GPT 5.3 Codex Spark · Week", usedPercent: 20 },
+                    { label: "GPT 5.3 Codex Spark · 5h", usedPercent: 20 },
+                    { label: "GPT 5.3 Codex Spark · Week", usedPercent: 30 },
                   ],
                 },
               },
@@ -617,13 +619,25 @@ describe("renderModelProviders", () => {
     const labels = [
       ...container.querySelectorAll<HTMLElement>(".provider-usage-window__compact-label"),
     ];
-    expect(labels).toHaveLength(2);
-    expect(text(labels[0]?.querySelector(".provider-usage-window__scope") ?? null)).toBe("");
-    expect(text(labels[0]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe("5h");
+    expect(labels).toHaveLength(4);
+    expect(text(labels[0]?.querySelector(".provider-usage-window__scope") ?? null)).toBe(
+      "Normal limit",
+    );
+    expect(text(labels[0]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe("168h");
     expect(text(labels[1]?.querySelector(".provider-usage-window__scope") ?? null)).toBe(
+      "Normal limit",
+    );
+    expect(text(labels[1]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe("5h");
+    expect(text(labels[2]?.querySelector(".provider-usage-window__scope") ?? null)).toBe(
       "GPT 5.3 Codex",
     );
-    expect(text(labels[1]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe(
+    expect(text(labels[2]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe(
+      "Spark · 5h",
+    );
+    expect(text(labels[3]?.querySelector(".provider-usage-window__scope") ?? null)).toBe(
+      "GPT 5.3 Codex",
+    );
+    expect(text(labels[3]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe(
       "Spark · Week",
     );
   });

@@ -35,7 +35,7 @@ function renderAuthStatus(card: ModelProviderCard) {
   `;
 }
 
-export function hasApiKeyCredential(card: ModelProviderCard): boolean {
+function hasApiKeyCredential(card: ModelProviderCard): boolean {
   return (
     card.hasConfigApiKey ||
     Boolean(card.apiKey) ||
