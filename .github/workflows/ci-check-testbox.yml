@@ -120,8 +120,16 @@ jobs:
           OPENCLAW_GEMINI_SETTINGS_JSON: ${{ secrets.OPENCLAW_GEMINI_SETTINGS_JSON }}
         run: bash scripts/ci-hydrate-testbox-env.sh
 
+      - name: Record Testbox proof namespaces
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          printf 'testbox-proof action-netns=%s action-pidns=%s\n' \
+            "$(readlink /proc/self/ns/net)" "$(readlink /proc/self/ns/pid)"
+
       - name: Run Testbox
-        uses: useblacksmith/run-testbox@3f60ff9ceb2c10c3feefa87dc0c6490cffae059d
+        # Candidate-only pin for the isolated lifecycle proof; not for landing.
+        uses: steipete/run-testbox@7aeb7bab6f521ca30924d7dbf1fd47d6fcada294
         if: github.event_name == 'workflow_dispatch' && always()
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
