@@ -5962,13 +5962,10 @@ td.data-table-key-col {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hover-marquee {
-    transition: none;
-  }
-
   .hover-marquee--scrolling {
-    mask-image: linear-gradient(to right, black calc(100% - 16px), transparent);
-    text-indent: 0;
+    /* This operator-triggered transition is the only path to the clipped tail.
+       Keep its measured pace despite base.css's blanket motion suppression. */
+    transition-duration: var(--hover-marquee-duration, 600ms) !important;
   }
 }
 

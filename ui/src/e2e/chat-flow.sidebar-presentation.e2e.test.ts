@@ -325,6 +325,48 @@ suite.define(() => {
     }
   });
 
+  it("reveals a long sidebar title through a physical hover with reduced motion enabled", async () => {
+    const context = await suite.newBrowserContext({
+      locale: "en-US",
+      reducedMotion: "reduce",
+      serviceWorkers: "block",
+      viewport: { height: 900, width: 1280 },
+    });
+    const page = await context.newPage();
+    const sessions = chatSessionListResponse();
+    const secondSession = expectDefined(sessions.sessions[1], "second chat session fixture");
+    secondSession.label =
+      "Review and repair the intentionally overlong sidebar session title before navigation";
+    await installMockGateway(page, {
+      methodResponses: { "sessions.list": sessions },
+      sessionKey: "agent:main:session-a",
+    });
+
+    try {
+      await page.goto(`${suite.server.baseUrl}chat`);
+      const row = page.locator('.sidebar-recent-session[data-session-key="agent:main:session-b"]');
+      const label = row.locator(".sidebar-recent-session__name");
+      await label.waitFor({ state: "visible", timeout: 10_000 });
+      const box = await row.boundingBox();
+      expect(box).not.toBeNull();
+      if (!box) {
+        return;
+      }
+      await page.mouse.move(box.x + box.width + 40, box.y + box.height / 2);
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 12 });
+
+      await expect
+        .poll(
+          () =>
+            label.evaluate((element) => Number.parseFloat(getComputedStyle(element).textIndent)),
+          { timeout: 2_000 },
+        )
+        .toBeLessThan(-1);
+    } finally {
+      await suite.closeBrowserContext(context);
+    }
+  });
+
   it("keeps session titles on the first line and collapses rows that have no second line", async () => {
     if (captureUiProofEnabled) {
       await mkdir(sessionSecondRowProofDir, { recursive: true });
