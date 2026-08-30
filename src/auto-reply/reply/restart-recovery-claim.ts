@@ -13,6 +13,7 @@ import type {
 } from "../../config/sessions/session-transcript-turn-lifecycle.types.js";
 import { sessionMatchesExpectedTranscriptTurn } from "../../config/sessions/session-transcript-turn-state.js";
 import type { InternalSessionEntry as SessionEntry } from "../../config/sessions/types.js";
+import { isAgentEventLifecycleGenerationCurrent } from "../../infra/agent-events.js";
 import type {
   UserTurnTranscriptRecorder,
   UserTurnTranscriptTarget,
@@ -107,6 +108,7 @@ function buildExpectedSessionState(entry: SessionEntry): SessionTranscriptTurnEx
 
 export function createReplyRestartRecoveryClaimController(params: {
   admissionRunId?: unknown;
+  lifecycleGeneration: string | undefined;
   getEntry: () => SessionEntry | undefined;
   getSessionId: () => string;
   isRestartAbort: () => boolean;
@@ -419,13 +421,19 @@ export function createReplyRestartRecoveryClaimController(params: {
     };
 
   const clear = async (): Promise<void> => {
-    if (!tracked || !params.sessionKey || !params.storePath || params.isRestartAbort()) {
+    if (!tracked || !params.sessionKey || !params.storePath) {
       return;
     }
     const persisted = await updateSessionEntry(
       { storePath: params.storePath, sessionKey: params.sessionKey },
       (current) => {
+        // Restart recovery can reuse this claim's run id in a new lifecycle.
+        // Recheck ownership after the store queue, before retiring its delivery route.
         if (
+          !params.lifecycleGeneration ||
+          !isAgentEventLifecycleGenerationCurrent(params.lifecycleGeneration) ||
+          params.isRestartAbort() ||
+          (current.abortedLastRun === true && current.mainRestartRecovery !== undefined) ||
           current.sessionId !== params.getSessionId() ||
           current.restartRecoveryDeliveryRunId !== recoveryRunId
         ) {
