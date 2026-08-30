@@ -518,6 +518,8 @@ export async function prepareGatewayKernelState(params: {
     sessionEventSubscribers,
     sessionMessageSubscribers,
     isConnectionActive,
+    nativeNotifications,
+    bindNativeNotificationReplay,
   } = connectionState;
 
   return {
@@ -604,6 +606,8 @@ export async function prepareGatewayKernelState(params: {
     sessionEventSubscribers,
     sessionMessageSubscribers,
     isConnectionActive,
+    nativeNotifications,
+    bindNativeNotificationReplay,
     getTailscaleIngressEndpoint: transportBridge.getTailscaleIngressEndpoint,
     getMcpAppSandboxPort: transportBridge.getMcpAppSandboxPort,
     ensureSandboxHostPort: transportBridge.ensureSandboxHostPort,

@@ -1,15 +1,10 @@
 import { createHash } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import type { WebPushNotificationCategory } from "../../packages/gateway-protocol/src/schema/push.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
   WEB_PUSH_USER_PREFERENCES_KEY,
-  isWebPushQuietHours,
-  normalizeWebPushDisplayLabel,
   resolveEffectiveWebPushPreferences,
-  webPushAgentAllowed,
-  webPushCategoryEnabled,
 } from "../infra/push-web-preferences.js";
 import {
   listBoundWebPushSubscriptions,
@@ -19,77 +14,21 @@ import {
 import { getUserPreferences } from "../state/user-preferences.js";
 import { resolveUserProfileId } from "../state/user-profiles.js";
 import { QUESTIONS_SCOPE } from "./method-scopes.js";
+import type { NativeNotificationRegistry } from "./native-notifications.js";
+import {
+  notificationAllowed,
+  renderEventNotification,
+  resolveEventNotification,
+  nativeNotification,
+  eventNotificationPath,
+  NOTIFICATION_TTL_MS,
+} from "./notification-presentation.js";
 import { READ_SCOPE } from "./operator-scopes.js";
 import type { GatewayBroadcastOpts } from "./server-broadcast-types.js";
+import type { GatewayWsClient } from "./server/ws-types.js";
 import { canReceiveSessionEvent } from "./session-sharing.js";
 import { listCurrentWebPushTargets, webPushTargetClient } from "./web-push-authority.js";
-
-const EVENT_PUSH_TTL_SECONDS = 5 * 60;
-
-type EventNotification = {
-  category: WebPushNotificationCategory;
-  title: string;
-  body: string;
-  identifiedBody?: string;
-  tag: string;
-};
-
-function resolveEventWebPushNotification(
-  event: string,
-  payload: unknown,
-  opts?: GatewayBroadcastOpts,
-): EventNotification | null {
-  const value = isRecord(payload) ? payload : null;
-  if (!value) {
-    return null;
-  }
-  if (event === "question.requested") {
-    const id = normalizeWebPushDisplayLabel(value.id) ?? "pending";
-    return {
-      category: "agent-question",
-      title: "OpenClaw needs an answer",
-      body: "An agent has a question for you.",
-      tag: `openclaw-question-${id}`,
-    };
-  }
-  if (event === "chat" && value.state === "final" && opts?.agentRunCompleted) {
-    const runId = normalizeWebPushDisplayLabel(value.runId) ?? "finished";
-    return {
-      category: "agent-finished",
-      title: "OpenClaw agent finished",
-      body: "An agent completed its response.",
-      tag: `openclaw-agent-finished-${runId}`,
-    };
-  }
-  if (event === "task" && value.action === "upserted") {
-    const task = isRecord(value.task) ? value.task : null;
-    if (task?.status !== "failed" && task?.status !== "timed_out") {
-      return null;
-    }
-    const taskId = normalizeWebPushDisplayLabel(task.id) ?? "failed";
-    const taskTitle = normalizeWebPushDisplayLabel(task.title);
-    return {
-      category: "background-task-failed",
-      title: "OpenClaw background task failed",
-      body: "A background task needs attention.",
-      ...(taskTitle ? { identifiedBody: `${taskTitle} needs attention.` } : {}),
-      tag: `openclaw-task-failed-${taskId}`,
-    };
-  }
-  if (event === "cron" && value.action === "finished" && value.status === "error") {
-    const job = isRecord(value.job) ? value.job : null;
-    const jobId = normalizeWebPushDisplayLabel(value.jobId) ?? "failed";
-    const jobName = normalizeWebPushDisplayLabel(job?.name);
-    return {
-      category: "scheduled-task-failed",
-      title: "OpenClaw scheduled task failed",
-      body: "A scheduled task needs attention.",
-      ...(jobName ? { identifiedBody: `${jobName} needs attention.` } : {}),
-      tag: `openclaw-cron-failed-${jobId}`,
-    };
-  }
-  return null;
-}
+import { webPushNotificationUrl } from "./web-push-navigation.js";
 
 function preferenceFor(subscription: BoundWebPushSubscription, stateDir?: string) {
   const profileId = subscription.userProfileId
@@ -105,19 +44,83 @@ function preferenceFor(subscription: BoundWebPushSubscription, stateDir?: string
   return resolveEffectiveWebPushPreferences({ user, device: subscription.devicePreferences });
 }
 
+function eventCopyForTarget(params: {
+  notification: NonNullable<ReturnType<typeof resolveEventNotification>>;
+  preferences: ReturnType<typeof resolveEffectiveWebPushPreferences>;
+  client: GatewayWsClient;
+  cfg: OpenClawConfig;
+  event: string;
+  payload: unknown;
+  opts?: GatewayBroadcastOpts;
+  agentId?: string;
+}) {
+  const { notification, preferences, client, cfg, event, payload, opts, agentId } = params;
+  const sessionKeys = opts?.sessionKeys ?? [];
+  if (
+    !notificationAllowed(preferences, notification.category, agentId) ||
+    (cfg.gateway?.roles && sessionKeys.length === 0) ||
+    (sessionKeys.length > 0 &&
+      !canReceiveSessionEvent({
+        cfg,
+        client,
+        sessionKeys,
+        agentId,
+        event,
+        payload,
+      }))
+  ) {
+    return null;
+  }
+  return renderEventNotification(notification, preferences, agentId);
+}
+
 /** Routes attention events to offline browsers without expanding live session visibility. */
 export function createEventWebPushDelivery(params: {
   getRuntimeConfig: () => OpenClawConfig;
   log?: { warn?: (message: string) => void };
   stateDir?: string;
+  nativeNotifications?: NativeNotificationRegistry;
 }) {
   return {
     handleEvent(event: string, payload: unknown, opts?: GatewayBroadcastOpts): void {
-      const notification = resolveEventWebPushNotification(event, payload, opts);
+      const notification = resolveEventNotification(event, payload, opts);
       if (!notification) {
         return;
       }
+      const requiredScopes =
+        notification.category === "agent-question" ? [READ_SCOPE, QUESTIONS_SCOPE] : [READ_SCOPE];
+      const agentId = normalizeOptionalString(
+        opts?.agentId ?? (isRecord(payload) ? payload.agentId : undefined),
+      );
+      const path = eventNotificationPath(event, payload, opts);
       void (async () => {
+        const native = params.nativeNotifications;
+        const nativeTargets = native?.targets(requiredScopes) ?? [];
+        const nativeCfg = nativeTargets.length > 0 ? params.getRuntimeConfig() : {};
+        for (const target of nativeTargets) {
+          const copy = eventCopyForTarget({
+            notification,
+            preferences: target.preferences,
+            client: target.visibilityClient,
+            cfg: nativeCfg,
+            event,
+            payload,
+            opts,
+            agentId,
+          });
+          if (copy) {
+            native?.send(
+              target,
+              nativeNotification({
+                ...copy,
+                id: notification.tag,
+                category: notification.category,
+                path,
+                expiresAtMs: Date.now() + NOTIFICATION_TTL_MS,
+              }),
+            );
+          }
+        }
         if (listBoundWebPushSubscriptions(params.stateDir).length === 0) {
           return;
         }
@@ -125,16 +128,9 @@ export function createEventWebPushDelivery(params: {
         const cfg = params.getRuntimeConfig();
         const targets = listCurrentWebPushTargets({
           cfg,
-          requiredScopes:
-            notification.category === "agent-question"
-              ? [READ_SCOPE, QUESTIONS_SCOPE]
-              : [READ_SCOPE],
+          requiredScopes,
           stateDir: params.stateDir,
         });
-        const agentId = normalizeOptionalString(
-          opts?.agentId ?? (isRecord(payload) ? payload.agentId : undefined),
-        );
-        const agentLabel = normalizeWebPushDisplayLabel(agentId);
         const groups = new Map<
           string,
           { title: string; body: string; subscriptions: BoundWebPushSubscription[] }
@@ -142,38 +138,20 @@ export function createEventWebPushDelivery(params: {
         for (const target of targets) {
           const subscription = target.subscription;
           const preferences = preferenceFor(subscription, params.stateDir);
-          if (
-            !webPushCategoryEnabled(preferences, notification.category) ||
-            isWebPushQuietHours(preferences) ||
-            !webPushAgentAllowed(preferences, agentId)
-          ) {
+          const copy = eventCopyForTarget({
+            notification,
+            preferences,
+            client: webPushTargetClient(target),
+            cfg,
+            event,
+            payload,
+            opts,
+            agentId,
+          });
+          if (!copy) {
             continue;
           }
-          const sessionKeys = opts?.sessionKeys ?? [];
-          if (
-            sessionKeys.length > 0 &&
-            !canReceiveSessionEvent({
-              cfg,
-              client: webPushTargetClient(target),
-              sessionKeys,
-              ...(agentId ? { agentId } : {}),
-              event,
-              payload,
-            })
-          ) {
-            continue;
-          }
-          if (cfg.gateway?.roles && sessionKeys.length === 0) {
-            // Multi-user events without an authoritative session owner are not broadcast offline.
-            continue;
-          }
-          const prefix = preferences.label ? `${preferences.label} · ` : "";
-          const title = `${prefix}${notification.title}`;
-          const body =
-            preferences.detailLevel === "private"
-              ? notification.body
-              : (notification.identifiedBody ??
-                (agentLabel ? `${agentLabel}: ${notification.body}` : notification.body));
+          const { title, body } = copy;
           const key = JSON.stringify({ title, body });
           const group = groups.get(key) ?? { title, body, subscriptions: [] };
           group.subscriptions.push(subscription);
@@ -191,10 +169,11 @@ export function createEventWebPushDelivery(params: {
                 title: group.title,
                 body: group.body,
                 tag: notification.tag,
+                url: webPushNotificationUrl(cfg, path),
                 renotify: false,
               },
               deliveryOptions: {
-                TTL: EVENT_PUSH_TTL_SECONDS,
+                TTL: NOTIFICATION_TTL_MS / 1_000,
                 urgency: notification.category.includes("failed") ? "high" : "normal",
                 topic,
               },

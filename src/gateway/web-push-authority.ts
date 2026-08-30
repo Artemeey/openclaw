@@ -4,11 +4,8 @@ import {
 } from "../../packages/gateway-protocol/src/client-info.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { listPairedDevicesReadOnly } from "../infra/device-pairing-store-readonly.js";
-import { hasEffectivePairedDeviceRole, type PairedDevice } from "../infra/device-pairing.js";
 import { listBoundWebPushSubscriptions, type BoundWebPushSubscription } from "../infra/push-web.js";
-import { roleScopesAllow } from "../shared/operator-scope-compat.js";
-import { resolveUserProfileId } from "../state/user-profiles.js";
-import { resolveOperatorRolePolicyForProfile } from "./operator-role-policy.js";
+import { resolveNotificationAuthority } from "./notification-authority.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 
 const OPERATOR_ROLE = "operator";
@@ -18,59 +15,6 @@ export type CurrentWebPushTarget = {
   scopes: string[];
   userProfileId: string | null;
 };
-
-function resolveCurrentWebPushTarget(params: {
-  subscription: BoundWebPushSubscription;
-  device: PairedDevice | undefined;
-  cfg: OpenClawConfig;
-  requiredScopes: readonly string[];
-}): CurrentWebPushTarget | null {
-  const { device, subscription, cfg } = params;
-  if (!device || !hasEffectivePairedDeviceRole(device, OPERATOR_ROLE)) {
-    return null;
-  }
-  const operatorToken = device.tokens?.[OPERATOR_ROLE];
-  const approvedScopes = device.approvedScopes ?? device.scopes;
-  if (
-    !operatorToken ||
-    operatorToken.revokedAtMs ||
-    !approvedScopes ||
-    !roleScopesAllow({
-      role: OPERATOR_ROLE,
-      requestedScopes: operatorToken.scopes,
-      allowedScopes: approvedScopes,
-    })
-  ) {
-    return null;
-  }
-
-  const storedProfileId = subscription.userProfileId;
-  const userProfileId = storedProfileId ? (resolveUserProfileId(storedProfileId) ?? null) : null;
-  if ((storedProfileId && !userProfileId) || (cfg.gateway?.roles && !userProfileId)) {
-    return null;
-  }
-  const rolePolicy = userProfileId
-    ? resolveOperatorRolePolicyForProfile(userProfileId, cfg)
-    : undefined;
-  if (cfg.gateway?.roles && !rolePolicy) {
-    return null;
-  }
-  const scopeCeilings = [operatorToken.scopes, ...(rolePolicy ? [rolePolicy.scopes] : [])];
-  // Visibility owners need effective admin authority, not just delivery scopes.
-  // Intersect grants by implication so neither device nor profile can elevate the other.
-  const scopes = [...new Set(scopeCeilings.flat())].filter((scope) =>
-    scopeCeilings.every((allowedScopes) =>
-      roleScopesAllow({ role: OPERATOR_ROLE, requestedScopes: [scope], allowedScopes }),
-    ),
-  );
-  return roleScopesAllow({
-    role: OPERATOR_ROLE,
-    requestedScopes: params.requiredScopes,
-    allowedScopes: scopes,
-  })
-    ? { subscription, scopes, userProfileId }
-    : null;
-}
 
 /** Reads every mutable authority fact in the caller's network-I/O continuation. */
 export function listCurrentWebPushTargets(params: {
@@ -82,13 +26,13 @@ export function listCurrentWebPushTargets(params: {
     listPairedDevicesReadOnly(params.stateDir).map((device) => [device.deviceId, device]),
   );
   return listBoundWebPushSubscriptions(params.stateDir).flatMap((subscription) => {
-    const target = resolveCurrentWebPushTarget({
-      subscription,
+    const authority = resolveNotificationAuthority({
+      userProfileId: subscription.userProfileId,
       device: pairedByDeviceId.get(subscription.deviceId),
       cfg: params.cfg,
       requiredScopes: params.requiredScopes,
     });
-    return target ? [target] : [];
+    return authority ? [{ subscription, ...authority }] : [];
   });
 }
 

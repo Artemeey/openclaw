@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import type { BoundWebPushSubscription } from "../infra/push-web.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
+import type { OperatorScope } from "./operator-scopes.js";
 
 const listDevicePairingMock = vi.fn();
 const listBoundWebPushSubscriptionsMock = vi.fn();
@@ -104,7 +105,12 @@ function boundSubscription(
   };
 }
 
-const impliedRoleScopeCases = [
+const impliedRoleScopeCases: Array<{
+  label: string;
+  tokenScopes: OperatorScope[];
+  profileScopes: OperatorScope[];
+  hasAdmin: boolean;
+}> = [
   {
     label: "device admin and granular profile",
     tokenScopes: ["operator.admin"],
@@ -125,7 +131,10 @@ const impliedRoleScopeCases = [
   },
 ];
 
-async function createRoleBoundApprovalDelivery(tokenScopes: string[], profileScopes: string[]) {
+async function createRoleBoundApprovalDelivery(
+  tokenScopes: OperatorScope[],
+  profileScopes: OperatorScope[],
+) {
   const subscription = boundSubscription("current-device", "profile-current");
   listBoundWebPushSubscriptionsMock.mockReturnValue([subscription]);
   listDevicePairingMock.mockReturnValue({
