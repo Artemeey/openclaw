@@ -585,6 +585,7 @@ final class OpenClawSnapshotUITests: XCTestCase {
         inlineNonDefaultModel.tap()
         let updatedInlineModel = app.buttons["chat-composer-inline-model"]
         XCTAssertTrue(updatedInlineModel.waitForExistence(timeout: 3))
+        self.waitForValue("claude-opus-4-1", of: updatedInlineModel)
         updatedInlineModel.tap()
         let selectedInlineModel = app.buttons["anthropic/claude-opus-4-1, Selected"]
         XCTAssertTrue(selectedInlineModel.waitForExistence(timeout: 3))
