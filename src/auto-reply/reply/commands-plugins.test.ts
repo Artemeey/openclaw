@@ -3,11 +3,14 @@ import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { PluginCapabilityConsentReview } from "../../plugins/capability-consent.js";
+import { recordInstalledPluginIndexInstallOwner } from "../../plugins/installed-plugin-index-install-owner.js";
 import { ManagedPluginLifecycleError } from "../../plugins/management-lifecycle-error.js";
+import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
 import { handlePluginsCommand } from "./commands-plugins.js";
 import { buildPluginsCommandParams, type ConfigSnapshotMock } from "./commands.test-harness.js";
 
 const readConfigFileSnapshotMock = vi.hoisted(() => vi.fn());
+const loadPluginMetadataSnapshotMock = vi.hoisted(() => vi.fn());
 const validateConfigObjectWithPluginsMock = vi.hoisted(() => vi.fn());
 const replaceConfigFileMock = vi.hoisted(() => vi.fn(async (_params: unknown) => undefined));
 const buildPluginRegistrySnapshotReportMock = vi.hoisted(() => vi.fn());
@@ -107,10 +110,9 @@ vi.mock("../../plugins/install.js", () => ({
   installPluginFromPath: vi.fn(),
 }));
 
-vi.mock("../../plugins/installed-plugin-index-records.js", () => ({
-  loadInstalledPluginIndexInstallRecords: vi.fn(
-    async (params = {}) => params.config?.plugins?.installs ?? {},
-  ),
+vi.mock("../../plugins/plugin-metadata-snapshot.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../plugins/plugin-metadata-snapshot.js")>()),
+  loadPluginMetadataSnapshot: loadPluginMetadataSnapshotMock,
 }));
 
 vi.mock("../../plugins/status.js", () => ({
@@ -208,6 +210,7 @@ function expectLastRegistryRefresh(enabled: boolean) {
 describe("handlePluginsCommand", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    loadPluginMetadataSnapshotMock.mockReturnValue(createPluginMetadataSnapshotFixture());
     resolvePluginCapabilityConsentMock.mockReset().mockResolvedValue(undefined);
     resolvePendingPluginCapabilityReviewMock.mockReset();
     readConfigFileSnapshotMock.mockResolvedValue({
@@ -289,6 +292,117 @@ describe("handlePluginsCommand", () => {
     expect(inspectAllResult?.reply?.text).toContain('"compatibilityWarnings"');
     expect(inspectAllResult?.reply?.text).toContain('"superpowers"');
   });
+
+  it("reports package-owned provenance for child inspection and all aliases", async () => {
+    const install = {
+      source: "npm" as const,
+      spec: "@example/pack@1.2.3",
+      version: "1.2.3",
+      installPath: "/plugins/pack",
+      integrity: "sha512-pack",
+    };
+    const reports = ["pack/one", "pack/two"].map((id) => ({
+      plugin: { id },
+      compatibility: [],
+      tools: [{ name: "runtime_tool" }],
+    }));
+    const metadata = createPluginMetadataSnapshotFixture({
+      plugins: reports.map(({ plugin }) => ({ id: plugin.id, rootDir: install.installPath })),
+    });
+    metadata.index.installRecords = { pack: install };
+    metadata.index.plugins.forEach((plugin) =>
+      recordInstalledPluginIndexInstallOwner(plugin, "pack"),
+    );
+    loadPluginMetadataSnapshotMock.mockReturnValue(metadata);
+    buildAllPluginInspectReportsMock.mockReturnValue(reports);
+
+    for (const action of ["inspect", "show", "get"]) {
+      for (const report of reports) {
+        buildPluginInspectReportMock.mockReturnValue(report);
+        const result = await handlePluginsCommand(
+          buildPluginsParams(`/plugins ${action} ${report.plugin.id}`, buildCfg()),
+          true,
+        );
+        const payload = JSON.parse(
+          result?.reply?.text?.split("```json\n")[1]?.split("\n```")[0] ?? "null",
+        );
+        expect(payload).toEqual({ ...report, compatibilityWarnings: [], install });
+      }
+      const result = await handlePluginsCommand(
+        buildPluginsParams(`/plugin ${action} all`, buildCfg()),
+        true,
+      );
+      const payload = JSON.parse(
+        result?.reply?.text?.split("```json\n")[1]?.split("\n```")[0] ?? "null",
+      );
+      expect(payload).toEqual(
+        reports.map((inspect) => ({ inspect, compatibilityWarnings: [], install })),
+      );
+    }
+    expect(buildPluginDiagnosticsReportMock).toHaveBeenCalled();
+    expect(buildPluginRegistrySnapshotReportMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps bare inspection on the runtime report", async () => {
+    const result = await handlePluginsCommand(
+      buildPluginsParams("/plugins inspect", buildCfg()),
+      true,
+    );
+    expect(result?.reply?.text).toContain("superpowers");
+    expect(buildPluginDiagnosticsReportMock).toHaveBeenCalledTimes(1);
+    expect(buildPluginRegistrySnapshotReportMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["list", "inspect pack/one", "enable pack/one"])(
+    "rejects invalid config before loading plugin state for %s",
+    async (action) => {
+      readConfigFileSnapshotMock.mockResolvedValue({ valid: false, path: "/tmp/openclaw.json" });
+      const result = await handlePluginsCommand(
+        buildPluginsParams(`/plugins ${action}`, buildCfg(), {
+          gatewayClientScopes: WRITE_GATEWAY_SCOPES,
+        }),
+        true,
+      );
+      expect(result?.reply?.text).toBe("⚠️ Config file is invalid; fix it before using /plugins.");
+      expect(buildPluginDiagnosticsReportMock).not.toHaveBeenCalled();
+      expect(buildPluginRegistrySnapshotReportMock).not.toHaveBeenCalled();
+      expect(replaceConfigFileMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["missing", "ambiguous", "conflicting"])(
+    "does not attribute chat install metadata when ownership is %s",
+    async (ownership) => {
+      const inspect = { plugin: { id: "pack/one" }, compatibility: [] };
+      const metadata = createPluginMetadataSnapshotFixture({
+        plugins: [{ id: inspect.plugin.id, rootDir: "/plugins/pack" }],
+      });
+      metadata.index.plugins.forEach((plugin) =>
+        recordInstalledPluginIndexInstallOwner(
+          plugin,
+          ownership === "conflicting" ? "pack" : undefined,
+          ownership === "ambiguous",
+        ),
+      );
+      metadata.index.installRecords = {
+        pack: { source: "npm", installPath: "/plugins/pack" },
+        "pack/one": { source: "npm", installPath: "/plugins/unrelated" },
+      };
+      loadPluginMetadataSnapshotMock.mockReturnValue(metadata);
+      buildPluginInspectReportMock.mockReturnValue(inspect);
+      buildAllPluginInspectReportsMock.mockReturnValue([inspect]);
+      for (const name of [inspect.plugin.id, "all"]) {
+        const result = await handlePluginsCommand(
+          buildPluginsParams(`/plugins inspect ${name}`, buildCfg()),
+          true,
+        );
+        const payload = JSON.parse(
+          result?.reply?.text?.split("```json\n")[1]?.split("\n```")[0] ?? "null",
+        );
+        expect(Array.isArray(payload) ? payload[0].install : payload.install).toBeNull();
+      }
+    },
+  );
 
   it("rejects internal writes without operator.admin", async () => {
     const params = buildPluginsParams("/plugins enable superpowers", buildCfg());

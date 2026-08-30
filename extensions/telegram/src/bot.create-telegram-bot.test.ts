@@ -5708,7 +5708,9 @@ describe("createTelegramBot", () => {
     expect(sendMessageSpy).toHaveBeenCalledTimes(1);
     const receipt = sendMessageSpy.mock.calls.at(0)?.[1];
     expect(receipt).toContain("Model changed to <b>openai/gpt-5.4</b>");
-    expect(receipt).toContain("Session-only model selection. Runtime unchanged.");
+    expect(receipt).toContain(
+      "Session-only model selection. Runtime set to <b>codex</b> from configured policy.",
+    );
     expect(
       editMessageTextSpy.mock.calls.some((call) =>
         (typeof call[2] === "string" ? call[2] : "").includes("Failed to change model"),

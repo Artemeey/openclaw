@@ -1,15 +1,20 @@
 import path from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import type { ModelRef } from "../../agents/model-ref-shared.js";
 import {
   createPluginMetadataSnapshot,
   makeRegistry,
 } from "../../config/plugin-auto-enable.test-helpers.js";
 import { replaceSessionEntrySync } from "../../config/sessions/session-accessor.js";
+import { resolveUnsuffixedSqliteTargetFromSessionStorePath } from "../../config/sessions/session-sqlite-target.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { isPathInside } from "../../infra/path-guards.js";
 import { withPluginRuntimeGenerationScope } from "../../plugins/runtime/generation-scope.js";
+import {
+  createOpenClawTestState,
+  type OpenClawTestState,
+} from "../../test-utils/openclaw-test-state.js";
 import { createSessionConversationTestRegistry } from "../../test-utils/session-conversation-registry.js";
 import {
   TURN_MODEL_CHANNEL_REF,
@@ -47,15 +52,17 @@ const mocks = vi.hoisted(() => ({
 registerGetReplyBaselineBypass();
 registerGetReplyRuntimeOverrides(mocks);
 
-const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+let state: OpenClawTestState;
 
 let getReplyFromConfig: typeof import("./get-reply.js").getReplyFromConfig;
+let resolveAgentWorkspaceDirMock: typeof import("../../agents/agent-scope.js").resolveAgentWorkspaceDir;
 let resolveDefaultModelMock: typeof import("./directive-handling.defaults.js").resolveDefaultModel;
 let resolveChannelModelOverrideMock: typeof import("../../channels/model-overrides.js").resolveChannelModelOverride;
 let runPreparedReplyMock: typeof import("./get-reply-run.js").runPreparedReply;
 
 function createConfig(params: {
   storePath: string;
+  workspaceDir: string;
   modelByChannel?: Record<string, Record<string, string>>;
 }): OpenClawConfig {
   return markCompleteReplyConfig({
@@ -64,6 +71,7 @@ function createConfig(params: {
       defaults: {
         model: { primary: turnModelRefLabel(TURN_MODEL_DEFAULT_REF) },
         modelPolicy: { allow: ["*/*"] },
+        workspace: params.workspaceDir,
       },
     },
     channels: params.modelByChannel ? { modelByChannel: params.modelByChannel } : undefined,
@@ -75,6 +83,8 @@ async function seedFixtureStore(
   sessionKey: string,
   fixture: Pick<TurnModelDifferentialFixture, "child" | "parent">,
 ): Promise<Record<string, SessionEntry>> {
+  const sqliteTarget = resolveUnsuffixedSqliteTargetFromSessionStorePath(storePath);
+  expect(isPathInside(state.root, sqliteTarget.path)).toBe(true);
   const store: Record<string, SessionEntry> = { [sessionKey]: fixture.child };
   replaceSessionEntrySync({ storePath, sessionKey }, fixture.child);
   if (fixture.parent) {
@@ -109,6 +119,8 @@ async function observeReplySelection(params: {
     }),
   );
   vi.mocked(runPreparedReplyMock).mockClear();
+  // Use the same module as getReply so a shared resolver override cannot escape this fixture.
+  expect(isPathInside(state.root, resolveAgentWorkspaceDirMock(cfg, "main"))).toBe(true);
   // Routing fixtures own their prepared generation just like admitted turns;
   // provider execution is stubbed, so missing hooks must not cold-activate plugins.
   await withPluginRuntimeGenerationScope(
@@ -116,7 +128,7 @@ async function observeReplySelection(params: {
       config: cfg,
       metadataSnapshot: createPluginMetadataSnapshot({
         config: cfg,
-        workspaceDir: "/tmp/workspace",
+        workspaceDir: state.workspaceDir,
         manifestRegistry: makeRegistry([]),
       }),
       pluginRegistry: createSessionConversationTestRegistry(),
@@ -145,6 +157,8 @@ async function observeReplySelection(params: {
 
 beforeAll(async () => {
   ({ getReplyFromConfig } = await loadGetReplyModuleForTest({ cacheKey: import.meta.url }));
+  ({ resolveAgentWorkspaceDir: resolveAgentWorkspaceDirMock } =
+    await import("../../agents/agent-scope.js"));
   ({ resolveDefaultModel: resolveDefaultModelMock } =
     await import("./directive-handling.defaults.js"));
   ({ resolveChannelModelOverride: resolveChannelModelOverrideMock } =
@@ -153,7 +167,10 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  vi.stubEnv("OPENCLAW_TEST_FAST", "1");
+  state = await createOpenClawTestState({
+    label: "turn-model-reply",
+    env: { OPENCLAW_TEST_FAST: "1" },
+  });
   const actualChannelModel = await vi.importActual<
     typeof import("../../channels/model-overrides.js")
   >("../../channels/model-overrides.js");
@@ -203,8 +220,8 @@ beforeEach(async () => {
   vi.mocked(runPreparedReplyMock).mockResolvedValue({ text: "ok" });
 });
 
-afterEach(() => {
-  vi.unstubAllEnvs();
+afterEach(async () => {
+  await state.cleanup();
 });
 
 describe("getReplyFromConfig channel model input boundary", () => {
@@ -257,7 +274,7 @@ describe("getReplyFromConfig channel model input boundary", () => {
   ];
 
   it.each(matrix)("selects $name", async (testCase) => {
-    const storePath = path.join(tempDirs.make("turn-model-reply-matrix-"), "sessions.json");
+    const storePath = path.join(state.sessionsDir("main"), "sessions.json");
     const sessionKey = "agent:main:telegram:group:room";
     const child = createTurnModelEntry({
       channel: testCase.omitPersistedChannel ? undefined : "discord",
@@ -294,7 +311,11 @@ describe("getReplyFromConfig channel model input boundary", () => {
       expected: {} as Record<TurnModelSelectionPath, TurnModelSelectionVerdict>,
     };
     const sessionStore = await seedFixtureStore(storePath, sessionKey, fixture);
-    const cfg = createConfig({ storePath, modelByChannel: fixture.modelByChannel });
+    const cfg = createConfig({
+      storePath,
+      workspaceDir: state.workspaceDir,
+      modelByChannel: fixture.modelByChannel,
+    });
     await expect(
       observeReplySelection({ fixture, cfg, sessionKey, sessionStore }),
     ).resolves.toEqual(turnModelVerdict(testCase.expected));
@@ -303,10 +324,14 @@ describe("getReplyFromConfig channel model input boundary", () => {
 
 describe("turn model selection reply-path differential", () => {
   it.each(TURN_MODEL_DIFFERENTIAL_FIXTURES)("pins observed $name behavior", async (fixture) => {
-    const storePath = path.join(tempDirs.make("turn-model-differential-"), "sessions.json");
+    const storePath = path.join(state.sessionsDir("main"), "sessions.json");
     const sessionKey = "agent:main:telegram:group:selection";
     const sessionStore = await seedFixtureStore(storePath, sessionKey, fixture);
-    const cfg = createConfig({ storePath, modelByChannel: fixture.modelByChannel });
+    const cfg = createConfig({
+      storePath,
+      workspaceDir: state.workspaceDir,
+      modelByChannel: fixture.modelByChannel,
+    });
 
     await expect(
       observeReplySelection({ fixture, cfg, sessionKey, sessionStore }),
