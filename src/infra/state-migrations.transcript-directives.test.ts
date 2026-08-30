@@ -10,8 +10,10 @@ import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
 } from "../state/openclaw-agent-db.js";
+import { withLegacySessionParticipantsSchema } from "../state/openclaw-agent-participants-migration.js";
+import { sessionParticipantsSchemaSql } from "../state/openclaw-agent-session-participants-schema.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
-import { requireNodeSqlite } from "./node-sqlite.js";
+import { openNodeSqliteDatabase, requireNodeSqlite } from "./node-sqlite.js";
 import { migrateHistoricalTranscriptDirectives } from "./state-migrations.transcript-directives.js";
 
 const tempDirs: string[] = [];
@@ -157,7 +159,7 @@ afterEach(() => {
 });
 
 describe("historical transcript directive migration", () => {
-  it("migrates assistant rows and archives while preserving code and derived indexes", () => {
+  it("migrates assistant rows and archives while preserving code and derived indexes", async () => {
     const stateDir = makeTempDir(tempDirs, "transcript-directive-migration-");
     const env = { OPENCLAW_STATE_DIR: stateDir };
     const opened = openOpenClawAgentDatabase({ agentId: "main", env });
@@ -279,7 +281,7 @@ describe("historical transcript directive migration", () => {
     const archivedUserJson = JSON.stringify(archivedUser);
     closeOpenClawAgentDatabasesForTest();
 
-    const result = migrateHistoricalTranscriptDirectives({ env });
+    const result = await migrateHistoricalTranscriptDirectives({ env });
     expect(result.warnings).toEqual([]);
     expect(result.changes).toHaveLength(1);
 
@@ -347,7 +349,7 @@ describe("historical transcript directive migration", () => {
       reaction: readGeneration(databasePath, "reaction-session"),
     };
     const archiveBytesAfterFirstRun = fs.readFileSync(archivePath);
-    expect(migrateHistoricalTranscriptDirectives({ env })).toEqual({
+    await expect(migrateHistoricalTranscriptDirectives({ env })).resolves.toEqual({
       changes: [],
       warnings: [],
     });
@@ -358,7 +360,7 @@ describe("historical transcript directive migration", () => {
     expect(fs.readFileSync(archivePath)).toEqual(archiveBytesAfterFirstRun);
   });
 
-  it("resumes after the committed transcript cursor", () => {
+  it("resumes after the committed transcript cursor", async () => {
     const stateDir = makeTempDir(tempDirs, "transcript-directive-resume-");
     const env = { OPENCLAW_STATE_DIR: stateDir };
     const opened = openOpenClawAgentDatabase({ agentId: "main", env });
@@ -403,7 +405,7 @@ describe("historical transcript directive migration", () => {
       );
     closeOpenClawAgentDatabasesForTest();
 
-    expect(migrateHistoricalTranscriptDirectives({ env }).warnings).toEqual([]);
+    expect((await migrateHistoricalTranscriptDirectives({ env })).warnings).toEqual([]);
     expect(readGeneration(databasePath, "resume-a")).toBe("already-bumped");
     expect(readGeneration(databasePath, "resume-b")).not.toBe("pending-before");
     expect(JSON.parse(readEventJson(databasePath, "resume-b", 0))).toMatchObject({
@@ -414,7 +416,7 @@ describe("historical transcript directive migration", () => {
     });
   });
 
-  it("completes an old-schema database without the optional archives table", () => {
+  it("completes an old-schema database without the optional archives table", async () => {
     const stateDir = makeTempDir(tempDirs, "transcript-directive-old-schema-");
     const env = { OPENCLAW_STATE_DIR: stateDir };
     const opened = openOpenClawAgentDatabase({ agentId: "main", env });
@@ -434,7 +436,7 @@ describe("historical transcript directive migration", () => {
     opened.db.exec("DROP TABLE session_transcript_archives");
     closeOpenClawAgentDatabasesForTest();
 
-    expect(migrateHistoricalTranscriptDirectives({ env })).toEqual({
+    await expect(migrateHistoricalTranscriptDirectives({ env })).resolves.toEqual({
       changes: [expect.stringContaining("1 active session(s), 0 archived transcript(s)")],
       warnings: [],
     });
@@ -446,13 +448,13 @@ describe("historical transcript directive migration", () => {
         openclawDelivery: { audioAsVoice: true },
       },
     });
-    expect(migrateHistoricalTranscriptDirectives({ env })).toEqual({
+    await expect(migrateHistoricalTranscriptDirectives({ env })).resolves.toEqual({
       changes: [],
       warnings: [],
     });
   });
 
-  it("completes a pre-stuck archives cursor when the optional table is absent", () => {
+  it("completes a pre-stuck archives cursor when the optional table is absent", async () => {
     const stateDir = makeTempDir(tempDirs, "transcript-directive-stuck-archives-");
     const env = { OPENCLAW_STATE_DIR: stateDir };
     const opened = openOpenClawAgentDatabase({ agentId: "main", env });
@@ -474,11 +476,35 @@ describe("historical transcript directive migration", () => {
       );
     closeOpenClawAgentDatabasesForTest();
 
-    expect(migrateHistoricalTranscriptDirectives({ env })).toEqual({
+    await expect(migrateHistoricalTranscriptDirectives({ env })).resolves.toEqual({
       changes: [],
       warnings: [],
     });
     expect(readMigrationCursor(databasePath)).toEqual({ phase: "complete" });
     expect(hasTranscriptArchivesTable(databasePath)).toBe(false);
+  });
+
+  it("acquires stopped-writer maintenance before upgrading an older agent database", async () => {
+    const stateDir = makeTempDir(tempDirs, "transcript-directive-old-agent-schema-");
+    const env = { OPENCLAW_STATE_DIR: stateDir };
+    const opened = openOpenClawAgentDatabase({ agentId: "main", env });
+    const databasePath = opened.path;
+    opened.db.exec(`
+      DROP TABLE session_participants;
+      ${withLegacySessionParticipantsSchema(sessionParticipantsSchemaSql())}
+      PRAGMA user_version = 17;
+      UPDATE schema_meta SET schema_version = 17 WHERE meta_key = 'primary';
+    `);
+    closeOpenClawAgentDatabasesForTest();
+
+    const result = await migrateHistoricalTranscriptDirectives({ env });
+
+    expect(result.warnings).toEqual([]);
+    const migrated = openNodeSqliteDatabase(databasePath, { readOnly: true });
+    try {
+      expect(migrated.prepare("PRAGMA user_version").get()?.user_version).toBe(19);
+    } finally {
+      migrated.close();
+    }
   });
 });

@@ -7,7 +7,10 @@ import {
   migrateOpenClawAgentDatabaseForMaintenance,
 } from "../state/openclaw-agent-db-maintenance.js";
 import type { DB as OpenClawAgentKyselyDatabase } from "../state/openclaw-agent-db.generated.js";
-import type { OpenClawAgentDatabase } from "../state/openclaw-agent-db.js";
+import {
+  type OpenClawAgentDatabase,
+  withAgentDatabaseMaintenanceLease,
+} from "../state/openclaw-agent-db.js";
 import { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS } from "../state/openclaw-state-db.js";
 import {
   clearNodeSqliteKyselyCacheForDatabase,
@@ -312,34 +315,40 @@ function migrateAgentDatabase(params: {
 }
 
 /** One-time startup migration from inline assistant directives to typed delivery facts. */
-export function migrateHistoricalTranscriptDirectives(
+export async function migrateHistoricalTranscriptDirectives(
   params: {
     configuredAgentDatabaseTargets?: readonly { agentId: string; path: string }[];
     env?: NodeJS.ProcessEnv;
   } = {},
-): MigrationMessages {
+): Promise<MigrationMessages> {
   const env = params.env ?? process.env;
   const changes: string[] = [];
   const warnings: string[] = [];
-  const targets = resolveAgentDatabaseMigrationTargets({
-    changes,
-    configuredAgentDatabaseTargets: params.configuredAgentDatabaseTargets ?? [],
-    env,
-    warnings,
-  });
-  for (const target of targets) {
-    try {
-      const result = migrateAgentDatabase({ agentId: target.agentId, pathname: target.path });
-      if (result.transcriptSessions > 0 || result.archivedTranscripts > 0) {
-        changes.push(
-          `Migrated historical transcript directives in ${target.path}: ${result.transcriptSessions} active session(s), ${result.archivedTranscripts} archived transcript(s).`,
-        );
+  try {
+    await withAgentDatabaseMaintenanceLease({ env }, async () => {
+      const targets = resolveAgentDatabaseMigrationTargets({
+        changes,
+        configuredAgentDatabaseTargets: params.configuredAgentDatabaseTargets ?? [],
+        env,
+        warnings,
+      });
+      for (const target of targets) {
+        try {
+          const result = migrateAgentDatabase({ agentId: target.agentId, pathname: target.path });
+          if (result.transcriptSessions > 0 || result.archivedTranscripts > 0) {
+            changes.push(
+              `Migrated historical transcript directives in ${target.path}: ${result.transcriptSessions} active session(s), ${result.archivedTranscripts} archived transcript(s).`,
+            );
+          }
+        } catch (error) {
+          warnings.push(
+            `Skipped historical transcript directive migration for ${target.path}: ${String(error)}`,
+          );
+        }
       }
-    } catch (error) {
-      warnings.push(
-        `Skipped historical transcript directive migration for ${target.path}: ${String(error)}`,
-      );
-    }
+    });
+  } catch (error) {
+    warnings.push(`Skipped historical transcript directive migration: ${String(error)}`);
   }
   return { changes, warnings };
 }
