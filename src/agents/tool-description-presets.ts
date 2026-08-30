@@ -130,13 +130,6 @@ export function describeSessionsSpawnTool(options?: {
     options?.acpAvailable === false
       ? 'Spawn child session; default `runtime="subagent"`.'
       : 'Spawn child session; default `runtime="subagent"`; ACP needs explicit `runtime="acp"`.';
-  const sessionCompletionGuidance =
-    options?.acpAvailable === false
-      ? "After spawn, do non-overlap work. Run result returns; session output stays thread."
-      : 'After spawn, do non-overlap work. Run result returns; session output stays thread unless ACP `streamTo="parent"`.';
-  const completionGuidance = options?.threadAvailable
-    ? sessionCompletionGuidance
-    : "After spawn, do non-overlap work while run result returns.";
   return [
     runtimeDescription,
     options?.threadAvailable
@@ -147,7 +140,7 @@ export function describeSessionsSpawnTool(options?: {
     visibilityLine,
     ...(options?.swarmEnabled
       ? [
-          "`collect=true` (swarm): parallel fan-out collector children; structured result per `outputSchema`; `groupId` groups a batch.",
+          "`collect=true` (swarm): parallel fan-out collector children with no completion notification; explicitly collect their results; structured result per `outputSchema`; `groupId` groups a batch.",
         ]
       : []),
     "Inherits parent workspace. Native task arrives in the child's initial `[Subagent Task]` message.",
@@ -156,7 +149,7 @@ export function describeSessionsSpawnTool(options?: {
       : ['`runtime="acp"` ids: codex, claude, gemini, opencode, or configured ACP.']),
     describeSubagentSpawnContext(options?.subagentThreadAvailable === true),
     "Hidden child: research, parallel/batch reads, throwaway side tasks. Coding, PRs, long builds, anything worth keeping: `visible=true`. No spawn for quick lookup/single read.",
-    completionGuidance,
+    "After spawn, do non-overlap work; follow the receipt's completion mode.",
   ].join(" ");
 }
 
