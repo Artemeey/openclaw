@@ -148,8 +148,7 @@ extension OpenClawClientDatabases {
             ALTER TABLE outbox_commands ADD COLUMN settings_retry_authorization INTEGER;
             CREATE TRIGGER outbox_settings_claim_guard
             BEFORE UPDATE OF status ON outbox_commands
-            WHEN OLD.expected_settings_json IS NOT NULL
-                AND OLD.status = 'queued' AND NEW.status = 'sending'
+            WHEN OLD.status = 'queued' AND NEW.status = 'sending'
                 AND COALESCE(NEW.settings_retry_authorization, 0) =
                     COALESCE(OLD.settings_retry_authorization, 0)
             BEGIN
@@ -161,8 +160,7 @@ extension OpenClawClientDatabases {
             END;
             CREATE TRIGGER outbox_settings_retry_guard
             BEFORE UPDATE OF status ON outbox_commands
-            WHEN OLD.expected_settings_json IS NOT NULL
-                AND OLD.status = 'failed' AND NEW.status = 'queued'
+            WHEN OLD.status = 'failed' AND NEW.status = 'queued'
                 AND COALESCE(NEW.settings_retry_authorization, 0) =
                     COALESCE(OLD.settings_retry_authorization, 0)
             BEGIN

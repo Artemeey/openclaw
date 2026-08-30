@@ -1136,6 +1136,51 @@ final class ChatCommandOutboxStoreTests: ClientDatabaseTestSuite, @unchecked Sen
         #expect(await reopened.store(gatewayID: "gw-a").loadCommands().first?.expectedSessionSettings == expectation)
     }
 
+    @Test func `legacy null settings row cannot claim or retry without current client authorization`() async throws {
+        try databases.close()
+        let stateURL = directory.appendingPathComponent("client-state.sqlite")
+        try withRawDatabase(at: stateURL) { raw in
+            execute(raw, """
+            INSERT INTO outbox_commands(
+                gateway_id, client_uuid, session_key, delivery_session_key,
+                routing_contract, agent_id, text, thinking, created_at, status
+            ) VALUES (
+                'gw-a', 'legacy-null-settings', 'main', 'agent:main:main',
+                'per-sender|main|main', 'main', 'legacy replay', 'off', 1, 'queued'
+            );
+            UPDATE outbox_commands
+            SET status = 'sending'
+            WHERE client_uuid = 'legacy-null-settings';
+            """)
+        }
+
+        let claimed = try OpenClawClientDatabases(directoryURL: directory)
+        let claimedCommand = try #require(await claimed.store(gatewayID: "gw-a").loadCommands().first)
+        #expect(claimedCommand.status == .failed)
+        #expect(claimedCommand.lastError == OpenClawChatSQLiteTranscriptCache.outboxSettingsUpgradeRequiredError)
+        #expect(claimedCommand.expectedSessionSettings == nil)
+        try claimed.close()
+
+        try withRawDatabase(at: stateURL) { raw in
+            let result = sqlite3_exec(
+                raw,
+                """
+                UPDATE outbox_commands
+                SET status = 'queued'
+                WHERE client_uuid = 'legacy-null-settings';
+                """,
+                nil,
+                nil,
+                nil)
+            #expect(result == SQLITE_CONSTRAINT)
+        }
+
+        let retried = try OpenClawClientDatabases(directoryURL: directory)
+        let retriedCommand = try #require(await retried.store(gatewayID: "gw-a").loadCommands().first)
+        #expect(retriedCommand.status == .failed)
+        #expect(retriedCommand.expectedSessionSettings == nil)
+    }
+
     @Test func `pre v7 upgrade reopens and fences a settings bound retry`() async throws {
         try databases.close()
         let stateURL = directory.appendingPathComponent("client-state.sqlite")
