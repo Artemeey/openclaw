@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/irc",
-  "version": "2026.8.1-beta.4",
+  "version": "2026.8.1",
   "description": "OpenClaw IRC channel plugin",
   "type": "module",
   "devDependencies": {
@@ -115,19 +115,16 @@
               "flags": "--use-env",
               "description": "Use IRC environment configuration"
             },
-            "envVars": [
-              "IRC_HOST",
-              "IRC_NICK"
-            ]
+            "envVars": ["IRC_HOST", "IRC_NICK"]
           }
         ]
       }
     },
     "compat": {
-      "pluginApi": ">=2026.8.1-beta.4"
+      "pluginApi": ">=2026.8.1"
     },
     "build": {
-      "openclawVersion": "2026.8.1-beta.4",
+      "openclawVersion": "2026.8.1",
       "bundledDist": false
     },
     "release": {
