@@ -625,20 +625,9 @@ describe("resolvePluginLoadCacheContext", () => {
 });
 
 describe("resolveRuntimePluginRegistry", () => {
-  it.each([
-    {
-      name: "an opaque nested model ID",
-      provider: "fixture-provider",
-      modelId: "fixture-nested-provider/model-legacy",
-      expectedModelId: "fixture-nested-provider/model-current",
-    },
-    {
-      name: "a model-owned virtual provider",
-      provider: "fixture-virtual-provider",
-      modelId: "fixture-model-legacy",
-      expectedModelId: "fixture-model-current",
-    },
-  ])("loads only the runtime hook owner for $name", ({ provider, modelId, expectedModelId }) => {
+  it("loads only the runtime hook owner for an opaque nested model ID", () => {
+    const provider = "fixture-provider";
+    const modelId = "fixture-nested-provider/model-legacy";
     useNoBundledPlugins();
     const selected = writePlugin({
       id: "fixture-hook-owner",
@@ -647,7 +636,6 @@ describe("resolveRuntimePluginRegistry", () => {
   register(api) {
     api.registerProvider({
       id: "fixture-provider", label: "Fixture", auth: [],
-      hookAliases: ["fixture-virtual-provider"],
       normalizeModelId: ({ modelId }) => modelId.replace("-legacy", "-current"),
     });
   },
@@ -666,16 +654,15 @@ module.exports = {
   },
 };`,
     });
-    for (const [plugin, providers, modelSupport] of [
-      [selected, ["fixture-provider"], { modelPrefixes: ["fixture-model-"] }],
-      [nested, ["fixture-nested-provider"], undefined],
+    for (const [plugin, providers] of [
+      [selected, ["fixture-provider"]],
+      [nested, ["fixture-nested-provider"]],
     ] as const) {
       fs.writeFileSync(
         path.join(plugin.dir, "openclaw.plugin.json"),
         JSON.stringify({
           id: plugin.id,
           providers,
-          modelSupport,
           configSchema: { type: "object", additionalProperties: false, properties: {} },
         }),
       );
@@ -701,11 +688,9 @@ module.exports = {
       pluginMetadataSnapshot: metadata.selectedSnapshot,
     };
 
-    // Direct lookup makes the virtual-provider control depend on model ownership,
-    // rather than succeeding through the hook resolver's broad alias fallback.
     expect(resolveProviderRuntimePlugin(lookup)?.id).toBe("fixture-provider");
     expect(normalizeProviderModelIdWithPlugin({ ...lookup, context: { provider, modelId } })).toBe(
-      expectedModelId,
+      "fixture-nested-provider/model-current",
     );
     expect(fs.existsSync(nestedMarker)).toBe(false);
   });

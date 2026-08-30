@@ -982,7 +982,7 @@ describe("runBtwSideQuestion", () => {
         options: Parameters<typeof import("./auth-profiles/store.js").ensureAuthProfileStore>[1],
       ) =>
         options?.config === cfg &&
-        options.workspaceDir === GENERATION_WORKSPACE_DIR &&
+        options.workspaceDir === state.workspaceDir &&
         options.pluginMetadataSnapshot === generationA.metadataSnapshot
           ? selectedStore
           : { version: 1, profiles: {} },
@@ -1041,7 +1041,7 @@ describe("runBtwSideQuestion", () => {
     ).resolves.toEqual({ text: "Generation A / runtime-auth-a / Stream A" });
     expect(ensureAuthProfileStoreMock).toHaveBeenCalledWith(DEFAULT_AGENT_DIR, {
       config: cfg,
-      workspaceDir: GENERATION_WORKSPACE_DIR,
+      workspaceDir: state.workspaceDir,
       pluginMetadataSnapshot: generationA.metadataSnapshot,
       externalCliProviderIds: [],
       externalCliProfileIds: [profileId],
@@ -1050,7 +1050,7 @@ describe("runBtwSideQuestion", () => {
     expect(resolveSessionAuthSelectionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         cfg,
-        workspaceDir: GENERATION_WORKSPACE_DIR,
+        workspaceDir: state.workspaceDir,
         pluginMetadataSnapshot: generationA.metadataSnapshot,
       }),
     );
