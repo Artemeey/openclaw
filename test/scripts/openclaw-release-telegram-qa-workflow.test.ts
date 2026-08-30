@@ -941,6 +941,10 @@ describe("release Telegram QA workflow", () => {
     expect(quiescenceCheck).toBeGreaterThan(-1);
     expect(ownershipReturn).toBeGreaterThan(quiescenceCheck);
     expect(launcher).not.toContain('chown -R -h -- "$RUNNER_UID:$RUNNER_GID" "$temp_root"');
+    expect(createSut).toContain(
+      'echo "Telegram SUT temp-root release accepted a live isolated UID." >&2',
+    );
+    expect(createSut).toContain('echo "Telegram SUT privileged temp-root release proof passed."');
   });
 
   it("lets the SUT create suite locks without exposing the runner-owned config", () => {
