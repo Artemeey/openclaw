@@ -202,6 +202,10 @@ Docs Sync Publish Repo prepares the same pinned owner after the source and ClawH
 
 Docs Agent prepares the same pinned owner immediately after checkout. Two trusted inline gate policies own Git before and after the unchanged shell GitHub/JQ cadence block; manual dispatch and superseded CI exit before that query. The connected commit policy owns diff, config, staging, commit, fetch, push, and stale-main readback. Gate and commit each retain five `fetch --no-tags` attempts with 120-second deadlines and exclusive-checkout lock reclamation. Gate backoffs are 2/4/6/8 seconds, only between attempts; commit fetch and push failures retain 2/4/6/8/10 seconds, including the final failure. Local reads, docs-only enforcement producers, config/add/commit, and push remain unbounded. Only typed ordinary Git failure or `FetchTimeout` permits the existing recovery paths after verified cleanup; setup, census, cleanup failure, and cancellation are terminal before retry, fallback, outputs, or downstream work. The one-hour cadence, REST `.id` current-run exclusion, cancelled/skipped exclusions, and review-base ordering remain unchanged.
 
+Generated PR publication prepares the same pinned owner before minting tokens. One trusted action policy owns every Git operation through staging, commit, overlap/invalidation checks, neutralization, leased push, reconciliation, and auth cleanup. Branch-head lookups and pushes retain 60-second deadlines; base fetches retain 120 seconds; local Git stays unbounded. There is no general Git retry or backoff. Only the existing deletion race permits one fresh-base rebuild and one create-only push after the observed nonempty head disappears. Typed ordinary `GitFailure` and `FetchTimeout` allow that semantic recovery only after verified cleanup; status 125 or 143 alone cannot identify an owner failure or cancellation. Git read failures cannot become no-overlap or merged-tree success. Cleanup uncertainty or cancellation stops before another Git/GH command, fallback, output consumption, summary, or auth-cleanup success. GitHub CLI commands retain their existing GNU timeout and reconciliation policies. The publisher remains the terminal step for Control UI locales, native locales, CI timing refit, and maturity publication.
+
+Maturity Scorecard prepares that immutable owner immediately before selected-ref checkout, preserving its runner-temporary environment handoff across checkout. Its trusted inline policy owns the full validation decision. Main, release-branch, and publication-base fetches and all local probes remain unbounded with one attempt. The sole 60-second operation is `ls-remote --exit-code --heads`: ordinary status 0 selects the branch, status 2 retains the default branch, and every other status fails with the lookup diagnostic after cleanup. A timeout is not absence; owner failure and cancellation never select a fallback or publish outputs. Main-ancestor, release-tag, and exact release-branch-head trust ordering, floating-main freeze, publication ancestry and excluded-path diff checks, and publication hash bytes remain unchanged.
+
 To use the standalone action from another workflow, pin `openclaw/openclaw/.github/actions/git-owner@<full-40-character-commit-SHA>` to a reviewed revision containing the action. Supply policy from the trusted workflow inline or from the same trusted action package, never from the selected candidate. Within `ci.yml`, the existing bundled-protocol and CI-routing matrix tasks smoke-test the action from the separately pinned `.ci-harness` checkout before Node setup, compare its output and copied bytes, and run owned `git --version` without network access. Other workflows' direct Git commands remain outside this ownership coverage until they adopt it.
 
 ## Scope and routing
@@ -535,6 +539,34 @@ The workflow installs OCM from a pinned release and Kova from `openclaw/Kova` at
 The mock-provider lane also runs OpenClaw-native source probes after the Kova pass: gateway boot timing and memory across default, skipped-channel, internal-hook, and fifty-plugin startup cases; bundled plugin import RSS, repeated mock-OpenAI `channel-chat-baseline` hello loops, CLI startup commands against the booted gateway, and the SQLite state smoke performance probe. When the previous published mock-provider source report is available for the tested ref, the source summary compares current RSS and heap values against that baseline and marks large RSS increases as `watch`. The source probe Markdown summary lives at `source/index.md` in the report bundle, with raw JSON beside it.
 
 Every lane uploads its complete GitHub artifact, including CPU, heap, trace, and compressed diagnostic bundles. A separate publisher job downloads and validates those artifacts, then mints a short-lived ClawSweeper GitHub App token scoped only to `openclaw/clawgrit-reports` contents and passes it only to the Git push step. It commits `report.json`, `report.md`, `index.md`, source-probe artifacts, and bundle metadata/checksums under `openclaw-performance/<tested-ref>/<run-id>-<attempt>/<lane>/`; the full diagnostic archive stays in the linked Actions artifact. The publisher rejects any report file over 50 MB before attempting a push. The current tested-ref pointer is `openclaw-performance/<tested-ref>/latest-<lane>.json`. Scheduled runs and `profile=release` dispatches fail if app-token creation or report publication fails. Manual non-release dispatches keep publication advisory and retain the GitHub artifacts when authentication or publishing fails. The previous source baseline is fetched anonymously from the public reports repository, so a successful baseline fetch does not prove publisher authentication.
+
+All explicit Performance workflow Git commands use the pinned Git lifecycle owner,
+prepared in `RUNNER_TEMP` before each job's selected checkout. Target resolution,
+Kova revision/install Git, source revision and baseline Git, and local publisher
+operations remain unbounded. Only the initial reports fetch, each push, and each
+reconciliation fetch have a 120-second deadline. The owner drains the entire Git
+process tree before reads, checkout reuse, artifact consumers, outputs, or retry;
+exclusive reports fetches reclaim only invocation-created locks after extinction.
+
+Report preparation and all fetches are anonymous. The App token is created only
+after a new report is prepared, removed from the environment immediately, and
+passed as a masked Basic header to push commands alone; it never enters the remote
+URL or repository config. A verified existing report succeeds before token creation.
+Only a successful empty `ls-tree` lookup means a baseline or report is absent;
+repository/read failures are terminal. Malformed baseline pointer JSON remains
+advisory, as does an ordinary baseline fetch failure after verified cleanup.
+
+Publication allows exactly five pushes. Every failed push, including the fifth,
+gets a 2/4/6/8/10-second backoff followed by one anonymous reconciliation fetch.
+A fetched remote report proves success even after the fifth ambiguous push; direct
+push success needs no fetch. Otherwise, attempts 1–4 replay the report commit on
+detached `FETCH_HEAD` with `cherry-pick -X theirs`, preserving concurrent unique
+reports while the current writer wins the latest pointer. There is no fifth-attempt
+replay. Ordinary fetch failures warn and retry on attempts 1–4. Only typed Git
+failure or timeout after verified cleanup permits recovery; owner setup, census,
+cleanup failure, and cancellation stop before fallback, retry, replay, or success.
+Full Release Validation continues to disable the publisher entirely and retains
+performance evidence only as workflow artifacts.
 
 ## Full Release Validation
 
