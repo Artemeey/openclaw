@@ -19,6 +19,7 @@ import { testing as externalAuthTesting } from "./external-auth.test-support.js"
 import { resolveApiKeyForProfile } from "./oauth.js";
 import { loadPersistedAuthProfileStore } from "./persisted.js";
 import {
+  AuthProfileOrderChangedError,
   clearLastGoodProfileWithLock,
   markAuthProfileSuccess,
   promoteAuthProfileInOrder,
@@ -1729,6 +1730,32 @@ describe("promoteAuthProfileInOrder", () => {
 });
 
 describe("setAuthProfileOrder", () => {
+  it("rejects an order when provider membership changed before the locked write", async () => {
+    await withAuthProfileTestState("openclaw-auth-order-stale-", async ({ agentDir }) => {
+      fs.mkdirSync(agentDir, { recursive: true });
+      saveAuthProfileStore(
+        {
+          version: AUTH_STORE_VERSION,
+          profiles: {
+            "openai:one": { type: "api_key", provider: "openai", key: "one" },
+            "openai:two": { type: "api_key", provider: "openai", key: "two" },
+          },
+        },
+        agentDir,
+      );
+
+      await expect(
+        setAuthProfileOrder({
+          agentDir,
+          provider: "openai",
+          order: ["openai:one"],
+          expectedLocalProviderProfileIds: ["openai:one"],
+        }),
+      ).rejects.toBeInstanceOf(AuthProfileOrderChangedError);
+      expect(loadPersistedAuthProfileStore(agentDir)?.order).toBeUndefined();
+    });
+  });
+
   it("canonicalizes every alias-equivalent provider state mutation", async () => {
     await withAuthProfileTestState("openclaw-auth-alias-state-", async ({ agentDir }) => {
       fs.mkdirSync(agentDir, { recursive: true });

@@ -7,6 +7,7 @@ import { createRequireRecord } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthHealthSummary } from "../../agents/auth-health.js";
 import {
+  AuthProfileOrderChangedError,
   replaceRuntimeAuthProfileStoreSnapshots,
   type AuthProfileStore,
 } from "../../agents/auth-profiles.js";
@@ -808,7 +809,7 @@ describe("models.authStatus", () => {
     expect(provider).toMatchObject({
       provider: "claude-cli",
       status: "ok",
-      profiles: [{ profileId, status: "expired" }],
+      profiles: [{ profileId, status: "expired", externallyManaged: true }],
     });
     expect(provider?.expiry).toBeUndefined();
   });
@@ -1537,6 +1538,11 @@ describe("models.authStatus", () => {
       billing: [{ type: "budget", used: 157.85, limit: 400, unit: "USD", period: "month" }],
       accountEmail: "clawd@example.com",
     });
+
+    const readOnly = createOptions({}, ["operator.read"]);
+    await handler(readOnly);
+    const readOnlyResult = firstRespondCall(readOnly)?.[1] as ModelAuthStatusResult;
+    expect(readOnlyResult.providers[0]?.usage).not.toHaveProperty("accountEmail");
   });
 
   it("adds DeepSeek API-key balance summaries to auth status usage", async () => {
@@ -2148,6 +2154,7 @@ describe("models.authOrderSet", () => {
           expires: 1_000_000,
         },
       },
+      runtimeLocalProfileIds: ["openai:one", "openai:two"],
     });
   });
 
@@ -2163,11 +2170,85 @@ describe("models.authOrderSet", () => {
       agentDir: "/tmp/agent",
       provider: "openai",
       order: ["openai:two", "openai:one"],
+      authAliasLookupParams: expect.objectContaining({ includeUntrustedWorkspacePlugins: false }),
+      expectedLocalProviderProfileIds: ["openai:one", "openai:two"],
     });
     expect(firstRespondCall(opts)?.slice(0, 2)).toEqual([
       true,
       { provider: "openai", profileIds: ["openai:two", "openai:one"] },
     ]);
+  });
+
+  it("validates and persists an aliased provider with the prepared metadata owner", async () => {
+    const plugins = [
+      {
+        id: "anthropic",
+        origin: "bundled",
+        providerAuthAliases: { "claude-cli": "anthropic" },
+      },
+    ];
+    setPreparedMetadataSnapshot({
+      index: { plugins: [] },
+      manifestRegistry: { plugins },
+      plugins,
+    });
+    setPreparedAuthStore({
+      version: 1,
+      profiles: {
+        "anthropic:cli": {
+          type: "oauth",
+          provider: "claude-cli",
+          access: "access",
+          refresh: "refresh",
+          expires: 1_000_000,
+        },
+      },
+      runtimeLocalProfileIds: ["anthropic:cli"],
+    });
+    const opts = createOrderOptions({
+      provider: "anthropic",
+      profileIds: ["anthropic:cli"],
+    });
+
+    await orderHandler(opts);
+
+    expect(mocks.setAuthProfileOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "anthropic",
+        order: ["anthropic:cli"],
+        expectedLocalProviderProfileIds: ["anthropic:cli"],
+      }),
+    );
+    expect(firstRespondCall(opts)?.[0]).toBe(true);
+  });
+
+  it("asks the client to retry when provider membership changes during the locked write", async () => {
+    mocks.setAuthProfileOrder.mockRejectedValueOnce(new AuthProfileOrderChangedError());
+    const opts = createOrderOptions({
+      provider: "openai",
+      profileIds: ["openai:two", "openai:one"],
+    });
+
+    await orderHandler(opts);
+
+    expect(firstRespondCall(opts)?.[0]).toBe(false);
+    expect(firstRespondCall(opts)?.[2]).toMatchObject({
+      code: "UNAVAILABLE",
+      message: expect.stringContaining("refresh and try again"),
+    });
+  });
+
+  it("does not acknowledge an order that could not be persisted", async () => {
+    mocks.setAuthProfileOrder.mockResolvedValueOnce(null);
+    const opts = createOrderOptions({
+      provider: "openai",
+      profileIds: ["openai:two", "openai:one"],
+    });
+
+    await orderHandler(opts);
+
+    expect(firstRespondCall(opts)?.[0]).toBe(false);
+    expect(firstRespondCall(opts)?.[2]).toMatchObject({ code: "UNAVAILABLE" });
   });
 
   it("publishes the reordered auth owner before acknowledging success", async () => {
@@ -2248,6 +2329,8 @@ describe("models.authOrderSet", () => {
       agentDir: "/tmp/agent",
       provider: "openai",
       order: null,
+      authAliasLookupParams: expect.objectContaining({ includeUntrustedWorkspacePlugins: false }),
+      expectedLocalProviderProfileIds: ["openai:one", "openai:two"],
     });
   });
 
