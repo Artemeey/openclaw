@@ -297,6 +297,18 @@ describe("Slack authored presentation delivery", () => {
 
   it.each([
     {
+      name: "code link",
+      authored: "`<https://example.com|Overview>`",
+      elements: [
+        { type: "link", text: "Overview", url: "https://example.com", style: { code: true } },
+      ],
+    },
+    {
+      name: "code reference",
+      authored: "`<@U123>`",
+      elements: [{ type: "user", user_id: "U123", style: { code: true } }],
+    },
+    {
       name: "color",
       authored: "First Second",
       elements: [
@@ -350,6 +362,31 @@ describe("Slack authored presentation delivery", () => {
   });
 
   it.each([
+    ...[{}, { unicode: "1f44b-1f3ff" }, { url: "https://emoji.example.com/wave.gif" }].map(
+      (metadata, index) => ({
+        name: `emoji metadata ${index}`,
+        authored: ":wave:",
+        rendered: index > 0 ? ":wave:" : undefined,
+        elements: [
+          { type: "rich_text_section", elements: [{ type: "emoji", name: "wave", ...metadata }] },
+        ],
+      }),
+    ),
+    ...[
+      { style: "bold", marker: "*" },
+      { style: "italic", marker: "_" },
+      { style: "strike", marker: "~" },
+    ].map(({ style, marker }) => ({
+      name: `whitespace-bounded ${style}`,
+      authored: `\\${marker} Overview \\${marker}`,
+      rendered: `${marker} Overview ${marker}`,
+      elements: [
+        {
+          type: "rich_text_section",
+          elements: [{ type: "text", text: " Overview ", style: { [style]: true } }],
+        },
+      ],
+    })),
     {
       name: "nested intraword styles",
       authored: "\\*A\\_B\\_\\*",

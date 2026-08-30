@@ -11,7 +11,7 @@ import {
 } from "openclaw/plugin-sdk/text-chunking";
 import {
   escapeSlackMrkdwnSegment,
-  makeSlackEmphasisStylesSafe,
+  isSlackEmphasisStyleSafe,
   SLACK_RENDER_OPTIONS,
 } from "./format.js";
 import { escapeSlackMrkdwn } from "./monitor/mrkdwn.js";
@@ -39,24 +39,22 @@ function projectRichText(
   preformatted = false,
 ): MarkdownIR | undefined {
   const element = asNonArrayRecord(value);
-  const type = element.type;
+  const type = String(element.type);
+  const section = type === "rich_text_section" || type === "rich_text_preformatted";
   const styled = options.format === "styled";
   const read = options.format === "plain" ? readNonBlankString : normalizeOptionalString;
   const result: MarkdownIR = { text: "", styles: [], links: [] };
-  const style = asOptionalRecord(element.style);
-  const styleNames =
-    styled && !preformatted
-      ? Object.keys(style ?? {}).filter((name) => style?.[name] === true)
-      : [];
+  const style = styled && !preformatted ? asOptionalRecord(element.style) : undefined;
+  const styleNames = Object.keys(style ?? {}).filter((name) => style?.[name] === true);
   const supportedStyles = Object.entries(styles).filter(([name]) => styleNames.includes(name));
   const code = styled && (preformatted || styleNames.includes("code"));
   // Native layout, generated dates and unrepresentable styles remain barriers, not flattened facts.
+  // Code references and emoji metadata carry rendering facts that literal tokens cannot preserve.
   if (
     styled &&
-    ((!["rich_text_section", "rich_text_preformatted", "text", "link", "emoji"].includes(
-      String(type),
-    ) &&
-      !references[String(type)]) ||
+    ((!section && !["text", "link", "emoji"].includes(type) && !references[type]) ||
+      (code && type !== "text") ||
+      (type === "emoji" && (element.unicode || element.url)) ||
       supportedStyles.length !== styleNames.length ||
       (styleNames.includes("code") && styleNames.length > 1) ||
       (!preformatted && code && typeof element.text === "string" && element.text.includes("`")))
@@ -66,9 +64,9 @@ function projectRichText(
   if (
     Array.isArray(element.elements) &&
     (options.format === "plain" ||
-      ["rich_text_section", "rich_text_list", "rich_text_quote", "rich_text_preformatted"].includes(
-        String(type),
-      ))
+      section ||
+      type === "rich_text_list" ||
+      type === "rich_text_quote")
   ) {
     for (const child of element.elements) {
       const part = projectRichText(
@@ -128,7 +126,7 @@ function projectRichText(
   } else if (type === "date") {
     result.text = literal(read(element.fallback) ?? "");
   } else {
-    const [field, prefix] = references[String(type)] ?? [];
+    const [field, prefix] = references[type] ?? [];
     const id = field ? read(element[field]) : undefined;
     const token = id ? `<${prefix}${id}>` : "";
     result.text = styled || options.preserveReferences ? token : literal(token);
@@ -151,7 +149,7 @@ export function renderSlackRichTextFragments(
     // Native styles must satisfy Slack's flanks and the marker renderer's nested-span contract.
     if (
       !ir ||
-      makeSlackEmphasisStylesSafe(ir) !== ir ||
+      ir.styles.some((span) => !isSlackEmphasisStyleSafe(ir.text, span)) ||
       ir.styles.some((a) =>
         ir.styles.some((b) => a.start < b.start && b.start < a.end && a.end < b.end),
       )

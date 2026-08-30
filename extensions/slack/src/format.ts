@@ -7,6 +7,7 @@ import {
   markdownToIR,
   type MarkdownIR,
   type MarkdownLinkSpan,
+  type MarkdownStyleSpan,
   renderMarkdownIRChunksWithinLimit,
   renderMarkdownWithMarkers,
 } from "openclaw/plugin-sdk/text-chunking";
@@ -139,30 +140,33 @@ function isSlackCjkPunctuation(character: string): boolean {
   );
 }
 
-function isUnsafeSlackEmphasisBoundary(character: string): boolean {
-  if (SLACK_MRKDWN_WORD_CHARACTER_RE.test(character)) {
-    return true;
-  }
-  const codePoint = character.codePointAt(0);
-  if (codePoint === undefined || codePoint <= 0x7f) {
+function isSlackEmphasisEdge(inside: string, outside: string, wordBounded: boolean): boolean {
+  const hasContent = inside.length > 0 && !/\s/u.test(inside);
+  if (!hasContent || (wordBounded && SLACK_MRKDWN_WORD_CHARACTER_RE.test(outside))) {
     return false;
   }
-  return SLACK_MRKDWN_SYMBOL_RE.test(character) || isSlackCjkPunctuation(character);
+  const codePoint = outside.codePointAt(0);
+  return (
+    !wordBounded ||
+    codePoint === undefined ||
+    codePoint <= 0x7f ||
+    (!SLACK_MRKDWN_SYMBOL_RE.test(outside) && !isSlackCjkPunctuation(outside))
+  );
 }
 
-export function makeSlackEmphasisStylesSafe(ir: MarkdownIR): MarkdownIR {
-  const styles = ir.styles.filter((span) => {
-    if (span.style !== "italic" && span.style !== "bold") {
-      return true;
-    }
-    // Slack's parser can expose markers accepted by the CJK-friendly Markdown parser.
-    // Drop only the affected style so transport syntax never leaks into visible text.
-    return (
-      !isUnsafeSlackEmphasisBoundary(getCodePointBefore(ir.text, span.start)) &&
-      !isUnsafeSlackEmphasisBoundary(getCodePointAt(ir.text, span.end))
-    );
-  });
-  return styles.length === ir.styles.length ? ir : { ...ir, styles };
+export function isSlackEmphasisStyleSafe(text: string, span: MarkdownStyleSpan): boolean {
+  const wordBounded = span.style === "bold" || span.style === "italic";
+  if (!wordBounded && span.style !== "strikethrough") {
+    return true;
+  }
+  // Slack requires both content and outside flanks to admit a native emphasis delimiter.
+  return [span.start, span.end].every((offset, index) =>
+    isSlackEmphasisEdge(
+      index === 0 ? getCodePointAt(text, offset) : getCodePointBefore(text, offset),
+      index === 0 ? getCodePointBefore(text, offset) : getCodePointAt(text, offset),
+      wordBounded,
+    ),
+  );
 }
 
 const SLACK_FORMAT_PROFILE = FormatCapabilityProfile.define({
@@ -249,10 +253,7 @@ function scanSlackMrkdwn(text: string) {
       const after = getCodePointAt(text, offset + token.text.length);
       const wordBounded = token.text === "*" || token.text === "_";
       const eligible = (inside: string, outside: string) =>
-        transition !== null ||
-        (inside.length > 0 &&
-          !/\s/u.test(inside) &&
-          (!wordBounded || !isUnsafeSlackEmphasisBoundary(outside)));
+        transition !== null || isSlackEmphasisEdge(inside, outside, wordBounded);
       const start = opened.get(token.text);
       if (start && eligible(before, after)) {
         ranges.push([start.offset, offset + token.text.length]);
@@ -445,16 +446,17 @@ export const SLACK_RENDER_OPTIONS = {
   buildLink: buildSlackLink,
 };
 function parseSlackMarkdown(markdown: string, options: SlackMarkdownOptions): MarkdownIR {
-  return makeSlackEmphasisStylesSafe(
-    markdownToIR(markdown ?? "", {
-      assistantTranscriptRoleHeaders: true,
-      linkify: false,
-      autolink: false,
-      headingStyle: "rich",
-      blockquotePrefix: "> ",
-      tableMode: options.tableMode,
-    }),
-  );
+  const ir = markdownToIR(markdown ?? "", {
+    assistantTranscriptRoleHeaders: true,
+    linkify: false,
+    autolink: false,
+    headingStyle: "rich",
+    blockquotePrefix: "> ",
+    tableMode: options.tableMode,
+  });
+  // Slack's parser can expose markers accepted by the CJK-friendly Markdown parser.
+  // Drop only the affected style so transport syntax never leaks into visible text.
+  return { ...ir, styles: ir.styles.filter((span) => isSlackEmphasisStyleSafe(ir.text, span)) };
 }
 
 export function normalizeSlackOutboundText(
