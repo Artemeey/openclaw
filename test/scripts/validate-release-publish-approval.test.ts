@@ -3,10 +3,13 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
 const SCRIPT_PATH = "scripts/validate-release-publish-approval.mjs";
 const tempRoots = useAutoCleanupTempDirTracker(afterEach);
+// Android publication runs on Ubuntu and executes Bash workflow steps.
+const androidIt = it.skipIf(process.platform === "win32");
 
 function runApprovalScript(
   run: Record<string, unknown>,
@@ -51,23 +54,193 @@ function runApprovalScript(
   });
 }
 
-function writeApproval(overrides: Record<string, unknown> = {}) {
-  const tempRoot = tempRoots.make("openclaw-release-approval-");
-  const approvalPath = path.join(tempRoot, "approval.json");
+const ANDROID_TOOLING_SHA = "d".repeat(40);
+const ANDROID_PROTECTED_REF = `release-publish/${ANDROID_TOOLING_SHA.slice(0, 12)}-123`;
+
+function workflowStep(file: string, name: string): string {
+  const workflow = parse(fs.readFileSync(file, "utf8"));
+  const steps = Object.values(workflow.jobs).flatMap(
+    (job) => (job as { steps?: { name?: string; run?: string }[] }).steps ?? [],
+  );
+  const step = steps.find((entry) => entry.name === name);
+  if (!step?.run) {
+    throw new Error(`Missing workflow step ${name}`);
+  }
+  return step.run;
+}
+
+function runAndroidApproval({
+  ref = ANDROID_PROTECTED_REF,
+  approval = {},
+  run = {},
+  identity,
+  recovery = false,
+  attestationExitCode = 0,
+}: {
+  ref?: string;
+  approval?: Record<string, unknown>;
+  run?: Record<string, unknown>;
+  identity?: Record<string, unknown>;
+  recovery?: boolean;
+  attestationExitCode?: number;
+} = {}) {
+  const tempRoot = tempRoots.make("openclaw-android-approval-");
+  const fullRef = `${ref.startsWith("release-publish/") ? "refs/tags" : "refs/heads"}/${ref}`;
+  const approvalPath = path.join(tempRoot, "android-release-approval/approval.json");
+  const env = {
+    ...process.env,
+    PATH: `${tempRoot}${path.delimiter}${process.env.PATH}`,
+    APPROVAL_PATH: approvalPath,
+    DIRECT_RELEASE_RECOVERY: String(recovery),
+    EXPECTED_WORKFLOW_BRANCH: ref,
+    EXPECTED_WORKFLOW_FULL_REF: fullRef,
+    EXPECTED_WORKFLOW_SHA: ANDROID_TOOLING_SHA,
+    EXPECTED_RUN_ATTEMPT: "2",
+    RELEASE_PUBLISH_BRANCH: ref,
+    RELEASE_PUBLISH_FULL_REF: fullRef,
+    RELEASE_PUBLISH_WORKFLOW_SHA: ANDROID_TOOLING_SHA,
+    RELEASE_PUBLISH_RUN_ATTEMPT: "2",
+    RELEASE_PUBLISH_RUN_ID: "123",
+    RELEASE_APPROVAL_KIND: "android",
+    RELEASE_TAG: "v2026.8.1",
+    RELEASE_TARGET_SHA: "a".repeat(40),
+    TARGET_SHA: "a".repeat(40),
+    GITHUB_REF: "refs/tags/v2026.8.1",
+    GITHUB_REPOSITORY: "openclaw/openclaw",
+    RUNNER_TEMP: tempRoot,
+  };
+  const producer = spawnSync(
+    "bash",
+    [
+      "-c",
+      workflowStep(
+        ".github/workflows/openclaw-release-publish.yml",
+        "Write Android release approval",
+      ),
+    ],
+    { encoding: "utf8", env },
+  );
+  expect(producer.status, producer.stderr).toBe(0);
+  const dispatchFunction = workflowStep(
+    ".github/workflows/openclaw-release-publish.yml",
+    "Dispatch publish workflows",
+  ).match(/^promote_android_release_asset\(\) \{[\s\S]*?^\}/m)?.[0];
+  expect(dispatchFunction).toBeDefined();
+  const dispatch = spawnSync(
+    "bash",
+    [
+      "-c",
+      `
+set -euo pipefail
+is_android_release() { return 0; }
+verify_android_release_asset_contract() { return 1; }
+dispatch_workflow_at_ref() { printf '%s\n' "$@" > "$RUNNER_TEMP/dispatch-args"; echo 456; }
+wait_for_run() { return 0; }
+${dispatchFunction}
+promote_android_release_asset
+`,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...env,
+        GITHUB_RUN_ID: "123",
+        GITHUB_RUN_ATTEMPT: "2",
+        GITHUB_STEP_SUMMARY: path.join(tempRoot, "summary"),
+        PARENT_WORKFLOW_BRANCH: ref,
+        PARENT_WORKFLOW_FULL_REF: fullRef,
+        PARENT_WORKFLOW_SHA: ANDROID_TOOLING_SHA,
+      },
+    },
+  );
+  expect(dispatch.status, dispatch.stderr).toBe(0);
+  expect(fs.readFileSync(path.join(tempRoot, "dispatch-args"), "utf8").trim().split("\n")).toEqual([
+    "v2026.8.1",
+    "a".repeat(40),
+    "android-release.yml",
+    "-f",
+    "tag=v2026.8.1",
+    "-f",
+    "release_publish_run_id=123",
+    "-f",
+    "release_publish_run_attempt=2",
+    "-f",
+    `release_publish_branch=${ref}`,
+    "-f",
+    `release_publish_full_ref=${fullRef}`,
+    "-f",
+    `release_publish_workflow_sha=${ANDROID_TOOLING_SHA}`,
+    "-f",
+    `release_target_sha=${"a".repeat(40)}`,
+    "-f",
+    "direct_release_recovery=false",
+  ]);
   fs.writeFileSync(
     approvalPath,
-    `${JSON.stringify({
-      version: 1,
-      repository: "openclaw/openclaw",
-      workflow: "OpenClaw Release Publish",
-      parentRunId: "123",
-      workflowBranch: "release/2026.6.21",
-      releaseTag: "v2026.6.21",
-      targetSha: "a".repeat(40),
-      ...overrides,
-    })}\n`,
+    JSON.stringify({
+      ...JSON.parse(fs.readFileSync(approvalPath, "utf8")),
+      ...approval,
+    }),
   );
-  return approvalPath;
+  const parent = {
+    id: 123,
+    repository: { full_name: "openclaw/openclaw" },
+    event: "workflow_dispatch",
+    head_branch: ref,
+    head_sha: ANDROID_TOOLING_SHA,
+    run_attempt: 2,
+    path: `.github/workflows/openclaw-release-publish.yml@${fullRef}`,
+    status: "in_progress",
+    conclusion: null,
+    html_url: "https://github.com/openclaw/openclaw/actions/runs/123",
+    ...run,
+  };
+  const tooling =
+    identity ??
+    (ref === "main"
+      ? { status: "ahead" }
+      : {
+          ref: fullRef,
+          object: { type: "commit", sha: ANDROID_TOOLING_SHA },
+        });
+  const identityEndpoint =
+    ref === "main"
+      ? `compare/${ANDROID_TOOLING_SHA}...main`
+      : `git/ref/${ref.startsWith("release-publish/") ? "tags" : "heads"}/${ref}`;
+  const attestationArgsPath = path.join(tempRoot, "attestation-args.json");
+  fs.writeFileSync(
+    path.join(tempRoot, "gh"),
+    `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "attestation" && args[1] === "verify") {
+  fs.writeFileSync(${JSON.stringify(attestationArgsPath)}, JSON.stringify(args));
+  process.exit(${attestationExitCode});
+}
+const responses = ${JSON.stringify({
+      "repos/openclaw/openclaw/actions/runs/123": parent,
+      [`repos/openclaw/openclaw/${identityEndpoint}`]: tooling,
+    })};
+if (args[0] !== "api" || !responses[args[1]]) process.exit(91);
+process.stdout.write(JSON.stringify(responses[args[1]]));
+`,
+    { mode: 0o755 },
+  );
+  // Execute the real producer and consumer handoff, stopping before release
+  // mutation/build checks. Only GitHub's external boundary is substituted.
+  const admission = workflowStep(
+    ".github/workflows/android-release.yml",
+    "Validate release approval and target",
+  );
+  const targetBoundary = admission.indexOf('tag_sha="$(git rev-parse');
+  if (targetBoundary < 0) {
+    throw new Error("Missing Android release target validation boundary");
+  }
+  const result = spawnSync("bash", ["-c", admission.slice(0, targetBoundary)], {
+    encoding: "utf8",
+    env,
+  });
+  return { ...result, attestationArgs: JSON.parse(fs.readFileSync(attestationArgsPath, "utf8")) };
 }
 
 function approvalRun(overrides: Record<string, unknown> = {}) {
@@ -182,14 +355,89 @@ describe("scripts/validate-release-publish-approval.mjs", () => {
     );
   });
 
-  it("accepts an exact attested Android release approval", () => {
-    const approvalPath = writeApproval();
+  androidIt.each(["main", ANDROID_PROTECTED_REF, "release/2026.8.1"])(
+    "accepts the attested Android workflow handoff from %s",
+    (ref) => {
+      const result = runAndroidApproval({ ref });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Using attested Android release approval run 123");
+      expect(result.attestationArgs).toEqual([
+        "attestation",
+        "verify",
+        expect.any(String),
+        "--repo",
+        "openclaw/openclaw",
+        "--signer-workflow",
+        "openclaw/openclaw/.github/workflows/openclaw-release-publish.yml",
+        "--source-ref",
+        `${ref === ANDROID_PROTECTED_REF ? "refs/tags" : "refs/heads"}/${ref}`,
+        "--source-digest",
+        ANDROID_TOOLING_SHA,
+        "--deny-self-hosted-runners",
+      ]);
+    },
+  );
 
-    const result = runApprovalScript(approvalRun(), { APPROVAL_PATH: approvalPath });
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
+  androidIt("rejects an Android handoff whose attestation fails", () => {
+    const result = runAndroidApproval({ attestationExitCode: 1 });
+    expect(result.status).toBe(1);
+    expect(result.stdout).not.toContain("Using attested Android");
   });
+
+  androidIt.each([
+    ["repository", { repository: { full_name: "other/repository" } }],
+    ["run ID", { id: 456 }],
+    ["attempt", { run_attempt: 3 }],
+    ["SHA", { head_sha: "e".repeat(40) }],
+    ["ref", { head_branch: "main" }],
+    ["workflow path", { path: ".github/workflows/android-release.yml" }],
+    ["full ref", { path: ".github/workflows/openclaw-release-publish.yml@refs/heads/main" }],
+    ["event", { event: "push" }],
+    ["completed parent", { status: "completed", conclusion: "success" }],
+  ])("rejects an Android handoff with a different live parent %s", (_name, run) => {
+    const result = runAndroidApproval({ run });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("release publish parent run");
+  });
+
+  androidIt.each([
+    [
+      "moved tag",
+      {
+        ref: `refs/tags/${ANDROID_PROTECTED_REF}`,
+        object: { type: "commit", sha: "e".repeat(40) },
+      },
+    ],
+    [
+      "annotated tag",
+      {
+        ref: `refs/tags/${ANDROID_PROTECTED_REF}`,
+        object: { type: "tag", sha: ANDROID_TOOLING_SHA },
+      },
+    ],
+    ["missing tag", {}],
+  ])("rejects an Android handoff from a %s", (_name, identity) => {
+    const result = runAndroidApproval({ identity });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("protected release tooling tag");
+  });
+
+  androidIt("rejects an Android parent SHA no longer reachable from main", () => {
+    const result = runAndroidApproval({ ref: "main", identity: { status: "diverged" } });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("not reachable from current main");
+  });
+
+  androidIt.each(["success", "failure", "cancelled"])(
+    "allows only completed success or failure for explicit Android recovery: %s",
+    (conclusion) => {
+      const result = runAndroidApproval({
+        recovery: true,
+        run: { status: "completed", conclusion },
+      });
+      expect(result.status, result.stderr).toBe(conclusion === "cancelled" ? 1 : 0);
+    },
+  );
 
   it("accepts an exact attested ClawHub bootstrap parent tuple", () => {
     const approvalPath = writeClawHubApproval();
@@ -316,15 +564,17 @@ describe("scripts/validate-release-publish-approval.mjs", () => {
     );
   });
 
-  it.each([
+  androidIt.each([
     ["parent run", { parentRunId: "999" }],
+    ["version", { version: 1 }],
+    ["parent attempt", { parentRunAttempt: 1 }],
+    ["parent full ref", { workflowFullRef: "refs/heads/main" }],
+    ["parent SHA", { parentWorkflowSha: "e".repeat(40) }],
     ["release tag", { releaseTag: "v2026.6.22" }],
     ["target SHA", { targetSha: "b".repeat(40) }],
     ["extra field", { unexpected: true }],
   ])("rejects an attested Android approval for another %s", (_name, overrides) => {
-    const approvalPath = writeApproval(overrides);
-
-    const result = runApprovalScript(approvalRun(), { APPROVAL_PATH: approvalPath });
+    const result = runAndroidApproval({ approval: overrides });
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(

@@ -12,7 +12,19 @@ on:
         required: true
         type: string
       release_publish_branch:
-        description: Branch used by the approving OpenClaw Release Publish run
+        description: Branch or protected tag used by the approving OpenClaw Release Publish run
+        required: true
+        type: string
+      release_publish_run_attempt:
+        description: Exact approving OpenClaw Release Publish run attempt
+        required: true
+        type: string
+      release_publish_full_ref:
+        description: Exact approving workflow full ref, including refs/heads/ or refs/tags/
+        required: true
+        type: string
+      release_publish_workflow_sha:
+        description: Frozen approving workflow commit SHA
         required: true
         type: string
       release_target_sha:
@@ -68,6 +80,9 @@ jobs:
           APPROVAL_PATH: ${{ runner.temp }}/android-release-approval/approval.json
           DIRECT_RELEASE_RECOVERY: ${{ inputs.direct_release_recovery && 'true' || 'false' }}
           EXPECTED_WORKFLOW_BRANCH: ${{ inputs.release_publish_branch }}
+          EXPECTED_RUN_ATTEMPT: ${{ inputs.release_publish_run_attempt }}
+          EXPECTED_WORKFLOW_FULL_REF: ${{ inputs.release_publish_full_ref }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.release_publish_workflow_sha }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_PUBLISH_RUN_ID: ${{ inputs.release_publish_run_id }}
           RELEASE_TAG: ${{ inputs.tag }}
@@ -78,11 +93,6 @@ jobs:
             echo "Android APK publishing requires a final or correction OpenClaw release tag: ${RELEASE_TAG}" >&2
             exit 1
           fi
-          if [[ "${EXPECTED_WORKFLOW_BRANCH}" != "main" && ! "${EXPECTED_WORKFLOW_BRANCH}" =~ ^release/[0-9]{4}\.[1-9][0-9]*\.[1-9][0-9]*$ ]]; then
-            echo "release_publish_branch must be main or release/YYYY.M.PATCH." >&2
-            exit 1
-          fi
-
           expected_source_ref="refs/tags/${RELEASE_TAG}"
           if [[ "${GITHUB_REF}" != "${expected_source_ref}" ]]; then
             echo "Android publication must run from ${expected_source_ref}, got ${GITHUB_REF}." >&2
@@ -96,9 +106,10 @@ jobs:
           gh attestation verify "${APPROVAL_PATH}" \
             --repo "${GITHUB_REPOSITORY}" \
             --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/openclaw-release-publish.yml" \
-            --source-ref "refs/heads/${EXPECTED_WORKFLOW_BRANCH}" \
+            --source-ref "${EXPECTED_WORKFLOW_FULL_REF}" \
+            --source-digest "${EXPECTED_WORKFLOW_SHA}" \
             --deny-self-hosted-runners
-          run_json="$(gh run view "${RELEASE_PUBLISH_RUN_ID}" --repo "${GITHUB_REPOSITORY}" --json workflowName,headBranch,event,status,conclusion,url)"
+          run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RELEASE_PUBLISH_RUN_ID}" --method GET)"
           printf '%s' "${run_json}" | node scripts/validate-release-publish-approval.mjs
           tag_sha="$(git rev-parse "${RELEASE_TAG}^{commit}")"
           if [[ "${RELEASE_TARGET_SHA}" != "${tag_sha}" ]]; then

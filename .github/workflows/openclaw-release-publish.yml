@@ -1187,6 +1187,9 @@ jobs:
         if: ${{ inputs.publish_openclaw_npm && !contains(inputs.tag, '-alpha.') && !contains(inputs.tag, '-beta.') }}
         env:
           RELEASE_PUBLISH_BRANCH: ${{ github.ref_name }}
+          RELEASE_PUBLISH_FULL_REF: ${{ github.ref }}
+          RELEASE_PUBLISH_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          RELEASE_PUBLISH_RUN_ATTEMPT: ${{ github.run_attempt }}
           RELEASE_PUBLISH_RUN_ID: ${{ github.run_id }}
           RELEASE_TAG: ${{ inputs.tag }}
           TARGET_SHA: ${{ needs.resolve_release_target.outputs.sha }}
@@ -1199,11 +1202,14 @@ jobs:
           import { join } from "node:path";
 
           const approval = {
-            version: 1,
+            version: 2,
             repository: process.env.GITHUB_REPOSITORY,
             workflow: "OpenClaw Release Publish",
             parentRunId: process.env.RELEASE_PUBLISH_RUN_ID,
+            parentRunAttempt: Number(process.env.RELEASE_PUBLISH_RUN_ATTEMPT),
             workflowBranch: process.env.RELEASE_PUBLISH_BRANCH,
+            workflowFullRef: process.env.RELEASE_PUBLISH_FULL_REF,
+            parentWorkflowSha: process.env.RELEASE_PUBLISH_WORKFLOW_SHA,
             releaseTag: process.env.RELEASE_TAG,
             targetSha: process.env.TARGET_SHA,
           };
@@ -2154,7 +2160,10 @@ jobs:
             android_release_run_id="$(dispatch_workflow_at_ref "${RELEASE_TAG}" "${TARGET_SHA}" android-release.yml \
               -f tag="${RELEASE_TAG}" \
               -f release_publish_run_id="${GITHUB_RUN_ID}" \
+              -f release_publish_run_attempt="${GITHUB_RUN_ATTEMPT}" \
               -f release_publish_branch="${PARENT_WORKFLOW_BRANCH}" \
+              -f release_publish_full_ref="${PARENT_WORKFLOW_FULL_REF}" \
+              -f release_publish_workflow_sha="${PARENT_WORKFLOW_SHA}" \
               -f release_target_sha="${TARGET_SHA}" \
               -f direct_release_recovery=false)"
             # Promotion runs in a background subshell; hand the run id to the

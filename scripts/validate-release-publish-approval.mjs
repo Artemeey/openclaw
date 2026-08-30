@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 // Validates that a referenced release-publish workflow run is usable for approval.
 import fs from "node:fs";
+import {
+  validateReleasePublishParentRun,
+  verifyReleaseToolingIdentity,
+} from "./release-tooling-identity.mjs";
 
 const run = JSON.parse(fs.readFileSync(0, "utf8"));
 
@@ -52,11 +56,14 @@ if (approvalPath) {
   let mismatchMessage;
   if (approvalKind === "android") {
     expectedApproval = {
-      version: 1,
+      version: 2,
       repository: process.env.GITHUB_REPOSITORY,
       workflow: "OpenClaw Release Publish",
       parentRunId: releasePublishRunId,
+      parentRunAttempt: positiveRunAttempt(expectedRunAttempt),
       workflowBranch: expectedBranch,
+      workflowFullRef: expectedWorkflowFullRef,
+      parentWorkflowSha: expectedWorkflowSha,
       releaseTag: process.env.RELEASE_TAG,
       targetSha: process.env.RELEASE_TARGET_SHA,
     };
@@ -86,6 +93,33 @@ if (approvalPath) {
   }
   if (JSON.stringify(approval) !== JSON.stringify(expectedApproval)) {
     fail(mismatchMessage);
+  }
+  if (approvalKind === "android") {
+    // The attestation binds the receipt; the live tooling identity and REST
+    // parent bind its authority now, including after a parent rerun or tag move.
+    const identity = verifyReleaseToolingIdentity({
+      allowPrevalidatedRef: /^release\/[0-9]{4}\.(?:[1-9]|1[0-2])\.[1-9][0-9]*$/u.test(
+        expectedBranch,
+      ),
+      repository: process.env.GITHUB_REPOSITORY,
+      workflowFullRef: expectedWorkflowFullRef,
+      workflowRef: expectedBranch,
+      workflowSha: expectedWorkflowSha,
+    });
+    validateReleasePublishParentRun({
+      identity,
+      releasePublishFullRef: expectedWorkflowFullRef,
+      releasePublishParentStatePolicy: directRecovery ? "manual-recovery" : "active",
+      releasePublishRef: expectedBranch,
+      releasePublishRunAttempt: expectedRunAttempt,
+      releasePublishRunId,
+      repository: process.env.GITHUB_REPOSITORY,
+      run,
+    });
+    console.log(
+      `Using attested Android release approval run ${releasePublishRunId}: ${run.html_url}`,
+    );
+    process.exit(0);
   }
 }
 

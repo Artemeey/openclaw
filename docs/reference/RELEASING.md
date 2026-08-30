@@ -596,6 +596,16 @@ release needs:
 6. Dispatch `OpenClaw NPM Release` with the release tag, npm dist-tag, and saved `preflight_run_id` after verifying the saved `full_release_validation_run_id` and exact run attempt.
 7. Verify the published npm package and selector readback, then call reusable `Docker Release` with the immutable tag and SHA. For stable releases, create or update the GitHub release as a draft, dispatch `Windows Node Release` with the explicit `windows_node_tag` and candidate-approved `windows_node_installer_digests`, and verify the canonical Windows installer/checksum assets. Also dispatch `Android Release` to build the exact-tag signed APK plus checksum and provenance. Finalize the GitHub release only after Docker and both native asset contracts succeed.
 
+Android approval binds the release tag and target SHA to the approving parent's
+run ID, exact attempt, full ref, and workflow SHA. The child verifies the attested
+v2 receipt and the live parent identity, including the protected tooling tag or
+main ancestry. For explicit Android recovery, pass `release_publish_run_attempt`,
+`release_publish_full_ref`, and `release_publish_workflow_sha` from that same
+parent alongside its run ID and ref; a rerun requires its own matching receipt.
+Older immutable release tags retain their original Android workflow contract:
+recover them with their matching frozen release tooling, rather than mixing a
+new v2 producer with an older consumer.
+
 Beta publish example:
 
 ```bash
