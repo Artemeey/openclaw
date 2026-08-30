@@ -17,6 +17,7 @@ vi.mock("./run-model-selection.runtime.js", async (importOriginal) => {
 });
 
 const owner = {
+  catalogOwner: { agentId: "main", workspaceDir: "/tmp/cron-workspace" },
   agentId: "main",
   agentDir: "/tmp/cron-agent",
   workspaceDir: "/tmp/cron-workspace",
