@@ -56,6 +56,7 @@ import {
   getPreparedModelRuntimeSnapshot,
   refreshPreparedModelRuntimeSnapshots,
 } from "./prepared-model-runtime.js";
+import { prepareScopedReadOnlyLiveModelCatalog } from "./prepared-model-runtime.scoped-catalog.js";
 import { AuthStorage } from "./sessions/auth-storage.js";
 import {
   markPluginMetadataSnapshotProvided,
@@ -255,6 +256,38 @@ async function createReadyWorkerFixture(spinMs: number) {
 describe("prepared model catalog worker boundary", () => {
   beforeEach(() => {
     vi.stubEnv("CODEX_HOME", makeTempDir("openclaw-worker-empty-codex-"));
+  });
+
+  it("fences a retired scoped owner before real plugin catalog I/O", async () => {
+    const fixture = createCatalogFixture(0);
+    const catalogMarker = path.join(fixture.root, "provider-catalog-marker.txt");
+    fixture.env.OPENCLAW_WORKER_PROVIDER_CATALOG_IO_MARKER = catalogMarker;
+    const input = {
+      agentId: "main",
+      agentDir: fixture.agentDir,
+      inheritedAuthDir: fixture.agentDir,
+      workspaceDir: fixture.workspaceDir,
+      config: fixture.config,
+      env: fixture.env,
+      readOnly: true,
+    };
+    const retired = new Error("catalog owner retired");
+
+    await expect(
+      prepareScopedReadOnlyLiveModelCatalog(input, [PROVIDER_ID], () => {
+        throw retired;
+      }),
+    ).rejects.toBe(retired);
+    expect(fs.existsSync(catalogMarker)).toBe(false);
+
+    const current = await prepareScopedReadOnlyLiveModelCatalog(input, [PROVIDER_ID]);
+    expect(fs.readFileSync(catalogMarker, "utf8")).toBe("provider\n");
+    expect(current.entries).toContainEqual(
+      expect.objectContaining({
+        provider: PROVIDER_ID,
+        id: "plugin-generation-v1",
+      }),
+    );
   });
 
   it("preserves prepared catalog ownership across ambient environment changes", async () => {

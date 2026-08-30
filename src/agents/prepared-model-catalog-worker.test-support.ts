@@ -75,6 +75,8 @@ module.exports = {
       },
       catalog: {
         run(context) {
+          const catalogMarker = process.env.OPENCLAW_WORKER_PROVIDER_CATALOG_IO_MARKER;
+          if (catalogMarker) fs.appendFileSync(catalogMarker, "provider\\n");
           const refOnlyApi = context.resolveProviderApiKey(${JSON.stringify(REF_ONLY_API_PROVIDER_ID)}).apiKey;
           const refOnlyToken = context.resolveProviderApiKey(${JSON.stringify(REF_ONLY_TOKEN_PROVIDER_ID)}).apiKey;
           const durableAuth = context.resolveProviderApiKey(${JSON.stringify(DURABLE_AUTH_PROVIDER_ID)}).apiKey;
