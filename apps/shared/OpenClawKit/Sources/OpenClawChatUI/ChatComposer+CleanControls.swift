@@ -193,17 +193,17 @@ extension OpenClawChatComposer {
 
     private func cleanInlineModelOption(title: String, selectionID: String) -> some View {
         let isSelected = self.viewModel.modelSelectionID == selectionID
+        let optionTitle = isSelected ? "\(title), \(String(localized: "Selected"))" : title
         return Button {
             self.viewModel.selectModel(selectionID)
         } label: {
             Label {
-                Text(title)
+                Text(optionTitle)
                     .font(OpenClawChatTypography.captionSemiBold)
             } icon: {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
             }
         }
-        .accessibilityLabel(isSelected ? "\(title), \(String(localized: "Selected"))" : title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
