@@ -3170,6 +3170,10 @@ jobs:
             fi
           done
 
+      - name: Run command reviewer custody E2E proof
+        if: matrix.task == 'lint'
+        run: node scripts/run-vitest.mjs src/agents/bash-tools.exec-gateway-approval.e2e.test.ts
+
       - name: Run check shard
         env:
           FROZEN_TARGET: ${{ needs.preflight.outputs.frozen_target }}
