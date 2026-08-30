@@ -202,6 +202,7 @@ describe.skipIf(process.platform === "win32")("QA gateway lifetime ownership", (
       abort: async () => {
         throw diagnostic;
       },
+      releaseTempRoot: async () => {},
     });
     const owner = own({
       ...params,
@@ -449,6 +450,74 @@ describe.skipIf(process.platform === "win32")("QA gateway lifetime ownership", (
     expect(log).toContain("QA_DESCENDANT_FINAL_OUTPUT");
     expect(pids().every((pid) => !isQaPosixProcessGroupAlive(pid))).toBe(true);
   });
+
+  it.runIf(process.platform === "linux")(
+    "returns cleanup authority only after a lingering descendant settles",
+    async () => {
+      const { params, pids } = await fixture("descendant");
+      let protectedState = "";
+      const releaseTempRoot = vi.fn(async () => {
+        expect(pids().every((pid) => !isQaPosixProcessGroupAlive(pid))).toBe(true);
+        await fs.chmod(protectedState, 0o700);
+      });
+      boundary.create.mockResolvedValue({
+        prepare: async ({ env }: { env: NodeJS.ProcessEnv }) => ({ env }),
+        accept: async ({ child }: { child: { pid: number } }) => {
+          groups.push(child.pid);
+          return {};
+        },
+        abort: async () => {},
+        signal: async () => {},
+        markReady: async () => {},
+        markExited: async () => {},
+        releaseTempRoot,
+      });
+      const owner = own({
+        ...params,
+        command: {
+          ...params.command,
+          processBoundary: {
+            kind: "linux-proc-v1",
+            evidenceDir: params.command.tempParentDir,
+            expectedGid: 1,
+            expectedUid: 1,
+            forwardedEnvKeys: [],
+            runtimeArgsPrefix: [],
+            runtimeExecutablePath: process.execPath,
+            terminationRetryTimeoutMs: 45_000,
+          },
+        },
+      });
+      const gateway = await owner.start();
+      protectedState = path.join(gateway.tempRoot, "state");
+      await fs.mkdir(protectedState);
+      await fs.writeFile(path.join(protectedState, "owned"), "sut");
+      await fs.chmod(protectedState, 0o000);
+      const realKill = process.kill.bind(process);
+      const signalFault = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+        const replacement = pids()[1];
+        if (replacement && pid === -replacement && (signal === "SIGTERM" || signal === "SIGKILL")) {
+          throw Object.assign(new Error("owned replacement signal denied"), { code: "EPERM" });
+        }
+        return realKill(pid, signal);
+      });
+      try {
+        await expect(gateway.restartAfterStateMutation(async () => {})).rejects.toBeInstanceOf(
+          AggregateError,
+        );
+        await expect(owner.stop()).resolves.toMatchObject({ process: "unconfirmed" });
+        expect(isQaPosixProcessGroupAlive(pids()[1]!)).toBe(true);
+        await expect(fs.readdir(protectedState)).rejects.toMatchObject({ code: "EACCES" });
+        expect(releaseTempRoot).not.toHaveBeenCalled();
+      } finally {
+        signalFault.mockRestore();
+      }
+
+      await expect(owner.stop()).resolves.toEqual({ process: "confirmed-stopped", errors: [] });
+      expect(releaseTempRoot).toHaveBeenCalledOnce();
+      await expect(fs.stat(gateway.tempRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
 
   it("does not spawn a replacement after stop closes an awaited mutation", async () => {
     const { params, pids } = await fixture();

@@ -244,6 +244,17 @@ export class QaGatewayChildLifecycle {
     await attempt(async () => this.current?.checkFailure());
     const tempRoot = this.tempRoot;
     const keepTemp = opts?.keepTemp ?? this.keepTemp;
+    let cleanupAuthorized = true;
+    if (tempRoot && this.controller && stopped.process !== "unconfirmed" && !keepTemp) {
+      try {
+        // The privileged boundary revalidates UID quiescence at ownership handoff.
+        // Cleanup must never race a descendant that still owns private state.
+        await this.controller.releaseTempRoot();
+      } catch (error) {
+        cleanupAuthorized = false;
+        errors.push(error);
+      }
+    }
     let artifactsPreserved = true;
     if (tempRoot && opts?.preserveToDir && !keepTemp && !this.artifactsFinalized) {
       try {
@@ -263,7 +274,13 @@ export class QaGatewayChildLifecycle {
         );
       }
     }
-    if (tempRoot && stopped.process !== "unconfirmed" && artifactsPreserved && !keepTemp) {
+    if (
+      tempRoot &&
+      stopped.process !== "unconfirmed" &&
+      cleanupAuthorized &&
+      artifactsPreserved &&
+      !keepTemp
+    ) {
       // Finalize artifact policy before cleanup can delete its log sources.
       // Unconfirmed stops must keep refreshing their still-writable snapshots.
       this.artifactsFinalized = true;

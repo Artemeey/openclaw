@@ -926,19 +926,21 @@ describe("release Telegram QA workflow", () => {
     );
   });
 
-  it("returns the stopped SUT tree to the trusted cleanup owner", () => {
+  it("returns the settled SUT tree to the trusted cleanup owner", () => {
     const createSut = requireRun(
       "run_telegram",
       "Create isolated Telegram SUT identity and launcher",
     );
     const launcher = extractHereDocument(createSut, "LAUNCHER");
-    const runtimeExit = launcher.lastIndexOf('\' openclaw-sut "$@"');
+    expect(launcher).toContain('exec sudo -n -- "$0" --root-release-temp-root "$@"');
+    expect(launcher).toContain('if [[ "${1:-}" == "--root-release-temp-root" ]]; then');
+    const quiescenceCheck = launcher.indexOf("if sut_uid_processes_alive; then");
     const ownershipReturn = launcher.indexOf(
-      'chown -R -h -- "$RUNNER_UID:$RUNNER_GID" "$temp_root"',
+      'chown -R -h -- "$RUNNER_UID:$RUNNER_GID" "$requested_temp_root"',
     );
-
-    expect(runtimeExit).toBeGreaterThan(-1);
-    expect(ownershipReturn).toBeGreaterThan(runtimeExit);
+    expect(quiescenceCheck).toBeGreaterThan(-1);
+    expect(ownershipReturn).toBeGreaterThan(quiescenceCheck);
+    expect(launcher).not.toContain('chown -R -h -- "$RUNNER_UID:$RUNNER_GID" "$temp_root"');
   });
 
   it("lets the SUT create suite locks without exposing the runner-owned config", () => {

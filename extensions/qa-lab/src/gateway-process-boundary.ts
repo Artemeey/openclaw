@@ -364,6 +364,15 @@ async function runBoundaryTermination(params: { launcherPath: string; identityFi
   });
 }
 
+async function runBoundaryTempRootRelease(params: { launcherPath: string; tempRoot: string }) {
+  await runBoundaryLauncherCommand({
+    args: ["--release-temp-root", params.tempRoot],
+    label: "temporary-root release",
+    launcherPath: params.launcherPath,
+    timeoutMs: PROCESS_BOUNDARY_CONTROL_TIMEOUT_MS,
+  });
+}
+
 async function runBoundaryUidTermination(launcherPath: string) {
   await runBoundaryLauncherCommand({
     args: ["--terminate-uid"],
@@ -771,6 +780,13 @@ export async function createQaGatewayProcessBoundaryController(params: {
     await clearCredentialLeaseRetention();
   };
 
+  const releaseTempRoot = async () => {
+    await runBoundaryTempRootRelease({
+      launcherPath: params.launcherPath,
+      tempRoot,
+    });
+  };
+
   return {
     prepare,
     accept,
@@ -778,6 +794,7 @@ export async function createQaGatewayProcessBoundaryController(params: {
     signal,
     markReady,
     markExited,
+    releaseTempRoot,
     evidencePath,
     retainCredentialLeasePath,
     retainCredentialLease,

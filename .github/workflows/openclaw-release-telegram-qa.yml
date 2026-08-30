@@ -1425,6 +1425,11 @@ jobs:
             exec sudo -n -- "$0" --root-terminate-uid
           fi
 
+          if [[ "${1:-}" == "--release-temp-root" ]]; then
+            shift
+            exec sudo -n -- "$0" --root-release-temp-root "$@"
+          fi
+
           if [[ "${1:-}" == "--verify" ]]; then
             shift
             exec sudo -n -- "$0" --root-verify "$@"
@@ -1493,6 +1498,29 @@ jobs:
             [[ "$EUID" == "0" ]]
             source /etc/openclaw-telegram-sut.conf
             terminate_sut_uid
+            exit 0
+          fi
+
+          if [[ "${1:-}" == "--root-release-temp-root" ]]; then
+            [[ "$EUID" == "0" ]]
+            source /etc/openclaw-telegram-sut.conf
+            shift
+            requested_temp_root="$(readlink -f -- "${1:?}")"
+            case "$requested_temp_root" in
+              "$RUNTIME_ROOT"/tmp/openclaw-qa-suite-*|"$RUNTIME_ROOT"/tmp/openclaw-"$RUNNER_UID"/openclaw-qa-suite-*) ;;
+              *) echo "Refusing Telegram SUT temp-root release outside the runtime root." >&2; exit 1 ;;
+            esac
+            [[ -d "$requested_temp_root" && ! -L "$requested_temp_root" ]]
+            # Revalidate the authoritative UID at the privileged use itself;
+            # earlier process-group settlement is not a transferable claim.
+            for _ in 1 2; do
+              if sut_uid_processes_alive; then
+                echo "Refusing Telegram SUT temp-root release while its UID is alive." >&2
+                exit 1
+              fi
+              sleep 1
+            done
+            chown -R -h -- "$RUNNER_UID:$RUNNER_GID" "$requested_temp_root"
             exit 0
           fi
 
@@ -1906,9 +1934,6 @@ jobs:
                     exec "$runtime_node_bin" "${runtime_node_args[@]}"
                   '\'' openclaw-sut "$@"
             ' openclaw-sut "$@"
-          # The isolated runtime owns its private state only while it is alive.
-          # Return deletion authority before the trusted lifecycle observes exit.
-          chown -R -h -- "$RUNNER_UID:$RUNNER_GID" "$temp_root"
           LAUNCHER
           sudo chown root:root "$launcher"
           sudo chmod 0755 "$launcher"
