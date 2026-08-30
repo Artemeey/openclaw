@@ -19,6 +19,8 @@ import { createChatRunState } from "../server-chat-state.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
 type BuildAuthHealthSummary = typeof import("../../agents/auth-health.js").buildAuthHealthSummary;
+type ResolveProviderAuths =
+  typeof import("../../infra/provider-usage.auth.js").resolveProviderAuths;
 
 function waitForFast<T>(
   callback: () => T | Promise<T>,
@@ -61,7 +63,7 @@ const mocks = vi.hoisted(() => ({
     (): AuthHealthSummary => ({ now: 0, warnAfterMs: 0, profiles: [], providers: [] }),
   ),
   loadProviderUsageSummary: vi.fn(async (): Promise<UsageSummary> => emptyUsageSummary()),
-  resolveProviderAuths: vi.fn(async (params: { providers: string[] }) =>
+  resolveProviderAuths: vi.fn<ResolveProviderAuths>(async (params) =>
     params.providers
       .filter((provider) => provider === "clawrouter" || provider === "deepseek")
       .map((provider) => ({ provider, token: `${provider}-key` })),
