@@ -75,6 +75,14 @@ extension OpenClawChatViewModel {
         return label.split(separator: "/").last.map(String.init) ?? label
     }
 
+    public var canonicalModelSelectionID: String {
+        if self.modelSelectionID == Self.defaultModelSelectionID {
+            return Self.defaultModelSelectionID
+        }
+        return self.modelChoices.first { self.isSelectedModel($0.selectionID) }?.selectionID ??
+            self.modelSelectionID
+    }
+
     public func isSelectedModel(_ selectionID: String) -> Bool {
         Self.modelSelectionMatches(
             selectionID: selectionID,

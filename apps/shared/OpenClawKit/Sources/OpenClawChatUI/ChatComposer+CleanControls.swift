@@ -127,28 +127,35 @@ extension OpenClawChatComposer {
     private func cleanInlineModelPicker(compact: Bool) -> some View {
         let sections = self.viewModel.modelPickerSections
         return Menu {
-            self.cleanInlineModelOption(
-                title: self.viewModel.defaultModelLabel,
-                selectionID: OpenClawChatViewModel.defaultModelSelectionID)
-            if !sections.pinned.isEmpty {
-                Section("Pinned") {
-                    self.cleanInlineModelOptions(sections.pinned)
+            Picker(
+                "Model",
+                selection: Binding(
+                    get: { self.viewModel.canonicalModelSelectionID },
+                    set: { self.viewModel.selectModel($0) }))
+            {
+                Text(self.viewModel.defaultModelLabel)
+                    .font(OpenClawChatTypography.captionSemiBold)
+                    .tag(OpenClawChatViewModel.defaultModelSelectionID)
+                if !sections.pinned.isEmpty {
+                    Section("Pinned") {
+                        self.cleanInlineModelOptions(sections.pinned)
+                    }
+                }
+                if !sections.recent.isEmpty {
+                    Section("Recent") {
+                        self.cleanInlineModelOptions(sections.recent)
+                    }
+                }
+                ForEach(sections.providers) { provider in
+                    Section(provider.displayName) {
+                        self.cleanInlineModelOptions(provider.models)
+                    }
                 }
             }
-            if !sections.recent.isEmpty {
-                Section("Recent") {
-                    self.cleanInlineModelOptions(sections.recent)
-                }
-            }
-            ForEach(sections.providers) { provider in
-                Section(provider.displayName) {
-                    self.cleanInlineModelOptions(provider.models)
-                }
-            }
+            .labelsHidden()
         } label: {
             self.cleanInlineModelLabel(compact: compact)
         }
-        .id(self.viewModel.modelSelectionID)
         .menuIndicator(.hidden)
         .tint(OpenClawChatTheme.muted)
         .disabled(
@@ -188,24 +195,10 @@ extension OpenClawChatComposer {
 
     private func cleanInlineModelOptions(_ models: [OpenClawChatModelChoice]) -> some View {
         ForEach(models) { model in
-            self.cleanInlineModelOption(title: model.displayLabel, selectionID: model.selectionID)
+            Text(model.displayLabel)
+                .font(OpenClawChatTypography.captionSemiBold)
+                .tag(model.selectionID)
         }
-    }
-
-    private func cleanInlineModelOption(title: String, selectionID: String) -> some View {
-        let isSelected = self.viewModel.isSelectedModel(selectionID)
-        let optionTitle = isSelected ? "\(title), \(String(localized: "Selected"))" : title
-        return Button {
-            self.viewModel.selectModel(selectionID)
-        } label: {
-            Label {
-                Text(optionTitle)
-                    .font(OpenClawChatTypography.captionSemiBold)
-            } icon: {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-            }
-        }
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var cleanInlineEffortMenu: some View {
