@@ -23,6 +23,9 @@ export const runPluginEmbeddedAgent: PluginRuntime["agent"]["runEmbeddedAgent"] 
     "admittedRunContext" in params ||
     "preparedRunAdmission" in params ||
     "expectedInitialModel" in params ||
+    "compactionCountOwner" in params ||
+    "onCompactionAccounting" in params ||
+    "onContextAccountingEvent" in params ||
     "onDeferredLifecycleOwner" in params ||
     "onDeferredLifecycleAbort" in params
   ) {

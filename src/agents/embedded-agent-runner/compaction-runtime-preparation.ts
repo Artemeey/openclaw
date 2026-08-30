@@ -94,7 +94,15 @@ export function resolveCompactionRuntimeSelection(
   });
   const provider = target.provider ?? DEFAULT_PROVIDER;
   const modelId = target.model ?? DEFAULT_MODEL;
+  const selectedRuntime = normalizeOptionalAgentRuntimeId(selectedHarnessRuntime);
+  const attemptNativeHarnessCompaction = Boolean(
+    selectedRuntime &&
+    selectedRuntime !== "auto" &&
+    selectedRuntime !== "openclaw" &&
+    (!isOpenAIProvider(provider) || target.nativeHarnessCompaction === true),
+  );
   return {
+    attemptNativeHarnessCompaction,
     runtimePolicySessionKey,
     runtimePolicyAgentId,
     boundHarnessRuntime,

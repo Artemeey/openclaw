@@ -255,15 +255,20 @@ describe("plugin embedded-agent runtime admission", () => {
       "admittedRunContext",
       "preparedRunAdmission",
       "expectedInitialModel",
+      "compactionCountOwner",
+      "onCompactionAccounting",
+      "onContextAccountingEvent",
       "onDeferredLifecycleOwner",
       "onDeferredLifecycleAbort",
     ].flatMap((field) => [false, true].map((inherited) => ({ field, inherited }))),
   )("rejects a plugin-supplied $field (inherited: $inherited)", async ({ field, inherited }) => {
+    const value =
+      field === "compactionCountOwner" ? "caller" : field.startsWith("on") ? vi.fn() : {};
     const input = { ...params };
     if (inherited) {
-      Object.setPrototypeOf(input, { [field]: {} });
+      Object.setPrototypeOf(input, { [field]: value });
     } else {
-      Object.defineProperty(input, field, { value: {}, enumerable: true });
+      Object.defineProperty(input, field, { value, enumerable: true });
     }
     await expect(
       withPluginRuntimePluginIdScope("memory-plugin", () => runPluginEmbeddedAgent(input)),
