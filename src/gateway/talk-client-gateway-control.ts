@@ -3,13 +3,11 @@ import type { EmbeddedAgentMessageInjectionTarget } from "../agents/embedded-age
 import { normalizeTalkSection } from "../config/talk.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginRuntime } from "../plugins/runtime/index.js";
-import { BoundedSerialQueue } from "../shared/bounded-serial-queue.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
 import { consultRealtimeVoiceAgent } from "../talk/agent-consult-runtime.js";
 import {
   REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
   parseRealtimeVoiceAgentConsultArgs,
-  resolveRealtimeVoiceAgentConsultToolsAllow,
 } from "../talk/agent-consult-tool.js";
 import {
   buildRealtimeVoiceAgentCancelProviderResult,
@@ -40,10 +38,17 @@ import {
 } from "../talk/realtime-session-harness.js";
 import type { TalkEvent } from "../talk/talk-events.js";
 import { registerChatAbortController } from "./chat-abort.js";
-import { ADMIN_SCOPE, WRITE_SCOPE } from "./operator-scopes.js";
 import type { GatewayRequestContext } from "./server-methods/shared-types.js";
 import { formatError } from "./server-utils.js";
-import { createPendingTalkConsult, type PendingConsult } from "./talk-client-pending-consult.js";
+import {
+  resolveTalkAgentConsultAuthority,
+  type TalkAgentConsultAuthority,
+} from "./talk-agent-consult-authority.js";
+import {
+  createPendingTalkConsult,
+  createRealtimeControlQueue,
+  type PendingConsult,
+} from "./talk-client-pending-consult.js";
 import { registerTalkConnectionCleanup } from "./talk-session-registry.js";
 
 type GatewayControlOwner = {
@@ -66,25 +71,6 @@ const owners = new Map<string, GatewayControlOwner>();
 const pendingOwners = new Set<GatewayControlOwner>();
 
 const REALTIME_VOICE_CONTEXT_MAX_UTF8_BYTES = 8_000;
-const REALTIME_CONTROL_MAX_PENDING = 8;
-
-export type TalkAgentConsultAuthority = {
-  senderIsOwner: boolean;
-  toolsAllow?: string[];
-};
-
-export function resolveTalkAgentConsultAuthority(
-  scopes: readonly string[] | undefined,
-): TalkAgentConsultAuthority {
-  const senderIsOwner = scopes?.includes(ADMIN_SCOPE) === true;
-  if (senderIsOwner || scopes?.includes(WRITE_SCOPE) === true) {
-    return { senderIsOwner };
-  }
-  return {
-    senderIsOwner: false,
-    toolsAllow: resolveRealtimeVoiceAgentConsultToolsAllow("safe-read-only"),
-  };
-}
 
 const loadTalkAgentExecution = createLazyRuntimeModule(async () => {
   const [embeddedAgent, admission] = await Promise.all([
@@ -99,13 +85,6 @@ const loadTalkAgentExecution = createLazyRuntimeModule(async () => {
     prepareAgentRunAdmission: admission.prepareAgentRunAdmission,
   };
 });
-
-function createRealtimeControlQueue(): BoundedSerialQueue {
-  return new BoundedSerialQueue({
-    maxPendingCount: REALTIME_CONTROL_MAX_PENDING,
-    maxPendingWeight: REALTIME_CONTROL_MAX_PENDING,
-  });
-}
 
 function createTalkClientAgentRuntime(params: {
   config: OpenClawConfig;
@@ -148,8 +127,7 @@ function createTalkClientAgentRuntime(params: {
         preparedRunAdmission.close();
       }
     };
-    // Abort owns authority revocation independently of core completion; the
-    // post-registration check closes the prepare-to-listener race.
+    // Abort revokes authority independently; the later check closes the listener race.
     runParams.abortSignal?.addEventListener("abort", close, { once: true });
     try {
       runParams.abortSignal?.throwIfAborted();
@@ -282,8 +260,7 @@ export function createTalkClientAgentConsultRunner(params: {
     if (!voiceSessionId) {
       throw new Error("Realtime browser voice session is not ready for agent consult");
     }
-    // Relays own admission before their lazy record registration. Browser callbacks
-    // must validate the durable call before accepting a new run.
+    // Browser callbacks validate durable admission; relays register lazily after admission.
     if (!params.registerRun) {
       assertClientVoiceSessionOpen({
         agentId: params.agentId,
@@ -509,8 +486,7 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
       return;
     }
     if (event.name === REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME) {
-      // Controls accepted during consult startup bind to this consult's eventual
-      // exact target; they never re-resolve whichever run happens to be current later.
+      // Startup controls bind to this consult's eventual target, never the later current run.
       const consult = createPendingTalkConsult<CapturedControl>();
       consultControllers.set(event.callId, consult);
       const admission = consultQueue.enqueue(() => runConsult(event, consult));
@@ -586,8 +562,7 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
       if (owners.get(params.voiceSessionId) !== owner) {
         throw new Error("Realtime voice session is not active");
       }
-      // Admission ends here: transport closure fences future requests, while the
-      // provider's consult signal continues to own already accepted work.
+      // Closure fences new requests; the provider signal owns already accepted work.
       return await params.runAgentConsult({ question: prompt }, consultSignal);
     },
     control: {

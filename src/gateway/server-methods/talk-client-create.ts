@@ -38,11 +38,11 @@ import {
   resolveSandboxedSessionCreation,
 } from "../operator-role-policy.js";
 import { readSessionPreviewItemsFromTranscript } from "../session-transcript-readers.js";
+import { resolveTalkAgentConsultAuthority } from "../talk-agent-consult-authority.js";
 import {
   boundTalkClientRealtimeInitialItems,
   createTalkClientAgentConsultRunner,
   createTalkClientGatewayControlOwner,
-  resolveTalkAgentConsultAuthority,
 } from "../talk-client-gateway-control.js";
 import { formatForLog } from "../ws-log.js";
 import {
