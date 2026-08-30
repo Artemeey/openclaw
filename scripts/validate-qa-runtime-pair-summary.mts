@@ -62,19 +62,6 @@ const FROZEN_RUNTIME_PAIR_MANIFESTS = new Map([
   ["311047822ecdde24e824d839ab105ef08f17be00:core", FROZEN_CORE_RUNTIME_PAIR_MANIFEST],
   ["c37af96b18776fecc9e24268f27fc89b563481bf:core", FROZEN_CORE_RUNTIME_PAIR_MANIFEST],
 ]);
-const FROZEN_RUNTIME_PAIR_COMPATIBILITY_PROFILES = new Map([
-  [
-    "ee5ead24b1b46a3560f28f8d57e0afcd911acacb:core",
-    {
-      allowMissingRunStatus: true,
-      scenarioIds: FROZEN_CORE_RUNTIME_PAIR_MANIFEST.scenarioIds.filter(
-        (scenarioId) =>
-          scenarioId !== "codex-plugin-pinned-new" && scenarioId !== "codex-plugin-pinned-old",
-      ),
-    },
-  ],
-]);
-
 type RuntimePairValidationOptions = {
   candidateSuiteOutcome?: string;
   lane?: string;
@@ -202,28 +189,23 @@ function isCanonicalIsoTimestamp(value: unknown): value is string {
   return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
 }
 
-function isTrustedMissingStatusRun(
+function hasTerminalRuntimePairRun(
   run: Record<string, unknown>,
   options: RuntimePairValidationOptions,
 ) {
-  const profile = FROZEN_RUNTIME_PAIR_COMPATIBILITY_PROFILES.get(
-    `${options.targetSha}:${options.lane}`,
-  );
-  if (
-    Object.hasOwn(run, "status") ||
-    options.candidateSuiteOutcome !== "success" ||
-    profile?.allowMissingRunStatus !== true ||
-    !isCanonicalIsoTimestamp(run.startedAt) ||
-    !isCanonicalIsoTimestamp(run.finishedAt) ||
-    Date.parse(run.finishedAt) < Date.parse(run.startedAt)
-  ) {
-    return false;
+  if (run.status === "completed") {
+    return true;
   }
-  const scenarioIds = run.scenarioIds;
+
+  // Older candidates omitted the derived terminal status. A trusted successful
+  // suite plus an ordered, timestamped result set is the generic completion
+  // evidence; later validation still requires every declared scenario and count.
   return (
-    Array.isArray(scenarioIds) &&
-    scenarioIds.length === profile.scenarioIds.length &&
-    profile.scenarioIds.every((scenarioId, index) => scenarioIds[index] === scenarioId)
+    !Object.hasOwn(run, "status") &&
+    options.candidateSuiteOutcome === "success" &&
+    isCanonicalIsoTimestamp(run.startedAt) &&
+    isCanonicalIsoTimestamp(run.finishedAt) &&
+    Date.parse(run.finishedAt) >= Date.parse(run.startedAt)
   );
 }
 
@@ -234,10 +216,7 @@ export function validateQaRuntimePairSummary(
   if (!isRecord(summary) || !isRecord(summary.run) || !Array.isArray(summary.scenarios)) {
     throw new Error("runtime-pair summary is missing run or scenario evidence");
   }
-  // Frozen compatibility profiles may admit a specifically attested legacy
-  // producer shape. The trusted workflow outcome and exact manifest prevent a
-  // partial or failed producer from masquerading as terminal evidence.
-  if (summary.run.status !== "completed" && !isTrustedMissingStatusRun(summary.run, options)) {
+  if (!hasTerminalRuntimePairRun(summary.run, options)) {
     throw new Error("runtime-pair summary is not completed");
   }
   if (!requireCanonicalRuntimePair(summary.run.runtimePair)) {

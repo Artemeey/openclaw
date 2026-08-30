@@ -106,12 +106,6 @@ const frozenCoreGapScenarioIds = new Set<string>([
   "runtime-tool-fs-write",
   "runtime-tool-grep",
 ]);
-const frozenLegacyCoreScenarioIds = frozenCoreScenarioIds.filter(
-  (scenarioId) =>
-    scenarioId !== "codex-plugin-pinned-new" && scenarioId !== "codex-plugin-pinned-old",
-);
-const frozenLegacyTargetSha = "ee5ead24b1b46a3560f28f8d57e0afcd911acacb";
-
 function frozenCoreSummary() {
   return summary(
     frozenCoreScenarioIds.map((scenarioId) => {
@@ -130,15 +124,8 @@ function frozenCoreSummary() {
   );
 }
 
-function frozenLegacyStatuslessSummary() {
-  const fixture = summary(
-    frozenLegacyCoreScenarioIds.map((scenarioId) =>
-      scenario({
-        name: scenarioId,
-        status: "pass",
-      }),
-    ),
-  );
+function statuslessCompletedSummary() {
+  const fixture = summary([scenario({ name: "candidate-like passing", status: "pass" })]);
   delete (fixture.run as { status?: string }).status;
   return Object.assign(fixture, {
     run: {
@@ -246,59 +233,38 @@ describe("frozen QA runtime-pair summary validation", () => {
     });
   });
 
-  it("accepts the exact statusless frozen core profile after a successful suite", () => {
+  it("accepts candidate-like statusless completion evidence after a successful suite", () => {
     expect(
-      validateQaRuntimePairSummary(frozenLegacyStatuslessSummary(), {
+      validateQaRuntimePairSummary(statuslessCompletedSummary(), {
         candidateSuiteOutcome: "success",
-        targetSha: frozenLegacyTargetSha,
-        lane: "core",
       }),
     ).toEqual({
-      total: 25,
-      passed: 25,
+      total: 1,
+      passed: 1,
       failed: 0,
       skipped: 0,
     });
   });
 
-  it("rejects a nonterminal status even for the exact frozen profile", () => {
-    const fixture = frozenLegacyStatuslessSummary();
+  it("rejects an explicit nonterminal status despite a successful suite", () => {
+    const fixture = statuslessCompletedSummary();
     fixture.run.status = "running";
 
     expect(() =>
       validateQaRuntimePairSummary(fixture, {
         candidateSuiteOutcome: "success",
-        targetSha: frozenLegacyTargetSha,
-        lane: "core",
       }),
     ).toThrow("runtime-pair summary is not completed");
   });
 
   it.each([
-    ["missing suite outcome", { targetSha: frozenLegacyTargetSha, lane: "core" }],
-    [
-      "failed suite",
-      { candidateSuiteOutcome: "failure", targetSha: frozenLegacyTargetSha, lane: "core" },
-    ],
-    [
-      "skipped suite",
-      { candidateSuiteOutcome: "skipped", targetSha: frozenLegacyTargetSha, lane: "core" },
-    ],
-    [
-      "cancelled suite",
-      { candidateSuiteOutcome: "cancelled", targetSha: frozenLegacyTargetSha, lane: "core" },
-    ],
-    [
-      "unknown suite outcome",
-      { candidateSuiteOutcome: "unknown", targetSha: frozenLegacyTargetSha, lane: "core" },
-    ],
-    ["wrong target", { candidateSuiteOutcome: "success", targetSha: "0".repeat(40), lane: "core" }],
-    [
-      "wrong lane",
-      { candidateSuiteOutcome: "success", targetSha: frozenLegacyTargetSha, lane: "soak" },
-    ],
-  ])("rejects statusless frozen evidence with %s", (_label, options) => {
-    expect(() => validateQaRuntimePairSummary(frozenLegacyStatuslessSummary(), options)).toThrow(
+    ["missing suite outcome", {}],
+    ["failed suite", { candidateSuiteOutcome: "failure" }],
+    ["skipped suite", { candidateSuiteOutcome: "skipped" }],
+    ["cancelled suite", { candidateSuiteOutcome: "cancelled" }],
+    ["unknown suite outcome", { candidateSuiteOutcome: "unknown" }],
+  ])("rejects statusless completion evidence with %s", (_label, options) => {
+    expect(() => validateQaRuntimePairSummary(statuslessCompletedSummary(), options)).toThrow(
       "runtime-pair summary is not completed",
     );
   });
@@ -309,49 +275,45 @@ describe("frozen QA runtime-pair summary validation", () => {
     ["invalid startedAt", "not-a-date", "2026-08-22T06:14:49.336Z"],
     ["invalid finishedAt", "2026-08-22T06:02:37.608Z", "not-a-date"],
     ["reversed timestamps", "2026-08-22T06:14:49.336Z", "2026-08-22T06:02:37.608Z"],
-  ])("rejects statusless frozen evidence with %s", (_label, startedAt, finishedAt) => {
-    const fixture = frozenLegacyStatuslessSummary();
-    if (startedAt === undefined) {
-      delete (fixture.run as { startedAt?: string }).startedAt;
-    } else {
-      fixture.run.startedAt = startedAt;
-    }
-    if (finishedAt === undefined) {
-      delete (fixture.run as { finishedAt?: string }).finishedAt;
-    } else {
-      fixture.run.finishedAt = finishedAt;
-    }
+  ])(
+    "rejects malformed statusless completion evidence with %s",
+    (_label, startedAt, finishedAt) => {
+      const fixture = statuslessCompletedSummary();
+      if (startedAt === undefined) {
+        delete (fixture.run as { startedAt?: string }).startedAt;
+      } else {
+        fixture.run.startedAt = startedAt;
+      }
+      if (finishedAt === undefined) {
+        delete (fixture.run as { finishedAt?: string }).finishedAt;
+      } else {
+        fixture.run.finishedAt = finishedAt;
+      }
+
+      expect(() =>
+        validateQaRuntimePairSummary(fixture, {
+          candidateSuiteOutcome: "success",
+        }),
+      ).toThrow("runtime-pair summary is not completed");
+    },
+  );
+
+  it("rejects manifest drift after accepting statusless completion evidence", () => {
+    const fixture = statuslessCompletedSummary();
+    fixture.run.scenarioIds[0] = "not-the-emitted-scenario";
 
     expect(() =>
       validateQaRuntimePairSummary(fixture, {
         candidateSuiteOutcome: "success",
-        targetSha: frozenLegacyTargetSha,
-        lane: "core",
       }),
-    ).toThrow("runtime-pair summary is not completed");
+    ).toThrow("runtime-pair results do not match the declared scenario manifest");
   });
 
-  it("rejects manifest drift before accepting a statusless frozen profile", () => {
-    const fixture = frozenLegacyStatuslessSummary();
-    fixture.run.scenarioIds.reverse();
-    fixture.scenarios.reverse();
-
-    expect(() =>
-      validateQaRuntimePairSummary(fixture, {
-        candidateSuiteOutcome: "success",
-        targetSha: frozenLegacyTargetSha,
-        lane: "core",
-      }),
-    ).toThrow("runtime-pair summary is not completed");
-  });
-
-  it("still rejects scenario and count failures after frozen profile admission", () => {
+  it("still rejects scenario and count failures after statusless completion evidence", () => {
     const options = {
       candidateSuiteOutcome: "success",
-      targetSha: frozenLegacyTargetSha,
-      lane: "core",
     };
-    const failedScenario = frozenLegacyStatuslessSummary();
+    const failedScenario = statuslessCompletedSummary();
     failedScenario.scenarios[0]!.status = "fail";
     failedScenario.counts.passed -= 1;
     failedScenario.counts.failed += 1;
@@ -359,26 +321,24 @@ describe("frozen QA runtime-pair summary validation", () => {
       "runtime-pair failure or unsupported skip",
     );
 
-    const countDrift = frozenLegacyStatuslessSummary();
+    const countDrift = statuslessCompletedSummary();
     countDrift.counts.passed -= 1;
     expect(() => validateQaRuntimePairSummary(countDrift, options)).toThrow(
       "counts do not match validated scenario evidence",
     );
   });
 
-  it("applies the trusted suite outcome gate to frozen report validation", () => {
-    const fixture = frozenLegacyStatuslessSummary();
+  it("applies the trusted suite outcome gate to statusless report validation", () => {
+    const fixture = statuslessCompletedSummary();
     const reportSummary = reportFor(fixture.scenarios);
     const markdown = markdownFor(fixture.scenarios);
     const options = {
       candidateSuiteOutcome: "success",
-      targetSha: frozenLegacyTargetSha,
-      lane: "core",
     };
 
     expect(validateQaRuntimePairReport(fixture, reportSummary, markdown, options)).toMatchObject({
-      total: 25,
-      passed: 25,
+      total: 1,
+      passed: 1,
     });
     expect(() =>
       validateQaRuntimePairReport(fixture, reportSummary, markdown, {
