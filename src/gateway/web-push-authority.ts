@@ -4,7 +4,12 @@ import {
 } from "../../packages/gateway-protocol/src/client-info.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { listPairedDevicesReadOnly } from "../infra/device-pairing-store-readonly.js";
+import {
+  WEB_PUSH_USER_PREFERENCES_KEY,
+  resolveEffectiveWebPushPreferences,
+} from "../infra/push-web-preferences.js";
 import { listBoundWebPushSubscriptions, type BoundWebPushSubscription } from "../infra/push-web.js";
+import { getUserPreferences } from "../state/user-preferences.js";
 import { resolveNotificationAuthority } from "./notification-authority.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 
@@ -14,9 +19,10 @@ export type CurrentWebPushTarget = {
   subscription: BoundWebPushSubscription;
   scopes: string[];
   userProfileId: string | null;
+  preferences: ReturnType<typeof resolveEffectiveWebPushPreferences>;
 };
 
-/** Reads every mutable authority fact in the caller's network-I/O continuation. */
+/** Prepares current authority and preferences in the caller's network-I/O continuation. */
 export function listCurrentWebPushTargets(params: {
   cfg: OpenClawConfig;
   requiredScopes: readonly string[];
@@ -32,7 +38,26 @@ export function listCurrentWebPushTargets(params: {
       cfg: params.cfg,
       requiredScopes: params.requiredScopes,
     });
-    return authority ? [{ subscription, ...authority }] : [];
+    if (!authority) {
+      return [];
+    }
+    const user = authority.userProfileId
+      ? getUserPreferences(
+          authority.userProfileId,
+          [WEB_PUSH_USER_PREFERENCES_KEY],
+          params.stateDir ? { env: { ...process.env, OPENCLAW_STATE_DIR: params.stateDir } } : {},
+        )[WEB_PUSH_USER_PREFERENCES_KEY]
+      : undefined;
+    return [
+      {
+        subscription,
+        ...authority,
+        preferences: resolveEffectiveWebPushPreferences({
+          user,
+          device: subscription.devicePreferences,
+        }),
+      },
+    ];
   });
 }
 

@@ -112,7 +112,7 @@ final class NativeGatewayNotifications: NSObject {
                         {
                             self.retire(session)
                         }
-                        _ = await self.status(target: source.target)
+                        await self.refresh(target: source.target)
                     }
                 }
             }
@@ -126,7 +126,7 @@ final class NativeGatewayNotifications: NSObject {
                 $0.hasPrefix(Self.identifierPrefix) && !$0.hasPrefix(Self.processPrefix)
             }
             center.removeDeliveredNotifications(withIdentifiers: identifiers)
-            _ = await self.status(target: .primary)
+            await self.refresh(target: .primary)
         }
     }
 
@@ -170,21 +170,13 @@ final class NativeGatewayNotifications: NSObject {
         }
     }
 
-    func status(target: DashboardGatewayTarget) async -> Status {
-        do {
-            return try await self.status(binding: self.bind(target: target))
-        } catch {
-            return Status(
-                supported: false,
-                preferences: nil,
-                error: error.localizedDescription,
-                errorRevision: self.errorRevision)
-        }
+    func refresh(target: DashboardGatewayTarget) async {
+        _ = try? await self.status(binding: self.bind(target: target))
     }
 
     func bind(target: DashboardGatewayTarget) async throws -> Binding {
         let source = try await self.source(for: target)
-        let enabled = await PermissionManager.ensure([.notifications], interactive: false)[.notifications] == true
+        let enabled = await PermissionManager.ensureNotifications(interactive: false)
         let session = try await self.session(for: source, enabled: enabled)
         return Binding(source: source, session: session)
     }
@@ -193,13 +185,8 @@ final class NativeGatewayNotifications: NSObject {
         let source = binding.source
         let session = binding.session
         do {
-            let enabled = await PermissionManager.ensureNotifications(interactive: false, isCurrent: isCurrent)
-            _ = try await session.ready?.value
-            let method = session.enabled == enabled ? "notifications.preferences.get" : "notifications.subscribe"
-            let params: [String: AnyCodable] = session.enabled == enabled ? [:] : ["enabled": AnyCodable(enabled)]
-            let preferences = try await self.request(
-                method, params: params, source: source, session: session, isCurrent: isCurrent)
-            session.enabled = enabled
+            let preferences = try await self.perform(
+                binding: binding, method: "notifications.preferences.get", isCurrent: isCurrent)
             return Status(
                 supported: true, preferences: preferences, error: session.error, errorRevision: self.errorRevision)
         } catch {
@@ -229,13 +216,14 @@ final class NativeGatewayNotifications: NSObject {
         let enabled = await PermissionManager.ensureNotifications(interactive: false, isCurrent: isCurrent)
         _ = try await session.ready?.value
         if session.enabled != enabled {
-            _ = try await self.request(
+            let preferences = try await self.request(
                 "notifications.subscribe",
                 params: ["enabled": AnyCodable(enabled)],
                 source: source,
                 session: session,
                 isCurrent: isCurrent)
             session.enabled = enabled
+            if method == "notifications.preferences.get" { return preferences }
         }
         return try await self.request(
             method, params: params, source: source, session: session, isCurrent: isCurrent)
@@ -265,8 +253,7 @@ final class NativeGatewayNotifications: NSObject {
             for await push in stream {
                 guard let self, let source, !Task.isCancelled else { return }
                 guard case .snapshot = push else { continue }
-                let enabled = await PermissionManager
-                    .ensure([.notifications], interactive: false)[.notifications] == true
+                let enabled = await PermissionManager.ensureNotifications(interactive: false)
                 do {
                     let session = try await self.session(for: source, enabled: enabled)
                     _ = try await session.ready?.value
@@ -408,7 +395,7 @@ final class NativeGatewayNotifications: NSObject {
         session.streamTask = nil
         self.retire(session)
         guard !Task.isCancelled, await source.connection.isCurrentServerLease(session.lease) else { return }
-        _ = await self.status(target: source.target)
+        await self.refresh(target: source.target)
     }
 
     private func request(

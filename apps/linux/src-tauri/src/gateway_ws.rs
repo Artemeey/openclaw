@@ -434,13 +434,33 @@ struct CanvasSurfaceState {
     url: Option<String>,
 }
 
+#[derive(Default)]
+struct NotificationState {
+    // Keep the current lease and its error revision under one lock so a retired
+    // socket cannot overwrite the replacement's delivery status.
+    lease: Option<NotificationLease>,
+    error: (u64, Option<String>),
+    gateway_support: Option<(u64, bool)>,
+    document: Option<(u64, BridgeDocument)>,
+}
+
+impl NotificationState {
+    fn set_error(&mut self, message: Option<String>) -> u64 {
+        self.error = (self.error.0 + 1, message);
+        self.error.0
+    }
+
+    fn retire(&mut self) {
+        if let Some(lease) = self.lease.take() {
+            lease.retire();
+        }
+    }
+}
+
 struct GatewayClientInner {
     config: Mutex<Option<GatewayWsConfig>>,
     config_generation: AtomicU64,
-    notification_lease: Mutex<Option<NotificationLease>>,
-    notification_error: Mutex<(u64, Option<String>)>,
-    notification_gateway_support: Mutex<(u64, bool)>,
-    notification_document: Mutex<Option<(u64, BridgeDocument)>>,
+    notifications: Mutex<NotificationState>,
     commands: Mutex<Option<mpsc::Sender<DriverCommand>>>,
     agents_cache: Mutex<Option<CachedAgents>>,
     identity: Mutex<Option<GatewayDeviceIdentityStore>>,
@@ -464,10 +484,7 @@ impl GatewayClient {
             inner: Arc::new(GatewayClientInner {
                 config: Mutex::new(None),
                 config_generation: AtomicU64::new(0),
-                notification_lease: Mutex::new(None),
-                notification_error: Mutex::new((0, None)),
-                notification_gateway_support: Mutex::new((0, true)),
-                notification_document: Mutex::new(None),
+                notifications: Mutex::new(NotificationState::default()),
                 commands: Mutex::new(None),
                 agents_cache: Mutex::new(None),
                 identity: Mutex::new(None),
@@ -483,56 +500,28 @@ impl GatewayClient {
     }
 
     pub fn configure(&self, app: &AppHandle, config: GatewayWsConfig) {
-        let generation = {
-            let mut current = self
-                .inner
-                .config
-                .lock()
-                .expect("gateway config mutex poisoned");
-            self.retire_notifications();
-            let mut error = self
-                .inner
-                .notification_error
-                .lock()
-                .expect("notification error mutex poisoned");
-            *error = (error.0 + 1, None);
-            *current = Some(config);
-            self.inner.config_generation.fetch_add(1, Ordering::SeqCst) + 1
-        };
-        *self
-            .inner
-            .agents_cache
-            .lock()
-            .expect("gateway agents cache mutex poisoned") = None;
-        self.set_canvas_surface_url(generation, None);
-        self.inner.reconnect_paused.store(false, Ordering::SeqCst);
-        self.set_connection_state(app, GatewayConnectionState::Down, None);
-        if let Some(commands) = self
-            .inner
-            .commands
-            .lock()
-            .expect("gateway command mutex poisoned")
-            .as_ref()
-        {
-            let _ = commands.try_send(DriverCommand::Reconfigure);
-        }
+        self.set_configuration(app, Some(config));
     }
 
     pub fn clear_configuration(&self, app: &AppHandle) {
+        self.set_configuration(app, None);
+    }
+
+    fn set_configuration(&self, app: &AppHandle, config: Option<GatewayWsConfig>) {
         let generation = {
             let mut current = self
                 .inner
                 .config
                 .lock()
                 .expect("gateway config mutex poisoned");
-            self.retire_notifications();
-            let mut error = self
+            let mut notifications = self
                 .inner
-                .notification_error
+                .notifications
                 .lock()
-                .expect("notification error mutex poisoned");
-            *error = (error.0 + 1, None);
-            *current = None;
+                .expect("notification state mutex poisoned");
+            notifications.retire();
+            notifications.set_error(None);
+            *current = config;
             self.inner.config_generation.fetch_add(1, Ordering::SeqCst) + 1
         };
         *self
@@ -572,9 +561,10 @@ impl GatewayClient {
 
     pub(crate) fn notification_lease(&self) -> Option<NotificationLease> {
         self.inner
-            .notification_lease
+            .notifications
             .lock()
             .ok()?
+            .lease
             .clone()
             .filter(NotificationLease::is_active)
     }
@@ -595,33 +585,36 @@ impl GatewayClient {
         if self.inner.config_generation.load(Ordering::SeqCst) == generation
             && document.is_current()
         {
-            *self
-                .inner
-                .notification_document
+            self.inner
+                .notifications
                 .lock()
-                .expect("notification document mutex poisoned") = Some((generation, document));
+                .expect("notification state mutex poisoned")
+                .document = Some((generation, document));
         }
     }
 
     pub(crate) fn notification_document(&self) -> Option<(u64, BridgeDocument)> {
-        self.inner.notification_document.lock().ok()?.clone()
+        self.inner.notifications.lock().ok()?.document.clone()
     }
 
     pub(crate) fn notification_error(&self) -> (u64, Option<String>) {
         self.inner
-            .notification_error
+            .notifications
             .lock()
-            .expect("notification error mutex poisoned")
+            .expect("notification state mutex poisoned")
+            .error
             .clone()
     }
 
     pub(crate) fn notifications_supported(&self) -> bool {
-        let support = self
-            .inner
-            .notification_gateway_support
+        self.inner
+            .notifications
             .lock()
-            .expect("notification support mutex poisoned");
-        support.0 != self.inner.config_generation.load(Ordering::SeqCst) || support.1
+            .expect("notification state mutex poisoned")
+            .gateway_support
+            .is_none_or(|(generation, supported)| {
+                generation != self.inner.config_generation.load(Ordering::SeqCst) || supported
+            })
     }
 
     fn record_notification_support(&self, generation: u64, supported: bool) {
@@ -631,68 +624,40 @@ impl GatewayClient {
             .lock()
             .expect("gateway config mutex poisoned");
         if self.inner.config_generation.load(Ordering::SeqCst) == generation {
-            *self
-                .inner
-                .notification_gateway_support
+            self.inner
+                .notifications
                 .lock()
-                .expect("notification support mutex poisoned") = (generation, supported);
-        }
-    }
-
-    pub(crate) fn clear_notification_error(&self, lease: &NotificationLease) {
-        let current = self
-            .inner
-            .notification_lease
-            .lock()
-            .expect("notification lease mutex poisoned");
-        if current
-            .as_ref()
-            .is_some_and(|current| current.is_same(lease) && lease.is_active())
-        {
-            let mut error = self
-                .inner
-                .notification_error
-                .lock()
-                .expect("notification error mutex poisoned");
-            *error = (error.0 + 1, None);
+                .expect("notification state mutex poisoned")
+                .gateway_support = Some((generation, supported));
         }
     }
 
     pub(crate) fn record_notification_error(
         &self,
         lease: &NotificationLease,
-        message: &str,
+        message: Option<String>,
     ) -> Option<u64> {
-        let current = self
+        let mut notifications = self
             .inner
-            .notification_lease
+            .notifications
             .lock()
-            .expect("notification lease mutex poisoned");
-        if !current
+            .expect("notification state mutex poisoned");
+        if !notifications
+            .lease
             .as_ref()
             .is_some_and(|current| current.is_same(lease) && lease.is_active())
         {
             return None;
         }
-        let mut error = self
-            .inner
-            .notification_error
-            .lock()
-            .expect("notification error mutex poisoned");
-        *error = (error.0 + 1, Some(message.to_string()));
-        Some(error.0)
+        Some(notifications.set_error(message))
     }
 
     fn retire_notifications(&self) {
-        if let Some(lease) = self
-            .inner
-            .notification_lease
+        self.inner
+            .notifications
             .lock()
-            .expect("notification lease mutex poisoned")
-            .take()
-        {
-            lease.retire();
-        }
+            .expect("notification state mutex poisoned")
+            .retire();
     }
 
     pub(crate) async fn notification_request(
@@ -1042,19 +1007,15 @@ impl GatewayClient {
                     }
                     continue;
                 }
-                *self
+                let mut notifications = self
                     .inner
-                    .notification_lease
+                    .notifications
                     .lock()
-                    .expect("notification lease mutex poisoned") = notification_lease.clone();
+                    .expect("notification state mutex poisoned");
+                notifications.lease = notification_lease.clone();
                 if let Some(message) = setup_error {
                     eprintln!("{message}");
-                    let mut error = self
-                        .inner
-                        .notification_error
-                        .lock()
-                        .expect("notification error mutex poisoned");
-                    *error = (error.0 + 1, Some(message));
+                    notifications.set_error(Some(message));
                 }
             }
             let connection_result = self

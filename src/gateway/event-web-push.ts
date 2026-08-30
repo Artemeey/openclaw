@@ -2,24 +2,18 @@ import { createHash } from "node:crypto";
 import { normalizeOptionalString } from "@openclaw/normalization-core";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import {
-  WEB_PUSH_USER_PREFERENCES_KEY,
-  resolveEffectiveWebPushPreferences,
-} from "../infra/push-web-preferences.js";
+import type { resolveEffectiveWebPushPreferences } from "../infra/push-web-preferences.js";
 import {
   listBoundWebPushSubscriptions,
   prepareWebPushNotificationSender,
   type BoundWebPushSubscription,
 } from "../infra/push-web.js";
-import { getUserPreferences } from "../state/user-preferences.js";
-import { resolveUserProfileId } from "../state/user-profiles.js";
 import { QUESTIONS_SCOPE } from "./method-scopes.js";
 import type { NativeNotificationRegistry } from "./native-notifications.js";
 import {
   notificationAllowed,
   renderEventNotification,
   resolveEventNotification,
-  nativeNotification,
   eventNotificationPath,
   NOTIFICATION_TTL_MS,
 } from "./notification-presentation.js";
@@ -29,20 +23,6 @@ import type { GatewayWsClient } from "./server/ws-types.js";
 import { canReceiveSessionEvent } from "./session-sharing.js";
 import { listCurrentWebPushTargets, webPushTargetClient } from "./web-push-authority.js";
 import { webPushNotificationUrl } from "./web-push-navigation.js";
-
-function preferenceFor(subscription: BoundWebPushSubscription, stateDir?: string) {
-  const profileId = subscription.userProfileId
-    ? resolveUserProfileId(subscription.userProfileId)
-    : undefined;
-  const user = profileId
-    ? getUserPreferences(
-        profileId,
-        [WEB_PUSH_USER_PREFERENCES_KEY],
-        stateDir ? { env: { ...process.env, OPENCLAW_STATE_DIR: stateDir } } : {},
-      )[WEB_PUSH_USER_PREFERENCES_KEY]
-    : undefined;
-  return resolveEffectiveWebPushPreferences({ user, device: subscription.devicePreferences });
-}
 
 function eventCopyForTarget(params: {
   notification: NonNullable<ReturnType<typeof resolveEventNotification>>;
@@ -109,16 +89,15 @@ export function createEventWebPushDelivery(params: {
             agentId,
           });
           if (copy) {
-            native?.send(
-              target,
-              nativeNotification({
-                ...copy,
-                id: notification.tag,
-                category: notification.category,
-                path,
-                expiresAtMs: Date.now() + NOTIFICATION_TTL_MS,
-              }),
-            );
+            native?.send(target, {
+              action: "show",
+              alert: true,
+              ...copy,
+              id: notification.tag,
+              category: notification.category,
+              path,
+              expiresAtMs: Date.now() + NOTIFICATION_TTL_MS,
+            });
           }
         }
         if (listBoundWebPushSubscriptions(params.stateDir).length === 0) {
@@ -137,10 +116,9 @@ export function createEventWebPushDelivery(params: {
         >();
         for (const target of targets) {
           const subscription = target.subscription;
-          const preferences = preferenceFor(subscription, params.stateDir);
           const copy = eventCopyForTarget({
             notification,
-            preferences,
+            preferences: target.preferences,
             client: webPushTargetClient(target),
             cfg,
             event,

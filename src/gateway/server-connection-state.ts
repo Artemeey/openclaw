@@ -4,7 +4,7 @@ import { resolveUserProfileId } from "../state/user-profiles.js";
 import type { ChatAbortControllerEntry } from "./chat-abort.js";
 import { createEventWebPushDelivery } from "./event-web-push.js";
 import { createNativeNotificationRegistry } from "./native-notifications.js";
-import { nativeNotification, NOTIFICATION_TTL_MS } from "./notification-presentation.js";
+import { NOTIFICATION_TTL_MS } from "./notification-presentation.js";
 import { createPresenceRecipientProjection } from "./presence-projection.js";
 import { createGatewayBroadcaster } from "./server-broadcast.js";
 import {
@@ -40,15 +40,16 @@ export function createGatewayConnectionState(params: {
     send: (client, message) =>
       gatewayBroadcaster.broadcastToConnIds("notification", message, new Set([client.connId])),
     onSubscribe: (client) => replayNativeNotifications(client),
-    createTestNotification: () =>
-      nativeNotification({
-        id: "openclaw-notification-test",
-        category: "approval-requested",
-        title: "OpenClaw",
-        body: "Notifications are working on this device.",
-        path: "/settings/notifications",
-        expiresAtMs: Date.now() + NOTIFICATION_TTL_MS,
-      }),
+    createTestNotification: () => ({
+      action: "show",
+      alert: true,
+      id: "openclaw-notification-test",
+      category: "approval-requested",
+      title: "OpenClaw",
+      body: "Notifications are working on this device.",
+      path: "/settings/notifications",
+      expiresAtMs: Date.now() + NOTIFICATION_TTL_MS,
+    }),
     onPreferencesChanged: (profileId, keys) => {
       const connIds = new Set(
         [...clients]

@@ -91,9 +91,9 @@ struct DashboardNotificationsBridgeTests {
         #expect(DashboardWindowController.notificationsRequestID(from: ["requestId": String(
             repeating: "x",
             count: 65)]) == nil)
-        let snapshot = DashboardWindowController.notificationsSnapshot(
+        let snapshot = DashboardNotificationsSnapshot(
             permission: "granted",
-            testOutcome: nil,
+            test: nil,
             supported: false,
             error: "Update this Gateway.",
             replyTo: requestID)
@@ -124,12 +124,12 @@ struct DashboardNotificationsBridgeTests {
     }
 
     @Test func `permission and test send outcome remain independent bridge facts`() {
-        let failed = DashboardWindowController.notificationsSnapshot(
+        let failed = DashboardNotificationsSnapshot(
             permission: "granted",
-            testOutcome: .error("Open System Settings and try again."))
-        let refreshed = DashboardWindowController.notificationsSnapshot(
+            test: .error("Open System Settings and try again."))
+        let refreshed = DashboardNotificationsSnapshot(
             permission: "granted",
-            testOutcome: .error("Open System Settings and try again."))
+            test: .error("Open System Settings and try again."))
 
         #expect(failed.permission == "granted")
         #expect(failed.test == .error("Open System Settings and try again."))
@@ -137,12 +137,12 @@ struct DashboardNotificationsBridgeTests {
     }
 
     @Test func `bridge exposes pending and queued test send states`() {
-        #expect(DashboardWindowController.notificationsSnapshot(
+        #expect(DashboardNotificationsSnapshot(
             permission: "granted",
-            testOutcome: .pending).test == .pending)
-        #expect(DashboardWindowController.notificationsSnapshot(
+            test: .pending).test == .pending)
+        #expect(DashboardNotificationsSnapshot(
             permission: "granted",
-            testOutcome: .sent).test == .sent)
+            test: .sent).test == .sent)
     }
 
     @Test func `bridge encodes closed wire states and error-only messages`() throws {

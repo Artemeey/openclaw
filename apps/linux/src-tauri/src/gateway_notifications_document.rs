@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Manager, Webview};
-use tokio::sync::oneshot;
+use tokio::sync::mpsc;
 
 #[derive(Default)]
 pub(crate) struct BridgeViews(Mutex<Option<Arc<BridgeView>>>);
@@ -62,6 +62,53 @@ impl BridgeView {
             id,
         }
     }
+
+    pub(crate) fn admit(
+        self: &Arc<Self>,
+        webview: Webview,
+        request_id: String,
+    ) -> impl std::future::Future<Output = Option<(BridgeDocument, String)>> + Send + 'static {
+        // Capture before returning the future: spawning it must not adopt a
+        // navigation or same-label replacement that happened while it was queued.
+        let navigation = self.navigation.load(Ordering::SeqCst);
+        let view = self.clone();
+        async move {
+            if !view.active.load(Ordering::SeqCst)
+                || view.navigation.load(Ordering::SeqCst) != navigation
+            {
+                return None;
+            }
+            let request =
+                serde_json::to_string(&request_id).expect("request identifier serialization");
+            let script =
+                format!("window.__OPENCLAW_NATIVE_NOTIFICATIONS_ADMIT__?.({request}) ?? null");
+            let (sender, mut receiver) = mpsc::channel(1);
+            webview
+                .eval_with_callback(script, move |result| {
+                    let _ = sender.try_send(result);
+                })
+                .ok()?;
+            // Wry can drop callbacks while initial scripts are queued. Only a
+            // returned top-frame request, still bound to this epoch, is admitted.
+            let result = tokio::time::timeout(Duration::from_secs(5), receiver.recv())
+                .await
+                .ok()??;
+            let (document_id, payload): (String, String) = serde_json::from_str(&result).ok()?;
+            let document = view.document(document_id);
+            if document.navigation != navigation || !document.is_current() {
+                return None;
+            }
+            // Acknowledge receipt before OS permission can outlive the transport
+            // timeout; a lost callback leaves that timeout available to the UI.
+            let args = serde_json::json!([request_id, document.id]);
+            webview
+                .eval(format!(
+                    "window.__OPENCLAW_NATIVE_NOTIFICATIONS_ADMIT__?.(...{args})"
+                ))
+                .ok()?;
+            document.is_current().then_some((document, payload))
+        }
+    }
 }
 
 impl BridgeDocument {
@@ -71,49 +118,6 @@ impl BridgeDocument {
 
     pub(crate) fn is_current(&self) -> bool {
         self.is_attached() && self.view.navigation.load(Ordering::SeqCst) == self.navigation
-    }
-
-    pub(crate) async fn admit(&self, webview: &Webview, request_id: &str, payload: &str) -> bool {
-        if !self.is_current() {
-            return false;
-        }
-        let args = serde_json::json!([self.id, request_id, payload]);
-        let script =
-            format!("window.__OPENCLAW_NATIVE_NOTIFICATIONS_ADMIT__?.(...{args}) === true");
-        let (sender, receiver) = oneshot::channel();
-        let sender = Mutex::new(Some(sender));
-        if webview
-            .eval_with_callback(script, move |result| {
-                if let Some(sender) = sender
-                    .lock()
-                    .expect("notification admission mutex poisoned")
-                    .take()
-                {
-                    let _ = sender.send(result == "true");
-                }
-            })
-            .is_err()
-        {
-            return false;
-        }
-        // Wry may drop callbacks while initial scripts are queued. Dispatch success
-        // is not document proof, and a callback from a replaced page grants nothing.
-        if !matches!(
-            tokio::time::timeout(Duration::from_secs(5), receiver).await,
-            Ok(Ok(true))
-        ) || !self.is_current()
-        {
-            return false;
-        }
-        // Clear only this admitted request's transport timeout. The permission prompt
-        // may legitimately outlive it; a dropped eval callback never reaches this ack.
-        let args = serde_json::json!([self.id, request_id, payload, true]);
-        webview
-            .eval(format!(
-                "window.__OPENCLAW_NATIVE_NOTIFICATIONS_ADMIT__?.(...{args})"
-            ))
-            .is_ok()
-            && self.is_current()
     }
 }
 

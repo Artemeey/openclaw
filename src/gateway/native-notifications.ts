@@ -40,6 +40,7 @@ export type NativeNotificationError = {
   message: string;
 };
 type Operation<T> = Result<T, NativeNotificationError>;
+type NativeNotificationShow = Extract<NativeNotificationMessage, { action: "show" }>;
 
 type NativeNotificationTarget = {
   client: GatewayWsClient;
@@ -64,7 +65,7 @@ export interface NativeNotificationRegistry {
     requiredScopes: readonly string[],
     onlyClient?: GatewayClient,
   ): NativeNotificationTarget[];
-  send(target: NativeNotificationTarget, message: NativeNotificationMessage): boolean;
+  send(target: NativeNotificationTarget, message: NativeNotificationShow): boolean;
   remove(id: string): void;
   clear(): void;
 }
@@ -85,9 +86,7 @@ export function createNativeNotificationRegistry(params: {
   send: (client: GatewayWsClient, message: NativeNotificationMessage) => void;
   onSubscribe?: (client: GatewayWsClient) => void;
   onPreferencesChanged?: (profileId: string, keys: string[]) => void;
-  createTestNotification: (
-    client: GatewayWsClient,
-  ) => Extract<NativeNotificationMessage, { action: "show" }>;
+  createTestNotification: (client: GatewayWsClient) => NativeNotificationShow;
   stateDir?: string;
 }): NativeNotificationRegistry {
   const registrations = new Map<GatewayClient, Registration>();
@@ -362,21 +361,12 @@ export function createNativeNotificationRegistry(params: {
     },
     send(target, message) {
       const owner = targetOwners.get(target);
-      if (!owner || !validateMessage(message)) {
+      if (!owner || message.action !== "show" || !validateMessage(message)) {
         return false;
       }
       const { registration, scopes } = owner;
       const authority = currentAuthority(registration);
-      if (!authority) {
-        return false;
-      }
-      if (message.action === "remove") {
-        if (!registration.shown.delete(message.id)) {
-          return false;
-        }
-        return emit(registration, message);
-      }
-      if (!registration.enabled || !allows(authority, scopes)) {
+      if (!authority || !registration.enabled || !allows(authority, scopes)) {
         return false;
       }
       const now = Date.now();

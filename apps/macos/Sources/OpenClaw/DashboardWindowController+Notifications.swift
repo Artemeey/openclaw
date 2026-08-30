@@ -37,12 +37,12 @@ struct DashboardNotificationsState {
 }
 
 struct DashboardNotificationsSnapshot: Encodable, Equatable {
-    let supported: Bool
     let permission: String
-    let test: TestNotificationOutcome?
-    let preferences: [String: AnyCodable]?
-    let error: String?
-    let replyTo: String?
+    var test: TestNotificationOutcome?
+    var supported = false
+    var preferences: [String: AnyCodable]?
+    var error: String?
+    var replyTo: String?
 }
 
 @MainActor
@@ -199,47 +199,41 @@ extension DashboardWindowController {
                 self.notificationState.permission = "unknown"
             }
             guard isCurrent() else { return }
-            guard let binding else {
-                if request == .sendTest {
-                    self.notificationState.testOutcome = .error(
-                        actionError ?? NativeGatewayNotifications.ConnectionError.unavailable.localizedDescription)
-                }
-                let snapshot = Self.notificationsSnapshot(
-                    permission: self.notificationState.permission,
-                    testOutcome: self.notificationState.testOutcome,
-                    error: actionError,
-                    replyTo: replyTo)
-                await self.publishNotificationsStatus(snapshot, document: document, errorRevision: 0)
-                return
-            }
-            do {
-                switch request {
-                case .preferencesSet:
-                    guard let preferenceParams else {
-                        throw NSError(domain: "OpenClawNotifications", code: 1, userInfo: [
-                            NSLocalizedDescriptionKey: "Invalid notification preferences. Reload Settings and retry.",
-                        ])
+            let status: NativeGatewayNotifications.Status
+            if let binding {
+                do {
+                    switch request {
+                    case .preferencesSet:
+                        guard let preferenceParams else {
+                            throw NSError(domain: "OpenClawNotifications", code: 1, userInfo: [
+                                NSLocalizedDescriptionKey:
+                                    "Invalid notification preferences. Reload Settings and retry.",
+                            ])
+                        }
+                        _ = try await NativeGatewayNotifications.shared.perform(
+                            binding: binding,
+                            method: "notifications.preferences.set",
+                            params: preferenceParams,
+                            isCurrent: isCurrent)
+                    case .sendTest:
+                        try await self.sendTestNotification(binding: binding, isCurrent: isCurrent)
+                    case .status, .requestPermission, .preferencesGet: break
                     }
-                    _ = try await NativeGatewayNotifications.shared.perform(
-                        binding: binding,
-                        method: "notifications.preferences.set",
-                        params: preferenceParams,
-                        isCurrent: isCurrent)
-                case .sendTest:
-                    try await self.sendTestNotification(binding: binding, isCurrent: isCurrent)
-                case .status, .requestPermission, .preferencesGet: break
+                } catch {
+                    actionError = error.localizedDescription
                 }
-            } catch {
-                actionError = error.localizedDescription
+                status = await NativeGatewayNotifications.shared.status(binding: binding, isCurrent: isCurrent)
+            } else {
+                status = NativeGatewayNotifications.Status(
+                    supported: false, preferences: nil, error: actionError, errorRevision: 0)
             }
-            let status = await NativeGatewayNotifications.shared.status(binding: binding, isCurrent: isCurrent)
             guard isCurrent() else { return }
             if let error = actionError ?? status.error, request == .sendTest {
                 self.notificationState.testOutcome = .error(error)
             }
-            let snapshot = Self.notificationsSnapshot(
+            let snapshot = DashboardNotificationsSnapshot(
                 permission: self.notificationState.permission,
-                testOutcome: self.notificationState.testOutcome,
+                test: self.notificationState.testOutcome,
                 supported: status.supported,
                 preferences: status.preferences,
                 error: actionError ?? status.error,
@@ -263,30 +257,13 @@ extension DashboardWindowController {
         if let error = status.error {
             self.notificationState.testOutcome = .error(error)
         }
-        let snapshot = Self.notificationsSnapshot(
+        let snapshot = DashboardNotificationsSnapshot(
             permission: self.notificationState.permission,
-            testOutcome: self.notificationState.testOutcome,
+            test: self.notificationState.testOutcome,
             supported: status.supported,
             preferences: status.preferences,
             error: status.error)
         await self.publishNotificationsStatus(snapshot, document: document, errorRevision: status.errorRevision)
-    }
-
-    static func notificationsSnapshot(
-        permission: String,
-        testOutcome: TestNotificationOutcome?,
-        supported: Bool = false,
-        preferences: [String: AnyCodable]? = nil,
-        error: String? = nil,
-        replyTo: String? = nil) -> DashboardNotificationsSnapshot
-    {
-        DashboardNotificationsSnapshot(
-            supported: supported,
-            permission: permission,
-            test: testOutcome,
-            preferences: preferences,
-            error: error,
-            replyTo: replyTo)
     }
 
     private func publishNotificationsStatus(

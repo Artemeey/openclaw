@@ -4,7 +4,6 @@ use crate::gateway_ws::GatewayClient;
 use crate::notify;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, Url};
 use tauri_plugin_notifications::{NotificationsExt, PermissionState};
@@ -28,18 +27,18 @@ pub(crate) const BRIDGE_SCRIPT: &str = r#"(() => {
     window.dispatchEvent(new CustomEvent('openclaw:native-notifications-status', { detail:snapshot }));
   };
   Object.defineProperty(window, '__OPENCLAW_NATIVE_NOTIFICATIONS_DOCUMENT__', { value: documentId });
-  Object.defineProperty(window, '__OPENCLAW_NATIVE_NOTIFICATIONS_ADMIT__', { value: (document, request, payload, acknowledge = false) => {
+  Object.defineProperty(window, '__OPENCLAW_NATIVE_NOTIFICATIONS_ADMIT__', { value: (request, acknowledgeDocument = null) => {
     const entry = pending.get(request);
-    if (document !== documentId || entry?.payload !== payload) return false;
-    if (acknowledge) {
-      if (!entry.claimed) return false;
+    if (!entry) return null;
+    if (acknowledgeDocument !== null) {
+      if (acknowledgeDocument !== documentId || !entry.claimed) return false;
       clearTimeout(entry.timer);
       pending.delete(request);
-    } else {
-      if (entry.claimed) return false;
-      entry.claimed = true;
+      return true;
     }
-    return true;
+    if (entry.claimed) return null;
+    entry.claimed = true;
+    return [documentId, entry.payload];
   }});
   Object.defineProperty(window, '__OPENCLAW_NATIVE_NOTIFICATIONS_BRIDGE__', { value: {
     postMessage(message) {
@@ -58,8 +57,7 @@ pub(crate) const BRIDGE_SCRIPT: &str = r#"(() => {
         reject(message, 'Could not authorize notification settings. Reload the Dashboard and try again.');
       }, 10000);
       pending.set(message.requestId, {payload, timer, claimed:false});
-      location.href = 'openclaw-notifications://request?document=' + encodeURIComponent(documentId)
-        + '&request=' + encodeURIComponent(message.requestId) + '&message=' + encodeURIComponent(payload);
+      location.href = 'openclaw-notifications://request?request=' + encodeURIComponent(message.requestId);
     }
   }});
 })();"#;
@@ -117,31 +115,22 @@ pub(crate) fn intercept_navigation(app: &AppHandle, view: &Arc<BridgeView>, targ
     {
         return true;
     }
-    let parameters: HashMap<_, _> = target.query_pairs().into_owned().collect();
-    let (Some(document), Some(request_id), Some(message)) = (
-        parameters.get("document"),
-        parameters.get("request"),
-        parameters.get("message"),
-    ) else {
+    let Some((_, request_id)) = target.query_pairs().find(|(key, _)| key == "request") else {
         return true;
     };
-    if target.host_str() != Some("request")
-        || document.is_empty()
-        || document.len() > 64
-        || request_id.is_empty()
-        || request_id.len() > 64
-    {
+    if target.host_str() != Some("request") || request_id.is_empty() || request_id.len() > 64 {
         return true;
     }
-    let document = view.document(document.clone());
     let lease = gateway.notification_lease();
-    let request_id = request_id.clone();
-    let message = message.clone();
+    let request_id = request_id.into_owned();
+    // The URL only wakes the bridge. Its payload and document come from the
+    // current top frame's private queue, never from a navigating child frame.
+    let admission = view.admit(webview, request_id.clone());
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        if !document.admit(&webview, &request_id, &message).await {
+        let Some((document, message)) = admission.await else {
             return;
-        }
+        };
         gateway.register_notification_document(generation, document.clone());
         respond_to_bridge(
             &app,
@@ -266,7 +255,7 @@ async fn handle_bridge(
     let send_test = matches!(action, BridgeAction::SendTest {});
     if send_test || matches!(action, BridgeAction::RequestPermission {}) {
         if let Some(lease) = lease.as_ref() {
-            gateway.clear_notification_error(lease);
+            gateway.record_notification_error(lease, None);
         }
     }
     let permission = if gateway.notifications_supported()

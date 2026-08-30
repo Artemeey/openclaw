@@ -761,7 +761,7 @@ final class DashboardManager {
     {
         let primaryLocal = !auxiliary && target == .primary && configuration.mode == .local
         if self.automaticGatewayProfileRefreshEnabled {
-            Task { _ = await NativeGatewayNotifications.shared.status(target: target) }
+            Task { await NativeGatewayNotifications.shared.refresh(target: target) }
         }
         return DashboardWindowController(
             url: configuration.url,

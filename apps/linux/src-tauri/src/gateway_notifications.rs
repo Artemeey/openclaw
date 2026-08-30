@@ -116,11 +116,10 @@ impl NotificationLease {
                 }
             })
             .map_err(|error| format!("Could not listen for notification clicks: {error}"))?;
-        let app = app.clone();
         let worker = lease.clone();
         tauri::async_runtime::spawn(async move {
             let _listener = listener;
-            worker.run(app, receiver).await;
+            worker.run(receiver).await;
         });
         Ok(lease)
     }
@@ -195,7 +194,7 @@ impl NotificationLease {
         let app = &self.0.app;
         let Some(revision) = app
             .state::<GatewayClient>()
-            .record_notification_error(self, message)
+            .record_notification_error(self, Some(message.to_string()))
         else {
             return;
         };
@@ -281,7 +280,8 @@ impl NotificationLease {
         }
     }
 
-    async fn run(&self, app: AppHandle, mut receiver: mpsc::Receiver<NotificationCommand>) {
+    async fn run(&self, mut receiver: mpsc::Receiver<NotificationCommand>) {
+        let app = &self.0.app;
         let mut owned = HashMap::<String, OwnedNotification>::new();
         while self.is_active() {
             tokio::select! {
@@ -297,13 +297,13 @@ impl NotificationLease {
                                         // Captured route, not OS payload data, owns the click destination.
                                         if webview.url().is_ok_and(|url| self.accepts_url(&url)) {
                                             let _ = webview.navigate(item.url.clone());
-                                            tray::show_window(&app);
+                                            tray::show_window(app);
                                         }
                                     }
                                 }
                             }
                         }
-                        NotificationCommand::Event(event, claim) => self.apply(&app, &mut owned, event, claim).await,
+                        NotificationCommand::Event(event, claim) => self.apply(&mut owned, event, claim).await,
                     }
                 }
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}
@@ -314,7 +314,7 @@ impl NotificationLease {
                 .map(|(id, _)| id.clone())
                 .collect();
             for id in expired {
-                self.remove_owned(&app, &mut owned, &id);
+                self.remove_owned(&mut owned, &id);
             }
         }
         self.0
@@ -324,17 +324,17 @@ impl NotificationLease {
             .clear();
         // Serial with show(): late platform completions are removed before this lease exits.
         for item in owned.into_values() {
-            remove_native(&app, item.native_id);
+            remove_native(app, item.native_id);
         }
     }
 
     async fn apply(
         &self,
-        app: &AppHandle,
         owned: &mut HashMap<String, OwnedNotification>,
         event: NotificationEvent,
         claim: Arc<NotificationClaim>,
     ) {
+        let app = &self.0.app;
         let NotificationEvent::Show {
             id,
             category: _category,
@@ -346,7 +346,7 @@ impl NotificationLease {
         } = event
         else {
             if let NotificationEvent::Remove { id } = event {
-                self.remove_owned(app, owned, &id);
+                self.remove_owned(owned, &id);
             }
             return;
         };
@@ -354,15 +354,11 @@ impl NotificationLease {
             self.fail("The Gateway sent an unsafe notification destination.");
             return;
         };
-        if id.is_empty()
-            || id.len() > 200
-            || title.chars().count() > 160
-            || body.chars().count() > 320
-        {
+        if title.chars().count() > 160 || body.chars().count() > 320 {
             self.fail("The Gateway sent an oversized notification.");
             return;
         }
-        self.remove_owned(app, owned, &id);
+        self.remove_owned(owned, &id);
         if !self.is_active() || !claim.is_current(now_ms()) {
             self.finish_claim(&id, &claim);
             return;
@@ -379,7 +375,7 @@ impl NotificationLease {
                 .min_by_key(|(_, item)| item.claim.expires_at_ms)
                 .map(|(id, _)| id.clone())
             {
-                self.remove_owned(app, owned, &oldest);
+                self.remove_owned(owned, &oldest);
             }
         }
         match app.notifications().permission_state().await {
@@ -438,15 +434,10 @@ impl NotificationLease {
         }
     }
 
-    fn remove_owned(
-        &self,
-        app: &AppHandle,
-        owned: &mut HashMap<String, OwnedNotification>,
-        id: &str,
-    ) {
+    fn remove_owned(&self, owned: &mut HashMap<String, OwnedNotification>, id: &str) {
         if let Some(item) = owned.remove(id) {
             self.finish_claim(id, &item.claim);
-            remove_native(app, item.native_id);
+            remove_native(&self.0.app, item.native_id);
         }
     }
 }

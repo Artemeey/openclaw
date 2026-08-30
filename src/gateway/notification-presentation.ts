@@ -2,10 +2,7 @@ import { normalizeOptionalString } from "@openclaw/normalization-core";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { buildControlUiSessionPath } from "@openclaw/session-url-contract";
-import type {
-  NativeNotificationMessage,
-  WebPushNotificationCategory,
-} from "../../packages/gateway-protocol/src/schema/push.js";
+import type { WebPushNotificationCategory } from "../../packages/gateway-protocol/src/schema/push.js";
 import {
   isWebPushQuietHours,
   normalizeWebPushDisplayLabel,
@@ -13,7 +10,6 @@ import {
   webPushAgentAllowed,
   webPushCategoryEnabled,
 } from "../infra/push-web-preferences.js";
-import type { ExecApprovalRecord } from "./exec-approval-manager.js";
 import type { GatewayBroadcastOpts } from "./server-broadcast-types.js";
 
 export const NOTIFICATION_TTL_MS = 5 * 60 * 1_000;
@@ -170,36 +166,4 @@ export function eventNotificationPath(
     : null;
   // Events without one bounded navigable session open the session catalog.
   return path && path.length <= 1024 ? path : "/sessions";
-}
-
-export function nativeNotification(params: {
-  id: string;
-  category: WebPushNotificationCategory;
-  title: string;
-  body: string;
-  path: string;
-  expiresAtMs: number;
-  alert?: boolean;
-}): Extract<NativeNotificationMessage, { action: "show" }> {
-  return { action: "show", ...params, alert: params.alert ?? true };
-}
-
-export function nativeApprovalNotification(
-  record: ExecApprovalRecord<unknown>,
-  preferences: NotificationPreferences,
-  alert: boolean,
-): NativeNotificationMessage {
-  const source = isRecord(record.request) ? record.request : undefined;
-  return nativeNotification({
-    ...renderApprovalNotification({
-      terminal: false,
-      preferences,
-      agentLabel: normalizeWebPushDisplayLabel(source?.agentId),
-    }),
-    id: approvalNotificationTag(record.id),
-    category: "approval-requested",
-    path: `/approve/${encodeURIComponent(record.id)}`,
-    expiresAtMs: record.expiresAtMs,
-    alert,
-  });
 }
