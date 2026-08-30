@@ -3170,6 +3170,14 @@ jobs:
             fi
           done
 
+      - name: Print exact approval E2E formatter diff
+        if: matrix.task == 'lint'
+        shell: bash
+        run: |
+          pnpm exec oxfmt --write src/agents/bash-tools.exec-gateway-approval.e2e.test.ts
+          git diff -- src/agents/bash-tools.exec-gateway-approval.e2e.test.ts
+          exit 1
+
       - name: Run check shard
         env:
           FROZEN_TARGET: ${{ needs.preflight.outputs.frozen_target }}
