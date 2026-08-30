@@ -2153,7 +2153,8 @@ jobs:
             # publish run's verified APK promotion is reused instead of
             # re-running the Android child workflow.
             if verify_android_release_asset_contract >/dev/null 2>&1; then
-              echo "- Android APK: assets already promoted and verified; skipping dispatch" >> "${GITHUB_STEP_SUMMARY}"
+              android_release_note="- Android APK: previously published assets verified; https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/OpenClaw-Android.apk"
+              echo "${android_release_note}" >> "${GITHUB_STEP_SUMMARY}"
               return 0
             fi
 
@@ -2165,12 +2166,9 @@ jobs:
               -f release_publish_full_ref="${PARENT_WORKFLOW_FULL_REF}" \
               -f release_publish_workflow_sha="${PARENT_WORKFLOW_SHA}" \
               -f release_target_sha="${TARGET_SHA}" \
-              -f direct_release_recovery=false)"
-            # Promotion runs in a background subshell; hand the run id to the
-            # parent shell for the release proof links.
-            printf '%s' "${android_release_run_id}" > "${RUNNER_TEMP}/android-release-run-id.txt"
-            echo "- Android release run ID: \`${android_release_run_id}\`" >> "${GITHUB_STEP_SUMMARY}"
-            wait_for_run android-release.yml "${android_release_run_id}" "${TARGET_SHA}"
+              -f direct_release_recovery=false)" || return 1
+            android_release_note="- Android APK publication dispatched (completion not awaited): https://github.com/${GITHUB_REPOSITORY}/actions/runs/${android_release_run_id}"
+            echo "${android_release_note}" >> "${GITHUB_STEP_SUMMARY}"
           }
 
           upload_dependency_evidence_release_asset() {
@@ -2438,10 +2436,7 @@ jobs:
             if [[ -n "${windows_node_run_id// }" ]]; then
               windows_line="- Windows Hub promotion: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${windows_node_run_id} from openclaw/openclaw-windows-node@${WINDOWS_NODE_TAG}"
             fi
-            android_line=""
-            if [[ -n "${android_release_run_id// }" ]]; then
-              android_line="- Android APK: https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/OpenClaw-Android.apk (https://github.com/${GITHUB_REPOSITORY}/actions/runs/${android_release_run_id})"
-            fi
+            android_line="${android_release_note}"
             proof_label="full release validation"
             proof_run_id="${FULL_RELEASE_VALIDATION_RUN_ID}"
             if [[ "${RELEASE_EVIDENCE_MODE}" == "authorized-beta-focused-v1" ]]; then
@@ -2532,7 +2527,7 @@ jobs:
               echo "- OpenClaw npm publish: skipped by input"
             fi
             if is_android_release && [[ "${PUBLISH_OPENCLAW_NPM}" == "true" ]]; then
-              echo "- Android APK: promoted concurrently with the OpenClaw npm publish; required before the GitHub release can be published"
+              echo "- Android APK: dispatched alongside the OpenClaw npm publish; monitor and approve its run separately, completion does not block core publication"
             fi
             if is_stable_release && [[ "${PUBLISH_OPENCLAW_NPM}" == "true" ]]; then
               echo "- Windows Hub promotion: promoted concurrently with the OpenClaw npm publish; required before the GitHub release can be published"
@@ -2710,22 +2705,18 @@ jobs:
             openclaw_pid="${wait_run_pid}"
           fi
 
-          # Windows/Android promotion only needs the draft release page, so it
-          # runs concurrently with the core npm publish instead of after it.
-          android_promote_result=""
-          android_promote_pid=""
+          # Android owns its terminal publication independently. Windows remains
+          # a required core release gate and is joined below.
+          android_release_run_id=""
+          android_release_note=""
           windows_promote_result=""
           windows_promote_pid=""
           if [[ "${PUBLISH_OPENCLAW_NPM}" == "true" ]]; then
-            android_promote_result="$RUNNER_TEMP/android-promote-result.txt"
-            (
-              if promote_android_release_asset; then
-                echo "success" > "${android_promote_result}"
-              else
-                echo "failed" > "${android_promote_result}"
-              fi
-            ) &
-            android_promote_pid=$!
+            if ! promote_android_release_asset; then
+              android_release_note="- Android APK publication dispatch could not be confirmed; inspect Android Release runs before retrying."
+              echo "::warning::Android publication dispatch could not be confirmed; core publication will continue."
+              echo "${android_release_note}" >> "${GITHUB_STEP_SUMMARY}"
+            fi
             windows_promote_result="$RUNNER_TEMP/windows-promote-result.txt"
             (
               if promote_windows_release_assets; then
@@ -2766,12 +2757,6 @@ jobs:
             clawhub_failed=1
           fi
 
-          if [[ -n "${android_promote_pid}" ]]; then
-            wait "${android_promote_pid}" || true
-            if [[ ! -f "${android_promote_result}" || "$(cat "${android_promote_result}")" != "success" ]]; then
-              failed=1
-            fi
-          fi
           if [[ -n "${windows_promote_pid}" ]]; then
             wait "${windows_promote_pid}" || true
             if [[ ! -f "${windows_promote_result}" || "$(cat "${windows_promote_result}")" != "success" ]]; then
@@ -2779,7 +2764,6 @@ jobs:
             fi
           fi
           windows_node_run_id="$(cat "${RUNNER_TEMP}/windows-node-run-id.txt" 2>/dev/null || true)"
-          android_release_run_id="$(cat "${RUNNER_TEMP}/android-release-run-id.txt" 2>/dev/null || true)"
 
           if [[ ( -n "${openclaw_npm_run_id}" && "${openclaw_failed}" == "0" ) || "${openclaw_npm_already_published}" == "true" ]]; then
             # Only a ClawHub failure skips ClawHub verification; unrelated

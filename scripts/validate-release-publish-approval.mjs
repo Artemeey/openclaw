@@ -109,7 +109,7 @@ if (approvalPath) {
     validateReleasePublishParentRun({
       identity,
       releasePublishFullRef: expectedWorkflowFullRef,
-      releasePublishParentStatePolicy: directRecovery ? "manual-recovery" : "active",
+      releasePublishParentStatePolicy: directRecovery ? "manual-recovery" : "active-or-success",
       releasePublishRef: expectedBranch,
       releasePublishRunAttempt: expectedRunAttempt,
       releasePublishRunId,

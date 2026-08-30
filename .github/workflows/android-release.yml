@@ -32,7 +32,7 @@ on:
         required: true
         type: string
       direct_release_recovery:
-        description: Allow a completed parent run and published release for explicit backfill or recovery
+        description: Allow a failed completed parent run for explicit backfill or recovery
         required: true
         default: false
         type: boolean
@@ -124,10 +124,6 @@ jobs:
           fi
           if [[ "$(printf '%s' "${release_json}" | jq -r '.isPrerelease')" == "true" ]]; then
             echo "Android APK publishing requires a stable GitHub release." >&2
-            exit 1
-          fi
-          if [[ "${DIRECT_RELEASE_RECOVERY}" != "true" && "$(printf '%s' "${release_json}" | jq -r '.isDraft')" != "true" ]]; then
-            echo "Normal Android promotion requires the target GitHub release to remain a draft." >&2
             exit 1
           fi
           release_created_at="$(printf '%s' "${release_json}" | jq -er '.createdAt')"

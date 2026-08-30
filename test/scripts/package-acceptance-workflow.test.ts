@@ -2308,7 +2308,6 @@ describe("package acceptance workflow", () => {
       'approve_pending_deployments "${workflow}" "${run_id}" "${expected_sha}"',
       'wait_for_run windows-node-release.yml "${windows_node_run_id}" "${PARENT_WORKFLOW_SHA}"',
       'dispatch_workflow_at_ref "${RELEASE_TAG}" "${TARGET_SHA}" android-release.yml',
-      'wait_for_run android-release.yml "${android_release_run_id}" "${TARGET_SHA}"',
       'wait_for_run plugin-npm-release.yml "${plugin_npm_run_id}" "${PARENT_WORKFLOW_SHA}"',
       'wait_for_run_background openclaw-npm-release.yml "${openclaw_npm_run_id}" "${PARENT_WORKFLOW_SHA}"',
       '-f release_publish_branch="${PARENT_WORKFLOW_BRANCH}"',
@@ -2317,6 +2316,83 @@ describe("package acceptance workflow", () => {
       "plugin-clawhub-new.yml: detached; approvals and bootstrap not awaited",
     ]);
   });
+
+  it.each([
+    [false, false],
+    [true, false],
+    [false, true],
+  ])(
+    "does not block core publication on Android completion (dispatch failure: %s, existing assets: %s)",
+    (dispatchFailure, assetsVerified) => {
+      const script = workflowStep(
+        workflowJob(RELEASE_PUBLISH_WORKFLOW, "publish"),
+        "Dispatch publish workflows",
+      ).run;
+      if (!script) throw new Error("Missing publish orchestration");
+      const start = script.indexOf('openclaw_result=""');
+      const end = script.indexOf('if [[ ( -n "${openclaw_npm_run_id}"', start);
+      if (start < 0 || end < start) throw new Error("Missing native publication stage");
+      const root = tempDirs.make("android-detached-publish-");
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          `
+set -euo pipefail
+is_android_release() { return 0; }
+verify_android_release_asset_contract() { return ${assetsVerified ? 0 : 1}; }
+dispatch_workflow_at_ref() { ${dispatchFailure ? "return 1" : "echo 456"}; }
+wait_for_run() { echo unexpected-android-wait >&2; return 1; }
+promote_windows_release_assets() { echo 789 > "$RUNNER_TEMP/windows-node-run-id.txt"; }
+${shellFunctionSource(script, "promote_android_release_asset")}
+${script.slice(start, end)}
+printf 'core_failed=%s\n' "$failed"
+`,
+        ],
+        {
+          encoding: "utf8",
+          env: {
+            PATH: process.env.PATH,
+            RUNNER_TEMP: root,
+            GITHUB_STEP_SUMMARY: join(root, "summary"),
+            GITHUB_REPOSITORY: "openclaw/openclaw",
+            GITHUB_RUN_ID: "123",
+            GITHUB_RUN_ATTEMPT: "2",
+            RELEASE_TAG: "v2026.8.1",
+            TARGET_SHA: "a".repeat(40),
+            PARENT_WORKFLOW_BRANCH: "main",
+            PARENT_WORKFLOW_FULL_REF: "refs/heads/main",
+            PARENT_WORKFLOW_SHA: "d".repeat(40),
+            PUBLISH_OPENCLAW_NPM: "true",
+            openclaw_npm_run_id: "",
+            clawhub_pid: "",
+            clawhub_result: "",
+            clawhub_bootstrap_pid: "",
+            clawhub_bootstrap_result: "",
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("core_failed=0");
+      expect(result.stderr).not.toContain("unexpected-android-wait");
+      const summary = readFileSync(join(root, "summary"), "utf8");
+      if (assetsVerified) {
+        expect(summary).toContain("previously published assets verified");
+        expect(summary).toContain("releases/download/v2026.8.1/OpenClaw-Android.apk");
+        expect(summary).not.toContain("actions/runs/456");
+      } else if (dispatchFailure) {
+        expect(result.stdout).toContain(
+          "::warning::Android publication dispatch could not be confirmed",
+        );
+        expect(summary).toContain("inspect Android Release runs before retrying");
+        expect(summary).not.toContain("actions/runs/456");
+      } else {
+        expect(summary).toContain("completion not awaited");
+        expect(summary).toContain("https://github.com/openclaw/openclaw/actions/runs/456");
+      }
+      if (!assetsVerified) expect(summary).not.toContain("releases/download");
+    },
+  );
 
   it("compares dependency evidence zip contents independently of archive timestamps", () => {
     const orchestration = workflowStep(
@@ -7937,7 +8013,7 @@ printf '%s\\n' "$DEEPSEEK_API_KEY" "$DEEPINFRA_API_KEY"`,
     );
   });
 
-  it("gates stable GitHub publication on the signed Android APK contract", () => {
+  it("keeps the signed Android APK contract independent of core publication", () => {
     const releaseWorkflow = readFileSync(RELEASE_PUBLISH_WORKFLOW, "utf8");
     const androidWorkflow = readFileSync(ANDROID_RELEASE_WORKFLOW, "utf8");
     const androidDocs = readFileSync("docs/platforms/android.md", "utf8");
@@ -8021,7 +8097,7 @@ printf '%s\\n' "$DEEPSEEK_API_KEY" "$DEEPINFRA_API_KEY"`,
       "\n            create_or_update_github_release\n",
     );
     const promoteAndroidCall = releaseWorkflow.lastIndexOf(
-      "\n              if promote_android_release_asset; then\n",
+      "\n            if ! promote_android_release_asset; then\n",
     );
     expect(createDraftCall).toBeGreaterThan(-1);
     expect(promoteAndroidCall).toBeGreaterThan(createDraftCall);
