@@ -41,14 +41,11 @@ import {
 import { publishSessionPatchEffects } from "./sessions-patch-effects.js";
 import {
   createCommitGuard,
+  invalidSessionPatchOutcome,
   sessionChangedError,
   unexpectedPatchError,
 } from "./sessions-patch-errors.js";
-import {
-  resolveSessionPatchExpectationError,
-  sessionPatchExpectationsChanged,
-  sessionPatchTargetIdentity,
-} from "./sessions-patch-expectations.js";
+import * as sessionPatchExpectations from "./sessions-patch-expectations.js";
 import { persistSessionPatchModelSelection } from "./sessions-patch-model-selection.js";
 import type { ActiveSessionPermissionChange } from "./sessions-patch-permissions.runtime.js";
 import { resolveSessionWorkerPlacementPatchError, sessionLog } from "./sessions-shared.js";
@@ -205,12 +202,10 @@ async function executeSessionPatchMutations(params: {
     // its public identity fields so closures can never reach hooks or entries.
     const { commitGuard: _commitGuard, ...identity } = input;
     const fullPatch: SessionsPatchParams = { ...params.patch, ...identity };
-    const expectationError = resolveSessionPatchExpectationError(fullPatch);
+    const expectationError =
+      sessionPatchExpectations.resolveSessionPatchExpectationError(fullPatch);
     if (expectationError) {
-      outcomes[index] = {
-        ok: false,
-        error: errorShape(ErrorCodes.INVALID_REQUEST, expectationError),
-      };
+      outcomes[index] = invalidSessionPatchOutcome(expectationError);
       continue;
     }
     let initialPlacementPatchError: string | undefined;
@@ -401,7 +396,10 @@ async function executeSessionPatchMutations(params: {
                           (target.fullPatch.expectedLifecycleRevision !== undefined &&
                             existingEntry?.lifecycleRevision !==
                               target.fullPatch.expectedLifecycleRevision) ||
-                          sessionPatchExpectationsChanged(existingEntry, target.fullPatch);
+                          sessionPatchExpectations.sessionPatchExpectationsChanged(
+                            existingEntry,
+                            target.fullPatch,
+                          );
                         const lifecycleEntryRemoved =
                           target.initialEntry !== undefined && existingEntry === undefined;
                         const archiveTargetChanged =
@@ -681,7 +679,7 @@ export async function executeSessionPatch(params: {
   patch: SessionsPatchParams;
   sessionMutationAuthorization?: SessionMutationAuthorization;
 }): Promise<{ ok: false; error: ErrorShape } | { ok: true; result: SessionsPatchResult }> {
-  const target = sessionPatchTargetIdentity(params.patch);
+  const target = sessionPatchExpectations.sessionPatchTargetIdentity(params.patch);
   const executed = await executeSessionPatchMutations({
     client: params.client,
     context: params.context,

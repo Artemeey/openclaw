@@ -28,10 +28,6 @@ import {
   runWithDispatchAbortSignal,
 } from "./dispatch-from-config.abort.js";
 import {
-  admittedSessionSettingsRestrictRuntime,
-  createReplyDispatchEvent,
-} from "./dispatch-from-config.events.js";
-import {
   hasExecApprovalPayload,
   requiresDurableToolResultDelivery,
 } from "./dispatch-from-config.payloads.js";
@@ -39,6 +35,8 @@ import { suppressPendingFinalDelivery } from "./dispatch-from-config.pending-fin
 import { extendPreparedDispatchState } from "./dispatch-from-config.phase-state.js";
 import type { PrepareDispatchOperationReadyState } from "./dispatch-from-config.prepare-operation.js";
 import { createSessionMetadataChangeNotifier } from "./dispatch-from-config.session-metadata.js";
+import { runReplyDispatchTakeover } from "./dispatch-from-config.reply-dispatch-hook.js";
+import { maybeRefuseRestrictedRuntimeTakeover } from "./dispatch-from-config.restricted-runtime.js";
 import {
   captureDeliveredTranscriptMirror,
   mirrorDeliveredReplyToTranscript,
@@ -52,9 +50,6 @@ import {
   type ReplyDispatchDeliveryOutcome,
 } from "./reply-dispatcher.js";
 import { isDispatchFinalReplySessionWriterAuthorized } from "./session-writer-delivery-authority.js";
-
-const RESTRICTED_RUNTIME_TAKEOVER_ERROR =
-  "This session's bound runtime cannot enforce its permission or tool policy; use an embedded runtime for this restricted conversation.";
 
 export async function chooseDispatchRoute(state: PrepareDispatchOperationReadyState) {
   const {
@@ -612,100 +607,20 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
     }
   }
 
-  const admittedSettingsRestrictRuntime = admittedSessionSettingsRestrictRuntime(
-    params.replyOptions?.admittedSessionSettings,
-  );
-  if (admittedSettingsRestrictRuntime && state.dispatchKind === "acp") {
-    let queuedFinal = false;
-    let routedFinalCount = 0;
-    if (!state.suppressDelivery) {
-      const refusal = await sendFinalPayload(
-        { text: RESTRICTED_RUNTIME_TAKEOVER_ERROR, isError: true },
-        {
-          abortSignal: getPreDispatchAbortSignal(),
-          deliveryId: "restricted-runtime-takeover",
-        },
-      );
-      queuedFinal = refusal.queuedFinal;
-      routedFinalCount = refusal.routedFinalCount;
-    }
-    const counts = dispatcher.getQueuedCounts();
-    counts.final += routedFinalCount;
-    recordProcessed("error", {
-      reason: "restricted_runtime_takeover",
-      error: RESTRICTED_RUNTIME_TAKEOVER_ERROR,
-    });
-    markIdle("message_completed");
-    commitInboundDedupeIfClaimed();
-    completeDispatchReplyOperation();
+  const restrictedRuntimeRefusal = await maybeRefuseRestrictedRuntimeTakeover({
+    state,
+    sendFinalPayload,
+  });
+  if (restrictedRuntimeRefusal) {
     return {
       status: "complete" as const,
-      result: attachSourceReplyDeliveryMode({ queuedFinal, counts }),
+      result: attachSourceReplyDeliveryMode(restrictedRuntimeRefusal),
     };
   }
 
-  if (
-    !admittedSettingsRestrictRuntime &&
-    hookRunner?.hasHooks("reply_dispatch", { dispatchKind: state.dispatchKind })
-  ) {
-    const replyDispatchResult = await traceReplyPhase("reply.reply_dispatch_hooks", () =>
-      runWithDispatchLifecycleAdmission(
-        async () =>
-          await runWithDispatchAbortSignal(
-            getPreDispatchAbortSignal(),
-            () =>
-              hookRunner.runReplyDispatch(
-                createReplyDispatchEvent({
-                  ctx,
-                  runId: params.replyOptions?.runId,
-                  sessionKey: acpDispatchSessionKey,
-                  toolsAllow: params.replyOptions?.toolsAllow,
-                  images: params.replyOptions?.images,
-                  inboundAudio: state.inboundAudio,
-                  sessionTtsAuto,
-                  ttsChannel: deliveryChannel,
-                  suppressUserDelivery: state.suppressHookUserDelivery,
-                  suppressReplyLifecycle: state.suppressHookReplyLifecycle,
-                  sourceReplyDeliveryMode: state.sourceReplyDeliveryMode,
-                  shouldRouteToOriginating,
-                  originatingChannel: routeReplyChannel,
-                  originatingTo: routeReplyTo,
-                  originatingAccountId: replyContextAccountId,
-                  originatingThreadId: routeReplyThreadId,
-                  originatingChatType: replyRoute.chatType,
-                  shouldSendToolSummaries,
-                  shouldSendFullToolDetails: state.shouldEmitFullVerboseProgress(),
-                  sendPolicy: state.sendPolicy,
-                }),
-                {
-                  cfg,
-                  dispatchKind: state.dispatchKind,
-                  dispatcher: state.dispatchHookDispatcher,
-                  abortSignal: getPreDispatchAbortSignal() ?? params.replyOptions?.abortSignal,
-                  onReplyStart: params.replyOptions?.onReplyStart,
-                  onAgentRunStart: params.replyOptions?.onAgentRunStart,
-                  userTurnTranscriptRecorder: params.replyOptions?.userTurnTranscriptRecorder,
-                  prepareAssistantTranscriptMessage:
-                    params.replyOptions?.prepareAssistantTranscriptMessage,
-                  recordProcessed,
-                  markIdle,
-                },
-              ),
-            trackDispatchLifecycleWork,
-          ),
-      ),
-    );
-    if (replyDispatchResult?.handled) {
-      commitInboundDedupeIfClaimed();
-      completeDispatchReplyOperation();
-      return {
-        status: "complete" as const,
-        result: attachSourceReplyDeliveryMode({
-          queuedFinal: replyDispatchResult.queuedFinal,
-          counts: replyDispatchResult.counts,
-        }),
-      };
-    }
+  const replyDispatchTakeover = await runReplyDispatchTakeover(state, shouldSendToolSummaries);
+  if (replyDispatchTakeover) {
+    return replyDispatchTakeover;
   }
 
   const dispatchAcquisition = await state.ensureDispatchReplyOperation(
