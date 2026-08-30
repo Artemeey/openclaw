@@ -354,6 +354,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
                   "agentHarnessId" in params.initialEntry,
                   "cliBackendId" in params.initialEntry,
                   "acpSessionBinding" in params.initialEntry,
+                  "nativeExecution" in params.initialEntry,
                 ].filter(Boolean).length;
                 if (runtimeOwnerCount !== 1) {
                   throw new Error(
@@ -368,6 +369,17 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
                   return await session.createSessionEntry(params);
                 }
                 if ("acpSessionBinding" in params.initialEntry) {
+                  if (!params.key.startsWith(`plugin:${pluginId}:`)) {
+                    throw new Error(
+                      `Plugin "${pluginId}" session keys must start with "plugin:${pluginId}:".`,
+                    );
+                  }
+                  return await session.createSessionEntry({
+                    ...params,
+                    initialEntry: { ...params.initialEntry, pluginOwnerId: pluginId },
+                  });
+                }
+                if ("nativeExecution" in params.initialEntry) {
                   if (!params.key.startsWith(`plugin:${pluginId}:`)) {
                     throw new Error(
                       `Plugin "${pluginId}" session keys must start with "plugin:${pluginId}:".`,

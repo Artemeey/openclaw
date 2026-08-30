@@ -1,6 +1,6 @@
 import http from "node:http";
 import type { ActiveSessionCatalog } from "openclaw/plugin-sdk/session-catalog-runtime";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBeamRequestHandler } from "./http.js";
 import { createBeamMirrorRunner } from "./mirror.js";
 import { createBeamSessionCatalog } from "./session-catalog.js";
@@ -471,5 +471,61 @@ describe("Beam session catalog", () => {
     expect(catalog.continueSession).toBeUndefined();
     expect(catalog.archive).toBeUndefined();
     expect(catalog.openTerminal).toBeUndefined();
+  });
+
+  it("continues a beamed thread by adopting its transcript into an owned native session", async () => {
+    const store = memoryStore();
+    await store.put({
+      ...sampleUpload({ completed: true }),
+      createdAt: 100,
+      receivedAt: 200,
+    });
+    const createSessionEntry = vi.fn(async () => ({
+      key: "agent:main:plugin:beam:catalog-adopt:native",
+    }));
+    const api = {
+      id: "beam",
+      runtime: {
+        config: {
+          current: () => ({ agents: { list: [{ id: "main", default: true }] } }),
+        },
+        agent: {
+          session: {
+            listSessionEntries: () => [],
+            createSessionEntry,
+          },
+        },
+      },
+    } as never;
+    const catalog = createBeamSessionCatalog(store, api);
+
+    const [host] = await catalog.list({ agentId: "main" });
+    expect(host?.sessions[0]?.canContinue).toBe(true);
+    await expect(
+      catalog.continueSession?.({
+        agentId: "main",
+        hostId: "gateway",
+        threadId: "0123456789abcdef0123456789abcdef",
+      }),
+    ).resolves.toEqual({ sessionKey: "agent:main:plugin:beam:catalog-adopt:native" });
+    expect(createSessionEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "main",
+        displayName: "Fix the upload flow",
+        recoverMatchingInitialEntry: true,
+        initialEntry: {
+          nativeExecution: true,
+          pluginOwnerId: "beam",
+          pluginExtensions: {
+            beam: {
+              sessionCatalog: {
+                sourceThreadId: "0123456789abcdef0123456789abcdef",
+              },
+            },
+          },
+        },
+        afterCreate: expect.any(Function),
+      }),
+    );
   });
 });

@@ -207,7 +207,10 @@ async function createSessionEntry(
   const cliInitial = "cliBackendId" in params.initialEntry ? params.initialEntry : undefined;
   const acpInitial = "acpSessionBinding" in params.initialEntry ? params.initialEntry : undefined;
   const harnessInitial = "agentHarnessId" in params.initialEntry ? params.initialEntry : undefined;
-  const pluginInitial = cliInitial ?? acpInitial;
+  const pluginInitial =
+    cliInitial ??
+    acpInitial ??
+    ("nativeExecution" in params.initialEntry ? params.initialEntry : undefined);
   const acpBackendId = acpInitial?.acpBackendId.trim();
   const acpAgentId = acpInitial?.acpSessionBinding.acpAgentId.trim();
   const agentSessionId = acpInitial?.acpSessionBinding.agentSessionId.trim();
@@ -410,6 +413,9 @@ async function createSessionEntry(
                     pluginOwnerId: acpInitial.pluginOwnerId,
                     acpSessionBinding: persistedAcpBinding,
                   }
+                : {}),
+              ...(!cliInitial && !acpInitial && pluginInitial
+                ? { pluginOwnerId: pluginInitial.pluginOwnerId }
                 : {}),
               ...(params.initialEntry.modelSelectionLocked === true
                 ? { modelSelectionLocked: true }

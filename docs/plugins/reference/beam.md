@@ -1,5 +1,5 @@
 ---
-summary: "Read-only coding-session Beam receiver."
+summary: "Coding-session Beam receiver with native-session continuation."
 read_when:
   - You are installing, configuring, or auditing the beam plugin
 title: "Beam plugin"
@@ -7,7 +7,7 @@ title: "Beam plugin"
 
 # Beam plugin
 
-Read-only coding-session Beam receiver.
+Coding-session Beam receiver with native-session continuation.
 
 ## Distribution
 

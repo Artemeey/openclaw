@@ -176,6 +176,33 @@ describe("plugin runtime session creation", () => {
     });
   });
 
+  it("creates a plugin-owned imported transcript with native execution", async () => {
+    await withOpenClawTestState({ label: "plugin-runtime-native-import" }, async () => {
+      const runtime = createRuntimeAgent();
+      const key = "agent:main:plugin:beam:catalog-adopt:test";
+      const marker = { beam: { sessionCatalog: { sourceThreadId: "beam-thread" } } };
+
+      const created = await runtime.session.createSessionEntry({
+        cfg: {},
+        key,
+        initialEntry: {
+          nativeExecution: true,
+          pluginOwnerId: "beam",
+          pluginExtensions: marker,
+        },
+        afterCreate: async () => ({ pluginExtensions: marker }),
+      });
+
+      expect(created.entry).toMatchObject({
+        pluginOwnerId: "beam",
+        pluginExtensions: marker,
+      });
+      expect(created.entry).not.toHaveProperty("agentHarnessId");
+      expect(created.entry).not.toHaveProperty("providerOverride");
+      expect(created.entry).not.toHaveProperty("modelSelectionLocked");
+    });
+  });
+
   // Plugin-owned CLI fork creation with colors lives in runtime-agent.session-color.test.ts.
 
   it("rolls back the exact created entry and transcript when initialization fails", async () => {

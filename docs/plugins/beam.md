@@ -1,5 +1,5 @@
 ---
-summary: "Publish redacted local coding sessions into a shared read-only OpenClaw catalog"
+summary: "Publish redacted local coding sessions into a shared OpenClaw catalog"
 read_when:
   - Sharing a Claude Code or Codex session with trusted Gateway operators
   - Configuring an authenticated session-ingest endpoint without connecting a node
@@ -12,7 +12,7 @@ The bundled `beam` plugin receives a sanitized coding-session snapshot over auth
 Beam ships with OpenClaw but is disabled by default. When enabled, it registers:
 
 - `POST /api/v1/beam/sessions`
-- the read-only **Beam** session catalog in the Control UI sidebar
+- the **Beam** session catalog in the Control UI sidebar, with continuation into a native session
 
 ## Enable
 
@@ -111,10 +111,11 @@ The catalog is intentionally shared across the Gateway operator domain. Every cl
 
 Beam is passive session publication, not remote control.
 
-- It has no `continueSession`, archive, terminal, tool, or node capability.
+- Continuing creates a new native OpenClaw session from the sanitized transcript; it does not resume or control the source session.
+- It has no archive, terminal, tool, or node capability for the source session.
 - It accepts text-only normalized transcript items, not HTML, scripts, archives, attachments, or server-fetched URLs.
 - The official skill removes raw tool results, reasoning, prompts, local paths, credentials, cookies, and auth material before upload.
-- The receiver still treats every transcript as untrusted text. Copying a beamed transcript into a new agent session is a separate operator action.
+- The receiver still treats every transcript as untrusted text. Copying a beamed transcript into a new agent session requires a separate write-authorized operator action.
 - Requests are rate-limited and concurrency-limited before the body is read.
 
 ## Mirroring

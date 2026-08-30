@@ -133,6 +133,15 @@ type RuntimeCreateSessionEntryBaseParams = {
         pluginExtensions?: RuntimeSessionPluginExtensions;
         /** Registry-injected owner; plugin callers cannot select another owner. */
         pluginOwnerId?: string;
+      }
+    | {
+        /** Import a transcript while keeping ordinary OpenClaw agent execution. */
+        nativeExecution: true;
+        /** Registry-injected owner; plugin callers cannot select another owner. */
+        pluginOwnerId?: string;
+        color?: string;
+        modelSelectionLocked?: true;
+        pluginExtensions?: RuntimeSessionPluginExtensions;
       };
 };
 type RuntimeCreateSessionEntryParams = RuntimeCreateSessionEntryBaseParams &

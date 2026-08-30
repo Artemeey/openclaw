@@ -1,13 +1,24 @@
 import { createHash } from "node:crypto";
+import { resolveSessionAgentIdsStrict } from "openclaw/plugin-sdk/agent-scope-runtime";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import type {
   SessionCatalogProvider,
   SessionCatalogTranscriptItem,
+} from "openclaw/plugin-sdk/session-catalog";
+import {
+  createSessionCatalogAdoptionCoordinator,
+  importSessionCatalogHistory,
+  listAdoptedSessionCatalogSessions,
+  sessionCatalogAdoptedSessionKey,
+  sessionCatalogAdoptedSourceKey,
 } from "openclaw/plugin-sdk/session-catalog";
 import type { BeamStore } from "./store.js";
 import { BEAM_HOST_ID, type BeamStoredSession } from "./types.js";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
+const ADOPTED_SESSION_KEY_PREFIX = "plugin:beam:catalog-adopt:";
 
 function boundedLimit(value: number | undefined): number {
   return Math.min(MAX_LIMIT, Math.max(1, value ?? DEFAULT_LIMIT));
@@ -82,7 +93,103 @@ function transcriptPage(
   };
 }
 
-export function createBeamSessionCatalog(store: BeamStore): SessionCatalogProvider {
+function sourceThreadIdFromEntry(entry: {
+  pluginExtensions?: Record<string, unknown>;
+}): string | undefined {
+  const beam = entry.pluginExtensions?.beam;
+  if (!beam || typeof beam !== "object" || Array.isArray(beam)) {
+    return undefined;
+  }
+  const catalog = (beam as Record<string, unknown>).sessionCatalog;
+  if (!catalog || typeof catalog !== "object" || Array.isArray(catalog)) {
+    return undefined;
+  }
+  const sourceThreadId = (catalog as Record<string, unknown>).sourceThreadId;
+  return typeof sourceThreadId === "string" ? sourceThreadId : undefined;
+}
+
+export function createBeamSessionCatalog(
+  store: BeamStore,
+  api?: OpenClawPluginApi,
+): SessionCatalogProvider {
+  const continueAdoption = createSessionCatalogAdoptionCoordinator<{ sessionKey: string }>();
+  const continueSession: SessionCatalogProvider["continueSession"] = api
+    ? async (params) => {
+        if (params.hostId !== BEAM_HOST_ID) {
+          throw new Error(`unknown Beam host: ${params.hostId}`);
+        }
+        const session = await store.get(params.threadId);
+        if (!session) {
+          throw new Error(`unknown Beam session: ${params.threadId}`);
+        }
+        const config = api.runtime.config.current() as OpenClawConfig;
+        const agentId = resolveSessionAgentIdsStrict({
+          config,
+          agentId: params.agentId,
+        }).sessionAgentId;
+        const sourceKey = sessionCatalogAdoptedSourceKey(BEAM_HOST_ID, session.beamId);
+        const findExisting = () =>
+          listAdoptedSessionCatalogSessions({
+            agentId,
+            config,
+            pluginId: api.id,
+            runtime: api.runtime,
+            sourceFromEntry: (entry) => {
+              const threadId = sourceThreadIdFromEntry(entry);
+              return threadId ? { hostId: BEAM_HOST_ID, threadId } : undefined;
+            },
+          }).get(sourceKey);
+        return await continueAdoption({
+          sourceKey: `${agentId}\0${sourceKey}`,
+          findExisting,
+          create: async () => {
+            const marker = { sourceThreadId: session.beamId };
+            const created = await api.runtime.agent.session.createSessionEntry({
+              cfg: config,
+              key: sessionCatalogAdoptedSessionKey(ADOPTED_SESSION_KEY_PREFIX, session.beamId),
+              agentId,
+              recoverMatchingInitialEntry: true,
+              displayName: session.title,
+              initialEntry: {
+                nativeExecution: true,
+                pluginOwnerId: api.id,
+                pluginExtensions: { beam: { sessionCatalog: marker } },
+              },
+              afterCreate: async (entry) => {
+                await importSessionCatalogHistory({
+                  catalogId: "beam",
+                  threadId: session.beamId,
+                  read: async ({ cursor, limit }) => {
+                    const current = await store.get(session.beamId);
+                    if (!current) {
+                      throw new Error(`unknown Beam session: ${session.beamId}`);
+                    }
+                    return {
+                      hostId: BEAM_HOST_ID,
+                      label: current.title,
+                      threadId: current.beamId,
+                      ...transcriptPage(
+                        transcriptItems(current),
+                        boundedLimit(limit),
+                        transcriptRevision(current),
+                        cursor === undefined ? undefined : decodeTranscriptCursor(cursor),
+                      ),
+                    };
+                  },
+                  sessionId: entry.sessionId,
+                  sessionKey: entry.key,
+                  agentId: entry.agentId,
+                  config,
+                });
+                return { pluginExtensions: { beam: { sessionCatalog: marker } } };
+              },
+            });
+            return { sessionKey: created.key };
+          },
+          complete: async (continued) => continued,
+        });
+      }
+    : undefined;
   return {
     id: "beam",
     label: "Beam",
@@ -110,7 +217,7 @@ export function createBeamSessionCatalog(store: BeamStore): SessionCatalogProvid
             recencyAt: session.receivedAt,
             source: session.source,
             archived: false,
-            canContinue: false,
+            canContinue: continueSession !== undefined,
             canArchive: false,
           })),
           ...(offset + page.length < sessions.length
@@ -140,5 +247,6 @@ export function createBeamSessionCatalog(store: BeamStore): SessionCatalogProvid
         ...page,
       };
     },
+    ...(continueSession ? { continueSession } : {}),
   };
 }

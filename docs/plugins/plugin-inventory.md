@@ -66,7 +66,7 @@ Each entry lists the package, distribution route, and description.
 
 - **[azure-speech](/plugins/reference/azure-speech)** (`@openclaw/azure-speech`) - included in OpenClaw. Azure AI Speech text-to-speech (MP3, native Ogg/Opus voice notes, PCM telephony).
 
-- **[beam](/plugins/reference/beam)** (`@openclaw/beam`) - included in OpenClaw. Read-only coding-session Beam receiver.
+- **[beam](/plugins/reference/beam)** (`@openclaw/beam`) - included in OpenClaw. Coding-session Beam receiver with native-session continuation.
 
 - **[bonjour](/plugins/reference/bonjour)** (`@openclaw/bonjour`) - included in OpenClaw. Advertise the local OpenClaw gateway over Bonjour/mDNS.
 
