@@ -99,6 +99,7 @@ actor OutboxTransportState {
     var sendRoutingChanged = false
     var sendSettingsChanged = false
     var sendActiveLeafChanged = false
+    var sendSessionSettingsChanged = false
     var historyFails = false
     var sessionListFails = false
     var historyRequestCount = 0
@@ -441,6 +442,13 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
                 code: "INVALID_REQUEST",
                 message: "active leaf changed",
                 details: ["reason": AnyCodable("active-leaf-changed")])
+        }
+        if await self.state.sendSessionSettingsChanged {
+            throw GatewayResponseError(
+                method: "chat.send",
+                code: "INVALID_REQUEST",
+                message: "session settings changed",
+                details: ["reason": AnyCodable("session-settings-changed")])
         }
         if await self.state.sendRejects {
             // Gateway responded but refused to start the run.
@@ -2365,6 +2373,46 @@ struct ChatViewModelOutboxTests {
         #expect(await MainActor.run {
             vm.messages.contains { vm.outboxState(for: $0.id)?.allowsRetry == false }
         })
+    }
+
+    @Test func `typed session settings change preserves localized outbox reason`() async throws {
+        let (store, _, databaseDirectory) = try makeOutboxStore()
+        defer { try? FileManager.default.removeItem(at: databaseDirectory) }
+        let command = OpenClawChatOutboxCommand(
+            id: "settings-race",
+            sessionKey: "main",
+            deliverySessionKey: "agent:main:main",
+            routingContract: "per-sender|main|main",
+            agentID: "main",
+            structuredMessageText: "retry with original settings",
+            sendContext: OpenClawChatSendContext(
+                agentID: "main",
+                expectedSessionRoutingContract: "per-sender|main|main",
+                expectedSessionSettings: OpenClawChatSessionSettingsExpectation(
+                    permissionMode: nil,
+                    toolOverrides: nil),
+                sessionID: "sess-live",
+                queueMode: .followup,
+                expectedLeaf: .entry("leaf-before-send"),
+                unstructuredMessageFallback: "retry with original settings",
+                requiresStructuredDelivery: true),
+            text: "retry with original settings",
+            thinking: "off",
+            createdAt: Date().timeIntervalSince1970,
+            status: .queued,
+            retryCount: 0,
+            lastError: nil)
+        #expect(await store.enqueueCommand(command))
+        let transport = OutboxTestTransport(healthy: true)
+        await transport.state.update { $0.sendSessionSettingsChanged = true }
+        let vm = await makeOutboxViewModel(transport: transport, outbox: store)
+
+        await MainActor.run { vm.load() }
+        try await waitUntil("settings race parks") {
+            await store.loadCommands().map(\.status) == [.failed]
+        }
+        let parked = try #require(await store.loadCommands().first)
+        #expect(parked.lastError == OpenClawChatSQLiteTranscriptCache.outboxSettingsChangedError)
     }
 
     @Test func `lost queued send ack reconciles history without replay`() async throws {

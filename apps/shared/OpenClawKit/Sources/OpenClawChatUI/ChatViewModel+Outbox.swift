@@ -1152,7 +1152,7 @@ extension OpenClawChatViewModel {
                 let parked = await self.parkOutboxCommandForChangedTarget(
                     command,
                     outbox: outbox,
-                    lastError: "Session settings changed; review and retry this message.")
+                    lastError: OpenClawChatSQLiteTranscriptCache.outboxSettingsChangedError)
                 return parked ? .continueFlush : .stop
             }
             // A response error proves the gateway rejected the request; unlike
