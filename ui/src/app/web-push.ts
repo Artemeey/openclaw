@@ -3,7 +3,6 @@ import { formatUiError } from "../lib/format-error.ts";
 import type { ApplicationGateway } from "./gateway.ts";
 import type {
   WebPushCapabilityAction,
-  WebPushCapabilityPatch,
   WebPushCapabilityRuntime,
   WebPushPreferencesResult,
   WebPushSubscriptionState,
@@ -49,7 +48,7 @@ export function createWebPushCapability(gateway: ApplicationGateway): WebPushCap
   };
   const listeners = new Set<() => void>();
 
-  const publish = (patch: WebPushCapabilityPatch) => {
+  const publish = (patch: Partial<WebPushSnapshot>) => {
     Object.assign(snapshot, patch);
     for (const listener of listeners) {
       listener();
@@ -66,7 +65,7 @@ export function createWebPushCapability(gateway: ApplicationGateway): WebPushCap
             permission: "unsupported",
             subscription: "unknown",
             preferences: null,
-            error: formatUiError(error),
+            error: `Notifications could not be loaded. Reload the page to try again. ${formatUiError(error)}`,
           });
           return null;
         })

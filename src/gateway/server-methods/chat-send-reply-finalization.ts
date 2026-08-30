@@ -148,6 +148,7 @@ export async function finalizeChatSendDispatchedReplies(params: {
   >;
   suppressReplies: boolean;
   runtimeOwnsTranscript?: boolean;
+  agentRunCompleted?: true;
   state: "final" | "aborted";
   stopReason?: string;
 }): Promise<void> {
@@ -180,6 +181,7 @@ export async function finalizeChatSendDispatchedReplies(params: {
       runId: clientRunId,
       sessionKey,
       agentId,
+      agentRunCompleted: params.agentRunCompleted,
     });
     return;
   }
@@ -387,5 +389,6 @@ export async function finalizeChatSendDispatchedReplies(params: {
     message,
     state: params.state,
     stopReason: params.stopReason,
+    agentRunCompleted: params.agentRunCompleted,
   });
 }

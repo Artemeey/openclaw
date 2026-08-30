@@ -2,7 +2,7 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { expect, it } from "vitest";
-import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
+import { installMockGateway, startControlUiE2eServer } from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 
 const suite = createControlUiE2eSuite({
@@ -55,6 +55,53 @@ function notificationStatusConfigMocks() {
     },
   };
 }
+
+const runtimeSuite = createControlUiE2eSuite({
+  name: "Control UI notification module recovery",
+  startServer: () => startControlUiE2eServer(undefined, { source: true }),
+});
+
+runtimeSuite.define(() => {
+  it("disables unavailable notification actions and recovers after reloading the runtime", async () => {
+    await runtimeSuite.withPage(
+      {
+        colorScheme: "dark",
+        locale: "en-US",
+        serviceWorkers: "block",
+        viewport: { height: 1000, width: 1440 },
+      },
+      async ({ page }) => {
+        await installMockGateway(page, {
+          methodResponses: notificationStatusConfigMocks(),
+        });
+        const runtimeModule = /\/web-push\.runtime\.ts(?:\?|$)/u;
+        await page.route(runtimeModule, (route) => route.abort());
+        await page.goto(`${runtimeSuite.server.baseUrl}settings/appearance`);
+        await page.getByRole("link", { name: "Notifications", exact: true }).click();
+        const section = page.locator("#settings-communications-notifications");
+        await section.locator(".cfg-field__error").waitFor();
+        if (captureUiProofEnabled) {
+          await mkdir(uiProofArtifactDir, { recursive: true });
+          await page.screenshot({
+            animations: "disabled",
+            fullPage: true,
+            path: path.join(uiProofArtifactDir, "06-notifications-runtime-unavailable.png"),
+          });
+        }
+        await expect.poll(() => section.getByRole("button").count()).toBe(0);
+        expect(await section.locator(".cfg-field__error").textContent()).toContain("Reload");
+
+        await page.unroute(runtimeModule);
+        await page.reload();
+        await expect.poll(() => section.locator(".cfg-field__error").count()).toBe(0);
+        await section.getByRole("button", { name: "Enable notifications", exact: true }).waitFor();
+        await expect
+          .poll(() => section.locator(".settings-section__header").textContent())
+          .toContain("Ready");
+      },
+    );
+  });
+});
 
 suite.define(() => {
   it("renders every accepted branch of a transform input schema", async () => {

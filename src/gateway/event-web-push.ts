@@ -16,7 +16,6 @@ import {
   prepareWebPushNotificationSender,
   type BoundWebPushSubscription,
 } from "../infra/push-web.js";
-import { isTranscriptOnlyOpenClawAssistantMessage } from "../shared/transcript-only-openclaw-assistant.js";
 import { getUserPreferences } from "../state/user-preferences.js";
 import { resolveUserProfileId } from "../state/user-profiles.js";
 import { QUESTIONS_SCOPE } from "./method-scopes.js";
@@ -38,6 +37,7 @@ type EventNotification = {
 function resolveEventWebPushNotification(
   event: string,
   payload: unknown,
+  opts?: GatewayBroadcastOpts,
 ): EventNotification | null {
   const value = isRecord(payload) ? payload : null;
   if (!value) {
@@ -52,11 +52,7 @@ function resolveEventWebPushNotification(
       tag: `openclaw-question-${id}`,
     };
   }
-  if (
-    event === "chat" &&
-    value.state === "final" &&
-    !isTranscriptOnlyOpenClawAssistantMessage(value.message)
-  ) {
+  if (event === "chat" && value.state === "final" && opts?.agentRunCompleted) {
     const runId = normalizeWebPushDisplayLabel(value.runId) ?? "finished";
     return {
       category: "agent-finished",
@@ -117,7 +113,7 @@ export function createEventWebPushDelivery(params: {
 }) {
   return {
     handleEvent(event: string, payload: unknown, opts?: GatewayBroadcastOpts): void {
-      const notification = resolveEventWebPushNotification(event, payload);
+      const notification = resolveEventWebPushNotification(event, payload, opts);
       if (!notification) {
         return;
       }
