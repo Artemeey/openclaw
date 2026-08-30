@@ -2172,7 +2172,8 @@ describe("models.authOrderSet", () => {
       provider: "openai",
       order: ["openai:two", "openai:one"],
       authAliasLookupParams: expect.objectContaining({ includeUntrustedWorkspacePlugins: false }),
-      expectedPersistedProviderProfileIds: ["openai:one", "openai:two"],
+      expectedProviderProfileIds: ["openai:one", "openai:two"],
+      expectedRuntimeExternalProfileIds: [],
       expectedLocalProviderProfileIds: ["openai:one", "openai:two"],
     });
     expect(firstRespondCall(opts)?.slice(0, 2)).toEqual([
@@ -2218,11 +2219,56 @@ describe("models.authOrderSet", () => {
       expect.objectContaining({
         provider: "anthropic",
         order: ["anthropic:cli"],
-        expectedPersistedProviderProfileIds: ["anthropic:cli"],
+        expectedProviderProfileIds: ["anthropic:cli"],
+        expectedRuntimeExternalProfileIds: [],
         expectedLocalProviderProfileIds: ["anthropic:cli"],
       }),
     );
     expect(firstRespondCall(opts)?.[0]).toBe(true);
+  });
+
+  it("carries the prepared inherited auth owner into the durable write", async () => {
+    mocks.readPreparedCatalog.mockResolvedValueOnce({
+      ...createPreparedOwnerSnapshot("main"),
+      inheritedAuthDir: "/tmp/agent-auth-owner",
+    });
+    const opts = createOrderOptions({
+      provider: "openai",
+      profileIds: ["openai:two", "openai:one"],
+    });
+
+    await orderHandler(opts);
+
+    expect(mocks.setAuthProfileOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ inheritedAuthDir: "/tmp/agent-auth-owner" }),
+    );
+  });
+
+  it("keeps persisted membership when a runtime profile overlays the same id", async () => {
+    setPreparedAuthStore({
+      version: 1,
+      profiles: {
+        "openai:one": {
+          type: "oauth",
+          provider: "openai",
+          access: "external",
+          refresh: "external-refresh",
+          expires: 1_000_000,
+        },
+      },
+      runtimeExternalProfileIds: ["openai:one"],
+      runtimeLocalProfileIds: ["openai:one"],
+    });
+    const opts = createOrderOptions({ provider: "openai", profileIds: ["openai:one"] });
+
+    await orderHandler(opts);
+
+    expect(mocks.setAuthProfileOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedProviderProfileIds: ["openai:one"],
+        expectedRuntimeExternalProfileIds: ["openai:one"],
+      }),
+    );
   });
 
   it("asks the client to retry when provider membership changes during the locked write", async () => {
@@ -2293,7 +2339,8 @@ describe("models.authOrderSet", () => {
       provider: "openai",
       order: null,
       authAliasLookupParams: expect.objectContaining({ includeUntrustedWorkspacePlugins: false }),
-      expectedPersistedProviderProfileIds: ["openai:one", "openai:two"],
+      expectedProviderProfileIds: ["openai:one", "openai:two"],
+      expectedRuntimeExternalProfileIds: [],
       expectedLocalProviderProfileIds: ["openai:one", "openai:two"],
     });
   });
