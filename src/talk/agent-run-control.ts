@@ -5,7 +5,7 @@
  * binds those contracts to embedded-run abort, status, and steering primitives.
  */
 import type {
-  EmbeddedAgentMessageInjectionTarget,
+  ActiveEmbeddedRunOwner,
   EmbeddedAgentQueueMessageOutcome,
 } from "../agents/embedded-agent-runner/runs.js";
 import { getDiagnosticSessionActivitySnapshot } from "../logging/diagnostic-run-activity.js";
@@ -39,9 +39,6 @@ export {
 
 type RealtimeVoiceAgentControlDeps = {
   abortEmbeddedAgentRun: (sessionId: string) => boolean;
-  abortEmbeddedAgentMessageInjectionTarget: (
-    target: EmbeddedAgentMessageInjectionTarget,
-  ) => boolean;
   queueEmbeddedAgentMessageWithOutcomeAsync: (
     sessionId: string,
     text: string,
@@ -57,16 +54,6 @@ type RealtimeVoiceAgentControlDeps = {
     sessionKey?: string;
   }) => RealtimeVoiceAgentRunActivity;
   resolveActiveEmbeddedRunSessionId: (sessionKey: string) => string | undefined;
-  queueEmbeddedAgentMessageInjectionTarget: (
-    target: EmbeddedAgentMessageInjectionTarget,
-    text: string,
-    options?: {
-      steeringMode?: "all";
-      debounceMs?: number;
-      isInboundUserMessage?: boolean;
-      taskSuggestionDeliveryMode?: undefined;
-    },
-  ) => Promise<EmbeddedAgentQueueMessageOutcome>;
 };
 
 type RealtimeVoiceAgentControlParams = {
@@ -81,21 +68,20 @@ export async function controlRealtimeVoiceAgentRun(
   params: RealtimeVoiceAgentControlParams,
   providedDeps?: RealtimeVoiceAgentControlDeps,
 ): Promise<RealtimeVoiceAgentControlResult> {
-  return controlRealtimeVoiceAgentRunWithTarget(params, undefined, false, providedDeps);
+  return controlRealtimeVoiceAgentRunWithTarget(params, undefined, providedDeps);
 }
 
 /** Apply control from an ingress that already proved ownership of this exact opaque run. */
 export async function controlOwnedRealtimeVoiceAgentRun(
   params: RealtimeVoiceAgentControlParams,
-  target: EmbeddedAgentMessageInjectionTarget | undefined,
+  target: ActiveEmbeddedRunOwner | undefined,
 ): Promise<RealtimeVoiceAgentControlResult> {
-  return controlRealtimeVoiceAgentRunWithTarget(params, target, true);
+  return controlRealtimeVoiceAgentRunWithTarget(params, target ?? null);
 }
 
 async function controlRealtimeVoiceAgentRunWithTarget(
   params: RealtimeVoiceAgentControlParams,
-  target: EmbeddedAgentMessageInjectionTarget | undefined,
-  exactTargetRequired: boolean,
+  target: ActiveEmbeddedRunOwner | null | undefined,
   providedDeps?: RealtimeVoiceAgentControlDeps,
 ): Promise<RealtimeVoiceAgentControlResult> {
   // Provider registration consumes the shared policy without starting the agent runtime.
@@ -108,9 +94,8 @@ async function controlRealtimeVoiceAgentRunWithTarget(
   const text = params.text.trim();
   const intent = resolveRealtimeVoiceAgentControlIntent({ text, mode: params.mode });
   const mode = intent.mode;
-  const sessionId = exactTargetRequired
-    ? target?.sessionId
-    : deps.resolveActiveEmbeddedRunSessionId(sessionKey);
+  const sessionId =
+    target === undefined ? deps.resolveActiveEmbeddedRunSessionId(sessionKey) : target?.sessionId;
   const activity = deps.getDiagnosticSessionActivitySnapshot({ sessionId, sessionKey });
   const active = Boolean(sessionId || activity.activeWorkKind || activity.hasActiveEmbeddedRun);
 
@@ -151,9 +136,7 @@ async function controlRealtimeVoiceAgentRunWithTarget(
         suppress: false,
       };
     }
-    const aborted = target
-      ? deps.abortEmbeddedAgentMessageInjectionTarget(target)
-      : deps.abortEmbeddedAgentRun(sessionId);
+    const aborted = target ? target.abort() : deps.abortEmbeddedAgentRun(sessionId);
     const message = aborted
       ? "Cancelled the active OpenClaw run."
       : "OpenClaw could not cancel the active run.";
@@ -192,12 +175,7 @@ async function controlRealtimeVoiceAgentRunWithTarget(
   // so the runner treats it as deferred context instead of an immediate pivot.
   const steerText = mode === "followup" ? buildRealtimeVoiceAgentFollowupSteeringText(text) : text;
   const queueMessage = target
-    ? (
-        message: string,
-        options: Parameters<
-          RealtimeVoiceAgentControlDeps["queueEmbeddedAgentMessageInjectionTarget"]
-        >[2],
-      ) => deps.queueEmbeddedAgentMessageInjectionTarget(target, message, options)
+    ? target.queueMessage
     : (
         message: string,
         options: Parameters<

@@ -7,17 +7,13 @@ import { markDiagnosticToolStartedForTest } from "../../logging/diagnostic-run-a
 import { resetDiagnosticSessionStateForTest } from "../../logging/diagnostic-session-state.js";
 import { createUserTurnTranscriptRecorder } from "../../sessions/user-turn-transcript.js";
 import { createTestUserTurnTranscriptTarget } from "../../sessions/user-turn-transcript.test-support.js";
-import { controlOwnedRealtimeVoiceAgentRun } from "../../talk/agent-run-control.js";
 import {
-  abortEmbeddedAgentMessageInjectionTarget,
   clearActiveEmbeddedRun,
   formatEmbeddedAgentQueueFailureSummary,
   observeEmbeddedAgentMessageInjectionTarget,
   preemptAndDrainEmbeddedHeartbeatRun,
-  queueEmbeddedAgentMessageInjectionTarget,
   queueEmbeddedAgentMessageWithOutcome,
   queueEmbeddedAgentMessageWithOutcomeAsync,
-  resolveEmbeddedAgentMessageInjectionTarget,
   setActiveEmbeddedRun,
   type EmbeddedAgentQueueHandle,
 } from "./runs.js";
@@ -32,41 +28,21 @@ describe("embedded-agent active-run steering", () => {
     vi.restoreAllMocks();
   });
 
-  it("publishes an admitted run target only after active registration", async () => {
+  it("projects authority only into the exact captured run", async () => {
     const context = {
-      operationalRunInstance: { instanceId: "instance-talk", runId: "run-talk" },
+      operationalRunInstance: { instanceId: "instance-talk", runId: "run-first" },
     };
     const observer = vi.fn();
     observeEmbeddedAgentMessageInjectionTarget(context, observer);
-    expect(observer).not.toHaveBeenCalled();
-
-    const queueMessage = vi.fn(async () => {});
-    const handle = createEmbeddedRunHandle({ queueMessage });
-    Object.assign(handle, { runId: "run-talk", toolAuthorityFingerprint: "authority-talk" });
-    setActiveEmbeddedRun("session-talk", handle, "agent:main:main", undefined, context);
-
-    expect(observer).toHaveBeenCalledOnce();
-    await expect(
-      queueEmbeddedAgentMessageInjectionTarget(observer.mock.calls[0]![0], "early steer"),
-    ).resolves.toMatchObject({ queued: true });
-    expect(queueMessage).toHaveBeenCalledWith("early steer", {
-      toolAuthorityFingerprint: "authority-talk",
-    });
-  });
-
-  it("projects authority only into the exact captured run", async () => {
     const firstQueue = vi.fn(async () => {});
     const first = createEmbeddedRunHandle({ queueMessage: firstQueue });
     Object.assign(first, { runId: "run-first", toolAuthorityFingerprint: "authority-first" });
-    setActiveEmbeddedRun("session-talk", first, "agent:main:main");
-    const target = resolveEmbeddedAgentMessageInjectionTarget({
-      sessionId: "session-talk",
-      runId: "run-first",
-    });
-    expect(target).toBeDefined();
+    setActiveEmbeddedRun("session-talk", first, "agent:main:main", undefined, context);
+    expect(observer).toHaveBeenCalledOnce();
+    const target = observer.mock.calls[0]![0];
 
     await expect(
-      queueEmbeddedAgentMessageInjectionTarget(target!, "steer", {
+      target.queueMessage("steer", {
         isInboundUserMessage: true,
         steeringMode: "all",
       }),
@@ -90,58 +66,14 @@ describe("embedded-agent active-run steering", () => {
     setActiveEmbeddedRun("session-talk", replacement, "agent:main:main");
 
     await expect(
-      queueEmbeddedAgentMessageInjectionTarget(target!, "stale steer", {
+      target.queueMessage("stale steer", {
         isInboundUserMessage: true,
       }),
     ).resolves.toMatchObject({ queued: false, reason: "tool_authority_mismatch" });
     expect(replacementQueue).not.toHaveBeenCalled();
 
-    expect(abortEmbeddedAgentMessageInjectionTarget(target!)).toBe(false);
+    expect(target.abort()).toBe(false);
     expect(replacementAbort).not.toHaveBeenCalled();
-  });
-
-  it("steers and cancels through the production adapter without reaching a replacement", async () => {
-    const firstQueue = vi.fn(async () => {});
-    const firstAbort = vi.fn();
-    const first = createEmbeddedRunHandle({
-      queueMessage: firstQueue,
-      abort: firstAbort,
-      runId: "run-first",
-    });
-    Object.assign(first, { toolAuthorityFingerprint: "authority-first" });
-    setActiveEmbeddedRun("session-talk", first, "agent:main:main");
-    const target = resolveEmbeddedAgentMessageInjectionTarget({
-      sessionId: "session-talk",
-      runId: "run-first",
-    });
-
-    await expect(
-      controlOwnedRealtimeVoiceAgentRun(
-        { sessionKey: "agent:main:main", text: "use the safer plan", mode: "steer" },
-        target,
-      ),
-    ).resolves.toMatchObject({ ok: true, queued: true, sessionId: "session-talk" });
-    expect(firstQueue).toHaveBeenCalledTimes(1);
-
-    const replacementQueue = vi.fn(async () => {});
-    const replacementAbort = vi.fn();
-    const replacement = createEmbeddedRunHandle({
-      queueMessage: replacementQueue,
-      abort: replacementAbort,
-      runId: "run-replacement",
-    });
-    Object.assign(replacement, { toolAuthorityFingerprint: "authority-replacement" });
-    setActiveEmbeddedRun("session-talk", replacement, "agent:main:main");
-
-    await expect(
-      controlOwnedRealtimeVoiceAgentRun(
-        { sessionKey: "agent:main:main", text: "cancel", mode: "cancel" },
-        target,
-      ),
-    ).resolves.toMatchObject({ ok: false, aborted: false, reason: "abort_rejected" });
-    expect(firstAbort).not.toHaveBeenCalled();
-    expect(replacementAbort).not.toHaveBeenCalled();
-    expect(replacementQueue).not.toHaveBeenCalled();
   });
 
   it("aborts and drains the exact heartbeat handle through session replacement", async () => {

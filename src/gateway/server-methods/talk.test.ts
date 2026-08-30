@@ -73,8 +73,8 @@ const mocks = vi.hoisted(() => ({
   stopTalkTranscriptionRelaySession: vi.fn(),
   chatSend: vi.fn(),
   controlRealtimeVoiceAgentRun: vi.fn(),
-  injectionTarget: {},
-  resolveEmbeddedAgentMessageInjectionTarget: vi.fn(),
+  injectionTarget: { sessionId: "session-active" },
+  resolveActiveEmbeddedRunOwnerByRunId: vi.fn(),
   steerTalkRealtimeRelayAgentRun: vi.fn(),
   resolveSessionKeyFromResolveParams: vi.fn(),
   resolveRealtimeBootstrapContextInstructions: vi.fn(
@@ -165,7 +165,7 @@ vi.mock("../../talk/agent-run-control.js", () => ({
 
 vi.mock("../../agents/embedded-agent-runner/runs.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../agents/embedded-agent-runner/runs.js")>()),
-  resolveEmbeddedAgentMessageInjectionTarget: mocks.resolveEmbeddedAgentMessageInjectionTarget,
+  resolveActiveEmbeddedRunOwnerByRunId: mocks.resolveActiveEmbeddedRunOwnerByRunId,
 }));
 
 vi.mock("../../talk/agent-consult-runtime.js", async (importOriginal) => {
@@ -2956,7 +2956,7 @@ describe("talk.client.steer handler", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.resolveEmbeddedAgentMessageInjectionTarget.mockReturnValue(mocks.injectionTarget);
+    mocks.resolveActiveEmbeddedRunOwnerByRunId.mockReturnValue(mocks.injectionTarget);
     mocks.controlRealtimeVoiceAgentRun.mockResolvedValue({
       ok: true,
       mode: "steer",
@@ -3494,6 +3494,8 @@ describe("talk.client.create handler", () => {
       show: true,
       suppress: false,
     });
+    const currentTarget = { ...mocks.injectionTarget, sessionId: "session-main" };
+    mocks.resolveActiveEmbeddedRunOwnerByRunId.mockReturnValue(currentTarget);
     const steerRespond = vi.fn();
     await callTalkHandler("talk.client.steer", {
       params: { sessionKey: "main", text: "Use the safer plan", mode: "steer" },
@@ -3506,7 +3508,7 @@ describe("talk.client.create handler", () => {
         text: "Use the safer plan",
         mode: "steer",
       },
-      mocks.injectionTarget,
+      currentTarget,
     );
     expectRespondOk(steerRespond, { ok: true, mode: "steer" });
 

@@ -1,3 +1,4 @@
+import type { ActiveEmbeddedRunOwner } from "../agents/embedded-agent.js";
 import { BoundedSerialQueue } from "../shared/bounded-serial-queue.js";
 import { createDeferredCore } from "../shared/deferred.js";
 
@@ -10,14 +11,14 @@ export function createRealtimeControlQueue(): BoundedSerialQueue {
   });
 }
 
-export type PendingConsult<CapturedControl> = {
+export type PendingConsult = {
   controller: AbortController;
-  controlTarget: Promise<CapturedControl | undefined>;
-  resolveControlTarget: (captured: CapturedControl | undefined) => void;
+  controlTarget: Promise<ActiveEmbeddedRunOwner | undefined>;
+  resolveControlTarget: (captured: ActiveEmbeddedRunOwner | undefined) => void;
 };
 
-export function createPendingTalkConsult<CapturedControl>(): PendingConsult<CapturedControl> {
-  const targetReady = createDeferredCore<CapturedControl | undefined>();
+export function createPendingTalkConsult(): PendingConsult {
+  const targetReady = createDeferredCore<ActiveEmbeddedRunOwner | undefined>();
   return {
     controller: new AbortController(),
     controlTarget: targetReady.promise,

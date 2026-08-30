@@ -19,7 +19,6 @@ function createDeps(options: {
 }) {
   return {
     abortEmbeddedAgentRun: vi.fn(() => options.abortResult ?? true),
-    abortEmbeddedAgentMessageInjectionTarget: vi.fn(() => options.abortResult ?? true),
     queueEmbeddedAgentMessageWithOutcomeAsync: vi.fn(
       async (
         sessionId: string,
@@ -45,7 +44,6 @@ function createDeps(options: {
               enqueuedAtMs: 123,
             },
     ),
-    queueEmbeddedAgentMessageInjectionTarget: vi.fn(),
     getDiagnosticSessionActivitySnapshot: vi.fn(() => options.activity ?? {}),
     resolveActiveEmbeddedRunSessionId: vi.fn(() => options.activeSessionId),
   };

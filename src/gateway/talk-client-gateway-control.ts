@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { EmbeddedAgentMessageInjectionTarget } from "../agents/embedded-agent.js";
+import type { ActiveEmbeddedRunOwner } from "../agents/embedded-agent.js";
 import { normalizeTalkSection } from "../config/talk.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginRuntime } from "../plugins/runtime/index.js";
@@ -90,7 +90,7 @@ function createTalkClientAgentRuntime(params: {
   config: OpenClawConfig;
   agentId: string;
   rawSourceRef?: string;
-  onControlTargetReady?: (target: EmbeddedAgentMessageInjectionTarget) => void;
+  onControlTargetReady?: (target: ActiveEmbeddedRunOwner) => void;
 }) {
   const agentRuntime = createPluginRuntime().agent;
   const runEmbeddedAgent: typeof agentRuntime.runEmbeddedAgent = async (runParams) => {
@@ -146,12 +146,12 @@ function createTalkClientAgentRuntime(params: {
   return agentRuntime;
 }
 
-export function createTalkRealtimeRunControlOwner<Captured = undefined>(params: {
+export function createTalkRealtimeRunControlOwner(params: {
   hasActiveRun: () => boolean;
-  capture?: (args: unknown) => Captured;
+  capture?: (args: unknown) => Promise<ActiveEmbeddedRunOwner | undefined> | undefined;
   execute: (
     args: unknown,
-    captured: Captured | undefined,
+    captured: Promise<ActiveEmbeddedRunOwner | undefined> | undefined,
   ) => Promise<RealtimeVoiceAgentControlResult>;
   speak: (message: string) => void;
   warn: (message: string) => void;
@@ -247,13 +247,13 @@ export function createTalkClientAgentConsultRunner(params: {
   runIdPrefix?: string;
   surface?: string;
   registerRun?: (params: { runId: string }) => void;
-  captureRunControl?: () => EmbeddedAgentMessageInjectionTarget | undefined;
+  captureRunControl?: () => ActiveEmbeddedRunOwner | undefined;
 }) {
   const authority = params.authority ?? resolveTalkAgentConsultAuthority(undefined);
   const runArgs = async (
     args: unknown,
     signal?: AbortSignal,
-    onRunControlReady?: (captured: EmbeddedAgentMessageInjectionTarget | undefined) => void,
+    onRunControlReady?: (captured: ActiveEmbeddedRunOwner | undefined) => void,
   ) => {
     const parsedArgs = parseRealtimeVoiceAgentConsultArgs(args);
     const voiceSessionId = params.getVoiceSessionId();
@@ -344,7 +344,7 @@ export function createTalkClientAgentConsultRunner(params: {
   };
 }
 
-export function createTalkClientGatewayControlOwner<CapturedControl = undefined>(params: {
+export function createTalkClientGatewayControlOwner(params: {
   voiceSessionId: string;
   providerId?: string;
   sessionKey: string;
@@ -354,7 +354,7 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
   runAgentConsult: (
     args: unknown,
     signal: AbortSignal,
-    onRunControlReady?: (captured: CapturedControl | undefined) => void,
+    onRunControlReady?: (captured: ActiveEmbeddedRunOwner | undefined) => void,
   ) => Promise<{ text: string }>;
   appendTranscript: (entry: {
     entryId: string;
@@ -363,10 +363,10 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
   }) => Promise<void>;
   flushTranscript: () => Promise<void>;
   closeLogicalSession: () => Promise<void>;
-  captureAgentRunControl?: () => CapturedControl | undefined;
+  captureAgentRunControl?: () => ActiveEmbeddedRunOwner | undefined;
   controlAgentRun?: (
     params: { sessionKey: string; text: string; mode?: unknown },
-    captured: CapturedControl | undefined,
+    captured: ActiveEmbeddedRunOwner | undefined,
   ) => Promise<RealtimeVoiceAgentControlResult>;
 }): GatewayControlOwner {
   let bridge: RealtimeVoiceBridge | undefined;
@@ -377,7 +377,7 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
   let transcriptSequence = 0;
   const entryPrefix = `gateway-${randomUUID()}`;
   const consultQueue = createRealtimeControlQueue();
-  const consultControllers = new Map<string, PendingConsult<CapturedControl>>();
+  const consultControllers = new Map<string, PendingConsult>();
   const warn = (message: string) => params.context.logGateway.warn(message);
   const talkPayload = () => ({ voiceSessionId: params.voiceSessionId });
   const harness = createRealtimeVoiceSessionHarness({
@@ -413,7 +413,7 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
     await bridge.submitToolResult(callId, result);
   };
 
-  const applyControl = async (args: unknown, captured: CapturedControl | undefined) => {
+  const applyControl = async (args: unknown, captured: ActiveEmbeddedRunOwner | undefined) => {
     const parsed = parseRealtimeVoiceAgentControlToolArgs(args);
     const controlParams = {
       sessionKey: params.sessionKey,
@@ -433,7 +433,7 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
 
   const runConsult = async (
     event: RealtimeVoiceToolCallEvent,
-    consult: PendingConsult<CapturedControl>,
+    consult: PendingConsult,
   ): Promise<void> => {
     const { controller } = consult;
     try {
@@ -487,7 +487,7 @@ export function createTalkClientGatewayControlOwner<CapturedControl = undefined>
     }
     if (event.name === REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME) {
       // Startup controls bind to this consult's eventual target, never the later current run.
-      const consult = createPendingTalkConsult<CapturedControl>();
+      const consult = createPendingTalkConsult();
       consultControllers.set(event.callId, consult);
       const admission = consultQueue.enqueue(() => runConsult(event, consult));
       if (!admission.accepted) {

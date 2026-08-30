@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { resolveExpiresAtMsFromDurationMs } from "@openclaw/normalization-core/number-coercion";
-import type { EmbeddedAgentMessageInjectionTarget } from "../agents/embedded-agent.js";
+import type { ActiveEmbeddedRunOwner } from "../agents/embedded-agent.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME } from "../talk/agent-consult-tool.js";
@@ -159,7 +159,7 @@ export function createTalkRealtimeRelaySession(
           }),
       })
     : undefined;
-  let pendingControlTarget: Promise<EmbeddedAgentMessageInjectionTarget | undefined> | undefined;
+  let pendingControlTarget: Promise<ActiveEmbeddedRunOwner | undefined> | undefined;
   const runAgentConsult = async ({ prompt, signal }: { prompt: string; signal?: AbortSignal }) => {
     if (!getActiveRelay()) {
       throw new Error("Realtime gateway-relay session is closed");
@@ -167,7 +167,7 @@ export function createTalkRealtimeRelaySession(
     if (!consultRunner) {
       throw new Error("Realtime gateway-relay agent consult requires a pinned session key");
     }
-    const targetReady = createDeferredCore<EmbeddedAgentMessageInjectionTarget | undefined>();
+    const targetReady = createDeferredCore<ActiveEmbeddedRunOwner | undefined>();
     pendingControlTarget = targetReady.promise;
     try {
       return await consultRunner.runArgs({ question: prompt }, signal, targetReady.resolve);

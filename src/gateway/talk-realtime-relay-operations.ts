@@ -1,8 +1,7 @@
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import {
   resolveActiveEmbeddedRunOwnerByRunId,
-  resolveEmbeddedAgentMessageInjectionTarget,
-  type EmbeddedAgentMessageInjectionTarget,
+  type ActiveEmbeddedRunOwner,
 } from "../agents/embedded-agent-runner/runs.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import { buildRealtimeVoiceAgentCancelProviderResult } from "../talk/agent-run-control-shared.js";
@@ -478,7 +477,7 @@ export async function flushTalkRealtimeRelayVoiceWrites(params: {
 export function captureTalkRealtimeRelayAgentRunControlTarget(params: {
   relaySessionId: string;
   connId: string;
-}): EmbeddedAgentMessageInjectionTarget | null {
+}): ActiveEmbeddedRunOwner | null {
   const session = getRelaySession(params.relaySessionId, params.connId);
   const sessionKey = session.sessionKey;
   if (!sessionKey) {
@@ -488,12 +487,9 @@ export function captureTalkRealtimeRelayAgentRunControlTarget(params: {
     if (key !== sessionKey) {
       continue;
     }
-    const activeOwner = resolveActiveEmbeddedRunOwnerByRunId(runId);
-    const target = activeOwner
-      ? resolveEmbeddedAgentMessageInjectionTarget(activeOwner)
-      : undefined;
-    if (target) {
-      return target;
+    const owner = resolveActiveEmbeddedRunOwnerByRunId(runId);
+    if (owner) {
+      return owner;
     }
   }
   return null;
@@ -506,7 +502,7 @@ export async function steerTalkRealtimeRelayAgentRun(params: {
   sessionKey?: string;
   text: string;
   mode?: string;
-  controlTarget?: EmbeddedAgentMessageInjectionTarget | null;
+  controlTarget?: ActiveEmbeddedRunOwner | null;
 }): Promise<RealtimeVoiceAgentControlResult> {
   const session = getRelaySession(params.relaySessionId, params.connId);
   const sessionKey = session.sessionKey;

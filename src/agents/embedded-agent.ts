@@ -1,7 +1,7 @@
 // Public embedded-agent barrel. Re-export the runner API used by gateway,
 // command, and plugin surfaces without exposing internal runner file layout.
 export type {
-  EmbeddedAgentMessageInjectionTarget,
+  ActiveEmbeddedRunOwner,
   EmbeddedAgentCompactResult,
   EmbeddedAgentMeta,
   EmbeddedAgentRunMeta,

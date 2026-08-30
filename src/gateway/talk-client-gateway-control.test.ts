@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { ActiveEmbeddedRunOwner } from "../agents/embedded-agent.js";
 import type { RealtimeVoiceBridge } from "../talk/provider-types.js";
 import {
   closeTalkClientGatewayControlSession,
@@ -13,6 +14,15 @@ function deferred<T>() {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+function createControlTarget(runId: string): ActiveEmbeddedRunOwner {
+  return {
+    runId,
+    sessionId: `session-${runId}`,
+    abort: vi.fn(() => true),
+    queueMessage: vi.fn(),
+  };
 }
 
 function controlContext(
@@ -31,21 +41,24 @@ function controlContext(
 
 describe("Talk client Gateway control owner", () => {
   it("waits for a relay target captured during run registration", async () => {
-    const targetReady = deferred<string | undefined>();
+    const target = createControlTarget("relay");
+    const targetReady = deferred<typeof target | undefined>();
     const applied = vi.fn();
-    const execute = vi.fn(async (_args: unknown, target?: Promise<string | undefined>) => {
-      applied(await target);
-      return {
-        ok: true,
-        mode: "cancel" as const,
-        sessionKey: "agent:main:main",
-        active: true,
-        message: "ok",
-        speak: false,
-        show: false,
-        suppress: false,
-      };
-    });
+    const execute = vi.fn(
+      async (_args: unknown, captured?: Promise<ActiveEmbeddedRunOwner | undefined>) => {
+        applied(await captured);
+        return {
+          ok: true,
+          mode: "cancel" as const,
+          sessionKey: "agent:main:main",
+          active: true,
+          message: "ok",
+          speak: false,
+          show: false,
+          suppress: false,
+        };
+      },
+    );
     const owner = createTalkRealtimeRunControlOwner({
       hasActiveRun: () => true,
       capture: () => targetReady.promise,
@@ -57,8 +70,8 @@ describe("Talk client Gateway control owner", () => {
     expect(owner.enqueue({ text: "cancel" })).toBe(true);
     await Promise.resolve();
     expect(applied).not.toHaveBeenCalled();
-    targetReady.resolve("exact-relay-target");
-    await vi.waitFor(() => expect(applied).toHaveBeenCalledWith("exact-relay-target"));
+    targetReady.resolve(target);
+    await vi.waitFor(() => expect(applied).toHaveBeenCalledWith(target));
   });
   it.each(["failed", "incomplete"] as const)(
     "keeps Gateway-controlled browser Talk reusable after a %s response",
@@ -316,9 +329,9 @@ describe("Talk client Gateway control owner", () => {
   });
 
   it("captures browser run authority before queued control executes", async () => {
-    let currentTarget = { id: "first" };
+    let currentTarget = createControlTarget("first");
     const controlAgentRun = vi.fn(
-      async (_params: unknown, _captured: { id: string } | undefined) => ({
+      async (_params: unknown, _captured: ActiveEmbeddedRunOwner | undefined) => ({
         ok: false,
         mode: "steer" as const,
         sessionKey: "agent:main:main",
@@ -360,7 +373,7 @@ describe("Talk client Gateway control owner", () => {
       args: { text: "steer" },
     });
     const admittedTarget = currentTarget;
-    currentTarget = { id: "replacement" };
+    currentTarget = createControlTarget("replacement");
 
     await vi.waitFor(() => expect(controlAgentRun).toHaveBeenCalledTimes(1));
     expect(controlAgentRun.mock.calls[0]?.[1]).toBe(admittedTarget);
@@ -370,10 +383,10 @@ describe("Talk client Gateway control owner", () => {
   it("binds control admitted before run registration to that consult's exact target", async () => {
     const registration = deferred<void>();
     const consultResult = deferred<{ text: string }>();
-    const target = { id: "registered" };
+    const target = createControlTarget("registered");
     let currentTarget: typeof target | undefined;
     const controlAgentRun = vi.fn(
-      async (_params: unknown, _captured: typeof target | undefined) => ({
+      async (_params: unknown, _captured: ActiveEmbeddedRunOwner | undefined) => ({
         ok: true,
         mode: "steer" as const,
         sessionKey: "agent:main:main",

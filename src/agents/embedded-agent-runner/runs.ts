@@ -115,26 +115,15 @@ type PreparedEmbeddedAgentQueueMessage =
       queueMessage: EmbeddedAgentQueueHandle["queueMessage"];
     };
 
-const embeddedAgentMessageInjectionTargetHandle = Symbol(
-  "embeddedAgentMessageInjectionTargetHandle",
-);
-
-/** Opaque exact-run capability minted only after an ingress proves ownership. */
-export type EmbeddedAgentMessageInjectionTarget = {
-  readonly [embeddedAgentMessageInjectionTargetHandle]: EmbeddedAgentQueueHandle;
-  readonly runId: string;
-  readonly sessionId: string;
-};
-
 const embeddedRunTargetObservers = new WeakMap<
   AdmittedRunContext,
-  (target: EmbeddedAgentMessageInjectionTarget) => void
+  (target: ActiveEmbeddedRunOwner) => void
 >();
 
 /** Observe the exact active handle created for one admitted operational instance. */
 export function observeEmbeddedAgentMessageInjectionTarget(
   context: AdmittedRunContext,
-  observer: (target: EmbeddedAgentMessageInjectionTarget) => void,
+  observer: (target: ActiveEmbeddedRunOwner) => void,
 ): () => void {
   embeddedRunTargetObservers.set(context, observer);
   return () => {
@@ -613,65 +602,6 @@ export async function queueEmbeddedAgentMessageWithOutcomeAsync(
   }
 }
 
-/** Capture one exact active run without exposing its authority fingerprint. */
-export function resolveEmbeddedAgentMessageInjectionTarget(params: {
-  sessionId: string;
-  runId: string;
-}): EmbeddedAgentMessageInjectionTarget | undefined {
-  const sessionId = params.sessionId.trim();
-  const runId = params.runId.trim();
-  const handle = sessionId && runId ? ACTIVE_EMBEDDED_RUNS.get(sessionId) : undefined;
-  if (!handle || handle.runId !== runId || ACTIVE_EMBEDDED_RUNS_BY_RUN_ID.get(runId) !== handle) {
-    return undefined;
-  }
-  return { [embeddedAgentMessageInjectionTargetHandle]: handle, runId, sessionId };
-}
-
-/** Inject owner-proven input only while the captured run remains the exact live owner. */
-export function queueEmbeddedAgentMessageInjectionTarget(
-  target: EmbeddedAgentMessageInjectionTarget,
-  text: string,
-  options?: Omit<
-    EmbeddedAgentQueueMessageOptions,
-    "toolAuthorityFingerprint" | "pendingInputAuthorityFingerprint"
-  >,
-): Promise<EmbeddedAgentQueueMessageOutcome> {
-  const handle = target[embeddedAgentMessageInjectionTargetHandle];
-  const fingerprint = normalizeOptionalString(handle.toolAuthorityFingerprint);
-  if (
-    ACTIVE_EMBEDDED_RUNS.get(target.sessionId) !== handle ||
-    ACTIVE_EMBEDDED_RUNS_BY_RUN_ID.get(target.runId) !== handle ||
-    !fingerprint
-  ) {
-    return Promise.resolve(createQueueFailureOutcome(target.sessionId, "tool_authority_mismatch"));
-  }
-  return queueEmbeddedAgentMessageWithOutcomeAsync(target.sessionId, text, {
-    ...options,
-    toolAuthorityFingerprint: fingerprint,
-  });
-}
-
-/** Abort only while the captured run remains the exact live owner. */
-export function abortEmbeddedAgentMessageInjectionTarget(
-  target: EmbeddedAgentMessageInjectionTarget,
-): boolean {
-  const handle = target[embeddedAgentMessageInjectionTargetHandle];
-  if (
-    ACTIVE_EMBEDDED_RUNS.get(target.sessionId) !== handle ||
-    ACTIVE_EMBEDDED_RUNS_BY_RUN_ID.get(target.runId) !== handle ||
-    !isEmbeddedRunHandleAbortable(target.sessionId, handle)
-  ) {
-    return false;
-  }
-  try {
-    handle.abort();
-    return true;
-  } catch (err) {
-    diag.warn(`abort failed: sessionId=${target.sessionId} err=${String(err)}`);
-    return false;
-  }
-}
-
 function prepareEmbeddedAgentQueueMessage(
   sessionId: string,
   options?: EmbeddedAgentQueueMessageOptions,
@@ -965,6 +895,13 @@ export type ActiveEmbeddedRunOwner = {
   sessionKey?: string;
   startedAtMs?: number;
   abort: () => boolean;
+  queueMessage: (
+    text: string,
+    options?: Omit<
+      EmbeddedAgentQueueMessageOptions,
+      "toolAuthorityFingerprint" | "pendingInputAuthorityFingerprint"
+    >,
+  ) => Promise<EmbeddedAgentQueueMessageOutcome>;
 };
 
 function projectActiveEmbeddedRunOwner(
@@ -1000,6 +937,22 @@ function projectActiveEmbeddedRunOwner(
       } catch {
         return false;
       }
+    },
+    queueMessage: (text, options) => {
+      const fingerprint = normalizeOptionalString(handle.toolAuthorityFingerprint);
+      if (
+        ACTIVE_EMBEDDED_RUNS.get(registration.sessionId) !== handle ||
+        ACTIVE_EMBEDDED_RUNS_BY_RUN_ID.get(runId) !== handle ||
+        !fingerprint
+      ) {
+        return Promise.resolve(
+          createQueueFailureOutcome(registration.sessionId, "tool_authority_mismatch"),
+        );
+      }
+      return queueEmbeddedAgentMessageWithOutcomeAsync(registration.sessionId, text, {
+        ...options,
+        toolAuthorityFingerprint: fingerprint,
+      });
     },
   };
 }
@@ -1434,11 +1387,10 @@ export function setActiveEmbeddedRun(
     embeddedRunTargetObservers.delete(admittedRunContext);
     // Publish only after both active indexes own this exact handle; delayed
     // controls then cannot bind to a predecessor or an unregistered run.
-    observer({
-      [embeddedAgentMessageInjectionTargetHandle]: handle,
-      runId: handle.runId,
-      sessionId,
-    });
+    const owner = resolveActiveEmbeddedRunOwnerByRunId(handle.runId);
+    if (owner) {
+      observer(owner);
+    }
   }
 }
 
