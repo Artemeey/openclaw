@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { signalExitCode } from "../../scripts/lib/managed-child-process.mts";
 import { spawnOwnedVitestProcess } from "../../scripts/lib/vitest-process.mts";
 import { installVitestProcessGroupCleanup } from "../../scripts/vitest-process-group.mts";
 
@@ -11,6 +12,7 @@ const { scenario, setup, fail } = JSON.parse(rawOptions);
 const repo = fileURLToPath(new URL("../../", import.meta.url));
 const events = path.join(root, "events.jsonl");
 const ready = path.join(root, "ready");
+const interrupted = path.join(root, "interrupted");
 const receipt = path.join(root, "receipt.json");
 const profiles = path.join(root, "profiles");
 const preload = path.join(root, "preload.mjs");
@@ -179,7 +181,7 @@ if (process.send) {
       ? []
       : [path.join(repo, setup === "env" ? "test/setup.env.ts" : "test/setup.ts")];
   let runner = path.join(repo, "test/non-isolated-runner.ts");
-  if (scenario === "hung-cleanup") {
+  if (scenario === "hung-cleanup" || scenario === "interrupted") {
     runner = path.join(root, "runner.ts");
     fs.writeFileSync(
       runner,
@@ -190,8 +192,19 @@ export default class extends Runner {
   constructor(config) {
     super(config);
     this.onCleanupWorkerContext(() => {
+      ${scenario === "interrupted" ? `if (!fs.existsSync(${JSON.stringify(receipt)})) return;` : ""}
       fs.writeFileSync(${JSON.stringify(ready)}, "cleanup");
-      return new Promise(() => {});
+      ${
+        scenario === "interrupted"
+          ? `return new Promise((resolve) => {
+        const poll = setInterval(() => {
+          if (!fs.existsSync(${JSON.stringify(interrupted)})) return;
+          clearInterval(poll);
+          resolve();
+        }, 5);
+      });`
+          : "return new Promise(() => {});"
+      }
     });
   }
 }
@@ -289,7 +302,18 @@ it("completes the test before worker shutdown", () => {
     args,
     options: { cwd: root, env, stdio: "pipe" },
   });
-  const detachCleanup = installVitestProcessGroupCleanup({ child, forceSignal: "SIGKILL" });
+  let forwardedSignal;
+  const detachCleanup = installVitestProcessGroupCleanup({
+    child,
+    forceSignal: "SIGKILL",
+    onSignal(signal) {
+      forwardedSignal ??= signal;
+      if (scenario === "interrupted") {
+        // Release cleanup only after the fixture observes the outer signal.
+        fs.writeFileSync(interrupted, forwardedSignal);
+      }
+    },
+  });
   let output = "";
   child.stdout.on("data", (chunk) => {
     output += chunk;
@@ -298,6 +322,10 @@ it("completes the test before worker shutdown", () => {
     output += chunk;
   });
   const { code } = await completion.finally(detachCleanup);
+  // Joining cleanup must not turn parent interruption into successful fixture completion.
+  if (forwardedSignal) {
+    process.exitCode = signalExitCode(forwardedSignal);
+  }
   assert.ok(
     fs.existsSync(receipt),
     `Vitest exited before the fixture test (code ${code}):\n${output}`,

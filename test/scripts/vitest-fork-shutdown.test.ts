@@ -1,7 +1,10 @@
 import { execFile } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
+import { isProcessAlive, waitForFile } from "../helpers/process-wait.js";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
 const execFileAsync = promisify(execFile);
@@ -82,5 +85,51 @@ it.each([
     if (scenario === "slow-exit") {
       expect(result.events).toContainEqual({ event: "home-removed" });
     }
+  }
+});
+
+// Windows termination cannot invoke the fixture's POSIX signal handlers.
+it.skipIf(process.platform === "win32").each([
+  { signal: "SIGINT", code: 130 },
+  { signal: "SIGTERM", code: 143 },
+] as const)("rejects forwarded $signal after joining fixture cleanup", async ({ signal, code }) => {
+  const root = tempDirs.make("vitest-fork-shutdown-");
+  const invocation = execFileAsync(
+    process.execPath,
+    [fixture, root, JSON.stringify({ scenario: "interrupted", setup: "shared", fail: false })],
+    { timeout: 20_000, maxBuffer: 2 * 1024 * 1024 },
+  );
+  // Handle early rejection while waiting for readiness; join before afterEach removes the root.
+  const settled = invocation.then(
+    () => undefined,
+    () => undefined,
+  );
+  try {
+    await waitForFile(path.join(root, "ready"), 10_000);
+    const receipt = JSON.parse(fs.readFileSync(path.join(root, "receipt.json"), "utf8"));
+    expect(isProcessAlive(receipt.pid)).toBe(true);
+    expect(fs.existsSync(receipt.home)).toBe(true);
+    expect(fs.readdirSync(path.join(root, "tmp"))).not.toEqual([]);
+
+    expect(invocation.child.kill(signal)).toBe(true);
+    await expect(invocation).rejects.toMatchObject({ code, killed: true, signal: null });
+    const { stdout } = await invocation.catch((error: { stdout: string }) => error);
+    expect(stdout).not.toBe("");
+    expect(JSON.parse(stdout)).toMatchObject({
+      worker: { pid: receipt.pid },
+      workerStopped: true,
+      homeRemoved: true,
+      callerPreserved: true,
+    });
+
+    expect(isProcessAlive(receipt.pid)).toBe(false);
+    expect(fs.existsSync(receipt.home)).toBe(false);
+    expect(fs.readdirSync(path.join(root, "tmp"))).toEqual([]);
+    expect(fs.readFileSync(path.join(root, "home", "caller"), "utf8")).toBe("keep");
+  } finally {
+    if (invocation.child.exitCode === null && invocation.child.signalCode === null) {
+      invocation.child.kill("SIGTERM");
+    }
+    await settled;
   }
 });
