@@ -99,18 +99,22 @@ export function withCurrentProjectionSnapshot<T>(
           value: read({ database, resolved, state: EMPTY_PROJECTION_STATE }),
         };
       }
+      let unclassifiedEvents: boolean | undefined;
       if (
         snapshot.state &&
         !snapshot.state.needsRebuild &&
         snapshot.state.indexedSeq === snapshot.latestSeq &&
-        !hasUnclassifiedSessionTranscriptEvents(database.db, resolved.sessionId)
+        !(unclassifiedEvents = hasUnclassifiedSessionTranscriptEvents(
+          database.db,
+          resolved.sessionId,
+        ))
       ) {
         return {
           kind: "value" as const,
           value: read({ database, resolved, state: snapshot.state }),
         };
       }
-      return { kind: "unavailable" as const };
+      return { kind: "unavailable" as const, snapshot, unclassifiedEvents };
     },
     {
       databaseLabel: database.path,
@@ -126,5 +130,24 @@ export function withCurrentProjectionSnapshot<T>(
     ...databaseOptions,
     preferredSessionId: resolved.sessionId,
   });
-  throw new SessionTranscriptProjectionUnavailableError(resolved.sessionId);
+  const error = new SessionTranscriptProjectionUnavailableError(resolved.sessionId);
+  try {
+    process.stderr.write(
+      "[frv-projection-diagnostic] " +
+        JSON.stringify({
+          event: "projection-unavailable",
+          at: new Date().toISOString(),
+          pid: process.pid,
+          sessionId: resolved.sessionId,
+          latestSeq: result.snapshot.latestSeq,
+          state: result.snapshot.state ?? null,
+          unclassifiedEvents: result.unclassifiedEvents ?? null,
+          stack: error.stack,
+        }) +
+        "\n",
+    );
+  } catch {
+    // Diagnostic output must never replace the original projection error.
+  }
+  throw error;
 }
