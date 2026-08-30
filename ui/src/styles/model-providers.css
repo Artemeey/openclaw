@@ -245,35 +245,25 @@
 }
 
 .model-providers__profile-usage .provider-usage-window__scope,
-.model-providers__profile-usage .provider-usage-window__variant,
 .model-providers__profile-usage .provider-usage-window__cadence {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.model-providers__profile-usage .provider-usage-window__scope,
-.model-providers__profile-usage .provider-usage-window__variant {
+.model-providers__profile-usage .provider-usage-window__scope {
   grid-column: 1 / -1;
   min-height: 1lh;
 }
 
-.model-providers__profile-usage .provider-usage-window__scope {
-  grid-row: 1;
-}
-
-.model-providers__profile-usage .provider-usage-window__variant {
-  grid-row: 2;
-}
-
 .model-providers__profile-usage .provider-usage-window__cadence {
   grid-column: 1;
-  grid-row: 3;
+  grid-row: 2;
 }
 
 .model-providers__profile-usage .provider-usage-window__meta strong {
   grid-column: 2;
-  grid-row: 3;
+  grid-row: 2;
   white-space: nowrap;
 }
 

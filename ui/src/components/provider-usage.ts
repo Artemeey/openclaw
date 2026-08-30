@@ -19,17 +19,16 @@ type ProviderUsageDetailsOptions = {
 function splitCompactWindowLabel(label: string) {
   const separator = label.lastIndexOf(" · ");
   if (separator < 0) {
-    return { scope: t("usage.providerUsage.normalLimit"), variant: "", cadence: label };
+    return { scope: t("usage.providerUsage.normalLimit"), cadence: label };
   }
   const prefix = label.slice(0, separator);
   const cadence = label.slice(separator + 3);
   const scopeBreak = prefix.lastIndexOf(" ");
   return scopeBreak < 0
-    ? { scope: prefix, variant: "", cadence }
+    ? { scope: "", cadence: label }
     : {
         scope: prefix.slice(0, scopeBreak),
-        variant: prefix.slice(scopeBreak + 1),
-        cadence,
+        cadence: `${prefix.slice(scopeBreak + 1)} · ${cadence}`,
       };
 }
 
@@ -235,9 +234,6 @@ export function renderProviderUsageDetails(
                           >
                             <span class="provider-usage-window__scope" aria-hidden="true"
                               >${compactLabel.scope}</span
-                            >
-                            <span class="provider-usage-window__variant" aria-hidden="true"
-                              >${compactLabel.variant}</span
                             >
                             <span class="provider-usage-window__cadence" aria-hidden="true"
                               >${compactLabel.cadence}</span
