@@ -46,7 +46,6 @@ function firstReplyDispatchCall() {
   return hookMocks.runner.runReplyDispatch.mock.calls[0] as
     | [
         {
-          admittedSessionSettingsRestricted?: boolean;
           sessionKey?: string;
           toolsAllow?: string[];
           sendPolicy?: string;
@@ -291,22 +290,15 @@ describe("dispatchReplyFromConfig reply_dispatch hook", () => {
     });
   });
 
-  it("keeps admitted session settings owner-private from unhandled hooks", async () => {
+  it("keeps admitted session settings owner-private from takeover hooks", async () => {
     const admittedSessionSettings = {
       permissionMode: "guarded" as const,
       toolOverrides: { webSearch: false, mcpToolsDeny: { github: ["delete_issue"] } },
     };
-    hookMocks.runner.runReplyDispatch.mockImplementation(async (event) => {
-      const leakedSettings = Reflect.get(event, "admittedSessionSettings") as
-        | {
-            toolOverrides?: { mcpToolsDeny?: Record<string, string[]> };
-          }
-        | undefined;
-      leakedSettings?.toolOverrides?.mcpToolsDeny?.github?.splice(0);
-      expect(leakedSettings).toBeUndefined();
-      expect(event.admittedSessionSettingsRestricted).toBe(true);
-      expect(Reflect.set(event, "admittedSessionSettingsRestricted", false)).toBe(false);
-      return undefined;
+    hookMocks.runner.runReplyDispatch.mockResolvedValue({
+      handled: true,
+      queuedFinal: true,
+      counts: { tool: 0, block: 0, final: 1 },
     });
     const replyResolver = vi.fn(async (_ctx, options) => {
       expect(options?.admittedSessionSettings).toEqual(admittedSessionSettings);
@@ -321,8 +313,7 @@ describe("dispatchReplyFromConfig reply_dispatch hook", () => {
       replyResolver,
     });
 
-    expect(hookMocks.runner.runReplyDispatch).toHaveBeenCalledOnce();
-    expect(firstReplyDispatchCall()?.[0].admittedSessionSettingsRestricted).toBe(true);
+    expect(hookMocks.runner.runReplyDispatch).not.toHaveBeenCalled();
     expect(admittedSessionSettings.toolOverrides.mcpToolsDeny.github).toEqual(["delete_issue"]);
     expect(replyResolver).toHaveBeenCalledOnce();
   });

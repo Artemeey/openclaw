@@ -364,7 +364,6 @@ async function runDispatch(params: {
   suppressReplyLifecycle?: boolean;
   sourceReplyDeliveryMode?: "automatic" | "message_tool_only";
   toolsAllow?: string[];
-  admittedSessionSettingsRestricted?: boolean;
   recordProcessed?: (
     outcome: "completed" | "skipped" | "error",
     opts?: { reason?: string; error?: string },
@@ -405,7 +404,6 @@ async function runDispatch(params: {
     shouldSendFullToolDetails: false,
     bypassForCommand: false,
     toolsAllow: params.toolsAllow,
-    admittedSessionSettingsRestricted: params.admittedSessionSettingsRestricted,
     ...(params.onReplyStart ? { onReplyStart: params.onReplyStart } : {}),
     recordProcessed: params.recordProcessed ?? vi.fn(),
     markIdle: params.markIdle ?? vi.fn(),
@@ -2920,23 +2918,6 @@ describe("tryDispatchAcpReplyCore", () => {
     expect(auditMocks.emitAcpLifecycleError).toHaveBeenCalledWith(
       expect.objectContaining({ terminalOutcome: "blocked" }),
     );
-  });
-
-  it("fails closed before runTurn for admitted session restrictions", async () => {
-    setReadyAcpResolution();
-    const { dispatcher } = createDispatcher();
-
-    await runDispatch({
-      bodyForAgent: "test",
-      dispatcher,
-      admittedSessionSettingsRestricted: true,
-    });
-
-    expect(managerMocks.runTurn).not.toHaveBeenCalled();
-    expect(dispatcherCall(dispatcher.sendFinalReply)).toMatchObject({
-      isError: true,
-      text: expect.stringContaining("cannot enforce its permission or tool policy"),
-    });
   });
 
   it("fails visibly when a bound ACP runtime receives restrictive conversation policy", async () => {

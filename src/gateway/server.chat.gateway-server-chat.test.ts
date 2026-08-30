@@ -315,7 +315,7 @@ describe("gateway server chat", () => {
     });
   });
 
-  test("chat.send keeps admitted settings after the session row broadens", async () => {
+  test("chat.send keeps stored settings for legacy callers after the session row broadens", async () => {
     await withMainSessionStore(async () => {
       const dispatchEntered = createDeferred<InternalGetReplyOptions | undefined>();
       const releaseDispatch = createDeferred();
@@ -338,8 +338,6 @@ describe("gateway server chat", () => {
       const accepted = await rpcReq(ws, "chat.send", {
         sessionKey: "main",
         message: "keep admitted authority",
-        expectedPermissionMode: "guarded",
-        expectedToolOverrides: { webSearch: false },
         idempotencyKey: "idem-chat-settings-final-freeze",
       });
       expect(accepted.ok).toBe(true);

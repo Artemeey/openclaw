@@ -16,32 +16,23 @@ export type PluginBindingTranscriptOwner = {
   transcriptWriteBlocked?: true;
 };
 
+export function admittedSessionSettingsRestrictRuntime(
+  settings: InternalGetReplyOptions["admittedSessionSettings"],
+): boolean {
+  return (
+    (settings?.permissionMode !== undefined && settings.permissionMode !== "full") ||
+    (settings?.toolOverrides !== undefined && Object.keys(settings.toolOverrides).length > 0)
+  );
+}
+
 export function createReplyDispatchEvent(
-  params: Omit<
-    PluginHookReplyDispatchEvent,
-    "admittedSessionSettingsRestricted" | "shouldSendToolSummaries"
-  > & {
-    admittedSessionSettings?: InternalGetReplyOptions["admittedSessionSettings"];
+  params: Omit<PluginHookReplyDispatchEvent, "shouldSendToolSummaries"> & {
     shouldSendToolSummaries: () => boolean;
   },
 ): PluginHookReplyDispatchEvent {
-  const { admittedSessionSettings, shouldSendToolSummaries, ...event } = params;
-  const admittedSessionSettingsRestricted =
-    (admittedSessionSettings?.permissionMode !== undefined &&
-      admittedSessionSettings.permissionMode !== "full") ||
-    (admittedSessionSettings?.toolOverrides !== undefined &&
-      Object.keys(admittedSessionSettings.toolOverrides).length > 0);
-  return Object.defineProperties(event, {
-    // Hook handlers share this event. Expose only an immutable derived fact so
-    // one handler cannot rewrite admitted authority before ACP consumes it.
-    admittedSessionSettingsRestricted: {
-      enumerable: true,
-      value: admittedSessionSettingsRestricted,
-      writable: false,
-    },
-    shouldSendToolSummaries: {
-      enumerable: true,
-      get: shouldSendToolSummaries,
-    },
+  const { shouldSendToolSummaries, ...event } = params;
+  return Object.defineProperty(event, "shouldSendToolSummaries", {
+    enumerable: true,
+    get: shouldSendToolSummaries,
   }) as PluginHookReplyDispatchEvent;
 }

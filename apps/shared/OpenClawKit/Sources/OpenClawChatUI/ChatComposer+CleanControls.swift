@@ -127,18 +127,9 @@ extension OpenClawChatComposer {
     private func cleanInlineModelPicker(compact: Bool) -> some View {
         let sections = self.viewModel.modelPickerSections
         return Menu {
-            Button {
-                self.viewModel.selectModel(OpenClawChatViewModel.defaultModelSelectionID)
-            } label: {
-                Label {
-                    Text(self.viewModel.defaultModelLabel)
-                        .font(OpenClawChatTypography.captionSemiBold)
-                } icon: {
-                    Image(systemName: self.viewModel.modelSelectionID == OpenClawChatViewModel.defaultModelSelectionID
-                        ? "checkmark.circle.fill"
-                        : "circle")
-                }
-            }
+            self.cleanInlineModelOption(
+                title: self.viewModel.defaultModelLabel,
+                selectionID: OpenClawChatViewModel.defaultModelSelectionID)
             if !sections.pinned.isEmpty {
                 Section("Pinned") {
                     self.cleanInlineModelOptions(sections.pinned)
@@ -196,19 +187,25 @@ extension OpenClawChatComposer {
 
     private func cleanInlineModelOptions(_ models: [OpenClawChatModelChoice]) -> some View {
         ForEach(models) { model in
-            Button {
-                self.viewModel.selectModel(model.selectionID)
-            } label: {
-                Label {
-                    Text(model.displayLabel)
-                        .font(OpenClawChatTypography.captionSemiBold)
-                } icon: {
-                    Image(systemName: self.viewModel.modelSelectionID == model.selectionID
-                        ? "checkmark.circle.fill"
-                        : "circle")
-                }
+            self.cleanInlineModelOption(title: model.displayLabel, selectionID: model.selectionID)
+        }
+    }
+
+    private func cleanInlineModelOption(title: String, selectionID: String) -> some View {
+        let isSelected = self.viewModel.modelSelectionID == selectionID
+        return Button {
+            self.viewModel.selectModel(selectionID)
+        } label: {
+            Label {
+                Text(title)
+                    .font(OpenClawChatTypography.captionSemiBold)
+            } icon: {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
             }
         }
+        .accessibilityLabel(title)
+        .accessibilityValue(isSelected ? String(localized: "Selected") : "")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var cleanInlineEffortMenu: some View {

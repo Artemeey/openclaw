@@ -673,7 +673,7 @@ struct LocalFixtureChatTransportTests {
     }
 
     @Test func `Apple Review fixture persists capability mutations into session readback`() async throws {
-        let transport = AppleReviewDemoChatTransport()
+        let transport = LocalFixtureChatTransport(fixture: .appleReviewDemo)
         #expect(transport.supportsComposerCapabilities)
         let catalog = await transport.loadComposerCapabilityCatalog(sessionKey: "main", agentID: "main")
         #expect(catalog.permissionMutationAvailable)

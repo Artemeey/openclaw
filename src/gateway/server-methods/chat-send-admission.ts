@@ -262,10 +262,7 @@ export async function admitChatSend(params: {
     if (settingsChanged) {
       throw new Error(SESSION_SETTINGS_CHANGED_ERROR_REASON);
     }
-    if (
-      commitOutcome &&
-      (p.expectedPermissionMode !== undefined || p.expectedToolOverrides !== undefined)
-    ) {
+    if (commitOutcome) {
       // Freeze the writer-barrier snapshot. Later reply preparation may reload
       // the session after awaited workspace/media work, but this run must keep
       // the authority under which it was admitted.

@@ -27,7 +27,10 @@ import {
   DispatchReplyOperationAbortedError,
   runWithDispatchAbortSignal,
 } from "./dispatch-from-config.abort.js";
-import { createReplyDispatchEvent } from "./dispatch-from-config.events.js";
+import {
+  admittedSessionSettingsRestrictRuntime,
+  createReplyDispatchEvent,
+} from "./dispatch-from-config.events.js";
 import {
   hasExecApprovalPayload,
   requiresDurableToolResultDelivery,
@@ -49,6 +52,9 @@ import {
   type ReplyDispatchDeliveryOutcome,
 } from "./reply-dispatcher.js";
 import { isDispatchFinalReplySessionWriterAuthorized } from "./session-writer-delivery-authority.js";
+
+const RESTRICTED_RUNTIME_TAKEOVER_ERROR =
+  "This session's bound runtime cannot enforce its permission or tool policy; use an embedded runtime for this restricted conversation.";
 
 export async function chooseDispatchRoute(state: PrepareDispatchOperationReadyState) {
   const {
@@ -606,7 +612,42 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
     }
   }
 
-  if (hookRunner?.hasHooks("reply_dispatch", { dispatchKind: state.dispatchKind })) {
+  const admittedSettingsRestrictRuntime = admittedSessionSettingsRestrictRuntime(
+    params.replyOptions?.admittedSessionSettings,
+  );
+  if (admittedSettingsRestrictRuntime && state.dispatchKind === "acp") {
+    let queuedFinal = false;
+    let routedFinalCount = 0;
+    if (!state.suppressDelivery) {
+      const refusal = await sendFinalPayload(
+        { text: RESTRICTED_RUNTIME_TAKEOVER_ERROR, isError: true },
+        {
+          abortSignal: getPreDispatchAbortSignal(),
+          deliveryId: "restricted-runtime-takeover",
+        },
+      );
+      queuedFinal = refusal.queuedFinal;
+      routedFinalCount = refusal.routedFinalCount;
+    }
+    const counts = dispatcher.getQueuedCounts();
+    counts.final += routedFinalCount;
+    recordProcessed("error", {
+      reason: "restricted_runtime_takeover",
+      error: RESTRICTED_RUNTIME_TAKEOVER_ERROR,
+    });
+    markIdle("message_completed");
+    commitInboundDedupeIfClaimed();
+    completeDispatchReplyOperation();
+    return {
+      status: "complete" as const,
+      result: attachSourceReplyDeliveryMode({ queuedFinal, counts }),
+    };
+  }
+
+  if (
+    !admittedSettingsRestrictRuntime &&
+    hookRunner?.hasHooks("reply_dispatch", { dispatchKind: state.dispatchKind })
+  ) {
     const replyDispatchResult = await traceReplyPhase("reply.reply_dispatch_hooks", () =>
       runWithDispatchLifecycleAdmission(
         async () =>
@@ -619,7 +660,6 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
                   runId: params.replyOptions?.runId,
                   sessionKey: acpDispatchSessionKey,
                   toolsAllow: params.replyOptions?.toolsAllow,
-                  admittedSessionSettings: params.replyOptions?.admittedSessionSettings,
                   images: params.replyOptions?.images,
                   inboundAudio: state.inboundAudio,
                   sessionTtsAuto,

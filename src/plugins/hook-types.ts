@@ -544,7 +544,6 @@ export type PluginHookReplyDispatchEvent = {
   runId?: string;
   sessionKey?: string;
   toolsAllow?: string[];
-  admittedSessionSettingsRestricted?: boolean;
   images?: Array<{ data: string; mimeType: string }>;
   inboundAudio: boolean;
   sessionTtsAuto?: TtsAutoMode;

@@ -451,7 +451,6 @@ export async function tryDispatchAcpReplyCore(params: {
   runId?: string;
   sessionKey?: string;
   toolsAllow?: string[];
-  admittedSessionSettingsRestricted?: boolean;
   images?: Array<{ data: string; mimeType: string }>;
   extractedFileImages?: ExtractedFileImage[];
   abortSignal?: AbortSignal;
@@ -778,8 +777,7 @@ export async function tryDispatchAcpReplyCore(params: {
     }
     if (
       isRestrictiveRuntimeToolsAllow(params.toolsAllow) ||
-      toolPolicyRestrictsTools(params.ctx.ConversationToolPolicy) ||
-      params.admittedSessionSettingsRestricted === true
+      toolPolicyRestrictsTools(params.ctx.ConversationToolPolicy)
     ) {
       auditTerminalOutcome = "blocked";
       throw new AcpRuntimeError(
