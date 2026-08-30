@@ -3170,6 +3170,18 @@ jobs:
             fi
           done
 
+      - name: Print exact Codex formatter diff
+        if: matrix.task == 'lint'
+        shell: bash
+        run: |
+          pnpm exec oxfmt --write \
+            extensions/codex/src/app-server/attempt-client-cleanup.ts \
+            extensions/codex/src/app-server/thread-supervision.ts
+          git diff -- \
+            extensions/codex/src/app-server/attempt-client-cleanup.ts \
+            extensions/codex/src/app-server/thread-supervision.ts
+          exit 1
+
       - name: Run check shard
         env:
           FROZEN_TARGET: ${{ needs.preflight.outputs.frozen_target }}
