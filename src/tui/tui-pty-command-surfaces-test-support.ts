@@ -46,6 +46,12 @@ export async function exerciseTuiCommandSurface(
     }
     if (surface === "pickers") {
       const cancelKeys = ["\u0003", "\u001b[99;5u", "\u001b[27;5;99~"];
+      const waitForSessionPicker = () =>
+        waitForRows(
+          (rows) =>
+            rowsInclude(rows, "Filter:") &&
+            rows.some((row) => row.trim() === "Picker target (picker-target)"),
+        );
       await fixture.run.write("/models\r", { delay: false });
       await fixture.waitForLogEntry((entry) => entry.method === "listModels");
       const pickerRows = await waitForRows((rows) => rows.some((row) => row.includes("Fixture 2")));
@@ -56,7 +62,9 @@ export async function exerciseTuiCommandSurface(
         await fixture.run.write("/models\r", { delay: false });
         await waitForRows((rows) => rows.some((row) => row.includes("Fixture 2")));
       }
-      await fixture.run.write("\x1b[B\r", { delay: false });
+      await fixture.run.write("\x1b[B", { delay: false });
+      await waitForRows((rows) => rowsInclude(rows, "→", "fixture-model-2"));
+      await fixture.run.write("\r", { delay: false });
       await fixture.waitForLogEntry(
         (entry) =>
           entry.method === "patchSession" &&
@@ -66,14 +74,16 @@ export async function exerciseTuiCommandSurface(
       await fixture.waitForLogEntry(
         (entry) => entry.method === "listSessions" && objectFieldEquals(entry, "purpose", "picker"),
       );
-      await waitForRows((rows) => rows.some((row) => row.includes("Picker target")));
+      await waitForSessionPicker();
       for (const key of cancelKeys) {
         await fixture.run.write(key, { delay: false });
         await waitForRows((rows) => !rows.some((row) => row.includes("Filter:")));
         await fixture.run.write("/sessions\r", { delay: false });
-        await waitForRows((rows) => rows.some((row) => row.includes("Picker target")));
+        await waitForSessionPicker();
       }
-      await fixture.run.write("\x1b[B\r", { delay: false });
+      await fixture.run.write("\x1b[B", { delay: false });
+      await waitForRows((rows) => rowsInclude(rows, "→", "Picker target"));
+      await fixture.run.write("\r", { delay: false });
       await fixture.waitForLogEntry(
         (entry) =>
           entry.method === "loadHistory" &&

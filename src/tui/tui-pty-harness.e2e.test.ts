@@ -42,6 +42,21 @@ it("rejects rendering oracle false positives", () => {
   expect(toolFrame(reversedTool, false)).toBe(false);
 });
 
+describe.sequential("TUI PTY command surfaces", () => {
+  it.each([
+    ["lists and executes slash commands through authenticated real PTY frames", "slash-commands"],
+    [
+      "cancels and selects model and session pickers through authenticated real PTY frames",
+      "pickers",
+    ],
+    ["updates settings through an authenticated real PTY overlay", "settings"],
+  ] as const)(
+    "%s",
+    (_name, surface) => exerciseTuiCommandSurface(startTuiFixture, surface, STARTUP_TIMEOUT_MS),
+    STARTUP_TEST_TIMEOUT_MS,
+  );
+});
+
 describe.sequential("TUI PTY harness", () => {
   let fixture: Awaited<ReturnType<typeof startTuiFixture>>;
   let compactFooterFixture: Awaited<ReturnType<typeof startTuiFixture>>;
@@ -900,19 +915,6 @@ describe.sequential("TUI PTY harness", () => {
         await isolationFixture.cleanup();
       }
     },
-    STARTUP_TEST_TIMEOUT_MS,
-  );
-
-  it.each([
-    ["lists and executes slash commands through authenticated real PTY frames", "slash-commands"],
-    [
-      "cancels and selects model and session pickers through authenticated real PTY frames",
-      "pickers",
-    ],
-    ["updates settings through an authenticated real PTY overlay", "settings"],
-  ] as const)(
-    "%s",
-    (_name, surface) => exerciseTuiCommandSurface(startTuiFixture, surface, STARTUP_TIMEOUT_MS),
     STARTUP_TEST_TIMEOUT_MS,
   );
 
