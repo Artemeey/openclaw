@@ -17,15 +17,12 @@ import {
 } from "./plugin-cache-primitives.js";
 import { resolvePluginControlPlaneFingerprint } from "./plugin-control-plane-context.js";
 import type { PluginMetadataRegistryView } from "./plugin-metadata-snapshot.types.js";
-import {
-  resolveModelCatalogScope,
-  resolveProviderRuntimeOwnerRefs,
-} from "./provider-config-owner.js";
+import { resolveProviderRuntimeOwnerRefs } from "./provider-config-owner.js";
 import {
   findProviderRuntimePluginInRegistry,
   listProviderRuntimePluginsInRegistry,
-  matchesProviderLiteralId,
   matchesProviderPluginRef,
+  matchesProviderRuntimePlugin,
 } from "./provider-registry-shared.js";
 import { isPluginProvidersLoadInFlight, resolvePluginProvidersCore } from "./providers.runtime.js";
 import type { PluginRegistry } from "./registry-types.js";
@@ -133,32 +130,6 @@ function resolveProviderRuntimeLookupModelId(
     params.modelId ??
       (typeof params.context?.modelId === "string" ? params.context.modelId : undefined),
   );
-}
-
-function resolveProviderRuntimeLookupScope(
-  params: ProviderRuntimePluginLookupParams,
-  ownerRefs: readonly string[],
-): {
-  providerRefs: string[];
-  modelRefs?: string[];
-} {
-  const providerRefs = [params.provider, ...ownerRefs];
-  const modelId = resolveProviderRuntimeLookupModelId(params);
-  if (!modelId) {
-    return { providerRefs };
-  }
-  return {
-    providerRefs,
-    modelRefs: resolveModelCatalogScope({
-      cfg: params.config,
-      provider: params.provider,
-      model: modelId,
-    }).modelRefs.filter(
-      // The selected provider owns nested IDs; a bare slash-bearing ID would
-      // activate its vendor as another provider. Keep slashless model-owner inference.
-      (modelRef) => !modelId.includes("/") || modelRef !== modelId,
-    ),
-  };
 }
 
 function findProviderRuntimePluginInLoadedRegistries(params: {
@@ -322,25 +293,16 @@ export function resolveProviderRuntimePlugin(
     return undefined;
   }
   const load = () => {
-    const lookupScope = resolveProviderRuntimeLookupScope(params, ownerRefs);
     return (
       resolveProviderPluginsForHooks({
         config: params.config,
         workspaceDir,
         env,
-        providerRefs: lookupScope.providerRefs,
-        modelRefs: lookupScope.modelRefs,
+        // An explicit provider owns the route; model-family hints belong to catalog discovery.
+        providerRefs,
         applyAutoEnable: params.applyAutoEnable,
         pluginMetadataSnapshot: params.pluginMetadataSnapshot,
-      }).find((plugin) => {
-        if (ownerRefs.length > 0) {
-          return (
-            matchesProviderLiteralId(plugin, params.provider) ||
-            ownerRefs.some((ownerRef) => matchesProviderPluginRef(plugin, ownerRef))
-          );
-        }
-        return matchesProviderPluginRef(plugin, params.provider);
-      }) ?? null
+      }).find((plugin) => matchesProviderRuntimePlugin(plugin, params.provider, ownerRefs)) ?? null
     );
   };
   // The supplied snapshot already owns reuse. A provider cached only by ids can

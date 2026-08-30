@@ -189,7 +189,7 @@ async function activateSetupInferenceUnredacted(
       const agentRuntimeId = resolveSetupAgentRuntimeId(params.kind);
       const stagedConfig = await applySystemAgentModelSelection({
         config: plan.config,
-        model: plan.persistModelRef,
+        model: plan,
         ...(params.agentId ? { targetAgentId: testPlan.routeAgentId } : {}),
         ...(agentRuntimeId ? { agentRuntimeId } : {}),
         ...(plan.manualAuth && plan.authProfileId ? { authProfileId: plan.authProfileId } : {}),

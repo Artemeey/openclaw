@@ -6,7 +6,6 @@ import { pathToFileURL } from "node:url";
 import { createState } from "./lib/openclaw-test-state.mts";
 import { resolveRepoRoot } from "./lib/repo-root.mjs";
 import { installProcessWarningFilter } from "./process-warning-filter.mts";
-import { stageBundledPluginRuntime } from "./stage-bundled-plugin-runtime.mts";
 
 installProcessWarningFilter();
 
@@ -120,7 +119,8 @@ fs.writeFileSync(
   "utf8",
 );
 
-stageBundledPluginRuntime({ repoRoot });
+// The full build owns existing runtime artifacts; copy only this smoke's synthetic plugin.
+fs.cpSync(distPluginDir, runtimePluginDir, { recursive: true });
 
 const runtimeEntryPath = path.join(runtimePluginDir, "index.js");
 assert.ok(fs.existsSync(runtimeEntryPath), "runtime overlay entry missing");

@@ -21,6 +21,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeProviderModelIdWithManifest } from "../plugins/manifest-model-id-normalization.js";
 import type { PluginManifestRecord } from "../plugins/manifest-registry.js";
 import type { PluginMetadataRegistryView } from "../plugins/plugin-metadata-snapshot.types.js";
+import type { ProviderPlugin } from "../plugins/types.js";
 import { modelKey } from "../shared/model-key.js";
 import { normalizeProviderModelIdWithRuntime } from "./provider-model-normalization.runtime.js";
 export { modelKey } from "../shared/model-key.js";
@@ -35,6 +36,7 @@ export type ModelManifestNormalizationContext = {
   config?: OpenClawConfig;
   workspaceDir?: string;
   pluginMetadataSnapshot?: PluginMetadataRegistryView;
+  providerPlugin?: ProviderPlugin;
 };
 
 export type ProviderModelIdNormalizationOptions = {
@@ -169,6 +171,7 @@ function normalizeProviderModelId(
       config: options?.config,
       workspaceDir: options?.workspaceDir,
       pluginMetadataSnapshot: options?.pluginMetadataSnapshot,
+      providerPlugin: options?.providerPlugin,
       ...(options?.manifestPlugins ? { plugins: options.manifestPlugins } : {}),
       context: {
         provider,

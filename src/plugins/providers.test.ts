@@ -1549,6 +1549,43 @@ describe("resolvePluginProviders", () => {
     ).toStrictEqual([]);
   });
 
+  it.each(["vendor-model", "vendor/model"])(
+    "keeps model-family owner out of explicit runtime lookup for %s",
+    async (modelId) => {
+      const routeOwner = createManifestProviderPlugin({
+        id: "route-owner",
+        providerIds: ["route-provider"],
+      });
+      const vendorOwner = createManifestProviderPlugin({
+        id: "vendor-owner",
+        providerIds: ["vendor"],
+        modelSupport: { modelPrefixes: ["vendor-"] },
+      });
+      setManifestPlugins([routeOwner, vendorOwner]);
+      const provider: ProviderPlugin = {
+        id: "route-provider",
+        label: "Route provider",
+        auth: [],
+        normalizeModelId: (context) => `${context.modelId}-normalized`,
+      };
+      resolveRuntimePluginRegistryMock.mockReturnValue(
+        createProviderRuntimeRegistryFixture(routeOwner, provider),
+      );
+      const { normalizeProviderModelIdWithPlugin } =
+        await import("./provider-model-normalization.runtime.js");
+
+      expect(
+        normalizeProviderModelIdWithPlugin({
+          provider: "route-provider",
+          config: {},
+          context: { provider: "route-provider", modelId },
+        }),
+      ).toBe(`${modelId}-normalized`);
+      expect(resolveRuntimePluginRegistryMock).toHaveBeenCalledOnce();
+      expectLastRuntimeRegistryCall({ onlyPluginIds: ["route-owner"] });
+    },
+  );
+
   it("scopes cli-backend provider refs to their owning plugin", () => {
     setOwningProviderManifestPlugins();
 

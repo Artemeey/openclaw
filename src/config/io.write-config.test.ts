@@ -9,6 +9,7 @@ import { resolveDefaultAgentWorkspaceDir } from "../agents/workspace-default.js"
 import { startGatewayConfigReloader } from "../gateway/config-reload.js";
 import { executeSqliteQueryTakeFirstSync, getNodeSqliteKysely } from "../infra/kysely-sync.js";
 import type { PluginManifestRegistry } from "../plugins/manifest-registry.js";
+import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { readConfigMachineState } from "../state/config-machine-state.js";
 import type { DB as OpenClawStateKyselyDatabase } from "../state/openclaw-state-db.generated.js";
 import {
@@ -145,6 +146,8 @@ describe("config io write", () => {
   afterAll(async () => {
     closeOpenClawStateDatabaseForTest();
     resetConfigRuntimeState();
+    // The process owner retains this suite's mocked manifest loader across module resets.
+    clearPluginMetadataLifecycleCaches();
     await suiteRootTracker.cleanup();
   });
 

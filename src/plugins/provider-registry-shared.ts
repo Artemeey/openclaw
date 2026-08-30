@@ -59,7 +59,7 @@ export function buildCapabilityProviderMaps<T extends { id: string; aliases?: re
   return { canonical, aliases };
 }
 
-export function matchesProviderLiteralId(provider: ProviderPlugin, providerId: string): boolean {
+function matchesProviderLiteralId(provider: ProviderPlugin, providerId: string): boolean {
   const normalized = normalizeLowercaseStringOrEmpty(providerId);
   return Boolean(normalized) && normalizeLowercaseStringOrEmpty(provider.id) === normalized;
 }
@@ -72,6 +72,18 @@ export function listProviderRuntimePluginsInRegistry(
   );
 }
 
+/** Matches a provider hook against the selected route and its explicit config owner. */
+export function matchesProviderRuntimePlugin(
+  plugin: ProviderPlugin,
+  provider: string,
+  ownerRefs: readonly string[],
+): boolean {
+  return ownerRefs.length > 0
+    ? matchesProviderLiteralId(plugin, provider) ||
+        ownerRefs.some((ownerRef) => matchesProviderPluginRef(plugin, ownerRef))
+    : matchesProviderPluginRef(plugin, provider);
+}
+
 /** Selects a provider hook while leaving registry provenance with the calling owner. */
 export function findProviderRuntimePluginInRegistry(params: {
   registry: PluginRegistry;
@@ -80,11 +92,7 @@ export function findProviderRuntimePluginInRegistry(params: {
   isPluginOwnerCompatible?: (pluginId: string) => boolean;
 }): ProviderPlugin | undefined {
   const entry = params.registry.providers.find(({ provider: plugin, pluginId }) => {
-    const matchesProvider =
-      params.ownerRefs.length > 0
-        ? matchesProviderLiteralId(plugin, params.provider) ||
-          params.ownerRefs.some((ownerRef) => matchesProviderPluginRef(plugin, ownerRef))
-        : matchesProviderPluginRef(plugin, params.provider);
+    const matchesProvider = matchesProviderRuntimePlugin(plugin, params.provider, params.ownerRefs);
     return matchesProvider && (params.isPluginOwnerCompatible?.(pluginId) ?? true);
   });
   return entry ? Object.assign({}, entry.provider, { pluginId: entry.pluginId }) : undefined;

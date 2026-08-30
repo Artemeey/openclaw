@@ -362,10 +362,11 @@ export async function applySystemAgentSetup(
       preserveWorkspace,
     });
     if (model) {
+      const { resolveModelTarget } = await import("../commands/models/shared.js");
       const targetAgentId = candidate.agents?.defaults?.systemAgent?.agentId;
       candidate = await applySystemAgentModelSelection({
         config: candidate,
-        model,
+        model: resolveModelTarget({ raw: model, cfg: candidate }),
         ...(targetAgentId ? { targetAgentId } : {}),
         ...(agentRuntimeId ? { agentRuntimeId } : {}),
         ...(authProfileId ? { authProfileId } : {}),

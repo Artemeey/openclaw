@@ -8,6 +8,7 @@ import {
   buildModelAliasIndexCore as buildModelAliasIndex,
   createModelManifestPluginContext,
   resolveModelRefFromString,
+  resolveModelRefWithConfiguredAliases,
 } from "../../agents/model-selection-shared.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import {
@@ -23,6 +24,7 @@ import {
 } from "../../config/model-input.js";
 import type { AgentModelEntryConfig } from "../../config/types.agent-defaults.js";
 import type { AgentModelConfig } from "../../config/types.agents-shared.js";
+import type { ProviderPlugin } from "../../plugins/types.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { inspectModelReference } from "./model-reference-validation.js";
 import { canonicalizeModelCatalogProviderRef } from "./provider-aliases.js";
@@ -88,6 +90,7 @@ export function createModelCommandRefResolver(params: {
   cfg: OpenClawConfig;
   agentId?: string;
   workspaceDir?: string;
+  providerPlugin?: ProviderPlugin;
 }) {
   const normalization = {
     cfg: params.cfg,
@@ -101,15 +104,22 @@ export function createModelCommandRefResolver(params: {
 }
 
 /** Resolves a CLI model reference through aliases and catalog provider aliases. */
-export function resolveModelTarget(params: { raw: string; cfg: OpenClawConfig }): {
-  provider: string;
-  model: string;
-} {
-  const resolved = createModelCommandRefResolver(params)(params.raw);
+export function resolveModelTarget(
+  params: Parameters<typeof createModelCommandRefResolver>[0] & { raw: string },
+): { provider: string; model: string } {
+  const manifestPluginContext = createModelManifestPluginContext(params);
+  const resolved = resolveModelRefWithConfiguredAliases({
+    ...params,
+    defaultProvider: DEFAULT_PROVIDER,
+    manifestPluginContext,
+  });
   if (!resolved) {
     throw new Error(`Invalid model reference: ${params.raw}`);
   }
-  return canonicalizeModelCatalogProviderRef(resolved.ref, { cfg: params.cfg });
+  return canonicalizeModelCatalogProviderRef(resolved, {
+    cfg: params.cfg,
+    metadataSnapshot: manifestPluginContext.getContext().pluginMetadataSnapshot,
+  });
 }
 
 function resolveAuthoredModelAliasTarget(params: {

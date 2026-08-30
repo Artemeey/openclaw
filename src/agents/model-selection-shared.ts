@@ -237,7 +237,11 @@ export function createModelManifestPluginContext(
   } & ModelManifestNormalizationContext,
 ): ModelManifestPluginContext {
   let context: ModelManifestNormalizationContext | undefined;
-  const getContext = () => (context ??= resolveModelManifestNormalizationContext(params));
+  const getContext = () =>
+    (context ??= {
+      ...resolveModelManifestNormalizationContext(params),
+      ...(params.providerPlugin ? { providerPlugin: params.providerPlugin } : {}),
+    });
   return {
     peek: () =>
       context?.manifestPlugins ??

@@ -149,16 +149,13 @@ type PrepareRuntimeSecretsSnapshot = NonNullable<
   Parameters<typeof createRuntimeSecretsActivator>[0]["prepareRuntimeSecretsSnapshot"]
 >;
 
-function createSecretsActivator(
-  prepareRuntimeSecretsSnapshot: PrepareRuntimeSecretsSnapshot,
-  activateRuntimeSecretsSnapshot = activateSecretsRuntimeSnapshot,
-) {
+function createSecretsActivator(prepareRuntimeSecretsSnapshot: PrepareRuntimeSecretsSnapshot) {
   // Keep the real callable identity: deferred state publishers belong to it.
   return createRuntimeSecretsActivator({
     logSecrets: { info: vi.fn(), warn: vi.fn() },
     emitStateEvent: vi.fn(),
     prepareRuntimeSecretsSnapshot,
-    activateRuntimeSecretsSnapshot,
+    activateRuntimeSecretsSnapshot: activateSecretsRuntimeSnapshot,
   });
 }
 
@@ -555,11 +552,7 @@ describe("gateway aux handlers", () => {
         return createSourceSnapshot(config);
       },
     );
-    const activatePreparedSnapshot = vi.fn(activateSecretsRuntimeSnapshot);
-    const activateRuntimeSecrets = createSecretsActivator(
-      prepareRuntimeSecretsSnapshot,
-      activatePreparedSnapshot,
-    );
+    const activateRuntimeSecrets = createSecretsActivator(prepareRuntimeSecretsSnapshot);
     const activatePreparedSnapshotIfCurrent = vi.spyOn(
       activateRuntimeSecrets,
       "activatePreparedSnapshotIfCurrent",
@@ -578,9 +571,9 @@ describe("gateway aux handlers", () => {
       ),
     ).toEqual([true, true]);
     // Preparation never publishes. Only the second CAS owns the current source.
-    expect(activatePreparedSnapshot).toHaveBeenCalledTimes(1);
-    expect(activatePreparedSnapshot.mock.calls[0]?.[0].sourceConfig).toEqual(canonicalConfig);
-    expect(activatePreparedSnapshotIfCurrent).toHaveBeenCalledTimes(2);
+    expect(
+      await Promise.all(activatePreparedSnapshotIfCurrent.mock.results.map(({ value }) => value)),
+    ).toEqual([null, expect.objectContaining({ sourceConfig: canonicalConfig })]);
     expect(getActiveSecretsRuntimeSnapshot()?.sourceConfig).toEqual(canonicalConfig);
     expect(firstRespondCall(respond)[0]).toBe(true);
   });

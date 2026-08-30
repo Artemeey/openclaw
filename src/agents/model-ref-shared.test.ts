@@ -14,6 +14,7 @@ import {
   normalizeConfiguredProviderCatalogModelId,
   normalizeStaticProviderModelId,
 } from "./model-ref-shared.js";
+import { resolveModelRefWithConfiguredAliases } from "./model-selection-shared.js";
 import { normalizeProviderModelIdWithRuntime } from "./provider-model-normalization.runtime.js";
 
 beforeEach(() => {
@@ -161,8 +162,16 @@ describe("normalizeConfiguredProviderCatalogModelId", () => {
 });
 
 describe("retained provider model normalization", () => {
-  it("uses the retained generation without reopening the strict cold facade", () => {
+  it("uses retained and prepared owners without reopening the strict cold facade", () => {
     const config: OpenClawConfig = {
+      agents: {
+        defaults: {
+          models: {
+            "fixture/input": { alias: "selected" },
+            "proxy/proxy/model": { alias: "literal" },
+          },
+        },
+      },
       models: {
         providers: {
           proxy: { api: "ollama", baseUrl: "http://fixture.invalid", models: [] },
@@ -214,8 +223,10 @@ describe("retained provider model normalization", () => {
       source: "/tmp/ambient-owner/index.js",
       provider: { ...provider, normalizeModelId: ambientNormalizer },
     });
-    const normalize = (providerId = "fixture", modelId = "input") =>
+    const preparedPlugin = { ...provider, pluginId: "prepared-owner" };
+    const normalize = (providerId = "fixture", modelId = "input", prepared = false) =>
       normalizeProviderModelIdWithRuntime({
+        ...(prepared ? { providerPlugin: preparedPlugin } : {}),
         provider: providerId,
         config,
         pluginMetadataSnapshot: metadataSnapshot,
@@ -231,7 +242,7 @@ describe("retained provider model normalization", () => {
     try {
       withPluginRuntimeGenerationScope({ config, metadataSnapshot, pluginRegistry }, () => {
         for (const providerId of ["fixture", "fixture-alias", "fixture-hook", "proxy"]) {
-          expect(normalize(providerId)).toBe("fixture-owner/input");
+          expect(normalize(providerId, "input", true)).toBe("fixture-owner/input");
         }
         expect(normalize("fixture", "blank")).toBe("manifest-model");
         expect(() => normalize("fixture", "throw")).toThrow(hookError);
@@ -252,12 +263,38 @@ describe("retained provider model normalization", () => {
       expect(ambientNormalizer).not.toHaveBeenCalled();
       expect(coldLoad).not.toHaveBeenCalled();
 
+      expect(normalize("fixture-hook", "input", true)).toBe("prepared-owner/input");
+      expect(normalize("proxy", "input", true)).toBe("prepared-owner/input");
+      const resolvePreparedAlias = (raw: string) =>
+        resolveModelRefWithConfiguredAliases({
+          cfg: config,
+          raw,
+          defaultProvider: provider.id,
+          pluginMetadataSnapshot: metadataSnapshot,
+          providerPlugin: preparedPlugin,
+        });
+      expect(resolvePreparedAlias("selected")).toEqual({
+        provider: "fixture",
+        model: "prepared-owner/input",
+      });
+      expect(resolvePreparedAlias("literal")).toEqual({ provider: "proxy", model: "proxy/model" });
+      expect(normalizeModelId).toHaveBeenCalledTimes(9);
+      expect(
+        normalizeProviderModelIdWithRuntime({
+          provider: "fixture",
+          pluginMetadataSnapshot: metadataSnapshot,
+          providerPlugin: { ...provider, normalizeModelId: undefined },
+          context: { provider: "fixture", modelId: "blank" },
+        }),
+      ).toBe("manifest-model");
+      expect(() => normalize("foreign-provider", "input", true)).toThrow(coldError);
+
       // Request-only and process registries must still use the strict cold resolver.
       expect(() => withPluginRuntimeRegistryScope(pluginRegistry, () => normalize())).toThrow(
         coldError,
       );
       expect(() => normalize()).toThrow(coldError);
-      expect(coldLoad).toHaveBeenCalledTimes(2);
+      expect(coldLoad).toHaveBeenCalledTimes(3);
     } finally {
       coldLoad.mockRestore();
       resetPluginRuntimeStateForTest();

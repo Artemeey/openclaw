@@ -6,7 +6,10 @@ import {
   normalizeProviderModelIdWithResolvedPlugin,
   type ProviderModelIdNormalizationParams,
 } from "../plugins/provider-model-normalization.js";
-import { findProviderRuntimePluginInRegistry } from "../plugins/provider-registry-shared.js";
+import {
+  findProviderRuntimePluginInRegistry,
+  matchesProviderRuntimePlugin,
+} from "../plugins/provider-registry-shared.js";
 import { getPluginRuntimeGenerationRegistry } from "../plugins/runtime/generation-state.js";
 
 type ProviderRuntimeModule = typeof import("../plugins/provider-model-normalization.runtime.js");
@@ -46,6 +49,18 @@ export function normalizeProviderModelIdWithRuntime(
       ownerRefs: resolveProviderRuntimeOwnerRefs(params),
     });
     return normalizeProviderModelIdWithResolvedPlugin(params, plugin);
+  }
+  const preparedPlugin = params.providerPlugin;
+  if (
+    preparedPlugin &&
+    matchesProviderRuntimePlugin(
+      preparedPlugin,
+      params.provider,
+      resolveProviderRuntimeOwnerRefs(params),
+    )
+  ) {
+    // Setup already selected this callable owner. Other provider operands still resolve normally.
+    return normalizeProviderModelIdWithResolvedPlugin(params, preparedPlugin);
   }
   return loadProviderRuntime().normalizeProviderModelIdWithPlugin(params);
 }

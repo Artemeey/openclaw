@@ -12,6 +12,7 @@ export type ProviderModelIdNormalizationParams = {
   workspaceDir?: string;
   env?: NodeJS.ProcessEnv;
   pluginMetadataSnapshot?: PluginMetadataRegistryView;
+  providerPlugin?: ProviderPlugin;
   plugins?: readonly Pick<PluginManifestRecord, "modelIdNormalization">[];
   context: ProviderNormalizeModelIdContext;
 };

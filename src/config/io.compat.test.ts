@@ -1,9 +1,10 @@
 // Verifies config IO compatibility loading and migration behavior.
 import fs from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { resolveContextTokensForModelFromCache } from "../agents/context-resolution.js";
 import * as pluginManifestRegistry from "../plugins/manifest-registry.js";
+import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { withTempDir } from "../test-utils/temp-dir.js";
 import { VERSION } from "../version.js";
 import { createConfigIO } from "./io.factory.js";
@@ -36,6 +37,9 @@ vi.mock("../plugins/plugin-metadata-snapshot.js", async (importOriginal) => {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+// The process owner retains this file's mocked snapshot loader across module resets.
+afterAll(clearPluginMetadataLifecycleCaches);
 
 function withTempHome<T>(run: (home: string) => Promise<T>): Promise<T> {
   return withTempDir("openclaw-config-compat-", run);
