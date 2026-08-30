@@ -101,6 +101,41 @@ describe("renderModelProviders profiles", () => {
     expect(container.querySelector(".model-providers__global-metrics")).toBeNull();
   });
 
+  it("shows an account-scoped plan only on its profile row", () => {
+    const container = mount(
+      props({
+        cards: [
+          card({
+            usageScope: "account",
+            usage: {
+              provider: "openai",
+              displayName: "OpenAI",
+              plan: "Pro",
+              windows: [{ label: "Weekly", usedPercent: 10 }],
+            },
+            profiles: [
+              {
+                profileId: "openai:first",
+                type: "oauth",
+                status: "ok",
+                usage: {
+                  providerId: "openai",
+                  plan: "Pro",
+                  windows: [{ label: "Weekly", usedPercent: 10 }],
+                },
+              },
+              { profileId: "openai:second", type: "oauth", status: "ok" },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    expect(text(container).match(/\bPro\b/gu)).toHaveLength(1);
+    expect(text(container.querySelector(".model-providers__profile"))).toContain("Pro");
+    expect(text(container.querySelector(".settings-row__control"))).not.toContain("Pro");
+  });
+
   it("distinguishes pending account usage from an unsupported usage source", () => {
     const pending = mount(
       props({

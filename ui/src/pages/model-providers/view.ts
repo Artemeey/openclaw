@@ -496,7 +496,9 @@ function renderProviderRow(card: ModelProviderCard, props: ModelProvidersViewPro
           </div>
         </div>
         <div class="settings-row__control">
-          ${card.usage?.plan ? renderSettingsValue(card.usage.plan) : nothing}
+          ${card.usageScope === "provider" && card.usage?.plan
+            ? renderSettingsValue(card.usage.plan)
+            : nothing}
           ${renderProviderStatus(card)}
         </div>
       </div>
