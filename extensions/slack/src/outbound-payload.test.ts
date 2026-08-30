@@ -12,7 +12,7 @@ type MockWithCalls = { mock: { calls: unknown[][] } };
 type SlackTestBlock = {
   block_id?: string;
   elements?: Array<{ action_id?: string }>;
-  text?: { text?: string };
+  text?: { text?: string; type?: string };
   type?: string;
 };
 
@@ -842,55 +842,82 @@ describe("slackOutbound sendPayload", () => {
       text: "Overview",
       presentation: { blocks: [{ type: "text" as const, text: "Overview" }] },
       blockTypes: ["section"],
+      posts: 1,
+      authoredSection: undefined,
     },
     {
       name: "equivalent rendered Markdown",
       text: "**Overview**",
       presentation: { blocks: [{ type: "text" as const, text: "*Overview*" }] },
       blockTypes: ["section"],
+      posts: 1,
+      authoredSection: undefined,
     },
-    {
-      name: "native chart data",
-      text: "Overview (pie chart)\n- Open: 5",
-      presentation: {
-        blocks: [
-          {
-            type: "chart" as const,
-            chartType: "pie" as const,
-            title: "Overview",
-            segments: [{ label: "Open", value: 5 }],
+    ...[false, true].flatMap((fallback) =>
+      [true, false].map((escaped) => {
+        const title = fallback
+          ? "Overview with a title too long for Slack native chart rendering"
+          : "Overview";
+        return {
+          name: `${fallback ? "literal fallback" : "native chart"}, escaped list: ${String(escaped)}`,
+          text: `${title} (pie chart)\n${escaped ? "\\-" : "-"} Open: 5`,
+          presentation: {
+            blocks: [
+              {
+                type: "chart" as const,
+                chartType: "pie" as const,
+                title,
+                segments: [{ label: "Open", value: 5 }],
+              },
+            ],
           },
-        ],
-      },
-      blockTypes: ["data_visualization"],
-    },
-    {
-      name: "literal chart fallback",
-      text: "Overview with a title too long for Slack native chart rendering (pie chart)\n- Open: 5",
-      presentation: {
-        blocks: [
-          {
-            type: "chart" as const,
-            chartType: "pie" as const,
-            title: "Overview with a title too long for Slack native chart rendering",
-            segments: [{ label: "Open", value: 5 }],
-          },
-        ],
-      },
-      blockTypes: [],
-    },
+          blockTypes: [
+            ...(escaped ? [] : ["section"]),
+            ...(fallback ? [] : ["data_visualization"]),
+          ],
+          posts: fallback && !escaped ? 2 : 1,
+          authoredSection: escaped ? undefined : `${title} (pie chart)\n\n• Open: 5`,
+        };
+      }),
+    ),
   ])(
-    "sends authored text represented by $name once",
-    async ({ text, presentation, blockTypes }) => {
+    "preserves authored rendering beside $name",
+    async ({ text, presentation, blockTypes, posts, authoredSection }) => {
       const { client } = await sendThroughRealSlack({
         payload: { text, presentation },
         renderText: text,
       });
 
-      expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
-      const message = postedSlackMessage(client, 0);
-      expect(message.text?.match(/Overview/gu)).toHaveLength(1);
-      expect(message.blocks?.map((block) => block.type) ?? []).toEqual(blockTypes);
+      expect(client.chat.postMessage).toHaveBeenCalledTimes(posts);
+      const messages = client.chat.postMessage.mock.calls.map((_, index) =>
+        postedSlackMessage(client, index),
+      );
+      expect(
+        messages
+          .map((message) => message.text)
+          .join("\n")
+          .match(/Overview/gu),
+      ).toHaveLength(authoredSection ? 2 : 1);
+      const blocks = messages.flatMap((message) => message.blocks ?? []);
+      expect(blocks.map((block) => block.type)).toEqual(blockTypes);
+      if (authoredSection) {
+        expect(blocks.find((block) => block.type === "section")?.text?.text).toBe(authoredSection);
+      }
+      const chart = presentation.blocks[0];
+      if (chart?.type === "chart") {
+        if (blockTypes.includes("data_visualization")) {
+          expect(blocks.at(-1)).toEqual({
+            type: "data_visualization",
+            title: chart.title,
+            chart: { type: "pie", segments: [{ label: "Open", value: 5 }] },
+          });
+        } else {
+          expect(messages.at(-1)).toMatchObject({
+            text: `${chart.title} (pie chart)\n- Open: 5`,
+            mrkdwn: false,
+          });
+        }
+      }
     },
   );
 
@@ -915,6 +942,82 @@ describe("slackOutbound sendPayload", () => {
       "*First*",
       "Second",
     ]);
+  });
+
+  it.each(
+    ["*", "**"].flatMap((marker) => [
+      {
+        name: `literal fallback (${marker})`,
+        payload: {
+          text: `**${"x".repeat(151)}**`,
+          presentation: { title: `${marker}${"x".repeat(151)}${marker}`, blocks: [] },
+        },
+        authoredSection: `*${"x".repeat(151)}*`,
+        posts: 2,
+      },
+      {
+        name: `plain_text header (${marker})`,
+        payload: {
+          text: "**Overview**",
+          presentation: { title: `${marker}Overview${marker}`, blocks: [] },
+        },
+        authoredSection: "*Overview*",
+        posts: 1,
+      },
+      ...["section", "context"].map((type) => ({
+        name: `plain_text ${type} (${marker})`,
+        payload: {
+          text: "**Overview**",
+          channelData: {
+            slack: {
+              blocks: [
+                type === "section"
+                  ? { type, text: { type: "plain_text", text: `${marker}Overview${marker}` } }
+                  : {
+                      type,
+                      elements: [{ type: "plain_text", text: `${marker}Overview${marker}` }],
+                    },
+              ],
+            },
+          },
+        },
+        authoredSection: "*Overview*",
+        posts: 1,
+      })),
+      ...[false, true].map((represented) => ({
+        name: `mixed context with mrkdwn: ${String(represented)} (${marker})`,
+        payload: {
+          text: "Ready **Overview**",
+          channelData: {
+            slack: {
+              blocks: [
+                {
+                  type: "context",
+                  elements: [
+                    { type: "plain_text", text: "Ready" },
+                    {
+                      type: represented ? "mrkdwn" : "plain_text",
+                      text: `${marker}Overview${marker}`,
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+        authoredSection: represented && marker === "*" ? undefined : "Ready *Overview*",
+        posts: 1,
+      })),
+    ]),
+  )("preserves authored formatting beside $name", async ({ payload, authoredSection, posts }) => {
+    const { client } = await sendThroughRealSlack({ payload, renderText: payload.text });
+    expect(client.chat.postMessage).toHaveBeenCalledTimes(posts);
+    const sections = client.chat.postMessage.mock.calls.flatMap((_, index) =>
+      (postedSlackMessage(client, index).blocks ?? [])
+        .filter((block) => block.type === "section" && block.text?.type === "mrkdwn")
+        .map((block) => block.text?.text),
+    );
+    expect(sections).toEqual(authoredSection ? [authoredSection] : []);
   });
 
   it("recognizes whitespace at actual portable chunk boundaries", async () => {
