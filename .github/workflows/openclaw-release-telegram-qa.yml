@@ -1940,26 +1940,26 @@ jobs:
 
           # Exercise the real sudo boundary before credentials or channel work:
           # a live isolated UID must block handoff, then quiescence must permit it.
-          release_proof_root="${RUNTIME_ROOT}/tmp/openclaw-qa-suite-release-proof"
+          release_proof_root="${runtime_root}/tmp/openclaw-qa-suite-release-proof"
           mkdir -p "$release_proof_root/state"
-          sudo chown -R "$SUT_UID:$SUT_GID" "$release_proof_root/state"
+          sudo chown -R "$sut_uid:$sut_gid" "$release_proof_root/state"
           sudo chmod 0700 "$release_proof_root/state"
-          sudo -u "$SUT_USER" -- setsid sleep 30 &
+          sudo -u "$sut_user" -- setsid sleep 30 &
           release_proof_pid=$!
           for _ in $(seq 1 20); do
-            pgrep -U "$SUT_UID" >/dev/null 2>&1 && break
+            pgrep -U "$sut_uid" >/dev/null 2>&1 && break
             sleep 0.1
           done
-          pgrep -U "$SUT_UID" >/dev/null 2>&1
+          pgrep -U "$sut_uid" >/dev/null 2>&1
           if "$launcher" --release-temp-root "$release_proof_root"; then
             echo "Telegram SUT temp-root release accepted a live isolated UID." >&2
             exit 1
           fi
-          [[ "$(stat -c '%u:%g' "$release_proof_root/state")" == "$SUT_UID:$SUT_GID" ]]
+          [[ "$(stat -c '%u:%g' "$release_proof_root/state")" == "$sut_uid:$sut_gid" ]]
           "$launcher" --terminate-uid
           wait "$release_proof_pid" 2>/dev/null || true
           "$launcher" --release-temp-root "$release_proof_root"
-          [[ "$(stat -c '%u:%g' "$release_proof_root/state")" == "$RUNNER_UID:$RUNNER_GID" ]]
+          [[ "$(stat -c '%u:%g' "$release_proof_root/state")" == "$runner_uid:$runner_gid" ]]
           rm -rf -- "$release_proof_root"
           echo "Telegram SUT privileged temp-root release proof passed."
 
