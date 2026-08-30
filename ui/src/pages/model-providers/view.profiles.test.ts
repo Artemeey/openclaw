@@ -106,6 +106,7 @@ describe("renderModelProviders profiles", () => {
       props({
         cards: [
           card({
+            apiKey: { source: "config" },
             usageScope: "account",
             usage: {
               provider: "openai",
@@ -134,6 +135,7 @@ describe("renderModelProviders profiles", () => {
     expect(text(container).match(/\bPro\b/gu)).toHaveLength(1);
     expect(text(container.querySelector(".model-providers__profile"))).toContain("Pro");
     expect(text(container.querySelector(".settings-row__control"))).not.toContain("Pro");
+    expect(container.querySelector(".model-providers__global-metrics")).toBeNull();
   });
 
   it("distinguishes pending account usage from an unsupported usage source", () => {
@@ -188,7 +190,7 @@ describe("renderModelProviders profiles", () => {
       }),
     );
     expect(text(planOnly)).toContain("Pro");
-    expect(text(planOnly)).toContain("No live usage data reported");
+    expect(text(planOnly)).not.toContain("No live usage data reported");
   });
 
   it("marks cached account usage as refreshing without hiding it", () => {

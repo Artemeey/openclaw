@@ -34,7 +34,6 @@ import type {
 import { renderDefaultModels } from "./default-models-view.ts";
 import { renderProviderProfiles } from "./profiles-view.ts";
 import {
-  hasApiKeyCredential,
   hasProviderCredentials,
   hasVerifiedProvider,
   renderProviderStatus,
@@ -240,10 +239,7 @@ function renderProviderMetrics(
 ) {
   const hasProfiles = card.profiles.length > 0;
   const hasProfileUsage = card.profiles.some((profile) => profile.usage !== undefined);
-  const usage =
-    hasProfileUsage && card.usageScope !== "provider" && !hasApiKeyCredential(card)
-      ? undefined
-      : card.usage;
+  const usage = hasProfileUsage && card.usageScope === "account" ? undefined : card.usage;
   const localCost = renderLocalCost(card, costDays);
   if (!usage && localCost === nothing && hasProfiles) {
     return nothing;

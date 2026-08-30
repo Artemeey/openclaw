@@ -56,7 +56,8 @@ function renderProfileUsage(profile: ProviderProfile) {
   const usage = profile.usage;
   if (
     usage &&
-    (usage.windows.length > 0 ||
+    (usage.plan ||
+      usage.windows.length > 0 ||
       usage.billing?.length ||
       usage.costHistory ||
       usage.summary ||
