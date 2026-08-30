@@ -9,6 +9,14 @@ import { isKnownWorkspacePath } from "./path.ts";
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 describe("isKnownWorkspacePath", () => {
+  it.each([
+    ["POSIX literal backslash", "/workspace", "/workspace/..\\folder", true],
+    ["Windows root-relative path", "\\workspace", "\\workspace\\sub\\..\\folder", true],
+    ["Windows root-relative escape", "\\workspace", "\\workspace\\..\\other", false],
+  ] as const)("compares %s", (_name, root, candidate, allowed) => {
+    expect(isKnownWorkspacePath([root], candidate)).toBe(allowed);
+  });
+
   it("accepts a canonical child after the Gateway approves a symlinked workspace root", async () => {
     const tempRoot = await fs.realpath(os.tmpdir());
     const container = tempDirs.make("openclaw-ui-workspace-alias-", tempRoot);

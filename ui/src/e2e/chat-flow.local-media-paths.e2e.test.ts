@@ -7,15 +7,34 @@ import { createChatFlowE2eSuite, installMockGateway } from "./chat-flow.test-sup
 const suite = createChatFlowE2eSuite();
 
 suite.define(() => {
-  it("allows tilde local media previews when the preview root home contains a literal $ pattern", async () => {
+  it.each([
+    { name: "dollar-home", source: "~/media/report-voice.mp3", root: "/home/us$&r/media" },
+    {
+      name: "posix-literal-backslash",
+      source: "/tmp/openclaw/..\\report.mp3",
+      root: "/tmp/openclaw",
+    },
+    {
+      name: "posix-dot-segments",
+      source: "/tmp/staging/../openclaw/report # 100%?.mp3",
+      root: "/tmp/openclaw",
+    },
+    {
+      name: "windows-dot-segments",
+      source: "C:/Temp/../Users/test/media/report # 100%?.mp3",
+      root: "c:/users/test/media",
+    },
+  ])("previews structured local audio with $name", async ({ name, source, root }) => {
     const artifactDir = process.env.OPENCLAW_UI_E2E_ARTIFACT_DIR?.trim();
     const context = await suite.newBrowserContext({
       locale: "en-US",
       serviceWorkers: "block",
       viewport: { height: 900, width: 1280 },
+      ...(artifactDir
+        ? { recordVideo: { dir: artifactDir, size: { height: 900, width: 1280 } } }
+        : {}),
     });
     const page = await context.newPage();
-    const source = "~/media/report-voice.mp3";
     const requestedMediaUrls: URL[] = [];
 
     await page.route("**/__openclaw__/assistant-media?**", async (route) => {
@@ -27,7 +46,7 @@ suite.define(() => {
           contentType: "application/json",
           body: JSON.stringify({
             available: true,
-            mediaTicket: "ticket-dollar-home",
+            mediaTicket: "ticket-local-media",
             mediaTicketExpiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
           }),
         });
@@ -40,10 +59,10 @@ suite.define(() => {
     });
 
     await installMockGateway(page, {
-      localMediaPreviewRoots: ["/home/us$&r/media"],
+      localMediaPreviewRoots: [root],
       historyMessages: [
         {
-          id: "assistant-dollar-home-audio",
+          id: `assistant-${name}-audio`,
           role: "assistant",
           content: [
             { type: "text", text: "Your recording" },
@@ -74,14 +93,14 @@ suite.define(() => {
       expect(
         requestedMediaUrls
           .slice(1)
-          .some((url) => url.searchParams.get("mediaTicket") === "ticket-dollar-home"),
+          .some((url) => url.searchParams.get("mediaTicket") === "ticket-local-media"),
       ).toBe(true);
       const downloadHref = await attachment
         .locator(".chat-assistant-attachment-card__download")
         .getAttribute("href");
       expect(downloadHref).toBeTruthy();
       const downloadUrl = new URL(downloadHref ?? "", suite.server.baseUrl);
-      expect(downloadUrl.searchParams.get("mediaTicket")).toBe("ticket-dollar-home");
+      expect(downloadUrl.searchParams.get("mediaTicket")).toBe("ticket-local-media");
       expect(downloadUrl.searchParams.get("source")).toBe(source);
       await expect
         .poll(() =>
@@ -91,14 +110,11 @@ suite.define(() => {
         )
         .toBeGreaterThanOrEqual(1);
       expect(await page.getByText("Outside allowed folders").count()).toBe(0);
+    } finally {
       if (artifactDir) {
         await mkdir(artifactDir, { recursive: true });
-        await page.screenshot({
-          fullPage: true,
-          path: path.join(artifactDir, "local-media-dollar-home-allowed.png"),
-        });
+        await page.screenshot({ fullPage: true, path: path.join(artifactDir, `${name}.png`) });
       }
-    } finally {
       await suite.closeBrowserContext(context);
     }
   });

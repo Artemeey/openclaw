@@ -1,4 +1,5 @@
 import { buildAssistantMediaUrl } from "../../../app/assistant-media.ts";
+import { comparableAbsolutePath } from "../../../lib/local-path.ts";
 
 export function isLocalAssistantAttachmentSource(source: string): boolean {
   const trimmed = source.trim();
@@ -74,14 +75,9 @@ function resolveHomeCandidatesFromRoots(localMediaPreviewRoots: readonly string[
 }
 
 function canonicalizeLocalPathForComparison(value: string): string {
-  let slashNormalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (/^\/[a-zA-Z]:\//.test(slashNormalized)) {
-    slashNormalized = slashNormalized.slice(1);
-  }
-  if (/^[a-zA-Z]:\//.test(slashNormalized)) {
-    return slashNormalized.toLowerCase();
-  }
-  return slashNormalized;
+  // Preserve file-URL drive spellings and the media gate's filesystem-root rejection.
+  const withoutDriveSlash = value.replace(/^[\\/](?=[a-z]:[\\/])/iu, "");
+  return comparableAbsolutePath(withoutDriveSlash)?.replace(/\/$/u, "") ?? "";
 }
 
 export function isLocalAttachmentPreviewAllowed(

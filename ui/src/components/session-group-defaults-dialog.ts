@@ -7,8 +7,9 @@ import type {
 } from "../../../packages/gateway-protocol/src/index.js";
 import { t } from "../i18n/index.ts";
 import { formatUiError } from "../lib/format-error.ts";
+import { isAbsolutePath } from "../lib/local-path.ts";
 import { renderSessionMenuItem } from "../pages/new-session/cloud-target.ts";
-import { folderDisplayName, isAbsolutePath } from "../pages/new-session/path.ts";
+import { folderDisplayName } from "../pages/new-session/path.ts";
 import { renderPlaceBrowser } from "../pages/new-session/place-browser.ts";
 import "../styles/new-session.css";
 import { icons } from "./icons.ts";
