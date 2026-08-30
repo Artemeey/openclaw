@@ -321,6 +321,7 @@ export async function startGatewayCoreRuntime(input: {
           return days !== null ? nowMs + days * 86_400_000 : null;
         },
         activateRuntimeSecrets,
+        getPluginMetadata: () => pluginMetadataOwner.getActive(),
         sharedGatewaySessionGenerationState,
         resolveSharedGatewaySessionGenerationForConfig,
         clients,

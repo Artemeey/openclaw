@@ -771,7 +771,6 @@ extensions/memory-core/src/memory/search-deadline.ts	1
 extensions/memory-core/src/migration/doctor-host-event-sources.ts	1
 extensions/memory-core/src/migration/doctor-memory-sidecar-import.ts	8
 extensions/memory-core/src/migration/doctor-memory-sidecar.ts	2
-extensions/memory-core/src/migration/doctor-vector-index-provider-diagnostic.ts	1
 extensions/memory-core/src/migration/doctor-workspaces.ts	1
 extensions/memory-core/src/session-backfill-gateway.ts	2
 extensions/memory-core/src/session-backfill-lifecycle.ts	2
@@ -1930,7 +1929,6 @@ src/agents/models-config-state.ts	1
 src/agents/models-config.merge.ts	2
 src/agents/models-config.plan.ts	4
 src/agents/models-config.providers.policy.lookup.ts	1
-src/agents/models-config.providers.source-managed.ts	4
 src/agents/models-config.ts	1
 src/agents/modes/interactive/theme/theme.ts	11
 src/agents/node-plugin-tools.ts	1

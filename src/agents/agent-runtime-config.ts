@@ -189,6 +189,7 @@ function resolveAgentRuntimeSecretTargets(params: {
   optionalActivePaths: Set<string>;
 } {
   const baseTargetIds = getAgentRuntimeCommandSecretTargetIds({
+    config: params.config,
     includeChannelTargets: params.includeChannelTargets,
   });
   const optionalActivePaths = getAgentRuntimeOptionalCommandSecretPaths(params.config);
