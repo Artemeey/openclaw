@@ -32,8 +32,7 @@ extension OpenClawChatSQLiteTranscriptCache {
                         name: item.name,
                         arguments: self.cacheablePatchArguments(item),
                         details: self.cacheableDetails(item.details),
-                        isError: item.isError,
-                    )
+                        isError: item.isError)
                 },
                 timestamp: message.timestamp,
                 transcriptMessageID: message.transcriptMessageID,
@@ -47,14 +46,13 @@ extension OpenClawChatSQLiteTranscriptCache {
                 details: self.cacheableDetails(message.details),
                 isError: message.isError,
                 provenance: message.provenance,
-                historyMarker: message.historyMarker,
-            )
+                historyMarker: message.historyMarker)
         }
     }
 
     private static func cacheableDetails(_ details: AnyCodable?) -> AnyCodable? {
         guard let diff = details?.dictionaryValue?["diff"]?.stringValue else { return nil }
-        let capped = cacheableText(diff)
+        let capped = self.cacheableText(diff)
         guard !capped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return AnyCodable(["diff": AnyCodable(capped)])
     }
@@ -71,7 +69,7 @@ extension OpenClawChatSQLiteTranscriptCache {
             guard let value = arguments[key]?.stringValue,
                   !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { continue }
-            return AnyCodable([key: AnyCodable(cacheableText(value))])
+            return AnyCodable([key: AnyCodable(self.cacheableText(value))])
         }
         return nil
     }
@@ -80,7 +78,7 @@ extension OpenClawChatSQLiteTranscriptCache {
         let limit = 64000
         let truncationMarker = "\n...(truncated)..."
         return if value.utf16.count > limit {
-            utf16Prefix(value, limit: limit - truncationMarker.utf16.count) + truncationMarker
+            self.utf16Prefix(value, limit: limit - truncationMarker.utf16.count) + truncationMarker
         } else {
             value
         }

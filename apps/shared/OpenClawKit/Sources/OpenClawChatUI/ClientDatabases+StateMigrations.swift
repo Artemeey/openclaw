@@ -91,8 +91,7 @@ extension OpenClawClientDatabases {
         migrator.registerMigration("client-state-outbox-attempt-scope-v5") { db in
             try db
                 .execute(
-                    sql: "ALTER TABLE outbox_commands ADD COLUMN had_unacknowledged_send INTEGER NOT NULL DEFAULT 0",
-                )
+                    sql: "ALTER TABLE outbox_commands ADD COLUMN had_unacknowledged_send INTEGER NOT NULL DEFAULT 0")
             // Legacy rows with prior attempts may have reached the gateway before a
             // transport failure; without this evidence a post-park retry would reuse an
             // idempotency key the old branch may already own.
@@ -100,8 +99,7 @@ extension OpenClawClientDatabases {
                 sql: """
                 UPDATE outbox_commands SET had_unacknowledged_send = 1
                 WHERE retry_count > 0 OR status IN ('sending', 'awaiting_confirmation')
-                """,
-            )
+                """)
             try db.execute(sql: """
             INSERT OR IGNORE INTO outbox_branch_scopes(
                 gateway_id, session_key, agent_id, branch_epoch, needs_reconciliation

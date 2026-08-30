@@ -754,7 +754,6 @@ public final class OpenClawChatViewModel {
         }
         return "Default: \(modelLabel(for: defaultModelID))"
     }
-
 }
 
 extension OpenClawChatViewModel {
