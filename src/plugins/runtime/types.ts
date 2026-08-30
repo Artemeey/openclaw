@@ -210,3 +210,9 @@ export type CreatePluginRuntimeOptions = {
   nodes?: PluginRuntime["nodes"];
   allowGatewaySubagentBinding?: boolean;
 };
+
+/** Checked contract for both the path-loaded factory and its implementation. */
+export type PluginRuntimeFactory = (
+  options?: CreatePluginRuntimeOptions,
+  state?: PluginRuntime["state"],
+) => PluginRuntime;

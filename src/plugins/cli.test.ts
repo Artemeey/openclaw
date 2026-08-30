@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
+import { createPluginCliLoadSession } from "./cli-registry-loader.js";
 import type { PluginManifestRecord } from "./manifest-registry.types.js";
 import type { PluginMetadataSnapshot } from "./plugin-metadata-snapshot.types.js";
 
@@ -35,6 +36,12 @@ vi.mock("./activation-planner.js", () => ({
 
 vi.mock("../config/plugin-auto-enable.js", () => ({
   applyPluginAutoEnable: (...args: unknown[]) => mocks.applyPluginAutoEnable(...args),
+}));
+
+vi.mock("./plugin-metadata-snapshot.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./plugin-metadata-snapshot.js")>()),
+  // CLI sessions prepare their snapshot before entering the shared load context.
+  resolvePluginMetadataSnapshot: () => mocks.getPreparedMetadataSnapshot(),
 }));
 
 vi.mock("./runtime/load-context.resolve.js", async (importOriginal) => {
@@ -294,7 +301,8 @@ describe("registerPluginCliCommands", () => {
     await registerPluginCliCommands(createProgram(), {} as OpenClawConfig, env);
 
     const loadOptions = getMockCallObject(mocks.loadOpenClawPlugins);
-    expect(loadOptions.env).toBe(env);
+    expect(loadOptions.env).toEqual(env);
+    expect(loadOptions.env).not.toBe(env);
   });
 
   it("injects gateway-backed node runtime into plugin CLI commands", async () => {
@@ -307,13 +315,16 @@ describe("registerPluginCliCommands", () => {
     expect(typeof loadOptions.runtimeOptions?.nodes?.invoke).toBe("function");
   });
 
-  it("reuses loaded plugin CLI entries on repeat calls for the same program", async () => {
+  it("reuses loaded plugin CLI entries within one exact invocation", async () => {
     const program = createProgram();
+    const config = {};
+    const session = createPluginCliLoadSession();
 
-    await registerPluginCliCommands(program, {} as OpenClawConfig);
-    await registerPluginCliCommands(program, {} as OpenClawConfig);
+    await registerPluginCliCommands(program, config, undefined, undefined, { session });
+    await registerPluginCliCommands(program, config, undefined, undefined, { session });
 
     expect(mocks.loadOpenClawPlugins).toHaveBeenCalledTimes(1);
+    session.close();
   });
 
   it("reloads plugin CLI entries when the requested primary command changes", async () => {

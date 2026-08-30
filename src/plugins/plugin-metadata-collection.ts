@@ -13,7 +13,10 @@ import {
 } from "./current-plugin-metadata-snapshot.js";
 import { hashJson } from "./installed-plugin-index-hash.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
-import { getInstalledPluginIndexInstallRecordsCacheGeneration } from "./installed-plugin-index-record-cache.js";
+import {
+  getInstalledPluginIndexInitializationGeneration,
+  getInstalledPluginIndexInstallRecordsCacheGeneration,
+} from "./installed-plugin-index-record-cache.js";
 import { resolveInstalledPluginIndexStorePath } from "./installed-plugin-index-store-path.js";
 import type { PluginManifestRegistry } from "./manifest-registry.types.js";
 import {
@@ -304,14 +307,25 @@ export function createPluginMetadataOwner(
   let refreshRequired = false;
   let disposed = false;
   const preparedEpochs = new WeakMap<PreparedPluginMetadata, number>();
-  const isPreparedCurrent = (metadata: PreparedPluginMetadata) =>
+  // Completed operations keep their first inventory across ledger writes. A database
+  // open still fences earlier read-only preparation, including foreign seeded views.
+  const resolveReadSourceGeneration = () =>
+    cache.kind === "operation" &&
+    observed &&
+    observed.metadata.installRecordsGeneration >= getInstalledPluginIndexInitializationGeneration()
+      ? observed.metadata.installRecordsGeneration
+      : getInstalledPluginIndexInstallRecordsCacheGeneration();
+  const isPreparedAtSource = (metadata: PreparedPluginMetadata, sourceGeneration: number) =>
     !disposed &&
     preparedEpochs.get(metadata) === epoch &&
     (boot
       ? metadata.unionSnapshot === boot.unionSnapshot &&
         getPluginMetadataSnapshotCache(metadata) === cache
-      : metadata.installRecordsGeneration ===
-        getInstalledPluginIndexInstallRecordsCacheGeneration());
+      : metadata.installRecordsGeneration === sourceGeneration);
+  const isPreparedCurrent = (metadata: PreparedPluginMetadata) =>
+    isPreparedAtSource(metadata, getInstalledPluginIndexInstallRecordsCacheGeneration());
+  const isPreparedReadable = (metadata: PreparedPluginMetadata) =>
+    isPreparedAtSource(metadata, resolveReadSourceGeneration());
 
   const replaceCache = (next: PluginCache) => {
     const ownsProcess = getProcessPluginCache().metadata.collectionOwner === owner;
@@ -372,7 +386,8 @@ export function createPluginMetadataOwner(
       if (disposed) {
         throw new Error("Plugin metadata owner has been disposed");
       }
-      if (boot && (params.allowCurrent === false || params.stateDir !== undefined)) {
+      const fresh = params.allowCurrent === false || params.stateDir !== undefined;
+      if (boot && fresh) {
         return createPluginMetadataOwner().prepare(params);
       }
       const suppliedCache = params.seed ? getPluginMetadataSnapshotCache(params.seed) : undefined;
@@ -391,17 +406,17 @@ export function createPluginMetadataOwner(
         boot = params.seed;
       }
       const key = resolvePreparationKey(params);
-      const previous =
-        params.allowCurrent === false
-          ? undefined
-          : [active, observed].find(
-              (entry) => entry?.key === key && isPreparedCurrent(entry.metadata),
-            );
+      const previous = fresh
+        ? undefined
+        : [active, observed].find(
+            (entry) => entry?.key === key && isPreparedReadable(entry.metadata),
+          );
       if (previous) {
         return previous.metadata;
       }
       const preparationEpoch = epoch;
-      const installRecordsGeneration = getInstalledPluginIndexInstallRecordsCacheGeneration();
+      const sourceGeneration = getInstalledPluginIndexInstallRecordsCacheGeneration();
+      const installRecordsGeneration = fresh ? sourceGeneration : resolveReadSourceGeneration();
       let metadata: PreparedPluginMetadata;
       if (boot) {
         metadata = prepareBootView(params);
@@ -421,7 +436,7 @@ export function createPluginMetadataOwner(
         if (
           refreshRequired ||
           cacheSourceGeneration !== installRecordsGeneration ||
-          (params.allowCurrent === false && observed)
+          (fresh && observed)
         ) {
           replaceCache(createPluginCache());
         } else if (seed && !observed && !active) {
@@ -436,25 +451,24 @@ export function createPluginMetadataOwner(
             const inputs = resolvePreparationInputs(params);
             const workspaces = new Map<string | undefined, PluginMetadataSnapshot>();
             for (const workspaceDir of inputs.workspaceDirs) {
-              const candidate =
-                params.allowCurrent === false
-                  ? undefined
-                  : [
-                      seed?.workspaces.get(workspaceDir),
-                      observed?.metadata.installRecordsGeneration === installRecordsGeneration
-                        ? observed.metadata.workspaces.get(workspaceDir)
-                        : undefined,
-                    ].find(
-                      (snapshot) =>
-                        snapshot &&
-                        isPluginMetadataSnapshotCompatible({
-                          snapshot,
-                          config: params.config,
-                          env: inputs.env,
-                          workspaceDir,
-                          allowScopedSnapshot: true,
-                        }),
-                    );
+              const candidate = fresh
+                ? undefined
+                : [
+                    seed?.workspaces.get(workspaceDir),
+                    observed?.metadata.installRecordsGeneration === installRecordsGeneration
+                      ? observed.metadata.workspaces.get(workspaceDir)
+                      : undefined,
+                  ].find(
+                    (snapshot) =>
+                      snapshot &&
+                      isPluginMetadataSnapshotCompatible({
+                        snapshot,
+                        config: params.config,
+                        env: inputs.env,
+                        workspaceDir,
+                        allowScopedSnapshot: true,
+                      }),
+                  );
               const snapshot =
                 candidate ??
                 loadPluginMetadataSnapshot({
@@ -523,8 +537,7 @@ export function createPluginMetadataOwner(
       if (
         disposed ||
         preparationEpoch !== epoch ||
-        (!boot &&
-          installRecordsGeneration !== getInstalledPluginIndexInstallRecordsCacheGeneration())
+        (!boot && sourceGeneration !== getInstalledPluginIndexInstallRecordsCacheGeneration())
       ) {
         throw new Error("Plugin metadata preparation was superseded");
       }
@@ -583,7 +596,7 @@ export function createPluginMetadataOwner(
       for (const entry of [active, observed]) {
         if (
           !entry ||
-          !isPreparedCurrent(entry.metadata) ||
+          !isPreparedReadable(entry.metadata) ||
           entry.metadata.envFingerprint !== resolvePluginMetadataEnvFingerprint(params.env)
         ) {
           continue;

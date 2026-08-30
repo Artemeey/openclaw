@@ -1350,7 +1350,10 @@ describe("gateway session utils", () => {
         },
       },
     } as OpenClawConfig;
-    const row = (entry: SessionEntry, catalog?: { reasoning?: boolean }) =>
+    const row = (
+      entry: SessionEntry,
+      catalog?: { reasoning?: boolean; compat?: { supportedReasoningEfforts: string[] } },
+    ) =>
       buildGatewaySessionRow({
         cfg,
         storePath: "",
@@ -1376,6 +1379,16 @@ describe("gateway session utils", () => {
     expect(row(stored).thinkingLevel).toBe("ultra");
     expect(row(stored, {}).thinkingLevel).toBe("ultra");
     expect(row(stored, { reasoning: true }).thinkingLevel).toBe("high");
+    expect(
+      row(stored, { reasoning: true, compat: { supportedReasoningEfforts: ["max"] } })
+        .thinkingLevel,
+    ).toBe("max");
+    const nativeUltra = row(stored, {
+      reasoning: true,
+      compat: { supportedReasoningEfforts: ["max", "ultra"] },
+    });
+    expect(nativeUltra.thinkingLevel).toBe("ultra");
+    expect(nativeUltra.thinkingLevels).toContainEqual({ id: "ultra", label: "ultra" });
   });
 
   test("strips retired thinking provenance from Gateway patch results", async () => {
@@ -3949,8 +3962,8 @@ describe("gateway session utils", () => {
 
     const result = listAgentsForGateway(cfg, disabledCatalog, {
       modelCatalogByAgentId: new Map([
-        ["main", disabledCatalog],
-        ["work", enabledCatalog],
+        ["main", { entries: disabledCatalog }],
+        ["work", { entries: enabledCatalog }],
         ["missing", undefined],
       ]),
     });

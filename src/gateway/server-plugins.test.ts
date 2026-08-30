@@ -37,6 +37,7 @@ import {
 } from "../plugins/test-helpers/cold-plugin-fixtures.js";
 import { withEnv } from "../test-utils/env.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import { createInternalAgentTurnFacade } from "./agent-turn/internal-facade.js";
 import type { GatewayRequestContext, GatewayRequestOptions } from "./server-methods/types.js";
 import { createSyntheticPluginRuntimeClient } from "./server-plugin-runtime-client.js";
 
@@ -115,6 +116,7 @@ vi.mock("./server-methods.js", () => ({
 
 vi.mock("../auto-reply/reply/dispatch-from-config.js", () => ({
   dispatchReplyFromConfig,
+  dispatchLowLevelChannelReplyFromConfig: dispatchReplyFromConfig,
 }));
 
 vi.mock("./agent-turn/internal-facade.js", () => ({
@@ -294,7 +296,13 @@ function createTestLog() {
 }
 
 function createTestContext(label: string): GatewayRequestContext {
-  return { label } as unknown as GatewayRequestContext;
+  return bindTestAgentTurns({ label } as unknown as GatewayRequestContext);
+}
+
+function bindTestAgentTurns(context: GatewayRequestContext): GatewayRequestContext {
+  context.createAgentTurnFacade ??= (principal) =>
+    createInternalAgentTurnFacade({ ...principal, getContext: () => context });
+  return context;
 }
 
 const requireRecord = createRequireRecord("record", "expected-label-object-capitalized");
@@ -386,6 +394,7 @@ async function loadTestModules() {
       resolveTestGatewayContext = () => undefined;
     },
     setFallbackGatewayContext: (context) => {
+      bindTestAgentTurns(context);
       resolveTestGatewayContext = () => context;
       return () => {
         if (resolveTestGatewayContext() === context) {
@@ -394,9 +403,13 @@ async function loadTestModules() {
       };
     },
     setFallbackGatewayContextResolver: (resolve) => {
-      resolveTestGatewayContext = resolve;
+      const boundResolve = () => {
+        const context = resolve();
+        return context ? bindTestAgentTurns(context) : undefined;
+      };
+      resolveTestGatewayContext = boundResolve;
       return () => {
-        if (resolveTestGatewayContext === resolve) {
+        if (resolveTestGatewayContext === boundResolve) {
           resolveTestGatewayContext = () => undefined;
         }
       };

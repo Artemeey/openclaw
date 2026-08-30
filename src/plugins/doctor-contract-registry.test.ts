@@ -19,6 +19,10 @@ vi.mock("../config/io.plugin-metadata.js", () => ({
     mocks.loadPluginManifestRegistry(...args),
 }));
 const doctorContractWarnMock = vi.hoisted(() => vi.fn());
+const retainedConfigDoctorMock = vi.hoisted(() => vi.fn());
+vi.mock("./public-surface-loader.js", () => ({
+  loadBundledPluginPublicArtifactModuleFromCandidatesSync: retainedConfigDoctorMock,
+}));
 vi.mock("../logging/subsystem.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../logging/subsystem.js")>();
   return {
@@ -79,6 +83,7 @@ describe("doctor-contract-registry module loader", () => {
     resetRegistryJitiMocks();
     mocks.loadPluginManifestRegistry.mockReturnValue({ plugins: [], diagnostics: [] });
     doctorContractWarnMock.mockReset();
+    retainedConfigDoctorMock.mockReset().mockReturnValue(null);
     // Loaded once in beforeAll; afterEach guards the same binding optionally because it
     // can fire when that import never completed. Fail loudly here instead of silently
     // running a case against the real module loader.

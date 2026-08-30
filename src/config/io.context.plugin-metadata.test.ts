@@ -30,6 +30,7 @@ import {
   makeTrackedTempDir,
   mkdirSafeDir,
 } from "../plugins/test-helpers/fs-fixtures.js";
+import { OPENCLAW_STATE_SCHEMA_VERSION } from "../state/openclaw-state-db-contract.js";
 import {
   closeOpenClawStateDatabaseForTest,
   openOpenClawStateDatabase,
@@ -194,7 +195,7 @@ describe("config IO plugin metadata snapshots", () => {
       );
       expect(
         openOpenClawStateDatabase({ env }).db.prepare("PRAGMA user_version").get()?.user_version,
-      ).toBe(13);
+      ).toBe(OPENCLAW_STATE_SCHEMA_VERSION);
       expect(
         owner.prepare({ config, env, seed: result.pluginMetadata }).byPluginId.has(plugin.pluginId),
       ).toBe(true);
@@ -435,6 +436,7 @@ describe("config IO plugin metadata snapshots", () => {
     ).toBe(false);
     expect(metadata?.byPluginId.get(disabled.pluginId)?.source).toBe(disabled.runtimeSource);
     expect(Object.isFrozen(metadata?.unionSnapshot.index.plugins)).toBe(true);
+    expect(structuredClone(registry)).toEqual(registry);
     expect(loader.getMetadata()).toBe(metadata);
   });
 
@@ -465,6 +467,7 @@ describe("config IO plugin metadata snapshots", () => {
     for (const { pluginIds, expected } of cases) {
       const registry = resolveConfigWidePluginManifestRegistry({ config, env, pluginIds });
       expect(registry.plugins.map((plugin) => plugin.id)).toEqual(expected);
+      expect(structuredClone(registry)).toEqual(registry);
     }
   });
 
@@ -487,6 +490,7 @@ describe("config IO plugin metadata snapshots", () => {
     expect(
       metadata.unionSnapshot.discovery?.candidates.map((candidate) => candidate.idHint),
     ).toEqual(expectedPluginIds);
+    expect(structuredClone(registry)).toEqual(registry);
     expect(registry.diagnostics).toContainEqual({
       level: "error",
       pluginId: "collision",

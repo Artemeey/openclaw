@@ -156,6 +156,44 @@ describe("plugin metadata collection", () => {
     },
   );
 
+  it.each(["process", "operation"] as const)(
+    "fences publication after ledger invalidation while retaining only %s reads",
+    (scope) => {
+      const config = {};
+      const env = {};
+      let packageGeneration = "initial";
+      loadPluginRegistrySnapshotWithMetadata.mockImplementation(() => {
+        const index = makeIndex(packageGeneration);
+        index.policyHash = resolveInstalledPluginIndexPolicyHash(config);
+        return { source: "provided", snapshot: index, diagnostics: [] };
+      });
+      const owner =
+        scope === "process" ? getOrCreatePluginMetadataOwner() : createPluginMetadataOwner();
+      ownerDisposers.push(() => owner.dispose());
+      const initial = owner.prepare({ config, env });
+      packageGeneration = "replacement";
+
+      clearLoadInstalledPluginIndexInstallRecordsCache();
+
+      expect(owner.isPreparedCurrent(initial)).toBe(false);
+      expect(() => owner.publish(initial, { config, env })).toThrow(
+        "superseded before publication",
+      );
+      expect(owner.readSnapshot({ config, env, allowWorkspaceScopedCurrent: true })).toBe(
+        scope === "operation" ? initial.selectedSnapshot : undefined,
+      );
+      const read = owner.prepare({ config, env });
+      expect(read.plugins.map((plugin) => plugin.id)).toEqual([
+        scope === "operation" ? "initial" : "replacement",
+      ]);
+
+      owner.invalidatePreparation();
+      const refreshed = owner.prepare({ config, env });
+      expect(refreshed.plugins.map((plugin) => plugin.id)).toEqual(["replacement"]);
+      expect(owner.isPreparedCurrent(refreshed)).toBe(true);
+    },
+  );
+
   it.each(["plugin lifecycle invalidation", "database initialization"] as const)(
     "keeps startup facts across %s while publishing a prepared config view",
     async (invalidation) => {

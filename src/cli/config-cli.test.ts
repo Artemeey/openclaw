@@ -18,6 +18,15 @@ import {
 import type { ConfigSetDryRunResult } from "./config-set-dryrun.js";
 import { applyCliProfileEnv } from "./profile.js";
 
+// The metadata fixture can reach the runtime mock before ordinary imports finish.
+const { defaultRuntime, resetRuntimeCapture, mockRuntimeModule } = await vi.hoisted(async () => {
+  const runtimeHelpers = await import("./test-runtime-capture.js");
+  return {
+    ...runtimeHelpers.createCliRuntimeCapture(),
+    mockRuntimeModule: runtimeHelpers.mockRuntimeModule,
+  };
+});
+
 /**
  * Test for issue #6070:
  * `openclaw config set/unset` must update snapshot.resolved (user config after $include/${ENV},
@@ -225,14 +234,6 @@ vi.mock("../secrets/channel-contract-api.js", () => ({
   loadChannelSecretContractApiForRecord: () => undefined,
 }));
 
-// Metadata imports can reach runtime.js before ordinary test imports initialize.
-const { defaultRuntime, resetRuntimeCapture, mockRuntimeModule } = await vi.hoisted(async () => {
-  const runtimeCapture = await import("./test-runtime-capture.js");
-  return {
-    ...runtimeCapture.createCliRuntimeCapture(),
-    mockRuntimeModule: runtimeCapture.mockRuntimeModule,
-  };
-});
 const mockLog = defaultRuntime.log;
 const mockWriteStdout = defaultRuntime.writeStdout;
 const mockError = defaultRuntime.error;
@@ -4637,7 +4638,6 @@ describe("config cli", () => {
         },
       };
       setSnapshot(resolved, resolved);
-      setSnapshot(resolved, resolved);
       mockCheckTouchedTextModelRefs.mockResolvedValueOnce({
         refsChecked: 1,
         refsTotal: 1,
@@ -4679,7 +4679,6 @@ describe("config cli", () => {
           alsoAllow: ["agents_list"],
         },
       };
-      setSnapshot(resolved, resolved);
       setSnapshot(resolved, resolved);
 
       await runConfigCommand(["config", "unset", "tools.alsoAllow", "--dry-run", "--json"]);
@@ -4830,7 +4829,6 @@ describe("config cli", () => {
         },
       };
       setSnapshot(resolved, resolved);
-      setSnapshot(resolved, resolved);
       mockResolveSecretRefValue.mockRejectedValueOnce(new Error("provider removed"));
 
       await expect(
@@ -4862,7 +4860,6 @@ describe("config cli", () => {
           },
         },
       } as OpenClawConfig;
-      setSnapshot(resolved, resolved);
       setSnapshot(resolved, resolved);
 
       await runConfigCommand(["config", "unset", "secrets.defaults", "--dry-run"]);

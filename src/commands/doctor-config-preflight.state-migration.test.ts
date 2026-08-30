@@ -94,7 +94,6 @@ const acquireStartupMigrationLeaseWithWait = vi.hoisted(() =>
 );
 const recordSuccessfulStateMigrations = vi.hoisted(() => vi.fn());
 const recordSuccessfulStartupMigrations = vi.hoisted(() => vi.fn());
-const writePersistedInstalledPluginIndexWithLeaseSync = vi.hoisted(() => vi.fn());
 const runPostCorePluginConvergence = vi.hoisted(() =>
   vi.fn(
     async (): Promise<StartupConvergenceResult> => ({
@@ -139,8 +138,6 @@ type ConfigSnapshotWithPluginMetadataFixture = {
   pluginMetadata?: {
     selectedSnapshot: {
       configFingerprint?: string;
-      index?: unknown;
-      registrySource?: "derived" | "persisted";
     };
   };
 };
@@ -192,12 +189,24 @@ function expectMigrationIdentity(): {
   };
 }
 
-vi.mock("./doctor-state-migrations.js", () => ({
+vi.mock("../infra/state-migrations.doctor.js", () => ({
   autoMigrateLegacyState,
+}));
+
+vi.mock("../infra/state-migrations.state-dir.js", () => ({
   autoMigrateLegacyStateDir,
-  autoMigrateLegacyPluginDoctorState,
   autoMigrateLegacyTaskStateSidecars,
+}));
+
+vi.mock("../infra/state-migrations.plugin-doctor.js", () => ({
+  autoMigrateLegacyPluginDoctorState,
+}));
+
+vi.mock("../infra/state-migrations.config-machine-state.js", () => ({
   migrateLegacyConfigMachineState,
+}));
+
+vi.mock("../infra/state-migrations.media-persistence.js", () => ({
   migrateLegacyMediaPersistence,
 }));
 
@@ -212,10 +221,6 @@ vi.mock("../infra/startup-migration-checkpoint.js", () => ({
   needsStartupMigrationCheckpoint,
   recordSuccessfulStateMigrations,
   recordSuccessfulStartupMigrations,
-}));
-
-vi.mock("../plugins/installed-plugin-index-store-write.js", () => ({
-  writePersistedInstalledPluginIndexWithLeaseSync,
 }));
 
 vi.mock("../plugins/plugin-metadata-collection.js", async (importOriginal) => {
@@ -411,52 +416,6 @@ describe("runDoctorConfigPreflight state migration", () => {
     }
     expect(recordSuccessfulStartupMigrations).not.toHaveBeenCalled();
     expect(startupMigrationLeaseRelease).toHaveBeenCalledTimes(needed ? 1 : 0);
-  });
-
-  it("persists a derived plugin index before recording the state checkpoint", async () => {
-    const snapshot = await readConfigFileSnapshot();
-    readConfigFileSnapshot.mockClear();
-    const index = { plugins: [{ pluginId: "legacy-plugin" }] };
-    for (const registrySource of ["derived", "derived", "derived", "persisted"] as const) {
-      readConfigFileSnapshotWithPluginMetadata.mockResolvedValueOnce({
-        snapshot,
-        pluginMetadata: {
-          selectedSnapshot: {
-            configFingerprint: "plugin-migrations",
-            index,
-            registrySource,
-          },
-        },
-      });
-    }
-    needsStateMigrationCheckpoint.mockReturnValue(true);
-
-    await runDoctorConfigPreflight(stateCheckpointOptions);
-
-    const pinnedEnv = acquireStartupMigrationLeaseWithWait.mock.calls[0]?.[0]?.env;
-    expect(writePersistedInstalledPluginIndexWithLeaseSync).toHaveBeenCalledWith(index, {
-      env: pinnedEnv,
-      lease: startupMigrationLease,
-    });
-    const writeOrder =
-      writePersistedInstalledPluginIndexWithLeaseSync.mock.invocationCallOrder[0] ?? 0;
-    const verificationReadOrder =
-      readConfigFileSnapshotWithPluginMetadata.mock.invocationCallOrder[3] ?? 0;
-    expect(verificationReadOrder).toBeGreaterThan(writeOrder);
-    expect(readConfigFileSnapshotWithPluginMetadata.mock.calls[3]?.[0]).toEqual({
-      allowCurrentPluginMetadata: false,
-      pluginMetadataOwner:
-        readConfigFileSnapshotWithPluginMetadata.mock.calls[0]?.[0]?.pluginMetadataOwner,
-    });
-    const checkpointOrder = recordSuccessfulStateMigrations.mock.invocationCallOrder[0] ?? 0;
-    expect(checkpointOrder).toBeGreaterThan(verificationReadOrder);
-    expect(recordSuccessfulStateMigrations).toHaveBeenCalledWith({
-      env: pinnedEnv,
-      identity: expectMigrationIdentity(),
-      lease: startupMigrationLease,
-    });
-    expect(autoMigrateLegacyState).toHaveBeenCalledOnce();
-    expect(startupMigrationLeaseRelease).toHaveBeenCalledOnce();
   });
 
   it("runs the startup guard immediately before the first state mutation", async () => {

@@ -4,7 +4,6 @@ import {
   validateAgentParams,
   validateAgentWaitParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import type { ModelRef } from "../../agents/model-ref-shared.js";
 import type { GatewayMethodRegistry } from "../methods/registry.js";
 import {
   type GatewayMethodDispatchResponse,
@@ -22,26 +21,17 @@ import type { GatewayRequestOptions } from "../server-methods/types.js";
 import { validateGatewayMethodParams } from "../server-methods/validation.js";
 import { prepareAgentRequestPreflight } from "./agent-request-preflight.js";
 import { createAgentTurnService } from "./agent-turn-service.js";
+import type {
+  InternalAgentTurnDispatchOptions,
+  InternalAgentTurnFacade,
+  InternalAgentTurnPrincipalOptions,
+} from "./internal-facade.types.js";
 import { captureAgentTurnPrincipal, resolveAgentTurnRunObserver } from "./principal.js";
 import type { AgentTurnIo } from "./types.js";
 
-type InternalAgentTurnFacadeOptions = {
-  // Authorization can await; the lifecycle owner must still be current before dispatch.
-  assertContextCurrent?: () => void;
-  client: NonNullable<GatewayRequestOptions["client"]>;
+type InternalAgentTurnFacadeOptions = InternalAgentTurnPrincipalOptions & {
   getContext: () => GatewayRequestOptions["context"];
   getMethodRegistry?: () => GatewayMethodRegistry;
-  isWebchatConnect?: GatewayRequestOptions["isWebchatConnect"];
-};
-
-type InternalAgentTurnDispatchOptions = {
-  expectedInitialModel?: Readonly<ModelRef>;
-  expectFinal?: boolean;
-  onAccepted?: (payload: unknown) => void;
-  onExecutionStarted?: () => void;
-  onSignalAbort?: () => Promise<void> | void;
-  signal?: AbortSignal;
-  timeoutMs?: number;
 };
 
 function throwEnvelopeRejection(method: string, error: ErrorShape): never {
@@ -52,7 +42,9 @@ function throwEnvelopeRejection(method: string, error: ErrorShape): never {
 }
 
 /** Typed, frame-free access to agent turns owned by the running Gateway instance. */
-export function createInternalAgentTurnFacade(options: InternalAgentTurnFacadeOptions) {
+export function createInternalAgentTurnFacade(
+  options: InternalAgentTurnFacadeOptions,
+): InternalAgentTurnFacade {
   const isWebchatConnect = options.isWebchatConnect ?? (() => false);
   const getMethodRegistry = options.getMethodRegistry ?? createRequestGatewayMethodRegistry;
 
@@ -62,6 +54,7 @@ export function createInternalAgentTurnFacade(options: InternalAgentTurnFacadeOp
   ): Promise<GatewayMethodDispatchResponse> => {
     const method = "agent";
     throwIfGatewayDispatchAborted(method, dispatchOptions.signal);
+    options.assertContextCurrent?.();
     const context = options.getContext();
     const methodRegistry = getMethodRegistry();
     const authorization = await authorizeGatewayRequestPreDispatch({
@@ -229,6 +222,7 @@ export function createInternalAgentTurnFacade(options: InternalAgentTurnFacadeOp
   ): Promise<T> => {
     const method = "agent.wait";
     throwIfGatewayDispatchAborted(method, signal);
+    options.assertContextCurrent?.();
     const context = options.getContext();
     const methodRegistry = getMethodRegistry();
     const authorization = await authorizeGatewayRequestPreDispatch({

@@ -1,4 +1,5 @@
 import { formatErrorMessage } from "../infra/errors.js";
+import { withPluginMetadataCollectionScope } from "../plugins/plugin-metadata-collection.js";
 import {
   includeContributionOwnsAgentRoster,
   includeContributionOwnsBindings,
@@ -63,6 +64,11 @@ export async function readConfigFileSnapshotInternal(
   if (!deps.fs.existsSync(configPath)) {
     const migrated = migratePersistedImplicitMainRoster({});
     const config = coerceConfig(migrated.config);
+    const metadata = context.createValidationPluginMetadataSnapshotLoader({
+      env: deps.env,
+      allowCurrentPluginMetadata: options.allowCurrentPluginMetadata,
+    });
+    const coreOnly = context.options.pluginValidation === "core-only";
     const legacyIssues: LegacyConfigIssue[] = [];
     return await finalizeReadConfigSnapshotInternalResult(deps, {
       snapshot: createConfigFileSnapshot({
@@ -75,15 +81,18 @@ export async function readConfigFileSnapshotInternal(
         // Missing config is the fresh-install default path: materialize the
         // same runtime defaults an existing empty {} config gets, so snapshot
         // consumers see identical out-of-box behavior either way.
-        runtimeConfig: materializeRuntimeConfig(config, {
-          manifestRegistry:
-            context.options.pluginValidation === "core-only" ? { plugins: [] } : undefined,
-        }),
+        runtimeConfig: materializeRuntimeConfig(
+          config,
+          coreOnly
+            ? { manifestRegistry: { plugins: [] } }
+            : { loadManifestRegistry: () => metadata.load(config).manifestRegistry },
+        ),
         hash: hashConfigRaw(null),
         issues: [],
         warnings: [],
         legacyIssues,
       }),
+      pluginMetadata: metadata.getMetadata(),
     });
   }
 
@@ -214,12 +223,20 @@ export async function readConfigFileSnapshotInternal(
       }),
     );
     if (!validated.ok) {
-      const legacyIssues = await deps.measure("config.snapshot.read.legacy-issues", () =>
+      const availableMetadata = pluginMetadata.getMetadata();
+      const collect = () =>
         collectInvalidConfigLegacyIssues(
           effectiveConfigRaw,
           effectiveParsed,
           context.options.pluginValidation,
-        ),
+        );
+      const legacyIssues = await deps.measure("config.snapshot.read.legacy-issues", () =>
+        availableMetadata
+          ? withPluginMetadataCollectionScope(availableMetadata, collect, {
+              config: coerceConfig(effectiveConfigRaw),
+              env: deps.env,
+            })
+          : collect(),
       );
       // Invalid snapshots stay inspectable, but rejected env.vars must not become runtime state.
       restoreEnvChangesIfUnchanged({
@@ -473,13 +490,8 @@ export async function readBestEffortConfigSnapshotFromContext(
     };
   }
   return {
-    config: context.finalizeLoadedRuntimeConfig(
-      materializeRuntimeConfig(result.snapshot.sourceConfig, {
-        manifestRegistry:
-          result.pluginMetadata?.manifestRegistry ??
-          (context.options.pluginValidation === "core-only" ? { plugins: [] } : undefined),
-      }),
-    ),
+    // The snapshot already materialized under the caller's plugin-validation policy.
+    config: context.finalizeLoadedRuntimeConfig(result.snapshot.config),
     sourceConfig: result.snapshot.sourceConfig,
     configDiagnostics: null,
   };

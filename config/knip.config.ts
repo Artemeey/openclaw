@@ -89,6 +89,7 @@ const repositoryScriptEntries = [
   // Oxlint loads this JS plugin by path from config/oxlint/boundary-guards.json.
   "scripts/oxlint-boundary-guards.mjs!",
   "scripts/plugin-prerelease-liveish-matrix.mts!",
+  "scripts/pre-commit/guard-staged-content.mjs!",
   // Generates the checked-in native protocol models from core descriptor metadata.
   "scripts/protocol-gen.ts!",
   "scripts/pr-gates-lock.mts!",
@@ -96,6 +97,7 @@ const repositoryScriptEntries = [
   "scripts/pr-lib/review-artifacts.mjs!",
   "scripts/pr-lib/process-group-runner.mjs!",
   "scripts/pre-commit/filter-staged-files.mjs!",
+  "scripts/print-live-docker-plugin-selection.mjs!",
   "scripts/qa-coverage-report.ts!",
   "scripts/qa-parity-report.ts!",
   "scripts/resolve-frozen-codex-live-suite.mjs!",
@@ -109,6 +111,8 @@ const repositoryScriptEntries = [
   "scripts/update-clawtributors.ts!",
   // The candidate binder invokes this trusted producer-identity verifier by path.
   "scripts/verify-full-release-producer-job.mjs!",
+  // Staging and signed-app packaging execute this verifier with each bundled Node.
+  "scripts/verify-mac-node-worker.mjs!",
   "scripts/verify-stable-main-closeout.mjs!",
   "scripts/write-package-dist-inventory.ts!",
   "scripts/write-plugin-sdk-entry-dts.ts!",

@@ -5,9 +5,16 @@ import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../agents/defaults.js";
 import type { ModelCatalogEntry } from "../agents/model-catalog.js";
 import { loadProviderScopedThinkingCatalog } from "../agents/model-catalog.runtime.js";
-import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
+import {
+  loadSessionEntryReadOnly,
+  replaceSessionEntry,
+} from "../config/sessions/session-accessor.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  onSessionLifecycleEvent,
+  type SessionLifecycleEvent,
+} from "../sessions/session-lifecycle-events.js";
 
 vi.mock("../agents/model-catalog.runtime.js", () => ({
   loadProviderScopedThinkingCatalog: vi.fn(async () => []),
@@ -22,6 +29,8 @@ const effects = vi.hoisted(() => ({
   warn: vi.fn(),
 }));
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
+let lifecycleEvents: SessionLifecycleEvent[];
+let unsubscribeLifecycle: () => void;
 
 vi.mock("../infra/system-events.js", () => ({
   enqueueSystemEvent: (...args: unknown[]) => effects.enqueueSystemEvent(...args),
@@ -103,6 +112,8 @@ function createParams(overrides: Partial<ApplySessionModelSelectionParams> = {})
 
 beforeEach(() => {
   vi.mocked(loadProviderScopedThinkingCatalog).mockReset().mockResolvedValue([]);
+  lifecycleEvents = [];
+  unsubscribeLifecycle = onSessionLifecycleEvent((event) => lifecycleEvents.push(event));
   effects.enqueueSystemEvent.mockReset();
   effects.info.mockReset();
   effects.warn.mockReset();
@@ -113,6 +124,8 @@ beforeEach(() => {
   effects.refreshQueuedFollowupSession.mockReset();
   effects.triggerSessionPatchHook.mockReset();
 });
+
+afterEach(() => unsubscribeLifecycle());
 
 describe("applySessionModelSelection", () => {
   it("uses selected route metadata for context and thinking outside the prepared inventory", async () => {
@@ -239,6 +252,57 @@ describe("applySessionModelSelection", () => {
       expect(effects.mutateConfigFileWithRetry).not.toHaveBeenCalled();
     },
   );
+
+  it("publishes a profile-only selection after the scoped session has persisted", async () => {
+    const tempRoot = tempDirs.make("openclaw-model-picker-profile-");
+    const storePath = path.join(tempRoot, "sessions.json");
+    const sessionKey = "agent:main:dm:profile";
+    const sessionEntry = createEntry({
+      providerOverride: "openai",
+      modelOverride: "gpt-5.6-luna",
+      modelOverrideSource: "user",
+      modelOverrideRouteResolution: "resolved",
+      authProfileOverride: "openai:work",
+      authProfileOverrideSource: "auto",
+    });
+    await replaceSessionEntry({ sessionKey, storePath }, sessionEntry);
+    let publishedEntry: SessionEntry | undefined;
+    const unsubscribe = onSessionLifecycleEvent(() => {
+      publishedEntry = loadSessionEntryReadOnly({ sessionKey, storePath });
+    });
+    try {
+      const result = await applySessionModelSelection(
+        createParams({
+          sessionEntry,
+          sessionKey,
+          storePath,
+          currentProvider: "openai",
+          currentModel: "gpt-5.6-luna",
+          modelCatalog: [{ provider: "openai", id: "gpt-5.6-luna", name: "Luna" }],
+          request: {
+            provider: "openai",
+            model: "gpt-5.6-luna",
+            isDefault: false,
+            profileOverride: "openai:work",
+            runtime: { kind: "unchanged" },
+          },
+        }),
+      );
+
+      expect(result).toMatchObject({ status: "applied", changed: true });
+      expect(lifecycleEvents).toEqual([{ sessionKey, agentId: "main", reason: "patch" }]);
+      expect(publishedEntry).toMatchObject({
+        sessionId: "session-1",
+        modelOverride: "gpt-5.6-luna",
+        authProfileOverride: "openai:work",
+        authProfileOverrideSource: "user",
+      });
+      expect(effects.enqueueSystemEvent).not.toHaveBeenCalled();
+      expect(effects.mutateConfigFileWithRetry).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+    }
+  });
 
   it("applies a non-default selection, auth profile, cleanup, and side effects once", async () => {
     const sessionEntry = createEntry({
@@ -592,6 +656,7 @@ describe("applySessionModelSelection", () => {
       reason: "locked",
       message: "Model selection is locked for this session.",
     });
+    expect(lifecycleEvents).toEqual([]);
     expect(sessionEntry).toEqual(initial);
     expect(effects.triggerSessionPatchHook).not.toHaveBeenCalled();
     expect(effects.refreshQueuedFollowupSession).not.toHaveBeenCalled();
@@ -839,6 +904,7 @@ describe("applySessionModelSelection", () => {
       status: "conflict",
       message: "Model change was not applied because the session changed. Retry.",
     });
+    expect(lifecycleEvents).toEqual([]);
     expect(sessionEntry).toEqual(concurrent);
     expect(sessionEntry).not.toMatchObject({ modelOverride: "gpt-4o" });
     expect(effects.triggerSessionPatchHook).not.toHaveBeenCalled();
@@ -862,6 +928,7 @@ describe("applySessionModelSelection", () => {
       effectiveModelRef: "openai/gpt-4o",
       changed: false,
     });
+    expect(lifecycleEvents).toEqual([]);
     expect(effects.triggerSessionPatchHook).not.toHaveBeenCalled();
     expect(effects.refreshQueuedFollowupSession).not.toHaveBeenCalled();
     expect(effects.enqueueSystemEvent).not.toHaveBeenCalled();

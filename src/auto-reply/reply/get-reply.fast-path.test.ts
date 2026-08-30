@@ -128,12 +128,8 @@ async function seedFastPathSessionStore(
   }
 }
 
-function readFastPathSessionEntry(storePath: string, sessionKey: string): Record<string, unknown> {
-  return (
-    (loadSessionEntry({ storePath, sessionKey }) as unknown as
-      | Record<string, unknown>
-      | undefined) ?? {}
-  );
+function readFastPathSessionEntry(storePath: string, sessionKey: string): SessionEntry {
+  return expectDefined(loadSessionEntry({ storePath, sessionKey }), "stored fast-path session");
 }
 
 describe("getReplyFromConfig fast test bootstrap", () => {
@@ -674,7 +670,7 @@ describe("getReplyFromConfig fast test bootstrap", () => {
       buildNativeCommandCtx("/model status", targetSessionKey, {
         SessionCreation: {
           via: "operator",
-          actor: { type: "human", id: "profile-native-slash" },
+          actor: { type: "human", source: "profile", id: "profile-native-slash" },
         },
       }),
       undefined,
@@ -770,10 +766,7 @@ describe("getReplyFromConfig fast test bootstrap", () => {
         "vi.mocked(runPreparedReplyMock).mock.invocationCallOrder[0] test invariant",
       ),
     );
-    expect(
-      (readFastPathSessionEntry(storePath, targetSessionKey) as unknown as SessionEntry).goal
-        ?.objective,
-    ).toBe("/status");
+    expect(readFastPathSessionEntry(storePath, targetSessionKey).goal?.objective).toBe("/status");
     const preparedReplyParams = requirePreparedReplyParams();
     expect(preparedReplyParams.command.commandBodyNormalized).toBe(continuationPrompt);
     expect(preparedReplyParams.sessionCtx.BodyForAgent).toBe(continuationPrompt);
@@ -805,7 +798,7 @@ describe("getReplyFromConfig fast test bootstrap", () => {
         SessionKey: "agent:main:dashboard:created",
         SessionCreation: {
           via: "operator",
-          actor: { type: "human", id: "profile-ada" },
+          actor: { type: "human", source: "profile", id: "profile-ada" },
         },
       }),
       cfg: { session: { store: path.join(tempRoot, "sessions.json") } } as OpenClawConfig,

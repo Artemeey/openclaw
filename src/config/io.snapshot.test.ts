@@ -2,6 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import * as doctorLegacy from "../commands/doctor/shared/legacy-config-issues.js";
+import * as channelPresence from "../plugins/channel-presence-policy.js";
+import * as manifestRegistry from "../plugins/manifest-registry.js";
 import { clearPluginMetadataLifecycleCaches } from "../plugins/plugin-metadata-lifecycle.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
 import { createConfigIoContext } from "./io.context.js";
@@ -9,6 +12,7 @@ import {
   readConfigFileSnapshotForWriteFromContext,
   readConfigFileSnapshotFromContext,
   readConfigFileSnapshotWithPluginMetadataFromContext,
+  readBestEffortConfigSnapshotFromContext,
 } from "./io.snapshot.js";
 import {
   cloneConfigWithResolutionFacts,
@@ -19,6 +23,7 @@ import {
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 afterEach(() => {
+  vi.restoreAllMocks();
   clearPluginMetadataLifecycleCaches();
   closeOpenClawStateDatabaseForTest();
 });
@@ -53,6 +58,84 @@ const metadataReaders = [
 ] as const;
 
 describe("config snapshot plugin metadata", () => {
+  it.each(["full", "core-only"] as const)(
+    "keeps legacy roster channel discovery owned by %s validation",
+    async (pluginValidation) => {
+      const root = tempDirs.make("openclaw-config-roster-metadata-");
+      const context = createContext(root);
+      context.options.pluginValidation = pluginValidation;
+      fs.writeFileSync(
+        context.configPath,
+        JSON.stringify({
+          agents: { list: [{ id: "primary", default: true }, { id: "secondary" }] },
+          channels: { discord: { enabled: false } },
+        }),
+      );
+      const discovery = vi.spyOn(channelPresence, "listChannelIdsForOwnershipMigration");
+      const snapshot = await readConfigFileSnapshotFromContext(context);
+      expect(snapshot.valid).toBe(true);
+      expect(snapshot.config.agents?.entries).toEqual({ primary: {}, secondary: {} });
+      expect(snapshot.config.agents?.defaults?.systemAgent?.agentId).toBe("primary");
+      expect(discovery.mock.calls.length > 0).toBe(pluginValidation === "full");
+    },
+  );
+
+  it.each(["full", "core-only"] as const)(
+    "keeps invalid snapshot Doctor contracts owned by %s validation",
+    async (pluginValidation) => {
+      const root = tempDirs.make("openclaw-config-invalid-metadata-");
+      const context = createContext(root);
+      context.options.pluginValidation = pluginValidation;
+      fs.writeFileSync(
+        context.configPath,
+        JSON.stringify({
+          nodeHost: { browserProxy: { enabled: "invalid" } },
+          channels: { discord: {} },
+          routing: { allowFrom: ["fixture"] },
+        }),
+      );
+      const doctor = vi.spyOn(doctorLegacy, "findDoctorLegacyConfigIssues");
+      const snapshot = await readConfigFileSnapshotFromContext(context);
+      expect(snapshot.valid).toBe(false);
+      expect(snapshot.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: "nodeHost.browserProxy.enabled" }),
+        ]),
+      );
+      expect(snapshot.legacyIssues).toEqual(
+        expect.arrayContaining([expect.objectContaining({ path: "routing.allowFrom" })]),
+      );
+      expect(doctor.mock.calls.length > 0).toBe(pluginValidation === "full");
+    },
+  );
+
+  it("keeps best-effort core-only materialization independent of plugin metadata", async () => {
+    const root = tempDirs.make("openclaw-config-best-effort-metadata-");
+    const context = createContext(root);
+    context.options.pluginValidation = "core-only";
+    fs.writeFileSync(
+      context.configPath,
+      JSON.stringify({
+        models: {
+          providers: {
+            "fixture-external": {
+              baseUrl: "https://example.test/v1",
+              api: "openai-completions",
+              models: [],
+            },
+          },
+        },
+      }),
+    );
+    const discovery = vi.spyOn(manifestRegistry, "loadPluginManifestRegistryCore");
+    const result = await readBestEffortConfigSnapshotFromContext(context);
+    expect(result.configDiagnostics).toBeNull();
+    expect(result.config.models?.providers?.["fixture-external"]?.baseUrl).toBe(
+      "https://example.test/v1",
+    );
+    expect(result.config.agents?.defaults?.compaction?.mode).toBe("safeguard");
+    expect(discovery).not.toHaveBeenCalled();
+  });
   it("records only genuinely missing substitutions as private facts", async () => {
     const root = tempDirs.make("openclaw-config-snapshot-env-facts-");
     const context = createContext(root);
@@ -108,12 +191,16 @@ describe("config snapshot plugin metadata", () => {
       const plainSnapshot = await readConfigFileSnapshotFromContext(context);
 
       expect(plainSnapshot).toMatchObject({ exists: false, valid: true });
-      expect(loader).not.toHaveBeenCalled();
+      expect(loader.mock.results.every(({ value }) => value.getMetadata() === undefined)).toBe(
+        true,
+      );
 
       const result = await read(context);
 
       expect(result.snapshot).toMatchObject({ exists: false, valid: true });
-      expect(loader).toHaveBeenCalledOnce();
+      expect(structuredClone(result.pluginMetadata?.manifestRegistry)).toEqual(
+        result.pluginMetadata?.manifestRegistry,
+      );
       expect(result.pluginMetadata?.selectedSnapshot.configFingerprint).toMatch(/^[a-f0-9]{64}$/u);
       expect(result.pluginMetadata?.selectedSnapshot.index).toMatchObject({
         version: 1,

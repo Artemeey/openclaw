@@ -10,6 +10,8 @@ import {
   createPluginMetadataSnapshotFixture,
   createPreparedPluginMetadataFixture,
 } from "../plugins/plugin-metadata.test-support.js";
+import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
+import type { PluginRegistry } from "../plugins/registry-types.js";
 
 const applyPluginAutoEnable = vi.hoisted(() =>
   vi.fn((params: { config: unknown }) => ({
@@ -19,6 +21,8 @@ const applyPluginAutoEnable = vi.hoisted(() =>
   })),
 );
 const initSubagentRegistry = vi.hoisted(() => vi.fn());
+const getActivePluginRegistry = vi.hoisted(() => vi.fn<() => PluginRegistry | undefined>());
+const setActivePluginRegistry = vi.hoisted(() => vi.fn());
 const loadGatewayStartupPlugins = vi.hoisted(() =>
   vi.fn((_params: unknown) => ({
     pluginRegistry: { diagnostics: [], gatewayHandlers: {}, plugins: [] },
@@ -120,14 +124,12 @@ vi.mock("../plugins/plugin-lookup-table.js", () => ({
   loadPluginLookUpTable: (params: unknown) => loadPluginLookUpTable(params),
 }));
 
-vi.mock("../plugins/registry.js", () => ({
-  createEmptyPluginRegistry: () => ({ diagnostics: [], gatewayHandlers: {}, plugins: [] }),
-}));
+vi.mock("../plugins/registry.js", () => import("../plugins/registry-empty.js"));
 
 vi.mock("../plugins/runtime.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../plugins/runtime.js")>()),
-  getActivePluginRegistry: () => undefined,
-  setActivePluginRegistry: vi.fn(),
+  getActivePluginRegistry,
+  setActivePluginRegistry,
 }));
 
 vi.mock("./server-methods-list.js", () => ({
@@ -170,6 +172,7 @@ function slackConfig(): OpenClawConfig {
 async function prepareBootstrapWithRuntimeConfig(
   cfg: OpenClawConfig,
   options: {
+    minimalTestGateway?: boolean;
     pluginMetadata?: PreparedPluginMetadata;
     workerProviderIds?: readonly string[];
   } = {},
@@ -265,6 +268,8 @@ describe("runGatewayStartupMaintenance", () => {
 
 describe("prepareGatewayPluginBootstrap startup plugins", () => {
   beforeEach(() => {
+    getActivePluginRegistry.mockReset();
+    setActivePluginRegistry.mockClear();
     applyPluginAutoEnable.mockClear();
     initSubagentRegistry.mockClear();
     loadGatewayStartupPlugins.mockClear();
@@ -397,12 +402,32 @@ describe("prepareGatewayPluginBootstrap startup plugins", () => {
     expect(loadGatewayStartupPlugins).not.toHaveBeenCalled();
   });
 
-  it("publishes an empty registry without loading plugin runtimes before bind", async () => {
-    const result = await prepareBootstrapWithRuntimeConfig(slackConfig());
+  it.each([
+    { minimalTestGateway: false, pluginsEnabled: true, reuseAmbientRegistry: false },
+    { minimalTestGateway: true, pluginsEnabled: undefined, reuseAmbientRegistry: true },
+    { minimalTestGateway: true, pluginsEnabled: true, reuseAmbientRegistry: true },
+    { minimalTestGateway: true, pluginsEnabled: false, reuseAmbientRegistry: false },
+  ])(
+    "publishes the startup registry without runtime loading (minimal=$minimalTestGateway, enabled=$pluginsEnabled)",
+    async ({ minimalTestGateway, pluginsEnabled, reuseAmbientRegistry }) => {
+      const ambientRegistry = createEmptyPluginRegistry();
+      ambientRegistry.gatewayHandlers.fixture = vi.fn();
+      getActivePluginRegistry.mockReturnValue(ambientRegistry);
 
-    expect(result.pluginRegistry.plugins).toEqual([]);
-    expect(loadGatewayStartupPlugins).not.toHaveBeenCalled();
-  });
+      const result = await prepareBootstrapWithRuntimeConfig(
+        { ...slackConfig(), plugins: { enabled: pluginsEnabled } },
+        { minimalTestGateway },
+      );
+
+      if (reuseAmbientRegistry) {
+        expect(result.pluginRegistry).toBe(ambientRegistry);
+      } else {
+        expect(result.pluginRegistry.gatewayHandlers).toEqual({});
+      }
+      expect(setActivePluginRegistry).toHaveBeenCalledWith(result.pluginRegistry);
+      expect(loadGatewayStartupPlugins).not.toHaveBeenCalled();
+    },
+  );
 
   it("threads durable worker provider ids into startup lookup planning", async () => {
     await prepareBootstrapWithRuntimeConfig({ channels: {} } as OpenClawConfig, {

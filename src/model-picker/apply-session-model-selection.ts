@@ -38,6 +38,7 @@ import {
   isModelSelectionLocked,
   MODEL_SELECTION_LOCKED_MESSAGE,
 } from "../sessions/model-overrides.js";
+import { emitSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 
 export type SessionModelSelectionRequest = {
   provider: string;
@@ -324,6 +325,11 @@ export async function applySessionModelSelection(
         })
       : undefined;
   if (changed) {
+    emitSessionLifecycleEvent({
+      sessionKey: params.sessionKey,
+      agentId: params.agentId,
+      reason: "patch",
+    });
     triggerSessionPatchHook({
       cfg: params.cfg,
       sessionEntry: persistedEntry,

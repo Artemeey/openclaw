@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -63,12 +64,28 @@ const UNAVAILABLE_HARNESS_MODEL = {
   name: "Account scoped model",
   available: false,
 };
+const fixtureWorkers = new Set<Worker>();
+const retireFixtureGenerations: Array<() => Promise<void>> = [];
+const postWorkerMessage = Worker.prototype.postMessage;
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
-  afterEach(() => {
+  afterEach(async () => {
+    const completions = retireFixtureGenerations.splice(0).map((retire) => retire());
     resetPreparedModelRuntimeSnapshotsForTest();
-    clearRuntimeAuthProfileStoreSnapshots();
-    closeOpenClawAgentDatabasesForTest();
-    cleanup();
+    try {
+      await Promise.all(completions);
+      await expect
+        .poll(() => [...fixtureWorkers].every((worker) => worker.threadId === -1), {
+          timeout: 30_000,
+        })
+        .toBe(true);
+    } finally {
+      // Failed retirement must still release real workers before deleting their files.
+      await Promise.all([...fixtureWorkers].map((worker) => worker.terminate()));
+      fixtureWorkers.clear();
+      clearRuntimeAuthProfileStoreSnapshots();
+      closeOpenClawAgentDatabasesForTest();
+      cleanup();
+    }
   });
 });
 
@@ -129,6 +146,7 @@ async function createStaticSnapshot(
     env,
   };
   let current = true;
+  const isCurrent = () => current;
   const loadedMetadataSnapshot = options?.metadataWorkspace
     ? loadPluginMetadataSnapshot({
         config:
@@ -145,21 +163,28 @@ async function createStaticSnapshot(
     options?.provideMetadataToWorker && loadedMetadataSnapshot
       ? markPluginMetadataSnapshotProvided(loadedMetadataSnapshot)
       : loadedMetadataSnapshot;
-  const build = await startSerializedSnapshotBuild(
+  const build = startSerializedSnapshotBuild(
     {
       input,
       catalogOwner: preparePublishedModelCatalogOwnerIdentity(input),
-      isGenerationCurrent: () => current,
+      isGenerationCurrent: isCurrent,
     },
     new Map(),
     30_000,
     "static",
     providedMetadataSnapshot,
-  ).pending;
+  );
+  // Direct fixtures own their generations independently of the global runtime reset.
+  retireFixtureGenerations.push(async () => {
+    current = false;
+    await build.completion;
+  });
+  const prepared = await build.pending;
   return {
     ...fixture,
-    pluginMetadataSnapshot: build.pluginGeneration.pluginMetadataSnapshot,
-    snapshot: build.snapshot,
+    pluginMetadataSnapshot: prepared.pluginGeneration.pluginMetadataSnapshot,
+    snapshot: prepared.snapshot,
+    isCurrent,
     supersede: () => (current = false),
   };
 }
@@ -179,6 +204,10 @@ async function waitForMarker(marker: string): Promise<void> {
 
 describe("prepared model catalog worker boundary", () => {
   beforeEach(() => {
+    vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (this: Worker, ...args) {
+      fixtureWorkers.add(this);
+      return postWorkerMessage.call(this, ...args);
+    });
     vi.stubEnv("CODEX_HOME", tempDirs.make("openclaw-worker-empty-codex-"));
   });
 
@@ -936,7 +965,7 @@ describe("prepared model catalog worker boundary", () => {
 
     const catalog = await createPreparedModelCatalogWorker({
       input,
-      isCurrent: () => true,
+      isCurrent: fixture.isCurrent,
     }).loadCatalog();
 
     expect(catalog.entries).toContainEqual(

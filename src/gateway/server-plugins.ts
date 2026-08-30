@@ -504,13 +504,13 @@ function createGatewayPluginRuntimeBindings(
     },
     runtime: {
       dispatchReplyFromConfig: async (params) => {
-        const { dispatchReplyFromConfig } =
+        const { dispatchLowLevelChannelReplyFromConfig } =
           await import("../auto-reply/reply/dispatch-from-config.js");
         const sessionWorkerPlacementContext = getInProcessGatewayRequestContext(
           resolveBoundGatewayContext,
         );
         const run = async () =>
-          await dispatchReplyFromConfig({
+          await dispatchLowLevelChannelReplyFromConfig({
             ...params,
             ...(sessionWorkerPlacementContext ? { sessionWorkerPlacementContext } : {}),
           });

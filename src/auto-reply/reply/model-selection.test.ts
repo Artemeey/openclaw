@@ -9,6 +9,7 @@ import {
   loadProviderScopedThinkingCatalog,
   loadPreparedModelCatalog as loadModelCatalogLocal,
 } from "../../agents/model-catalog.runtime.js";
+import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import { normalizeModelRef } from "../../agents/model-ref-shared.js";
 import { resolveDefaultModelForAgent } from "../../agents/model-selection-config.js";
 import { createModelManifestPluginContext } from "../../agents/model-selection-shared.js";
@@ -20,6 +21,9 @@ import {
 } from "../../config/plugin-auto-enable.test-helpers.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import * as currentPluginMetadata from "../../plugins/current-plugin-metadata-snapshot.js";
+import { createPluginMetadataSnapshotFixture } from "../../plugins/plugin-metadata.test-support.js";
+import * as activeThinkingPolicy from "../../plugins/provider-thinking-active.js";
+import { prepareModelCatalogThinkingPolicies } from "../../plugins/provider-thinking.js";
 import { resolveDefaultModel } from "./directive-handling.defaults.js";
 import {
   createModelSelectionState as createPreparedModelSelectionState,
@@ -796,6 +800,71 @@ describe("createModelSelectionState catalog loading", () => {
     expect(loadModelCatalogLocal).not.toHaveBeenCalled();
     expect(catalogRuntimeMocks.loadModelCatalogSnapshot).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { hasModelDirective: false, capturedPolicy: true, expected: "ultra" },
+    { hasModelDirective: true, capturedPolicy: true, expected: "ultra" },
+    { hasModelDirective: false, capturedPolicy: false, expected: "medium" },
+    { hasModelDirective: true, capturedPolicy: false, expected: "medium" },
+  ])(
+    "keeps prepared thinking ownership through reply selection (directive=$hasModelDirective policy=$capturedPolicy)",
+    async ({ hasModelDirective, capturedPolicy, expected }) => {
+      const provider = "fixture-provider";
+      const model = "fixture-model";
+      const cfg: OpenClawConfig = {
+        agents: { defaults: { models: { [`${provider}/${model}`]: { alias: "Fixture" } } } },
+        models: {
+          providers: {
+            [provider]: {
+              baseUrl: "https://fixture.invalid/v1",
+              models: [makeConfiguredModel({ id: model })],
+            },
+          },
+        },
+      };
+      const preparedModelCatalog: ModelCatalogSnapshot = {
+        entries: [{ provider, id: model, name: "Fixture", reasoning: true }],
+        routeVariants: [],
+      };
+      prepareModelCatalogThinkingPolicies({
+        catalog: preparedModelCatalog,
+        metadataSnapshot: createPluginMetadataSnapshotFixture(),
+        providers: [
+          {
+            provider: {
+              id: provider,
+              ...(capturedPolicy
+                ? {
+                    resolveThinkingProfile: () => ({
+                      levels: [{ id: "off" }, { id: "max" }, { id: "ultra" }],
+                      defaultLevel: "ultra",
+                    }),
+                  }
+                : {}),
+            },
+          },
+        ],
+      });
+      const ambient = vi
+        .spyOn(activeThinkingPolicy, "resolveActiveProviderThinkingProfile")
+        .mockReturnValue({ levels: [{ id: "off" }], defaultLevel: "off" });
+      try {
+        const state = await createModelSelectionState({
+          cfg,
+          defaultProvider: provider,
+          defaultModel: model,
+          hasModelDirective,
+          preparedModelCatalog,
+        });
+        await expect(
+          state.resolveDefaultThinkingLevel({ provider, model, agentRuntime: "codex" }),
+        ).resolves.toBe(expected);
+        expect(ambient).not.toHaveBeenCalled();
+      } finally {
+        ambient.mockRestore();
+      }
+    },
+  );
 
   it("uses manifest metadata before hydrating the runtime thinking catalog", async () => {
     vi.mocked(loadModelCatalogLocal).mockClear();

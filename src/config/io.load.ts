@@ -40,11 +40,17 @@ export function loadConfigFromContext(
       // A missing config is the fresh-install default path: materialize the
       // same runtime defaults an empty {} config gets, or out-of-box behavior
       // (compaction safeguard, session/cron defaults) silently diverges.
+      const config = coerceConfig(migratePersistedImplicitMainRoster({}).config);
+      const metadata = context.createValidationPluginMetadataSnapshotLoader({
+        env: deps.env,
+      });
       return context.finalizeLoadedRuntimeConfig(
-        materializeRuntimeConfig(coerceConfig(migratePersistedImplicitMainRoster({}).config), {
-          manifestRegistry:
-            context.options.pluginValidation === "core-only" ? { plugins: [] } : undefined,
-        }),
+        materializeRuntimeConfig(
+          config,
+          context.options.pluginValidation === "core-only"
+            ? { manifestRegistry: { plugins: [] } }
+            : { loadManifestRegistry: () => metadata.load(config).manifestRegistry },
+        ),
       );
     }
     const raw = deps.fs.readFileSync(configPath, "utf-8");

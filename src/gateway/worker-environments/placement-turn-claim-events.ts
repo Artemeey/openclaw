@@ -1,15 +1,18 @@
 import type { OperationalRunInstanceRef } from "../../agents/admitted-run-context.js";
 import type { ModelRef } from "../../agents/model-ref-shared.js";
 import type { ExecutionIdentityAdmissionToken } from "../../audit/execution-identity-admission.js";
+import type { PrepareAssistantTranscriptMessage } from "../../config/sessions/transcript-assistant-delivery.js";
 import {
   getActiveAgentRunDelegatedAuthority,
   validateAgentRunDelegatedAuthority,
   type AgentRunDelegatedAuthority,
 } from "../../infra/agent-run-registry.js";
+import type { AssistantMessage } from "../../llm/types.js";
 import {
   captureGatewayRootWorkAdmissionContinuationScope,
   type GatewayRootWorkAdmissionContinuationScope,
 } from "../../process/gateway-work-admission.js";
+import { extractAssistantPhaseText } from "../../shared/chat-message-content.js";
 import { resolveGlobalMap } from "../../shared/global-singleton.js";
 import type { WorkerConnectionIdentity } from "./connection-identity.js";
 import type { WorkerSessionTurnClaim } from "./placement-record.js";
@@ -58,6 +61,7 @@ type BoundWorkerTurnOwner = {
   claimKey: string;
   admission?: {
     delegatedAuthority: AgentRunDelegatedAuthority;
+    prepareAssistantTranscriptMessage?: PrepareAssistantTranscriptMessage;
     scope?: GatewayRootWorkAdmissionContinuationScope;
     store: WorkerTurnExecutionIdentityStore;
     expectedInitialModel?: Readonly<ModelRef>;
@@ -163,7 +167,10 @@ export function bindWorkerTurnAdmission(
   store: WorkerTurnExecutionIdentityStore,
   claim: WorkerSessionTurnClaim,
   operationalRunInstance: OperationalRunInstanceRef,
-  expectedInitialModel?: Readonly<ModelRef>,
+  options?: {
+    expectedInitialModel?: Readonly<ModelRef>;
+    prepareAssistantTranscriptMessage?: PrepareAssistantTranscriptMessage;
+  },
 ): void {
   const scope = captureGatewayRootWorkAdmissionContinuationScope();
   const path = store[WORKER_TURN_EXECUTION_IDENTITY_PATH];
@@ -182,10 +189,11 @@ export function bindWorkerTurnAdmission(
     claimKey: currentClaimKey,
     admission: {
       delegatedAuthority,
+      prepareAssistantTranscriptMessage: options?.prepareAssistantTranscriptMessage,
       scope,
       store,
-      expectedInitialModel: expectedInitialModel
-        ? Object.freeze({ ...expectedInitialModel })
+      expectedInitialModel: options?.expectedInitialModel
+        ? Object.freeze({ ...options.expectedInitialModel })
         : undefined,
     },
   });
@@ -248,6 +256,19 @@ export function runWorkerTurnAdmissionContinuation<T>(
   run: () => Promise<T>,
 ): Promise<T> | null {
   return resolveWorkerTurnOwner(identity)?.admission?.scope?.run(run) ?? null;
+}
+
+/** Host-owned preparation runs at append time, after any awaited transcript admission. */
+export function prepareWorkerTurnTranscriptMessage(
+  identity: WorkerConnectionIdentity,
+  message: AssistantMessage,
+): AssistantMessage {
+  return (
+    resolveWorkerTurnOwner(identity)?.admission?.prepareAssistantTranscriptMessage?.(
+      message,
+      extractAssistantPhaseText(message),
+    ) ?? message
+  );
 }
 
 export function attachWorkerTurnExecutionIdentityStore(store: object, path: string): void {

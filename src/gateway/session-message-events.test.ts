@@ -2067,7 +2067,7 @@ describe("session.message websocket events", () => {
       content: [{ type: "text", text: "early selected prompt" }],
       timestamp: Date.now(),
     };
-    await persistSessionTranscriptTurn(
+    const persisted = await persistSessionTranscriptTurn(
       {
         agentId: "main",
         sessionId: "sess-main",
@@ -2075,10 +2075,11 @@ describe("session.message websocket events", () => {
         storePath,
       },
       {
-        messages: [{ message: transcriptMessage }],
+        messages: [{ eventId: "msg-selected", message: transcriptMessage }],
         updateMode: "none",
       },
     );
+    expect(persisted.appendedCount).toBe(1);
 
     const ws = await harness.openWs();
     try {
@@ -2097,7 +2098,10 @@ describe("session.message websocket events", () => {
           sessionKey: "agent:main:main",
           storePath,
         },
-        message: transcriptMessage,
+        message: {
+          ...transcriptMessage,
+          content: [{ type: "text", text: "stale queued prompt" }],
+        },
         messageId: "msg-selected",
       });
 
@@ -2106,6 +2110,14 @@ describe("session.message websocket events", () => {
         sessionKey: "agent:main:main",
         messageId: "msg-selected",
         messageSeq: 1,
+      });
+      expect(requireRecord(messageEvent.payload, "selected session event").message).toMatchObject({
+        ...transcriptMessage,
+        __openclaw: {
+          id: "msg-selected",
+          seq: 1,
+          transcriptPosition: { source: expect.any(String), rawSeq: expect.any(Number) },
+        },
       });
     } finally {
       ws.close();
