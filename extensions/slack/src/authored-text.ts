@@ -1,49 +1,12 @@
 import type { LegacyInteractiveReply } from "openclaw/plugin-sdk/interactive-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { slackMrkdwnTextBoundary } from "./format.js";
 
 export type SlackAuthoredTextPlacement = "none" | "blocks" | "outside-blocks";
 
 // Project producer plans the same way so trimmed chunk seams cannot duplicate authored text.
 function normalizeSlackAuthoredTextFragments(fragments: readonly string[]): string[] {
   return fragments.map((fragment) => fragment.trim()).filter(Boolean);
-}
-
-function isSlackAuthoredTextRepresentedInFragments(
-  text: string,
-  rawFragments: readonly string[],
-  authoredChunkPlans: readonly (readonly string[])[] = [],
-): boolean {
-  const fragments = normalizeSlackAuthoredTextFragments(rawFragments);
-  for (const rawPlan of authoredChunkPlans) {
-    const plan = normalizeSlackAuthoredTextFragments(rawPlan);
-    if (
-      plan.length > 0 &&
-      fragments.some((_, start) =>
-        plan.every((fragment, index) => fragment === fragments[start + index]),
-      )
-    ) {
-      return true;
-    }
-  }
-  // Legacy inline controls may split authored whitespace at fragment boundaries.
-  // Consume only those separators; code/literal interiors and chunk seams stay exact.
-  for (let start = 0; start < fragments.length; start += 1) {
-    let remaining = text;
-    for (const fragment of fragments.slice(start)) {
-      if (!remaining.startsWith(fragment)) {
-        break;
-      }
-      remaining = remaining.slice(fragment.length);
-      if (!remaining) {
-        return true;
-      }
-      if (!/^\s/u.test(remaining)) {
-        break;
-      }
-      remaining = remaining.trimStart();
-    }
-  }
-  return false;
 }
 
 /** Resolve placement from producer facts, before accessibility text changes the payload text. */
@@ -58,13 +21,44 @@ export function resolveSlackAuthoredTextPlacement(params: {
   if (!text) {
     return "none";
   }
+  if (params.renderedInBlocks) {
+    return "blocks";
+  }
   // Rendered facts own placement; raw legacy text is only a pre-render metadata source.
-  const fragments =
+  const fragments = normalizeSlackAuthoredTextFragments(
     params.renderedTextFragments ??
-    params.interactive?.blocks.flatMap((block) => (block.type === "text" ? [block.text] : [])) ??
-    [];
-  const isRepresentedInBlocks =
-    params.renderedInBlocks ||
-    isSlackAuthoredTextRepresentedInFragments(text, fragments, params.authoredChunkPlans);
-  return isRepresentedInBlocks ? "blocks" : "outside-blocks";
+      params.interactive?.blocks.flatMap((block) => (block.type === "text" ? [block.text] : [])) ??
+      [],
+  );
+  for (const rawPlan of params.authoredChunkPlans ?? []) {
+    const plan = normalizeSlackAuthoredTextFragments(rawPlan);
+    if (
+      plan.length > 0 &&
+      fragments.some((_, start) =>
+        plan.every((fragment, index) => fragment === fragments[start + index]),
+      )
+    ) {
+      return "blocks";
+    }
+  }
+  // Legacy inline controls may split authored whitespace at fragment boundaries.
+  // Consume only separators outside complete native formatting spans and tokens.
+  const isBoundary = slackMrkdwnTextBoundary(text);
+  for (let start = 0; start < fragments.length; start += 1) {
+    let remaining = text;
+    for (const fragment of fragments.slice(start)) {
+      if (!remaining.startsWith(fragment)) {
+        break;
+      }
+      remaining = remaining.slice(fragment.length);
+      if (!remaining) {
+        return "blocks";
+      }
+      if (!/^\s/u.test(remaining) || !isBoundary(text.length - remaining.length)) {
+        break;
+      }
+      remaining = remaining.trimStart();
+    }
+  }
+  return "outside-blocks";
 }

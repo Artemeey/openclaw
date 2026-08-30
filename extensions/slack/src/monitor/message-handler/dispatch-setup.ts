@@ -17,6 +17,7 @@ import { resolveInboundLastRouteSessionKey } from "openclaw/plugin-sdk/routing";
 import { danger, logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { resolvePinnedMainDmOwnerFromAllowlist } from "openclaw/plugin-sdk/security-runtime";
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { resolveSlackMarkdownOptions } from "../../accounts.js";
 import { reactSlackMessage, removeSlackReaction } from "../../actions.js";
 import { formatSlackError } from "../../errors.js";
 import { resolveSlackStreamingConfig } from "../../stream-mode.js";
@@ -319,6 +320,7 @@ export async function createSlackDispatchSetup(prepared: PreparedSlackMessage) {
     slackClient,
     slackStreamFallbackTeamId,
     cfg,
+    markdownOptions: resolveSlackMarkdownOptions({ cfg, accountId: account.accountId }),
     runtime,
     slackIdentity,
     forcedReplyThreadTs,

@@ -1190,7 +1190,7 @@ extensions/slack/src/post-message-identity.ts	1
 extensions/slack/src/probe.ts	2
 extensions/slack/src/progress-blocks.ts	2
 extensions/slack/src/reply-action-ids.ts	1
-extensions/slack/src/reply-blocks.ts	9
+extensions/slack/src/reply-blocks.ts	8
 extensions/slack/src/resolve-channels.ts	1
 extensions/slack/src/resolve-users.ts	1
 extensions/slack/src/scopes.ts	2

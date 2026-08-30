@@ -105,7 +105,7 @@ function buildSlackLink(link: MarkdownLinkSpan, text: string) {
   };
 }
 
-type SlackMarkdownOptions = {
+export type SlackMarkdownOptions = {
   tableMode?: MarkdownTableMode;
 };
 
@@ -253,6 +253,31 @@ function resolveSlackCodeMarkerTransition(
     return active === "`" ? undefined : "`";
   }
   return null;
+}
+
+/** Native fields may separate only outside complete formatting spans or atomic tokens. */
+export function slackMrkdwnTextBoundary(text: string): (offset: number) => boolean {
+  // Unmatched literal delimiters do not form spans; paired markers protect their entire content.
+  const ranges: Array<[number, number]> = [];
+  const opened = new Map<string, number>();
+  let activeCode: SlackCodeMarker | undefined;
+  let offset = 0;
+  for (const token of tokenizeSlackMrkdwn(text)) {
+    const transition = resolveSlackCodeMarkerTransition(activeCode, token);
+    const marker = transition !== null || (!activeCode && ["*", "_", "~"].includes(token));
+    if (transition !== null) activeCode = transition;
+    if (marker) {
+      const start = opened.get(token);
+      if (start === undefined) opened.set(token, offset);
+      else {
+        ranges.push([start, offset + token.length]);
+        opened.delete(token);
+      }
+    }
+    if (token.length > 1) ranges.push([offset, offset + token.length]);
+    offset += token.length;
+  }
+  return (offset) => !ranges.some(([start, end]) => start < offset && offset < end);
 }
 
 type SlackVisibleProjection = {

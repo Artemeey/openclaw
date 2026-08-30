@@ -6,6 +6,7 @@ import { mergePairLoopGuardConfig } from "openclaw/plugin-sdk/pair-loop-guard-ru
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import type { ReplyDispatchKind, ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
 import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
+import type { SlackMarkdownOptions } from "../../format.js";
 import { resolveSlackReplyRenderPlan } from "../../reply-blocks.js";
 import type { SlackMessageEvent } from "../../types.js";
 import { readSlackReplyBlocks, resolveSlackThreadTs } from "../replies.js";
@@ -147,13 +148,17 @@ function getSlackStreamRecipientTeamCache(client: object): Map<string, string> {
   return cache;
 }
 
-function buildSlackEventDeliveryKey(params: SlackEventDeliveryAttempt): string | null {
+function buildSlackEventDeliveryKey(
+  params: SlackEventDeliveryAttempt,
+  options: SlackMarkdownOptions,
+): string | null {
   const reply = resolveSendableOutboundReplyParts(params.payload, {
     text: params.textOverride,
   });
   const renderPlan = resolveSlackReplyRenderPlan(
     params.payload,
     params.textOverride ?? params.payload.text,
+    options,
   );
   const plannedBlocks =
     renderPlan.mode === "single" ? renderPlan.blocks : renderPlan.blockPart?.blocks;
@@ -214,15 +219,15 @@ function rememberSlackStreamRecipientTeam(params: {
   }
 }
 
-export function createSlackEventDeliveryTracker() {
+export function createSlackEventDeliveryTracker(options: SlackMarkdownOptions = {}) {
   const deliveredKeys = new Set<string>();
   return {
     hasDelivered(params: SlackEventDeliveryAttempt) {
-      const key = buildSlackEventDeliveryKey(params);
+      const key = buildSlackEventDeliveryKey(params, options);
       return key ? deliveredKeys.has(key) : false;
     },
     markDelivered(params: SlackEventDeliveryAttempt) {
-      const key = buildSlackEventDeliveryKey(params);
+      const key = buildSlackEventDeliveryKey(params, options);
       if (key) {
         deliveredKeys.add(key);
       }

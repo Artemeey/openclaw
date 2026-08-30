@@ -331,7 +331,10 @@ describe("handleSlackMessageAction", () => {
       });
       expect(firstAction(invoke)).toMatchObject({
         action: "editMessage",
-        content: paddedMarkdownTable,
+        content:
+          tables === "off"
+            ? paddedMarkdownTable
+            : Array.from({ length: 20 }, () => "*x*\n• Value: 2").join("\n\n"),
       });
     },
   );
@@ -731,8 +734,29 @@ describe("handleSlackMessageAction", () => {
     },
   );
 
+  it("measures native mrkdwn fallback bytes without a second Markdown escape", async () => {
+    const invoke = createInvokeSpy();
+    const text = `${"&".repeat(801)}${"x".repeat(2_200)}`;
+    await handleSlackMessageAction({
+      providerId: "slack",
+      ctx: {
+        action: "edit",
+        channel: "slack",
+        cfg: {},
+        params: {
+          channelId: "C1",
+          messageId: "171234.567",
+          presentation: { blocks: [{ type: "text", text }] },
+        },
+      },
+      invoke,
+    });
+    expect(firstAction(invoke)).toMatchObject({ content: text, blocks: undefined });
+    expect(firstInvokeCall(invoke)[2]).toMatchObject({ preparedEditText: text });
+  });
+
   it.each([
-    { name: "Slack markdown rendering", text: `${"&".repeat(801)}${"x".repeat(2_200)}` },
+    { name: "Slack entity bytes", text: `${"&amp;".repeat(801)}${"x".repeat(2_200)}` },
     { name: "UTF-8 expansion", text: "😀".repeat(1_501) },
   ])("rejects presentation fallback edits that overflow after $name", async ({ text }) => {
     const invoke = createInvokeSpy();

@@ -8,13 +8,12 @@ import {
   normalizeLegacyInteractiveReply,
   normalizeMessagePresentation,
 } from "openclaw/plugin-sdk/interactive-runtime";
-import { resolveMarkdownTableMode } from "openclaw/plugin-sdk/markdown-table-runtime";
 import { readPositiveIntegerParam, readStringParam } from "openclaw/plugin-sdk/param-readers";
 import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { resolveDefaultSlackAccountId } from "./accounts.js";
+import { resolveDefaultSlackAccountId, resolveSlackMarkdownOptions } from "./accounts.js";
 import { normalizeSlackOutboundText } from "./format.js";
 import { SLACK_EDIT_TEXT_MAX_BYTES } from "./limits.js";
 import { renderSlackMessagePresentationFallbackText } from "./presentation-fallback.js";
@@ -73,7 +72,10 @@ export async function handleSlackMessageAction(params: {
         presentation,
         interactive,
       },
-      { materializeAuthoredText: hasStructuredContent },
+      {
+        ...resolveSlackMarkdownOptions({ cfg, accountId }),
+        materializeAuthoredText: hasStructuredContent,
+      },
     );
     const preparedMessages =
       resolution.segments.length > 0
@@ -184,7 +186,11 @@ export async function handleSlackMessageAction(params: {
     });
     const content = readStringParam(actionParams, "message", { allowEmpty: true });
     const presentation = normalizeMessagePresentation(actionParams.presentation);
-    const resolution = resolveSlackReplyBlockResolution({ text: content, presentation });
+    const markdownOptions = resolveSlackMarkdownOptions({ cfg, accountId });
+    const resolution = resolveSlackReplyBlockResolution(
+      { text: content, presentation },
+      markdownOptions,
+    );
     const nativeSegment = resolution.segments.length === 1 ? resolution.segments[0] : undefined;
     // Edits retain their single-message fallback for oversized text, even though sends can chunk it.
     const usesPresentationTextFallback = Boolean(
@@ -202,24 +208,17 @@ export async function handleSlackMessageAction(params: {
       !usesPresentationTextFallback && nativeSegment?.kind === "blocks"
         ? nativeSegment.blocks
         : undefined;
+    const renderedContent = normalizeSlackOutboundText(content ?? "", markdownOptions);
     const accessibleContent =
       usesPresentationTextFallback ||
       presentation?.blocks.some((block) => block.type === "chart" || block.type === "table")
         ? renderSlackMessagePresentationFallbackText({
-            text: resolution.authoredTextPlacement === "blocks" ? undefined : content,
+            text: resolution.authoredTextPlacement === "blocks" ? undefined : renderedContent,
             presentation,
           })
-        : (content ?? "");
-    const tableMode = resolveMarkdownTableMode({
-      cfg,
-      channel: "slack",
-      accountId: accountId ?? resolveDefaultSlackAccountId(cfg),
-    });
-    if (
-      !blocks &&
-      countSlackTextUtf8Bytes(normalizeSlackOutboundText(accessibleContent, { tableMode })) >
-        SLACK_EDIT_TEXT_MAX_BYTES
-    ) {
+        : renderedContent;
+    // Prepared edits already use Slack mrkdwn; size and transport share those exact bytes.
+    if (!blocks && countSlackTextUtf8Bytes(accessibleContent) > SLACK_EDIT_TEXT_MAX_BYTES) {
       const editSubject = usesPresentationTextFallback
         ? "Slack presentation fallback"
         : "Slack edit";
@@ -240,7 +239,7 @@ export async function handleSlackMessageAction(params: {
         accountId,
       },
       cfg,
-      ctx.toolContext,
+      { ...ctx.toolContext, preparedEditText: accessibleContent },
     );
   }
 
