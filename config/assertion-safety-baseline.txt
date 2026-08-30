@@ -1590,7 +1590,6 @@ packages/memory-host-sdk/src/host/session-reset-recall.ts	3
 packages/memory-host-sdk/src/host/session-transcript-corpus.ts	1
 packages/memory-host-sdk/src/host/sqlite-vec.ts	3
 packages/memory-host-sdk/src/host/sqlite.ts	1
-packages/memory-host-sdk/src/host/types.ts	1
 packages/model-catalog-core/src/model-catalog-normalize.ts	6
 packages/model-catalog-core/src/model-catalog-types.ts	1
 packages/model-catalog-core/src/remote-catalog-bundle.ts	2
@@ -1858,7 +1857,7 @@ src/agents/embedded-agent-runner/tool-result-context-guard.ts	13
 src/agents/embedded-agent-runner/tool-result-truncation.ts	23
 src/agents/embedded-agent-runner/tool-schema-runtime.ts	1
 src/agents/embedded-agent-runner/transcript-rewrite.ts	2
-src/agents/embedded-agent-subscribe.handlers.messages.lifecycle.ts	6
+src/agents/embedded-agent-subscribe.handlers.messages.lifecycle.ts	5
 src/agents/embedded-agent-subscribe.handlers.messages.stream.ts	6
 src/agents/embedded-agent-subscribe.handlers.messages.update.ts	6
 src/agents/embedded-agent-subscribe.handlers.tools.completion.ts	3
@@ -2441,7 +2440,7 @@ src/cli/update-cli/update-command-config.ts	6
 src/cli/update-cli/update-command-plugins.ts	1
 src/cli/update-cli/update-command-post-update.ts	2
 src/cli/users-cli.ts	1
-src/commands/agent-exec.ts	6
+src/commands/agent-exec.ts	1
 src/commands/agent-via-gateway.ts	7
 src/commands/agents.commands.bind.ts	5
 src/commands/agents.commands.identity.ts	1
@@ -2668,7 +2667,7 @@ src/config/schema.hints.ts	15
 src/config/schema.tags.ts	1
 src/config/schema.ts	3
 src/config/sessions/archive-compression.ts	1
-src/config/sessions/cleanup-service.ts	4
+src/config/sessions/cleanup-service.ts	3
 src/config/sessions/conversation-delivery-store.ts	2
 src/config/sessions/group.ts	1
 src/config/sessions/legacy-main-session-migration-operations.ts	1

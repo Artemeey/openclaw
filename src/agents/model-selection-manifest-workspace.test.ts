@@ -6,6 +6,7 @@ import {
   buildAllowedModelSet,
   buildConfiguredModelCatalog,
   buildModelAliasIndexCore as buildModelAliasIndex,
+  inferUniqueProviderFromConfiguredModels,
   resolveConfiguredModelRef,
 } from "./model-selection-shared.js";
 
@@ -116,19 +117,22 @@ describe("configured model manifest workspace scope", () => {
           ],
         },
       });
-      expect(
-        buildConfiguredModelCatalog({
-          cfg,
-          ...(source === "snapshot"
-            ? { pluginMetadataSnapshot }
-            : { workspaceDir: "/workspace/a" }),
-        }),
-      ).toMatchObject([
+      const context = {
+        cfg,
+        ...(source === "snapshot" ? { pluginMetadataSnapshot } : { workspaceDir: "/workspace/a" }),
+      };
+      expect(buildConfiguredModelCatalog(context)).toMatchObject([
         {
           provider: "custom",
           id: "workspace-custom/fast-model",
         },
       ]);
+      expect(
+        inferUniqueProviderFromConfiguredModels({
+          ...context,
+          model: "workspace-custom/fast-model",
+        }),
+      ).toBe("custom");
       if (source === "workspace") {
         expect(loadManifestMetadataSnapshotMock).toHaveBeenCalledWith({
           config: cfg,

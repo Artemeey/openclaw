@@ -36,6 +36,7 @@ import type { ModelCatalogEntry } from "./model-catalog.types.js";
 import { resolveCatalogOwnedModelCompat } from "./model-compat-catalog.js";
 import { splitTrailingAuthProfile } from "./model-ref-profile.js";
 import {
+  createConfiguredProviderCatalogModelIdNormalizer,
   normalizeConfiguredProviderCatalogModelId,
   type ModelManifestNormalizationContext,
   type ModelRef,
@@ -437,6 +438,9 @@ export function inferUniqueProviderFromConfiguredModels(
   };
   const configuredProviders = params.cfg.models?.providers;
   if (configuredProviders) {
+    let normalizeModelId:
+      | ReturnType<typeof createConfiguredProviderCatalogModelIdNormalizer>
+      | undefined;
     for (const [providerId, providerConfig] of Object.entries(configuredProviders)) {
       const models = providerConfig?.models;
       if (!Array.isArray(models)) {
@@ -447,10 +451,11 @@ export function inferUniqueProviderFromConfiguredModels(
         if (!modelId) {
           continue;
         }
-        const normalizedModelId = normalizeConfiguredProviderCatalogModelId(providerId, modelId, {
+        normalizeModelId ??= createConfiguredProviderCatalogModelIdNormalizer({
           ...manifestContext.getContext(),
           allowManifestNormalization: params.allowManifestNormalization,
         });
+        const normalizedModelId = normalizeModelId(providerId, modelId);
         if (
           modelId === model ||
           normalizeLowercaseStringOrEmpty(modelId) === normalized ||
@@ -1517,7 +1522,7 @@ export function resolveAllowedModelRefFromAliasIndex(
 }
 
 /** True when config contains provider model rows that should seed catalogs. */
-export function hasConfiguredProviderModelRows(cfg: OpenClawConfig): boolean {
+function hasConfiguredProviderModelRows(cfg: OpenClawConfig): boolean {
   const providers = cfg.models?.providers;
   if (!providers || typeof providers !== "object") {
     return false;
@@ -1598,6 +1603,7 @@ export function buildConfiguredModelCatalog(
             getCurrentPluginMetadataSnapshot({ config: params.cfg, env: process.env })?.plugins ??
             [],
         });
+  const normalizeModelId = createConfiguredProviderCatalogModelIdNormalizer(normalization);
   const catalog: ModelCatalogEntry[] = [];
   for (const [providerRaw, provider] of Object.entries(providers)) {
     const providerId = normalizeProviderId(providerRaw);
@@ -1606,9 +1612,7 @@ export function buildConfiguredModelCatalog(
     }
     for (const model of provider.models) {
       const rawId = normalizeOptionalString(model?.id) ?? "";
-      const id = rawId
-        ? normalizeConfiguredProviderCatalogModelId(providerId, rawId, normalization)
-        : "";
+      const id = rawId ? normalizeModelId(providerId, rawId) : "";
       if (!id) {
         continue;
       }
