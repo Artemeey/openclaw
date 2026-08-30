@@ -390,7 +390,6 @@ function renderSessionDetailPanel(
           ${renderContextPanel(
             context,
             onRetryContextWeight,
-            usage,
             contextExpanded,
             onToggleContextExpanded,
           )}
@@ -803,7 +802,6 @@ function renderTimeSeriesCompact(
 function renderContextPanel(
   { weight: contextWeight, loading, status }: UsageContextDetail,
   onRetry: () => void,
-  usage: UsageSessionEntry["usage"],
   expanded: boolean,
   onToggleExpanded: () => void,
 ) {
@@ -870,6 +868,8 @@ function renderContextPanel(
       return right.chars === null ? -1 : right.chars - left.chars;
     }),
   }));
+  // Reports retain component inventories, which can overlap the rendered prompt.
+  // Keep their estimates separate instead of adding them or comparing to cumulative usage.
   const categories = [
     {
       className: "system",
@@ -878,12 +878,6 @@ function renderContextPanel(
     },
     ...groups,
   ];
-  const totalContextTokens = categories.reduce((sum, { tokens }) => sum + tokens, 0);
-  const inputTokens = usage && usage.totalTokens > 0 ? usage.input + usage.cacheRead : 0;
-  const contextDescription =
-    inputTokens > 0
-      ? `~${Math.min((totalContextTokens / inputTokens) * 100, 100).toFixed(0)}% ${t("usage.details.ofInput")}`
-      : t("usage.details.baseContextPerMessage");
   const defaultLimit = 4;
   const hasMore = groups.some(({ entries }) => entries.length > defaultLimit);
 
@@ -900,18 +894,7 @@ function renderContextPanel(
             </button>`
           : nothing}
       </div>
-      <p class="context-weight-desc">${contextDescription}</p>
-      <div class="context-stacked-bar">
-        ${categories.map(
-          ({ className, labelKey, tokens }) => html`
-            <div
-              class="context-segment ${className}"
-              style="width: ${pct(tokens, totalContextTokens).toFixed(1)}%"
-              title="${t(labelKey)}: ~${formatUsageTokens(tokens)}"
-            ></div>
-          `,
-        )}
-      </div>
+      <p class="context-weight-desc">${t("usage.details.contextEstimates")}</p>
       <div class="context-legend">
         ${categories.map(
           ({ className, labelKey, tokens }) => html`
@@ -923,9 +906,6 @@ function renderContextPanel(
             >
           `,
         )}
-      </div>
-      <div class="context-total">
-        ${t("usage.breakdown.total")}: ~${formatUsageTokens(totalContextTokens)}
       </div>
       <div class="context-breakdown-grid">
         ${groups
