@@ -257,6 +257,7 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
       "exhaustion",
       "cron automatic pin",
       "cron user pin",
+      "cron configured pin",
       "cron concurrent user pin",
     ] as const)("keeps captured auth aliases for %s", async (scenario) => {
       const previousStores = listOwnedRuntimeAuthProfileStoreSnapshots();
@@ -331,6 +332,7 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
         if (
           scenario === "cron automatic pin" ||
           scenario === "cron user pin" ||
+          scenario === "cron configured pin" ||
           scenario === "cron concurrent user pin"
         ) {
           const agentId = "work";
@@ -381,6 +383,8 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
               agentDir,
               workspaceDir: WORKSPACE,
               pluginMetadataSnapshot,
+              configuredProfileId:
+                scenario === "cron configured pin" ? "captured:profile" : undefined,
               sessionEntry: cronSession.sessionEntry,
               sessionStore: cronSession.store,
               storePath: cronSession.storePath,
@@ -466,6 +470,12 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
       {
         scope: "captured workspace during cron admission",
         surface: "cron",
+        pluginIds: ["captured"],
+        expected: ["captured:prepared"],
+      },
+      {
+        scope: "captured workspace during configured-profile admission",
+        surface: "configured",
         pluginIds: ["captured"],
         expected: ["captured:prepared"],
       },
@@ -559,23 +569,30 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
             allowKeychainPrompt: false,
           };
 
-          if (surface === "cron") {
+          if (surface === "cron" || surface === "configured") {
             const previousStores = listOwnedRuntimeAuthProfileStoreSnapshots();
             onTestFinished(() => replaceOwnedRuntimeAuthProfileStoreSnapshots(previousStores));
             const agentId = "work";
             const agentDir = state.agentDir(agentId);
             const sessionKey = "agent:work:cron:external-auth-context";
-            const cronSession = resolveCronSession({
-              cfg: config,
-              sessionKey,
-              agentId,
-              nowMs: Date.now(),
-              store: {},
-            });
-            cronSession.sessionEntry.authProfileOverride = "captured:prepared";
-            cronSession.sessionEntry.authProfileOverrideSource = "user";
-            const scope = { storePath: cronSession.storePath, sessionKey };
-            await replaceSessionEntry(scope, cronSession.sessionEntry);
+            const cronSession =
+              surface === "cron"
+                ? resolveCronSession({
+                    cfg: config,
+                    sessionKey,
+                    agentId,
+                    nowMs: Date.now(),
+                    store: {},
+                  })
+                : undefined;
+            if (cronSession) {
+              cronSession.sessionEntry.authProfileOverride = "captured:prepared";
+              cronSession.sessionEntry.authProfileOverrideSource = "user";
+              await replaceSessionEntry(
+                { storePath: cronSession.storePath, sessionKey },
+                cronSession.sessionEntry,
+              );
+            }
             setRuntimeAuthProfileStoreSnapshot({ version: 1, profiles: {} }, agentDir);
             const registryLoadsBeforeSelection =
               loadPluginRegistrySnapshotWithMetadata.mock.calls.length;
@@ -590,10 +607,14 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
                 agentDir,
                 workspaceDir: WORKSPACE,
                 pluginMetadataSnapshot,
-                sessionEntry: cronSession.sessionEntry,
-                sessionStore: cronSession.store,
-                storePath: cronSession.storePath,
-                sessionKey,
+                ...(cronSession
+                  ? {
+                      sessionEntry: cronSession.sessionEntry,
+                      sessionStore: cronSession.store,
+                      storePath: cronSession.storePath,
+                      sessionKey,
+                    }
+                  : { configuredProfileId: "captured:prepared" }),
                 isNewSession: false,
               }),
             );
@@ -608,10 +629,18 @@ describe("provider runtime consults the current plugin metadata snapshot", () =>
             expect(loadPluginManifestRegistryForInstalledIndex.mock.calls.length).toBe(
               manifestLoadsBeforeSelection,
             );
-            expect(loadSessionEntry({ ...scope, readConsistency: "latest" })).toMatchObject({
-              authProfileOverride: "captured:prepared",
-              authProfileOverrideSource: "user",
-            });
+            if (cronSession) {
+              expect(
+                loadSessionEntry({
+                  storePath: cronSession.storePath,
+                  sessionKey,
+                  readConsistency: "latest",
+                }),
+              ).toMatchObject({
+                authProfileOverride: "captured:prepared",
+                authProfileOverrideSource: "user",
+              });
+            }
           } else if (surface === "fallback") {
             const previousStores = listOwnedRuntimeAuthProfileStoreSnapshots();
             onTestFinished(() => replaceOwnedRuntimeAuthProfileStoreSnapshots(previousStores));

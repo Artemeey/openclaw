@@ -81,6 +81,7 @@ export async function resolveCronAuthSelection(params: {
   cfg: OpenClawConfig;
   provider: string;
   modelId: string;
+  configuredProfileId?: string;
   harnessRuntime: Parameters<
     CronAuthProfileRuntime["resolveSessionAuthSelection"]
   >[0]["harnessRuntime"];
@@ -103,6 +104,7 @@ export async function resolveCronAuthSelection(params: {
     cfg: params.cfg,
     provider: params.provider,
     modelId: params.modelId,
+    ...(params.configuredProfileId ? { configuredProfileId: params.configuredProfileId } : {}),
     harnessRuntime: params.harnessRuntime,
     agentDir: params.agentDir,
     workspaceDir: params.workspaceDir,

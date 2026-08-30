@@ -452,14 +452,15 @@ type SessionAuthSelection = {
 export async function resolveSessionAuthSelection(
   params: SessionAuthSelectionParams,
 ): Promise<SessionAuthSelection | undefined> {
+  const acceptedProviderIds = listOpenAIAuthProfileProvidersForAgentRuntime({
+    provider: params.provider,
+    harnessRuntime: params.harnessRuntime,
+    config: params.cfg,
+  });
   const { profileId: rotatedProfileId, store } = await resolveSessionAuthProfileOverride({
     ...params,
     modelId: splitTrailingAuthProfile(params.modelId).model,
-    acceptedProviderIds: listOpenAIAuthProfileProvidersForAgentRuntime({
-      provider: params.provider,
-      harnessRuntime: params.harnessRuntime,
-      config: params.cfg,
-    }),
+    acceptedProviderIds,
   });
   const rotatedSource = rotatedProfileId
     ? params.sessionEntry?.authProfileOverride?.trim() === rotatedProfileId
@@ -468,6 +469,34 @@ export async function resolveSessionAuthSelection(
     : undefined;
   const rotatedUserProfileId = rotatedSource === "user" ? rotatedProfileId : undefined;
   const configuredProfileId = params.configuredProfileId?.trim() || undefined;
+  const authStore =
+    store ??
+    (configuredProfileId
+      ? ensureAuthProfileStore(params.agentDir, {
+          allowKeychainPrompt: false,
+          config: params.cfg,
+          workspaceDir: params.workspaceDir,
+          pluginMetadataSnapshot: params.pluginMetadataSnapshot,
+        })
+      : undefined);
+  if (
+    configuredProfileId &&
+    (!authStore ||
+      !isProfileForProvider({
+        authAliasLookupParams: {
+          config: params.cfg,
+          workspaceDir: params.workspaceDir,
+          metadataSnapshot: params.pluginMetadataSnapshot?.manifestRegistry,
+        },
+        providers: uniqueProviders(params.provider, acceptedProviderIds),
+        profileId: configuredProfileId,
+        store: authStore,
+      }))
+  ) {
+    throw new Error(
+      `Auth profile "${configuredProfileId}" is not configured for ${params.provider}.`,
+    );
+  }
   const profileId = rotatedUserProfileId ?? configuredProfileId ?? rotatedProfileId;
   if (!profileId) {
     return undefined;
@@ -475,6 +504,6 @@ export async function resolveSessionAuthSelection(
   return {
     profileId,
     source: rotatedUserProfileId || configuredProfileId ? "user" : (rotatedSource ?? "auto"),
-    routeRequirement: profileAuthRequirement({ cfg: params.cfg, store, profileId }),
+    routeRequirement: profileAuthRequirement({ cfg: params.cfg, store: authStore, profileId }),
   };
 }

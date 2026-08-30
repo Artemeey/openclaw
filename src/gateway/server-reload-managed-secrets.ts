@@ -90,7 +90,14 @@ type EffectiveConfigUnchangedHandler = NonNullable<
 type HotReloadHandler = NonNullable<ManagedReloadOptions["onHotReload"]>;
 
 export function createManagedReloadSecretHandlers(options: {
-  params: ManagedGatewayConfigReloaderParams;
+  params: Pick<
+    ManagedGatewayConfigReloaderParams,
+    | "activateRuntimeSecrets"
+    | "clients"
+    | "reconcileTerminalSessions"
+    | "resolveSharedGatewaySessionGenerationForConfig"
+    | "sharedGatewaySessionGenerationState"
+  >;
   prepareRuntimeCandidate: PrepareRuntimeCandidate;
   tryPrepareRuntimeSecrets: TryPrepareRuntimeSecrets;
   applyHotReload: ReturnType<typeof createGatewayReloadHandlers>["applyHotReload"];
@@ -265,6 +272,8 @@ export function createManagedReloadSecretHandlers(options: {
         throw new GatewayConfigReloadSupersededError();
       }
       const previousSnapshot = getActiveSecretsRuntimeSnapshotState();
+      // Prepared secrets carry effective defaults; commit and rollback must retain authored provenance.
+      const previousRuntimeSourceConfig = getRuntimeConfigSourceSnapshot() ?? undefined;
       const previousSnapshotRevision = getActiveSecretsRuntimeSnapshotRevisionState();
       const previousGenerationOwnership = captureSharedGatewaySessionGenerationOwnership(
         params.sharedGatewaySessionGenerationState,
@@ -410,6 +419,7 @@ export function createManagedReloadSecretHandlers(options: {
                       publishedSnapshotRevision ?? -1,
                       prepared,
                       {
+                        runtimeSourceConfig: previousRuntimeSourceConfig,
                         onActivated: () => {
                           generationRestored = restoreOwnedCurrentSharedGatewaySessionGeneration(
                             params.sharedGatewaySessionGenerationState,
@@ -455,6 +465,7 @@ export function createManagedReloadSecretHandlers(options: {
               {
                 reason: "reload",
                 activate: true,
+                runtimeSourceConfig: sourceConfig,
               },
               publishRuntime,
               () =>
@@ -505,6 +516,7 @@ export function createManagedReloadSecretHandlers(options: {
               publishedSnapshotRevision,
               prepared,
               {
+                runtimeSourceConfig: previousRuntimeSourceConfig,
                 onActivated: () => {
                   generationRestored = restoreOwnedCurrentSharedGatewaySessionGeneration(
                     params.sharedGatewaySessionGenerationState,

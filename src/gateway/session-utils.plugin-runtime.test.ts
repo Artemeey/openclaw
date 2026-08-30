@@ -25,7 +25,7 @@ vi.mock("../plugins/manifest-registry.js", async (importOriginal) => ({
 }));
 
 let sessionUtils: typeof import("./session-utils.js");
-let buildSessionListRowContext: typeof import("./session-utils-projection.js").buildSessionListRowContext;
+let buildSessionListRowMetadataContext: typeof import("./session-utils-projection.js").buildSessionListRowMetadataContext;
 
 function withPreparedPluginMetadata<T>(config: OpenClawConfig, run: () => T): T {
   // Retained empty facts must win over an ambient collection owner without rediscovery.
@@ -43,7 +43,7 @@ describe("gateway session list plugin runtime normalization", () => {
   beforeAll(async () => {
     vi.resetModules();
     sessionUtils = await import("./session-utils.js");
-    ({ buildSessionListRowContext } = await import("./session-utils-projection.js"));
+    ({ buildSessionListRowMetadataContext } = await import("./session-utils-projection.js"));
   });
 
   beforeEach(() => {
@@ -180,7 +180,7 @@ describe("gateway session list plugin runtime normalization", () => {
       modelOverrideFallbackOriginModel: "origin-model",
     };
     const store = { raw, resolved, legacyResolved };
-    const rowContext = buildSessionListRowContext({ store, now: 10 });
+    const rowContext = buildSessionListRowMetadataContext({ now: 10 });
     for (const entry of Object.values(store)) {
       rowContext.acpSessionMetaByEntry.set(entry, undefined);
     }

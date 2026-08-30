@@ -11,12 +11,16 @@ import {
 import { resetPreparedModelRuntimeSnapshotsForTest } from "../agents/prepared-model-runtime.test-support.js";
 import { writeConfigFile } from "../config/config.js";
 import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
-import { getRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
+import { cloneConfigWithResolutionFacts } from "../config/resolution-facts.js";
+import {
+  getRuntimeConfigSnapshot,
+  getRuntimeConfigSourceSnapshot,
+} from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { preparePluginMetadata } from "../plugins/plugin-metadata-collection.js";
 import * as pluginMetadataSnapshots from "../plugins/plugin-metadata-snapshot.js";
 import {
-  activateSecretsRuntimeSnapshot,
+  activateSecretsRuntimeSnapshotWithSource,
   clearSecretsRuntimeSnapshot,
   prepareSecretsRuntimeSnapshot,
 } from "../secrets/runtime.js";
@@ -103,8 +107,10 @@ async function coldRuntime(
     workspaceDir: state.workspaceDir,
     allowCurrent: false,
   });
+  const runtimeConfig = cloneConfigWithResolutionFacts(config);
+  runtimeConfig.models!.providers!["healthy-fixture"]!.models[0]!.compat = { supportsStore: false };
   const initial = await prepareSecretsRuntimeSnapshot({
-    config,
+    config: runtimeConfig,
     allowUnavailableSecretOwners: true,
   });
   expect(initial.degradedOwners).toEqual(
@@ -116,7 +122,7 @@ async function coldRuntime(
       }),
     ]),
   );
-  activateSecretsRuntimeSnapshot(initial);
+  activateSecretsRuntimeSnapshotWithSource(initial, config);
   await refreshPreparedModelRuntimeSnapshots(requireRuntimeConfig(), {
     catalogMode: "static",
     gatewayLifecycle: true,
@@ -189,6 +195,7 @@ describe("secret reload model-runtime publication", () => {
     }
     expect(loadMetadata).not.toHaveBeenCalled();
 
+    expect(getRuntimeConfigSourceSnapshot()).toEqual(config);
     expect(getRuntimeAuthProfileStoreCredentialsRevision()).toBe(authRevision);
     expect(requireRuntimeConfig().models?.providers?.["recoverable-fixture"]?.apiKey).toBe(
       "recovered-fixture-key",
@@ -222,6 +229,7 @@ describe("secret reload model-runtime publication", () => {
 
       await expect(reload()).rejects.toThrow("catalog build failed");
 
+      expect(getRuntimeConfigSourceSnapshot()).toEqual(config);
       const current = requireRuntimeConfig();
       const published = await prepareModelRuntimeSnapshot({
         config: current,
@@ -345,6 +353,7 @@ describe("secret reload model-runtime publication", () => {
         await nextPublication;
         expect((await reader).config).toBe(current);
         expect(requireRuntimeConfig()).toBe(current);
+        expect(getRuntimeConfigSourceSnapshot()?.models).toEqual(next.models);
         expect(generationState).toEqual({ current: "newer", required: null });
       } finally {
         release.resolve();

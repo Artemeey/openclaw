@@ -600,6 +600,9 @@ async function prepareCronRunContextWithModelOwner(
       cfg: cfgWithAgentDefaults,
       provider,
       modelId: model,
+      ...(provider === resolvedModelSelection.provider && resolvedModelSelection.configuredProfileId
+        ? { configuredProfileId: resolvedModelSelection.configuredProfileId }
+        : {}),
       harnessRuntime: effectiveAgentRuntime,
       agentDir,
       workspaceDir,

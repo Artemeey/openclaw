@@ -203,8 +203,9 @@ function resolveModelThroughAliases(
   value: string,
   params: { cfg: OpenClawConfig; agentId: string; defaultProvider?: string },
 ): string {
-  if (value.includes("/")) {
-    return value;
+  const { model, profile } = splitTrailingAuthProfile(value);
+  if (model.includes("/")) {
+    return appendAuthProfileSuffix(model, profile);
   }
   const defaultProvider =
     normalizeOptionalString(params.defaultProvider) ??
@@ -213,12 +214,12 @@ function resolveModelThroughAliases(
       agentId: params.agentId,
     });
   const aliasIndex = buildModelAliasIndex({ ...params, defaultProvider });
-  const aliasKey = normalizeLowercaseStringOrEmpty(value);
+  const aliasKey = normalizeLowercaseStringOrEmpty(model);
   const aliasMatch = aliasIndex.byAlias.get(aliasKey);
   if (aliasMatch) {
-    return `${aliasMatch.ref.provider}/${aliasMatch.ref.model}`;
+    return appendAuthProfileSuffix(`${aliasMatch.ref.provider}/${aliasMatch.ref.model}`, profile);
   }
-  return value;
+  return appendAuthProfileSuffix(model, profile);
 }
 
 export function resolveSubagentSpawnModelSelection(params: {
