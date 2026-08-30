@@ -603,18 +603,18 @@ describe("renderModelProviders", () => {
                 usage: {
                   providerId: "openai",
                   windows: [
-                    { label: "168h", usedPercent: 5 },
+                    { label: "Week", usedPercent: 5 },
                     { label: "5h", usedPercent: 10 },
                     {
                       label: "GPT 5.3 Codex Spark · 5h",
-                      groupLabel: "GPT 5.3 Codex",
-                      windowLabel: "Spark · 5h",
+                      groupLabel: "GPT 5.3 Codex Spark",
+                      windowLabel: "5h",
                       usedPercent: 20,
                     },
                     {
                       label: "GPT 5.3 Codex Spark · Week",
-                      groupLabel: "GPT 5.3 Codex",
-                      windowLabel: "Spark · Week",
+                      groupLabel: "GPT 5.3 Codex Spark",
+                      windowLabel: "Week",
                       usedPercent: 30,
                     },
                     {
@@ -639,13 +639,16 @@ describe("renderModelProviders", () => {
     );
     expect(
       [...(groups[0]?.querySelectorAll(".provider-usage-window__cadence") ?? [])].map(text),
-    ).toEqual(["5h", "168h"]);
+    ).toEqual(["5h", "Week"]);
     expect(text(groups[1]?.querySelector(".provider-usage-window-group__title") ?? null)).toBe(
-      "GPT 5.3 Codex",
+      "GPT 5.3 Codex Spark",
     );
     expect(
       [...(groups[1]?.querySelectorAll(".provider-usage-window__cadence") ?? [])].map(text),
-    ).toEqual(["Spark · 5h", "Spark · Week"]);
+    ).toEqual(["5h", "Week"]);
+    const progress = groups[1]?.querySelector<HTMLElement>("[role='progressbar']");
+    expect(progress?.getAttribute("aria-valuenow")).toBe("20");
+    expect(progress?.getAttribute("aria-valuetext")).toBe("80% left");
     expect(text(groups[2]?.querySelector(".provider-usage-window-group__title") ?? null)).toBe(
       "codex other",
     );
