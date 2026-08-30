@@ -1,7 +1,7 @@
 // Exercises the fake-backend TUI PTY harness and visible terminal output.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sleep } from "../utils/sleep.js";
-import { exerciseTuiCommandSurface } from "./tui-pty-command-surfaces-test-support.js";
+import { registerTuiCommandSurfaceTests } from "./tui-pty-command-surfaces-test-support.js";
 import {
   approveWorkspaceSkill,
   COMPACT_TERMINAL_SIZES,
@@ -42,20 +42,7 @@ it("rejects rendering oracle false positives", () => {
   expect(toolFrame(reversedTool, false)).toBe(false);
 });
 
-describe.sequential("TUI PTY command surfaces", () => {
-  it.each([
-    ["lists and executes slash commands through authenticated real PTY frames", "slash-commands"],
-    [
-      "cancels and selects model and session pickers through authenticated real PTY frames",
-      "pickers",
-    ],
-    ["updates settings through an authenticated real PTY overlay", "settings"],
-  ] as const)(
-    "%s",
-    (_name, surface) => exerciseTuiCommandSurface(startTuiFixture, surface, STARTUP_TIMEOUT_MS),
-    STARTUP_TEST_TIMEOUT_MS,
-  );
-});
+registerTuiCommandSurfaceTests(startTuiFixture, STARTUP_TIMEOUT_MS, STARTUP_TEST_TIMEOUT_MS);
 
 describe.sequential("TUI PTY harness", () => {
   let fixture: Awaited<ReturnType<typeof startTuiFixture>>;

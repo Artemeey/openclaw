@@ -1,4 +1,4 @@
-import { expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   type StartTuiPtyFixture,
   waitForSynchronizedFrameRows,
@@ -14,7 +14,28 @@ const countHistoryLoads = async (logPath: string) =>
 const rowsInclude = (rows: string[], ...texts: string[]) =>
   rows.some((row) => texts.every((text) => row.includes(text)));
 
-export async function exerciseTuiCommandSurface(
+export function registerTuiCommandSurfaceTests(
+  startFixture: StartTuiPtyFixture,
+  startupTimeoutMs: number,
+  testTimeoutMs: number,
+): void {
+  describe.sequential("TUI PTY command surfaces", () => {
+    it.each([
+      ["lists and executes slash commands through authenticated real PTY frames", "slash-commands"],
+      [
+        "cancels and selects model and session pickers through authenticated real PTY frames",
+        "pickers",
+      ],
+      ["updates settings through an authenticated real PTY overlay", "settings"],
+    ] as const)(
+      "%s",
+      (_name, surface) => exerciseTuiCommandSurface(startFixture, surface, startupTimeoutMs),
+      testTimeoutMs,
+    );
+  });
+}
+
+async function exerciseTuiCommandSurface(
   startFixture: StartTuiPtyFixture,
   surface: "slash-commands" | "pickers" | "settings",
   startupTimeoutMs: number,
