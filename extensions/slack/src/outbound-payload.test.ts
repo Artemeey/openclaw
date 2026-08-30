@@ -836,6 +836,84 @@ describe("slackOutbound sendPayload", () => {
     expect(fallback.blocks?.filter((block) => block.text?.text === "Overview")).toHaveLength(1);
   });
 
+  it.each([
+    {
+      name: "portable text",
+      text: "Overview",
+      presentation: { blocks: [{ type: "text" as const, text: "Overview" }] },
+      blockTypes: ["section"],
+    },
+    {
+      name: "equivalent rendered Markdown",
+      text: "**Overview**",
+      presentation: { blocks: [{ type: "text" as const, text: "*Overview*" }] },
+      blockTypes: ["section"],
+    },
+    {
+      name: "native chart data",
+      text: "Overview (pie chart)\n- Open: 5",
+      presentation: {
+        blocks: [
+          {
+            type: "chart" as const,
+            chartType: "pie" as const,
+            title: "Overview",
+            segments: [{ label: "Open", value: 5 }],
+          },
+        ],
+      },
+      blockTypes: ["data_visualization"],
+    },
+    {
+      name: "literal chart fallback",
+      text: "Overview with a title too long for Slack native chart rendering (pie chart)\n- Open: 5",
+      presentation: {
+        blocks: [
+          {
+            type: "chart" as const,
+            chartType: "pie" as const,
+            title: "Overview with a title too long for Slack native chart rendering",
+            segments: [{ label: "Open", value: 5 }],
+          },
+        ],
+      },
+      blockTypes: [],
+    },
+  ])(
+    "sends authored text represented by $name once",
+    async ({ text, presentation, blockTypes }) => {
+      const { client } = await sendThroughRealSlack({
+        payload: { text, presentation },
+        renderText: text,
+      });
+
+      expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+      const message = postedSlackMessage(client, 0);
+      expect(message.text?.match(/Overview/gu)).toHaveLength(1);
+      expect(message.blocks?.map((block) => block.type) ?? []).toEqual(blockTypes);
+    },
+  );
+
+  it("packs represented authored text once at the native block limit", async () => {
+    const { client } = await sendThroughRealSlack({
+      payload: {
+        text: "Overview",
+        channelData: { slack: { blocks: Array.from({ length: 49 }, () => ({ type: "divider" })) } },
+        presentation: {
+          blocks: [{ type: "text", text: "Overview" }, valueButtons("Refresh", "refresh")],
+        },
+      },
+    });
+
+    expect(client.chat.postMessage).toHaveBeenCalledTimes(2);
+    expect(postedSlackMessage(client, 0).blocks).toHaveLength(50);
+    expect(postedSlackMessage(client, 1).blocks?.map((block) => block.type)).toEqual(["actions"]);
+    const text = client.chat.postMessage.mock.calls
+      .map((_, index) => postedSlackMessage(client, index).text ?? "")
+      .join("\n");
+    expect(text.match(/Overview/gu)).toHaveLength(1);
+  });
+
   it("sends media before a separate interactive blocks message", async () => {
     const { run, sendMock, to } = createHarness({
       payload: {

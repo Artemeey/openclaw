@@ -427,42 +427,13 @@ function subtractMirroredSlackControlRows(params: {
   });
 }
 
-/**
- * Resolve reply content into transport-order segments. Each blocks segment is
- * one Slack message; text segments carry complete fallback content between it.
- */
-export function resolveSlackReplyBlockResolution(
+function compileSlackReplyBlockSegments(
   payload: ReplyPayload,
-  options: { materializeAuthoredText?: boolean } = {},
-): SlackReplyBlockResolution {
+  channelBlocks: SlackBlock[],
+): SlackReplyBlockSegment[] {
   const segments: SlackReplyBlockSegment[] = [];
-  const channelBlocks = readSlackChannelBlocks(payload);
-  let compiledChannelBlocks = channelBlocks;
-  let authoredTextKnownInBlocks = false;
-  if (options.materializeAuthoredText) {
-    const rawTextFragments = renderSlackAuthoredTextFragments(channelBlocks);
-    const initialPlacement = resolveSlackAuthoredTextPlacement({
-      text: payload.text,
-      interactive: payload.interactive,
-      renderedTextFragments: rawTextFragments,
-    });
-    authoredTextKnownInBlocks = initialPlacement === "blocks";
-    const text = normalizeOptionalString(payload.text);
-    if (text && initialPlacement === "outside-blocks") {
-      const textBlocks = buildSlackAuthoredTextBlocks(text);
-      const compiledText = renderSlackAuthoredTextFragments(textBlocks).join(" ");
-      const compiledPlacement = resolveSlackAuthoredTextPlacement({
-        text: compiledText,
-        renderedTextFragments: rawTextFragments,
-      });
-      if (compiledPlacement !== "blocks") {
-        compiledChannelBlocks = [...channelBlocks, ...textBlocks];
-      }
-      authoredTextKnownInBlocks = true;
-    }
-  }
-  if (compiledChannelBlocks.length > 0) {
-    appendBlockSegment(segments, compiledChannelBlocks);
+  if (channelBlocks.length > 0) {
+    appendBlockSegment(segments, channelBlocks);
   }
 
   const presentation = normalizeMessagePresentation(payload.presentation);
@@ -493,21 +464,46 @@ export function resolveSlackReplyBlockResolution(
       presentationBlocks: renderedPresentationBlocks,
     }),
   );
+  return segments;
+}
+
+/**
+ * Resolve reply content into transport-order segments. Each blocks segment is
+ * one Slack message; text segments carry complete fallback content between it.
+ */
+export function resolveSlackReplyBlockResolution(
+  payload: ReplyPayload,
+  options: { materializeAuthoredText?: boolean } = {},
+): SlackReplyBlockResolution {
+  const channelBlocks = readSlackChannelBlocks(payload);
+  let segments = compileSlackReplyBlockSegments(payload, channelBlocks);
   const renderedTextFragments = segments.flatMap((segment) => {
     if (segment.kind === "text") {
       return [segment.text];
     }
     return renderSlackAuthoredTextFragments(segment.blocks);
   });
-  const authoredTextPlacement = resolveSlackAuthoredTextPlacement({
+  let authoredTextPlacement = resolveSlackAuthoredTextPlacement({
     text: payload.text,
     interactive: payload.interactive,
     renderedTextFragments,
   });
-  return {
-    authoredTextPlacement: authoredTextKnownInBlocks ? "blocks" : authoredTextPlacement,
-    segments,
-  };
+  const text = normalizeOptionalString(payload.text);
+  if (options.materializeAuthoredText && text && authoredTextPlacement === "outside-blocks") {
+    const textBlocks = buildSlackAuthoredTextBlocks(text);
+    const compiledText = renderSlackAuthoredTextFragments(textBlocks).join(" ");
+    const compiledPlacement = resolveSlackAuthoredTextPlacement({
+      text: compiledText,
+      renderedTextFragments,
+    });
+    if (compiledPlacement !== "blocks") {
+      // Decide from rendered content, then repack missing text through the same
+      // compiler so authored ordering, native-data budgets, and control ids stay aligned.
+      segments = compileSlackReplyBlockSegments(payload, [...channelBlocks, ...textBlocks]);
+    }
+    authoredTextPlacement = "blocks";
+  }
+  return { authoredTextPlacement, segments };
 }
 
 /** Return the single-message native shape when no ordered text fallback is required. */
