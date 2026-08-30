@@ -7,7 +7,7 @@ import type { ReplyDispatchKind } from "./reply-dispatcher.types.js";
 export const RESTRICTED_RUNTIME_TAKEOVER_ERROR =
   "This session's bound runtime cannot enforce its permission or tool policy; use an embedded runtime for this restricted conversation.";
 
-export function replyDispatchHooksAllowed(
+export function runtimeTakeoverHooksAllowed(
   settings: InternalGetReplyOptions["admittedSessionSettings"],
 ): boolean {
   return !admittedSessionSettingsRestrictRuntime(settings);
@@ -23,7 +23,7 @@ export async function maybeRefuseRestrictedRuntimeTakeover(params: {
   const { state } = params;
   if (
     state.dispatchKind !== "acp" ||
-    replyDispatchHooksAllowed(state.params.replyOptions?.admittedSessionSettings)
+    runtimeTakeoverHooksAllowed(state.params.replyOptions?.admittedSessionSettings)
   ) {
     return undefined;
   }

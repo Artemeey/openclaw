@@ -1,7 +1,7 @@
 import { runWithDispatchAbortSignal } from "./dispatch-from-config.abort.js";
 import { createReplyDispatchEvent } from "./dispatch-from-config.events.js";
 import type { PrepareDispatchOperationReadyState } from "./dispatch-from-config.prepare-operation.js";
-import { replyDispatchHooksAllowed } from "./dispatch-from-config.restricted-runtime.js";
+import { runtimeTakeoverHooksAllowed } from "./dispatch-from-config.restricted-runtime.js";
 import type { DispatchFromConfigResult } from "./dispatch-from-config.types.js";
 
 export async function runReplyDispatchTakeover(
@@ -10,7 +10,7 @@ export async function runReplyDispatchTakeover(
 ): Promise<{ status: "complete"; result: DispatchFromConfigResult } | undefined> {
   const { hookRunner, params } = state;
   if (
-    !replyDispatchHooksAllowed(params.replyOptions?.admittedSessionSettings) ||
+    !runtimeTakeoverHooksAllowed(params.replyOptions?.admittedSessionSettings) ||
     !hookRunner?.hasHooks("reply_dispatch", { dispatchKind: state.dispatchKind })
   ) {
     return undefined;
