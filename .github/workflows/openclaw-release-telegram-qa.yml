@@ -1906,6 +1906,9 @@ jobs:
                     exec "$runtime_node_bin" "${runtime_node_args[@]}"
                   '\'' openclaw-sut "$@"
             ' openclaw-sut "$@"
+          # The isolated runtime owns its private state only while it is alive.
+          # Return deletion authority before the trusted lifecycle observes exit.
+          chown -R -h -- "$RUNNER_UID:$RUNNER_GID" "$temp_root"
           LAUNCHER
           sudo chown root:root "$launcher"
           sudo chmod 0755 "$launcher"

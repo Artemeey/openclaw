@@ -926,6 +926,21 @@ describe("release Telegram QA workflow", () => {
     );
   });
 
+  it("returns the stopped SUT tree to the trusted cleanup owner", () => {
+    const createSut = requireRun(
+      "run_telegram",
+      "Create isolated Telegram SUT identity and launcher",
+    );
+    const launcher = extractHereDocument(createSut, "LAUNCHER");
+    const runtimeExit = launcher.lastIndexOf('\' openclaw-sut "$@"');
+    const ownershipReturn = launcher.indexOf(
+      'chown -R -h -- "$RUNNER_UID:$RUNNER_GID" "$temp_root"',
+    );
+
+    expect(runtimeExit).toBeGreaterThan(-1);
+    expect(ownershipReturn).toBeGreaterThan(runtimeExit);
+  });
+
   it("lets the SUT create suite locks without exposing the runner-owned config", () => {
     const createSut = requireRun(
       "run_telegram",
