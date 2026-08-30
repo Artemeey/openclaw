@@ -2,7 +2,10 @@
 // billing, provider cost history). Used by the usage dashboard and the
 // Models settings page; styles live in styles/usage.css.
 import { html, nothing } from "lit";
-import type { ProviderUsageSnapshot } from "../../../src/infra/provider-usage.types.js";
+import type {
+  ProviderUsageSnapshot,
+  UsageWindow,
+} from "../../../src/infra/provider-usage.types.js";
 import { t } from "../i18n/index.ts";
 import { formatUiExternalText } from "../lib/format-error.ts";
 import { formatCompactTokenCount } from "../lib/format.ts";
@@ -30,6 +33,38 @@ function splitCompactWindowLabel(label: string) {
         scope: prefix.slice(0, scopeBreak),
         cadence: `${prefix.slice(scopeBreak + 1)} · ${cadence}`,
       };
+}
+
+type CompactWindowGroup = {
+  scope: string;
+  windows: Array<{ cadence: string; window: UsageWindow }>;
+};
+
+function compactWindowRank(cadence: string): number {
+  if (/\b\d+h\b/iu.test(cadence) && !/\b168h\b/iu.test(cadence)) {
+    return 0;
+  }
+  if (/\b(?:week|168h)\b/iu.test(cadence)) {
+    return 1;
+  }
+  return 2;
+}
+
+function groupCompactWindows(windows: UsageWindow[]): CompactWindowGroup[] {
+  const groups = new Map<string, CompactWindowGroup>();
+  for (const window of windows) {
+    const { scope, cadence } = splitCompactWindowLabel(window.label);
+    const group = groups.get(scope) ?? { scope, windows: [] };
+    group.windows.push({ cadence, window });
+    groups.set(scope, group);
+  }
+  const groupedWindows = [...groups.values()];
+  for (const group of groupedWindows) {
+    group.windows.sort(
+      (left, right) => compactWindowRank(left.cadence) - compactWindowRank(right.cadence),
+    );
+  }
+  return groupedWindows;
 }
 
 function formatProviderAmount(amount: number, unit: string): string {
@@ -200,6 +235,43 @@ function renderProviderCostHistory(snapshot: ProviderUsageDetails) {
   `;
 }
 
+function renderProviderUsageWindow(window: UsageWindow, cadence?: string) {
+  const used = Math.max(0, Math.min(100, window.usedPercent));
+  const remaining = Math.max(0, 100 - used);
+  const reset = formatProviderReset(window.resetAt);
+  return html`
+    <div class="provider-usage-window">
+      <div class="provider-usage-window__meta">
+        ${cadence
+          ? html`<span class="provider-usage-window__cadence" aria-label=${window.label}
+              >${cadence}</span
+            >`
+          : html`<span>${window.label}</span>`}
+        <strong
+          >${t("usage.providerUsage.remaining", {
+            percent: remaining.toFixed(0),
+          })}</strong
+        >
+      </div>
+      <div
+        class="provider-usage-progress"
+        role="progressbar"
+        aria-label=${window.label}
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow=${used.toFixed(0)}
+      >
+        <span style=${`width: ${used}%`}></span>
+      </div>
+      ${reset
+        ? html`<div class="provider-usage-reset">
+            ${t("usage.providerUsage.resets", { date: reset })}
+          </div>`
+        : nothing}
+    </div>
+  `;
+}
+
 /**
  * Card body for one provider usage snapshot: quota windows with progress
  * bars, billing rows, provider cost history, and the provider summary line.
@@ -214,59 +286,28 @@ export function renderProviderUsageDetails(
   }
   return html`
     ${snapshot.windows.length > 0
-      ? html`
-          <div class="provider-usage-windows">
-            ${snapshot.windows.map((window) => {
-              const used = Math.max(0, Math.min(100, window.usedPercent));
-              const remaining = Math.max(0, 100 - used);
-              const reset = formatProviderReset(window.resetAt);
-              const compactLabel = options.compactWindowLabels
-                ? splitCompactWindowLabel(window.label)
-                : null;
-              return html`
-                <div class="provider-usage-window">
-                  <div class="provider-usage-window__meta">
-                    ${compactLabel
-                      ? html`
-                          <span
-                            class="provider-usage-window__compact-label"
-                            aria-label=${window.label}
-                          >
-                            <span class="provider-usage-window__scope" aria-hidden="true"
-                              >${compactLabel.scope}</span
-                            >
-                            <span class="provider-usage-window__cadence" aria-hidden="true"
-                              >${compactLabel.cadence}</span
-                            >
-                          </span>
-                        `
-                      : html`<span>${window.label}</span>`}
-                    <strong
-                      >${t("usage.providerUsage.remaining", {
-                        percent: remaining.toFixed(0),
-                      })}</strong
-                    >
+      ? options.compactWindowLabels
+        ? html`
+            <div class="provider-usage-windows provider-usage-windows--grouped">
+              ${groupCompactWindows(snapshot.windows).map(
+                (group) => html`
+                  <div class="provider-usage-window-group" role="group" aria-label=${group.scope}>
+                    <div class="provider-usage-window-group__title">${group.scope}</div>
+                    <div class="provider-usage-window-group__windows">
+                      ${group.windows.map(({ cadence, window }) =>
+                        renderProviderUsageWindow(window, cadence),
+                      )}
+                    </div>
                   </div>
-                  <div
-                    class="provider-usage-progress"
-                    role="progressbar"
-                    aria-label=${window.label}
-                    aria-valuemin="0"
-                    aria-valuemax="100"
-                    aria-valuenow=${used.toFixed(0)}
-                  >
-                    <span style=${`width: ${used}%`}></span>
-                  </div>
-                  ${reset
-                    ? html`<div class="provider-usage-reset">
-                        ${t("usage.providerUsage.resets", { date: reset })}
-                      </div>`
-                    : nothing}
-                </div>
-              `;
-            })}
-          </div>
-        `
+                `,
+              )}
+            </div>
+          `
+        : html`
+            <div class="provider-usage-windows">
+              ${snapshot.windows.map((window) => renderProviderUsageWindow(window))}
+            </div>
+          `
       : nothing}
     ${snapshot.billing && snapshot.billing.length > 0
       ? html`<div class="provider-usage-billing">${renderProviderBilling(snapshot)}</div>`

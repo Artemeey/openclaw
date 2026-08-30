@@ -590,7 +590,7 @@ describe("renderModelProviders", () => {
     expect(text(metrics)).toContain("12 credits");
   });
 
-  it("gives compact account quota labels a consistent two-line structure", () => {
+  it("groups compact account quotas by family with short windows first", () => {
     const container = mount(
       props({
         cards: [
@@ -616,30 +616,20 @@ describe("renderModelProviders", () => {
       }),
     );
 
-    const labels = [
-      ...container.querySelectorAll<HTMLElement>(".provider-usage-window__compact-label"),
-    ];
-    expect(labels).toHaveLength(4);
-    expect(text(labels[0]?.querySelector(".provider-usage-window__scope") ?? null)).toBe(
+    const groups = [...container.querySelectorAll<HTMLElement>(".provider-usage-window-group")];
+    expect(groups).toHaveLength(2);
+    expect(text(groups[0]?.querySelector(".provider-usage-window-group__title") ?? null)).toBe(
       "Normal limit",
     );
-    expect(text(labels[0]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe("168h");
-    expect(text(labels[1]?.querySelector(".provider-usage-window__scope") ?? null)).toBe(
-      "Normal limit",
-    );
-    expect(text(labels[1]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe("5h");
-    expect(text(labels[2]?.querySelector(".provider-usage-window__scope") ?? null)).toBe(
+    expect(
+      [...(groups[0]?.querySelectorAll(".provider-usage-window__cadence") ?? [])].map(text),
+    ).toEqual(["5h", "168h"]);
+    expect(text(groups[1]?.querySelector(".provider-usage-window-group__title") ?? null)).toBe(
       "GPT 5.3 Codex",
     );
-    expect(text(labels[2]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe(
-      "Spark · 5h",
-    );
-    expect(text(labels[3]?.querySelector(".provider-usage-window__scope") ?? null)).toBe(
-      "GPT 5.3 Codex",
-    );
-    expect(text(labels[3]?.querySelector(".provider-usage-window__cadence") ?? null)).toBe(
-      "Spark · Week",
-    );
+    expect(
+      [...(groups[1]?.querySelectorAll(".provider-usage-window__cadence") ?? [])].map(text),
+    ).toEqual(["Spark · 5h", "Spark · Week"]);
   });
 
   it("keeps provider-scoped usage beside OAuth usage without an inference API key", () => {

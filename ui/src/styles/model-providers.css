@@ -230,8 +230,31 @@
   padding-bottom: var(--space-3);
 }
 
-.model-providers__profile-usage .provider-usage-windows {
-  grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr));
+.model-providers__profile-usage .provider-usage-windows--grouped {
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+}
+
+.model-providers__profile-usage .provider-usage-window-group {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.model-providers__profile-usage .provider-usage-window-group__title {
+  color: var(--muted);
+  font-size: var(--control-ui-text-xs);
+}
+
+.model-providers__profile-usage .provider-usage-window-group__windows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.model-providers__profile-usage .provider-usage-window-group__windows > :only-child {
+  grid-column: 1 / -1;
 }
 
 .model-providers__profile-usage .provider-usage-window__meta {
@@ -240,30 +263,14 @@
   gap: 2px var(--space-2);
 }
 
-.model-providers__profile-usage .provider-usage-window__compact-label {
-  display: contents;
-}
-
-.model-providers__profile-usage .provider-usage-window__scope,
 .model-providers__profile-usage .provider-usage-window__cadence {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.model-providers__profile-usage .provider-usage-window__scope {
-  grid-column: 1 / -1;
-  min-height: 1lh;
-}
-
-.model-providers__profile-usage .provider-usage-window__cadence {
-  grid-column: 1;
-  grid-row: 2;
-}
-
 .model-providers__profile-usage .provider-usage-window__meta strong {
   grid-column: 2;
-  grid-row: 2;
   white-space: nowrap;
 }
 
@@ -322,9 +329,15 @@
   .model-providers__profile-avatar {
     display: none;
   }
+}
 
-  .model-providers__profile-usage .provider-usage-windows {
+@container provider-profiles (max-width: 400px) {
+  .model-providers__profile-usage .provider-usage-window-group__windows {
     grid-template-columns: 1fr;
+  }
+
+  .model-providers__profile-usage .provider-usage-window-group__windows > :only-child {
+    grid-column: auto;
   }
 }
 
