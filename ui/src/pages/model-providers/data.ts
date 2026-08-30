@@ -330,7 +330,7 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
     // usage.status snapshots carry cost history and errors that the
     // auth-status embed drops, so they win when both are present.
     draft.card.usage = snapshot;
-    draft.card.usageScope = "provider";
+    draft.card.usageScope = snapshot.accountEmail ? "account" : "provider";
     draft.hasUsageSnapshot = true;
   }
 

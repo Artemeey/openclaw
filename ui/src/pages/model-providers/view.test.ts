@@ -533,6 +533,22 @@ describe("renderModelProviders", () => {
     expect(text(provider)).toContain("Credentials for Writer");
     expect(text(provider)).toContain("Usage and cost");
     expect(text(provider)).toContain("Session spend · 30d");
+    expect(text(provider?.querySelector(".model-providers__head") ?? null)).toContain("Default");
+  });
+
+  it("marks only the provider that owns the saved primary model as default", () => {
+    const container = mount(
+      props({
+        cards: [card(), card({ id: "anthropic", displayName: "Anthropic" })],
+      }),
+    );
+
+    expect(
+      text(container.querySelector('[data-provider-id="openai"] .model-providers__head')),
+    ).toContain("Default");
+    expect(
+      text(container.querySelector('[data-provider-id="anthropic"] .model-providers__head')),
+    ).not.toContain("Default");
   });
 
   it("keeps provider usage visible for API-key profiles without account snapshots", () => {

@@ -114,6 +114,7 @@ describe("renderModelProviders profiles", () => {
               plan: "Pro",
               windows: [{ label: "Weekly", usedPercent: 10 }],
             },
+            localCost: { totalCost: 12, totalTokens: 1_000, sessionCount: 2 },
             profiles: [
               {
                 profileId: "openai:first",
@@ -135,6 +136,13 @@ describe("renderModelProviders profiles", () => {
     expect(text(container).match(/\bPro\b/gu)).toHaveLength(1);
     expect(text(container.querySelector(".model-providers__profile"))).toContain("Pro");
     expect(text(container.querySelector(".settings-row__control"))).not.toContain("Pro");
+    const sessionSummary = container.querySelector(".model-providers__local-cost");
+    const profiles = container.querySelector(".model-providers__profiles");
+    expect(text(sessionSummary)).toContain("Session spend · 30d");
+    expect(text(sessionSummary)).not.toContain("Weekly");
+    expect(sessionSummary?.compareDocumentPosition(profiles ?? container)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
     expect(container.querySelector(".model-providers__global-metrics")).toBeNull();
   });
 

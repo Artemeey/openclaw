@@ -277,7 +277,7 @@ describe("buildModelProviderCards", () => {
     expect(firstCard(cards).auth).toMatchObject({ kind: "missing", profileCount: 0 });
   });
 
-  it("prefers usage.status snapshots over the auth-status embed", () => {
+  it("keeps account usage.status snapshots scoped to the account", () => {
     const cards = buildModelProviderCards({
       ...EMPTY_INPUT,
       authStatus: authStatus([
@@ -295,6 +295,7 @@ describe("buildModelProviderCards", () => {
           {
             provider: "openai",
             displayName: "OpenAI",
+            accountEmail: "owner@example.com",
             windows: [{ label: "5h", usedPercent: 55 }],
             costHistory: {
               unit: "USD",
@@ -320,7 +321,7 @@ describe("buildModelProviderCards", () => {
     expect(cards).toHaveLength(1);
     expect(firstCard(cards).usage?.windows).toEqual([{ label: "5h", usedPercent: 55 }]);
     expect(firstCard(cards).usage?.costHistory?.periodDays).toBe(30);
-    expect(firstCard(cards).usageScope).toBe("provider");
+    expect(firstCard(cards).usageScope).toBe("account");
   });
 
   it("preserves provider-scoped auth usage beside account usage", () => {

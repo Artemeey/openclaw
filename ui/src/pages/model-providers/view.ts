@@ -20,16 +20,18 @@ import { t } from "../../i18n/index.ts";
 import { formatThinkingOverrideLabel } from "../../lib/chat/thinking.ts";
 import { formatUiExternalText } from "../../lib/format-error.ts";
 import { formatCompactTokenCount, formatCost, formatTimeMs } from "../../lib/format.ts";
+import { canonicalModelAuthProviderId } from "../../lib/model-auth.ts";
 import { MODEL_SETTINGS_TARGET_IDS } from "../config/route-data.ts";
 import "../../styles/model-providers.css";
 import "../../styles/usage.css";
-import type {
-  DefaultModelSelection,
-  ModelPickerEntry,
-  ModelProviderCard,
-  ModelProviderPendingLogout,
-  ModelProviderLogoutTarget,
-  ProviderOption,
+import {
+  modelCatalogRef,
+  type DefaultModelSelection,
+  type ModelPickerEntry,
+  type ModelProviderCard,
+  type ModelProviderPendingLogout,
+  type ModelProviderLogoutTarget,
+  type ProviderOption,
 } from "./data.ts";
 import { renderDefaultModels } from "./default-models-view.ts";
 import { renderProviderProfiles } from "./profiles-view.ts";
@@ -232,16 +234,11 @@ function renderLocalCost(card: ModelProviderCard, costDays: number) {
   `;
 }
 
-function renderProviderMetrics(
-  card: ModelProviderCard,
-  costDays: number,
-  supplementalLoading: boolean,
-) {
+function renderProviderMetrics(card: ModelProviderCard, supplementalLoading: boolean) {
   const hasProfiles = card.profiles.length > 0;
   const hasProfileUsage = card.profiles.some((profile) => profile.usage !== undefined);
   const usage = hasProfileUsage && card.usageScope === "account" ? undefined : card.usage;
-  const localCost = renderLocalCost(card, costDays);
-  if (!usage && localCost === nothing && hasProfiles) {
+  if (!usage && hasProfiles) {
     return nothing;
   }
   return html`
@@ -257,9 +254,19 @@ function renderProviderMetrics(
               ${t(supplementalLoading ? "common.loading" : "modelProviders.noStats")}
             </div>`
           : nothing}
-      ${localCost}
     </div>
   `;
+}
+
+function providerOwnsDefaultModel(
+  card: ModelProviderCard,
+  props: ModelProvidersViewProps,
+): boolean {
+  const primary = props.defaultModels.primary;
+  const configured = props.configuredModels.find((model) => modelCatalogRef(model) === primary);
+  const separator = primary.indexOf("/");
+  const provider = configured?.provider ?? (separator > 0 ? primary.slice(0, separator) : "");
+  return provider.length > 0 && canonicalModelAuthProviderId(provider) === card.id;
 }
 
 function renderCredentialSummary(card: ModelProviderCard, agentLabel: string) {
@@ -492,12 +499,16 @@ function renderProviderRow(card: ModelProviderCard, props: ModelProvidersViewPro
           </div>
         </div>
         <div class="settings-row__control">
+          ${providerOwnsDefaultModel(card, props)
+            ? renderSettingsValue(t("quickSettings.model.default"))
+            : nothing}
           ${card.usageScope === "provider" && card.usage?.plan
             ? renderSettingsValue(card.usage.plan)
             : nothing}
           ${renderProviderStatus(card)}
         </div>
       </div>
+      ${renderLocalCost(card, props.costDays)}
       ${card.profiles.length > 0 && props.canViewProfiles
         ? renderProviderProfiles(card, {
             busy: props.busy,
@@ -509,7 +520,7 @@ function renderProviderRow(card: ModelProviderCard, props: ModelProvidersViewPro
             onRequestLogout: props.onRequestLogout,
           })
         : renderCredentialSummary(card, props.credentialAgentLabel)}
-      ${renderProviderMetrics(card, props.costDays, props.supplementalLoading)}
+      ${renderProviderMetrics(card, props.supplementalLoading)}
       ${renderProviderActions(card, props)} ${renderKeyEditor(card, props)}
       ${renderProbeResult(props.probeResults[card.id])} ${renderMutationMessage(message)}
     </div>
