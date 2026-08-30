@@ -4052,12 +4052,9 @@
     {"id":"native.apple.00599ee83707094d","source":"Unsupported field type.","surface":"apple","sites":[{"kind":"ui-call","path":"apps/macos/Sources/OpenClaw/ChannelConfigForm.swift"}]},
     {"id":"native.apple.b0939970a976d52e","source":"Untitled branch","surface":"apple","sites":[{"kind":"ui-localized-call","path":"apps/shared/OpenClawKit/Sources/OpenClawChatUI/ChatComposer+Controls.swift"}]},
     {"id":"native.apple.891696b1a481ae0e","source":"Untitled job","surface":"apple","sites":[{"kind":"conditional-branch","path":"apps/macos/Sources/OpenClaw/CronModels.swift"}]},
-<<<<<<< HEAD
-    {"id":"native.apple.6686c63918788a74","source":"Update color failed","surface":"apple","sites":[{"kind":"ui-localized-call","path":"apps/macos/Sources/OpenClaw/StatusMenuSessions.swift"}]},
-=======
     {"id":"native.apple.7f943a0afa91492e","source":"Update Gateway","surface":"apple","sites":[{"kind":"ui-localized-call","path":"apps/shared/OpenClawKit/Sources/OpenClawChatUI/ChatMessageViews.swift"}]},
     {"id":"native.apple.e8289dd7831ec50c","source":"Update OpenClaw on the Gateway host, then touch and hold to copy this message and send it again","surface":"apple","sites":[{"kind":"ui-localized-call","path":"apps/shared/OpenClawKit/Sources/OpenClawChatUI/ChatMessageViews.swift"}]},
->>>>>>> f8bca27c0fa (fix(ios): point structured replay recovery at gateway)
+    {"id":"native.apple.6686c63918788a74","source":"Update color failed","surface":"apple","sites":[{"kind":"ui-localized-call","path":"apps/macos/Sources/OpenClaw/StatusMenuSessions.swift"}]},
     {"id":"native.apple.3763e29c884dd87a","source":"Update gateway token","surface":"apple","sites":[{"kind":"conditional-branch","path":"apps/shared/OpenClawKit/Sources/OpenClawKit/GatewayConnectionProblem.swift"}]},
     {"id":"native.apple.e5d6ff4068bbf8d6","source":"Update guide","surface":"apple","sites":[{"kind":"ui-call","path":"apps/macos/Sources/OpenClaw/PostUpdate.swift"}]},
     {"id":"native.apple.55dea68e89642a06","source":"Update password","surface":"apple","sites":[{"kind":"ui-call","path":"apps/macos/Sources/OpenClaw/TailscaleIntegrationSection.swift"}]},
