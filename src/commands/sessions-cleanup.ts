@@ -59,7 +59,7 @@ function formatCleanupActionCell(
     return theme.warn(action);
   }
   if (action === "archive-cap") {
-    return theme.warn(label);
+    return theme.warn(action);
   }
   if (action === "prune-missing") {
     return theme.error(action);

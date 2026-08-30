@@ -416,10 +416,6 @@ export function resolveQuotaSuspensionEntryMaintenance(params: {
   return { patch: null, cleared: false };
 }
 
-function getEntryUpdatedAt(entry?: SessionEntry): number {
-  return entry?.updatedAt ?? Number.NEGATIVE_INFINITY;
-}
-
 function getSessionMaintenanceActivityAt(entry: SessionEntry | undefined): number {
   return Math.max(
     entry?.lastInteractionAt ?? 0,
@@ -594,10 +590,15 @@ function selectSessionEntryCapVictims(
     return [];
   }
 
-  // Sort newest first; entries without updatedAt go to the end and are removed first.
+  // Rank the whole eligible roster by its latest activity signal so the sessions untouched for
+  // longest are handled first. Key ordering makes timestamp ties deterministic.
   return eligibleKeys
-    .toSorted((a, b) => getEntryUpdatedAt(store[b]) - getEntryUpdatedAt(store[a]))
-    .slice(-victimCount);
+    .toSorted(
+      (a, b) =>
+        getSessionMaintenanceActivityAt(store[a]) - getSessionMaintenanceActivityAt(store[b]) ||
+        a.localeCompare(b),
+    )
+    .slice(0, victimCount);
 }
 
 export function getActiveSessionMaintenanceWarning(params: {

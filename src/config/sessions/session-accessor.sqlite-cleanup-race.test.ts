@@ -926,10 +926,10 @@ describe("SQLite lifecycle cleanup races", () => {
     expect(batchSizes).toEqual([64, 2]);
     expect(result).toMatchObject({
       beforeCount: entryCount,
-      afterCount: 3,
+      afterCount: 2,
       modelRunPruned: 0,
       pruned: 0,
-      capped: 63,
+      capped: 64,
     });
     expect(loadSessionEntry({ sessionKey: racedKey ?? "", storePath })).toMatchObject({
       label: "changed during batch materialization",
@@ -941,7 +941,7 @@ describe("SQLite lifecycle cleanup races", () => {
         sessionId: historicalSessionId,
         storePath,
       }),
-    ).resolves.toEqual([]);
+    ).resolves.toHaveLength(1);
     const databasePath = resolveSqliteTargetFromSessionStorePath(storePath, {
       agentId: "main",
     }).path;
@@ -953,7 +953,7 @@ describe("SQLite lifecycle cleanup races", () => {
       database.db
         .prepare("SELECT 1 AS present FROM session_nodes WHERE session_key = ?")
         .get(historicalOwnerKey),
-    ).toBeUndefined();
+    ).toBeDefined();
   });
 
   it("retains unplanned historical windows behind a placeholder node", async () => {

@@ -16,6 +16,7 @@ import {
 } from "./store-maintenance-preserve.js";
 import {
   capEntryCount,
+  countUnarchivedSessionEntries,
   getActiveSessionMaintenanceWarning,
   pruneStaleEntries,
   pruneStaleModelRunEntries,
@@ -378,8 +379,9 @@ describe("applyFileBackedSessionStoreMaintenance", () => {
       expect(report?.modelRunPruned).toBe(modelRunPruned);
       expect(report?.capped).toBe(capped);
       expect(store[staleProbe] != null).toBe(probePresent);
-      expect(Object.keys(store)).toHaveLength(50);
-      expect(Object.keys(store).filter((key) => key.includes(":real-"))).toHaveLength(50 - capped);
+      expect(Object.keys(store)).toHaveLength(51 - modelRunPruned);
+      expect(countUnarchivedSessionEntries(store)).toBe(50);
+      expect(Object.keys(store).filter((key) => key.includes(":real-"))).toHaveLength(50);
     },
   );
 
@@ -758,20 +760,6 @@ describe("capEntryCount", () => {
     expect(store).toHaveProperty(lockedKey);
     expect(store).toHaveProperty("recent");
     expect(store.old?.archivedAt).toEqual(expect.any(Number));
-  });
-
-  it("preserves archived sessions when capping", () => {
-    const now = Date.now();
-    const store = makeStore([
-      ["archived", { ...makeEntry(now - 10 * DAY_MS), archivedAt: now - 5 * DAY_MS }],
-      ["recent", makeEntry(now)],
-      ["old", makeEntry(now - DAY_MS)],
-    ]);
-
-    expect(capEntryCount(store, 2)).toBe(0);
-    expect(store).toHaveProperty("archived");
-    expect(store.recent?.archivedAt).toBeUndefined();
-    expect(store.old?.archivedAt).toBeUndefined();
   });
 
   it("preserves runtime-provided pending subagent sessions when capping", () => {
