@@ -489,7 +489,7 @@ describe.skipIf(process.platform === "win32")("QA gateway lifetime ownership", (
         },
       });
       const gateway = await owner.start();
-      protectedState = path.join(gateway.tempRoot, "state");
+      protectedState = path.join(gateway.tempRoot, "state", "sut-owned");
       await fs.mkdir(protectedState);
       await fs.writeFile(path.join(protectedState, "owned"), "sut");
       await fs.chmod(protectedState, 0o000);
