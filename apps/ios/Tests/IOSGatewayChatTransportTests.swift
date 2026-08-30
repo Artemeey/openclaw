@@ -702,7 +702,7 @@ struct LocalFixtureChatTransportTests {
 
     @Test func `Apple Review fixture preserves structured send context in history`() async throws {
         typealias ContextDictionary = [String: AnyCodable]
-        let transport = AppleReviewDemoChatTransport()
+        let transport = LocalFixtureChatTransport(fixture: .appleReviewDemo)
         let context = OpenClawChatSendContext(
             agentID: "main",
             expectedSessionRoutingContract: "per-sender|main|main",
