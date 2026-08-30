@@ -4,7 +4,7 @@ import {
 } from "openclaw/plugin-sdk/interactive-runtime";
 import { describe, expect, it } from "vitest";
 import { renderSlackMessagePresentationFallbackText } from "./presentation-fallback.js";
-import { resolveSlackReplyBlockResolution } from "./reply-blocks.js";
+import { resolveSlackReplyBlockResolution, resolveSlackReplyRenderPlan } from "./reply-blocks.js";
 
 describe("renderSlackMessagePresentationFallbackText", () => {
   it("includes complete portable table data in Slack accessibility text", () => {
@@ -338,6 +338,21 @@ describe("renderSlackMessagePresentationFallbackText", () => {
 
     expect(resolution.authoredTextPlacement).toBe("blocks");
     expect(resolution.segments).toContainEqual({ kind: "text", text, mrkdwn: false });
+  });
+
+  it("keeps a represented literal fallback out of preview edits and native streams", () => {
+    const title = "This chart title is too long for Slack native chart rendering";
+    const text = `${title} (pie chart)\n- *raw*: 5`;
+    expect(
+      resolveSlackReplyRenderPlan({
+        text,
+        presentation: {
+          blocks: [
+            { type: "chart", chartType: "pie", title, segments: [{ label: "*raw*", value: 5 }] },
+          ],
+        },
+      }),
+    ).toEqual({ mode: "split", fallbackText: text });
   });
 
   it("materializes authored text blocks as verbatim mrkdwn", () => {

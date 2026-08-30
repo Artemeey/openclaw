@@ -353,6 +353,39 @@ describe("handleSlackMessageAction", () => {
     expect(firstAction(invoke)).toMatchObject({ action: "editMessage", content: message });
   });
 
+  it("deduplicates represented fallback text before checking the edit byte limit", async () => {
+    const invoke = createInvokeSpy();
+    const title = "x".repeat(2_100);
+    await handleSlackMessageAction({
+      providerId: "slack",
+      ctx: {
+        action: "edit",
+        cfg: {},
+        params: {
+          channelId: "C1",
+          messageId: "171234.567",
+          message: title,
+          presentation: {
+            title,
+            blocks: [
+              {
+                type: "buttons",
+                buttons: [{ label: "Status", action: { type: "command", command: "/status" } }],
+              },
+            ],
+          },
+        },
+      } as never,
+      invoke: invoke as never,
+    });
+
+    expect(firstAction(invoke)).toMatchObject({
+      action: "editMessage",
+      content: `${title}\n\n- Status: \`/status\``,
+      blocks: undefined,
+    });
+  });
+
   it("keeps oversized notification fallback for visibly rendered block edits", async () => {
     const invoke = createInvokeSpy();
     const message = "x".repeat(4_001);

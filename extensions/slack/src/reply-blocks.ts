@@ -163,7 +163,8 @@ export function resolveSlackReplyRenderPlan(
     segments: resolution.segments,
     text,
   });
-  if (messages.length <= 1) {
+  // Preview edits and native streams interpret text as mrkdwn; literal fallback uses normal delivery.
+  if (messages.length <= 1 && !messages[0]?.textIsSlackPlainText) {
     const [message] = messages;
     const sourceText = text?.trim() ?? "";
     const blocks =
@@ -275,11 +276,7 @@ function appendTextSegment(segments: SlackReplyBlockSegment[], text: string): vo
   if (!trimmed) {
     return;
   }
-  const last = segments.at(-1);
-  if (last?.kind === "text") {
-    last.text = `${last.text}\n\n${trimmed}`;
-    return;
-  }
+  // Preserve rendered fragment boundaries until authored-text placement is decided.
   segments.push({ kind: "text", text: trimmed, mrkdwn: false });
 }
 
@@ -503,7 +500,17 @@ export function resolveSlackReplyBlockResolution(
     }
     authoredTextPlacement = "blocks";
   }
-  return { authoredTextPlacement, segments };
+  // All transports consume this compact shape, after placement has used the original fragments.
+  const compacted: SlackReplyBlockSegment[] = [];
+  for (const segment of segments) {
+    const last = compacted.at(-1);
+    if (segment.kind === "text" && last?.kind === "text") {
+      last.text = `${last.text}\n\n${segment.text}`;
+    } else {
+      compacted.push(segment);
+    }
+  }
+  return { authoredTextPlacement, segments: compacted };
 }
 
 /** Return the single-message native shape when no ordered text fallback is required. */

@@ -894,6 +894,31 @@ describe("slackOutbound sendPayload", () => {
     },
   );
 
+  it("sends authored text represented by adjacent fallbacks once", async () => {
+    const title = "x".repeat(151);
+    const { client } = await sendThroughRealSlack({
+      payload: {
+        text: title,
+        presentation: {
+          title,
+          blocks: [
+            {
+              type: "buttons",
+              buttons: [{ label: "Status", action: { type: "command", command: "/status" } }],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(client.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(postedSlackMessage(client, 0)).toMatchObject({
+      text: `${title}\n\n- Status: \`/status\``,
+      mrkdwn: false,
+    });
+    expect(postedSlackMessage(client, 0).blocks).toBeUndefined();
+  });
+
   it("packs represented authored text once at the native block limit", async () => {
     const { client } = await sendThroughRealSlack({
       payload: {

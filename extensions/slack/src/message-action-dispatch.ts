@@ -15,8 +15,6 @@ import {
   normalizeOptionalString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolveDefaultSlackAccountId } from "./accounts.js";
-import { SLACK_MAX_BLOCKS } from "./blocks-input.js";
-import { buildSlackPresentationBlocks, canRenderSlackPresentation } from "./blocks-render.js";
 import { normalizeSlackOutboundText } from "./format.js";
 import { SLACK_EDIT_TEXT_MAX_BYTES } from "./limits.js";
 import { renderSlackMessagePresentationFallbackText } from "./presentation-fallback.js";
@@ -39,44 +37,6 @@ function readSlackForceDocument(params: Record<string, unknown>): boolean {
   return (
     readBooleanParam(params, "forceDocument") ?? readBooleanParam(params, "asDocument") ?? false
   );
-}
-
-function resolveSlackPresentationText(
-  content: string | undefined,
-  presentation: ReturnType<typeof normalizeMessagePresentation>,
-): string {
-  const hasStructuredData = presentation?.blocks.some(
-    (block) => block.type === "chart" || block.type === "table",
-  );
-  return hasStructuredData
-    ? renderSlackMessagePresentationFallbackText({ text: content, presentation })
-    : (content ?? "");
-}
-
-function renderSlackActionPresentation(
-  presentation: ReturnType<typeof normalizeMessagePresentation>,
-): {
-  blocks?: ReturnType<typeof buildSlackPresentationBlocks>;
-  usesPresentationTextFallback: boolean;
-} {
-  if (!presentation) {
-    return { usesPresentationTextFallback: false };
-  }
-  const needsCompleteTextFallback = presentation.blocks.some(
-    (block) =>
-      (block.type === "text" || block.type === "context") &&
-      block.text.trim().length > SLACK_SECTION_TEXT_MAX,
-  );
-  const renderedBlocks =
-    !needsCompleteTextFallback && canRenderSlackPresentation(presentation)
-      ? buildSlackPresentationBlocks(presentation)
-      : undefined;
-  const usesPresentationTextFallback = !renderedBlocks || renderedBlocks.length > SLACK_MAX_BLOCKS;
-  const blocks = usesPresentationTextFallback ? undefined : renderedBlocks;
-  return {
-    ...(blocks?.length ? { blocks } : {}),
-    usesPresentationTextFallback,
-  };
 }
 
 /** Translate generic channel action requests into Slack-specific tool invocations and payload shapes. */
@@ -224,15 +184,32 @@ export async function handleSlackMessageAction(params: {
     });
     const content = readStringParam(actionParams, "message", { allowEmpty: true });
     const presentation = normalizeMessagePresentation(actionParams.presentation);
-    const renderedPresentation = renderSlackActionPresentation(presentation);
+    const resolution = resolveSlackReplyBlockResolution({ text: content, presentation });
+    const nativeSegment = resolution.segments.length === 1 ? resolution.segments[0] : undefined;
+    // Edits retain their single-message fallback for oversized text, even though sends can chunk it.
+    const usesPresentationTextFallback = Boolean(
+      presentation &&
+      (nativeSegment?.kind !== "blocks" ||
+        presentation.blocks.some(
+          (block) =>
+            (block.type === "text" || block.type === "context") &&
+            block.text.trim().length > SLACK_SECTION_TEXT_MAX,
+        )),
+    );
     // Slack hides top-level text when blocks are present on updates. Keep an
     // unrenderable presentation text-only so its complete fallback stays visible.
-    const blocks = renderedPresentation.usesPresentationTextFallback
-      ? undefined
-      : renderedPresentation.blocks;
-    const accessibleContent = renderedPresentation.usesPresentationTextFallback
-      ? renderSlackMessagePresentationFallbackText({ text: content, presentation })
-      : resolveSlackPresentationText(content, presentation);
+    const blocks =
+      !usesPresentationTextFallback && nativeSegment?.kind === "blocks"
+        ? nativeSegment.blocks
+        : undefined;
+    const accessibleContent =
+      usesPresentationTextFallback ||
+      presentation?.blocks.some((block) => block.type === "chart" || block.type === "table")
+        ? renderSlackMessagePresentationFallbackText({
+            text: resolution.authoredTextPlacement === "blocks" ? undefined : content,
+            presentation,
+          })
+        : (content ?? "");
     const tableMode = resolveMarkdownTableMode({
       cfg,
       channel: "slack",
@@ -243,7 +220,7 @@ export async function handleSlackMessageAction(params: {
       countSlackTextUtf8Bytes(normalizeSlackOutboundText(accessibleContent, { tableMode })) >
         SLACK_EDIT_TEXT_MAX_BYTES
     ) {
-      const editSubject = renderedPresentation.usesPresentationTextFallback
+      const editSubject = usesPresentationTextFallback
         ? "Slack presentation fallback"
         : "Slack edit";
       throw new Error(
