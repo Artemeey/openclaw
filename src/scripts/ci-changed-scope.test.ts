@@ -403,6 +403,7 @@ describe("detectChangedScope", () => {
     ".github/workflows/workflow-sanity.yml",
     ".github/workflows/qa-profile-evidence.yml",
     ".github/workflows/docs-sync-publish.yml",
+    ".github/workflows/docs-agent.yml",
     ".github/actions/mantis-validate-trusted-ref/action.yml",
     ".github/workflows/mantis-discord-smoke.yml",
     ".github/workflows/mantis-discord-status-reactions.yml",
@@ -983,6 +984,7 @@ describe("detectChangedScope", () => {
     execFileSync("git", ["config", "user.name", "CI"], { cwd: repoDir });
     for (const sourcePath of [
       "scripts/ci-changed-scope.mjs",
+      "scripts/lib/arg-utils.runtime.mjs",
       "scripts/lib/changed-path-facts.mjs",
       "scripts/lib/direct-run.mjs",
       "scripts/lib/merge-head-diff-base.mjs",

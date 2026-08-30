@@ -212,7 +212,7 @@ export async function resolveImageRuntime(
             (modelId) => ({
               provider: plannedRef.provider,
               modelId,
-              ...(params.agentId ? { agentId: params.agentId } : {}),
+              agentId: params.agentId || undefined,
             }),
           ),
         },

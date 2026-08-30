@@ -1,10 +1,11 @@
 // Preserve module setup before modules that consume it.
 // oxfmt-ignore
 import {
+  cleanupPreparedModelRuntimeHarness,
   getPreparedModelRuntimeMocks,
   resetPreparedModelRuntimeHarness,
 } from "./prepared-model-runtime.test-harness.js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
 import { createPluginMetadataSnapshot } from "../config/plugin-auto-enable.test-helpers.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -14,6 +15,10 @@ import {
 } from "../plugins/plugin-metadata-collection.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { createPreparedPluginMetadataFixture } from "../plugins/plugin-metadata.test-support.js";
+import {
+  createOpenClawTestState,
+  type OpenClawTestState,
+} from "../test-utils/openclaw-test-state.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import { getPreparedModelRuntimeAuthStore } from "./prepared-model-runtime-auth.js";
 import {
@@ -23,6 +28,7 @@ import {
 import * as providerModelNormalization from "./provider-model-normalization.runtime.js";
 
 const mocks = getPreparedModelRuntimeMocks();
+let state: OpenClawTestState;
 
 function createNormalizerSnapshot(
   config: OpenClawConfig,
@@ -56,7 +62,10 @@ function createNormalizerSnapshot(
 }
 
 describe("prepared model runtime scoped refresh", () => {
-  beforeEach(() => resetPreparedModelRuntimeHarness());
+  beforeEach(async () => {
+    state = await createOpenClawTestState({ label: "prepared-model-runtime" });
+    resetPreparedModelRuntimeHarness(state);
+  });
 
   it.each([
     { mode: "direct", selectionSource: "primary" },
@@ -140,8 +149,8 @@ describe("prepared model runtime scoped refresh", () => {
         getPreparedModelRuntimeSnapshot({
           config,
           agentId: "pro",
-          agentDir: "/tmp/configured-pro",
-          inheritedAuthDir: "/tmp/unused-agent",
+          agentDir: state.agentDir("pro"),
+          inheritedAuthDir: state.agentDir("default"),
           workspaceDir,
         })?.metadataSnapshot,
       ).toBe(candidate.selectedSnapshot);
@@ -216,14 +225,14 @@ describe("prepared model runtime scoped refresh", () => {
       const freeInput = {
         config: initialConfig,
         agentId: "free",
-        agentDir: "/tmp/configured-free",
-        inheritedAuthDir: "/tmp/unused-agent",
+        agentDir: state.agentDir("free"),
+        inheritedAuthDir: state.agentDir("default"),
         workspaceDir: "/tmp/workspace-free",
       };
       const proInput = {
         ...freeInput,
         agentId: "pro",
-        agentDir: "/tmp/configured-pro",
+        agentDir: state.agentDir("pro"),
         workspaceDir: "/tmp/workspace-pro",
       };
       // The harness stubs discovery, not the snapshot's catalog guards. Real worker retirement
@@ -329,8 +338,8 @@ describe("prepared model runtime scoped refresh", () => {
       getPreparedModelRuntimeSnapshot({
         config,
         agentId: "default",
-        agentDir: "/tmp/unused-agent",
-        inheritedAuthDir: "/tmp/unused-agent",
+        agentDir: state.agentDir("default"),
+        inheritedAuthDir: state.agentDir("default"),
         workspaceDir: startupWorkspaceDir,
       })?.metadataSnapshot,
     ).toBe(startupSnapshot);
@@ -363,8 +372,8 @@ describe("prepared model runtime scoped refresh", () => {
       const freeInput = {
         config: initialConfig,
         agentId: "free",
-        agentDir: "/tmp/configured-free",
-        inheritedAuthDir: "/tmp/unused-agent",
+        agentDir: state.agentDir("free"),
+        inheritedAuthDir: state.agentDir("default"),
         workspaceDir: "/tmp/workspace-free",
       };
       const proMetadata = createPluginMetadataSnapshot({
@@ -491,10 +500,14 @@ describe("prepared model runtime scoped refresh", () => {
       getPreparedModelRuntimeSnapshot({
         config: nextConfig,
         agentId: "pro",
-        agentDir: "/tmp/configured-pro",
-        inheritedAuthDir: "/tmp/unused-agent",
+        agentDir: state.agentDir("pro"),
+        inheritedAuthDir: state.agentDir("default"),
         workspaceDir: "/tmp/workspace-pro",
       }),
     ).toMatchObject({ agentId: "pro", config: nextConfig });
   });
+});
+
+afterEach(async ({ task }) => {
+  await cleanupPreparedModelRuntimeHarness(state, task.result?.state === "fail");
 });
