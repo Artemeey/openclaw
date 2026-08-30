@@ -81,6 +81,7 @@ openclaw tui --local
 - Model picker: list available models and set the session override.
 - Agent picker: choose a different agent.
 - Session picker: shows up to 50 sessions for the current agent updated in the last 7 days. Use `/session <key>` to jump to an older known session.
+- Esc or Ctrl+C closes model and agent pickers. In the session picker, it clears an active filter first; press again to close.
 - Settings (`/settings`): toggle tool output expansion and thinking visibility. This panel does not control delivery.
 
 ## Keyboard shortcuts

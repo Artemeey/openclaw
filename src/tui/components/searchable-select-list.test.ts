@@ -444,17 +444,23 @@ describe("SearchableSelectList", () => {
     expect(selectedValue).toBe(rawValue);
   });
 
-  it("calls onCancel when escape is pressed", () => {
+  it.each([
+    ["Escape", "\u001b"],
+    ["legacy Ctrl+C", "\u0003"],
+    ["Kitty Ctrl+C", "\u001b[99;5u"],
+    ["modifyOtherKeys Ctrl+C", "\u001b[27;5;99~"],
+  ])("cancels a filtered picker with %s", (_keyName, key) => {
     const list = new SearchableSelectList(testItems, 5, mockTheme);
-    let cancelled = false;
+    let cancellations = 0;
 
     list.onCancel = () => {
-      cancelled = true;
+      cancellations += 1;
     };
 
-    // Press escape
-    list.handleInput("\x1b");
+    typeInput(list, "gemini");
+    list.handleInput(key);
 
-    expect(cancelled).toBe(true);
+    expect(cancellations).toBe(1);
+    expect(list.getSelectedItem()?.value).toBe("google/gemini-pro");
   });
 });

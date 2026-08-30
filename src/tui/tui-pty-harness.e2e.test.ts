@@ -905,7 +905,10 @@ describe.sequential("TUI PTY harness", () => {
 
   it.each([
     ["lists and executes slash commands through authenticated real PTY frames", "slash-commands"],
-    ["selects model and session pickers through authenticated real PTY frames", "pickers"],
+    [
+      "cancels and selects model and session pickers through authenticated real PTY frames",
+      "pickers",
+    ],
     ["updates settings through an authenticated real PTY overlay", "settings"],
   ] as const)(
     "%s",

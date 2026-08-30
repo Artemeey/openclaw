@@ -127,7 +127,7 @@ export class FilterableSelectList implements Component, Focusable {
     }
 
     // Escape: clear filter or cancel
-    if (matchesKey(keyData, "escape") || keyData === "\u0003") {
+    if (matchesKey(keyData, "escape") || matchesKey(keyData, "ctrl+c")) {
       if (this.filterText) {
         this.filterText = "";
         this.input.setValue("");

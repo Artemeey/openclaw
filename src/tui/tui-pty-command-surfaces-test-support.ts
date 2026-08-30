@@ -45,10 +45,17 @@ export async function exerciseTuiCommandSurface(
       return;
     }
     if (surface === "pickers") {
+      const cancelKeys = ["\u0003", "\u001b[99;5u", "\u001b[27;5;99~"];
       await fixture.run.write("/models\r", { delay: false });
       await fixture.waitForLogEntry((entry) => entry.method === "listModels");
       const pickerRows = await waitForRows((rows) => rows.some((row) => row.includes("Fixture 2")));
       expect(pickerRows.some((row) => row.includes("loading models..."))).toBe(false);
+      for (const key of cancelKeys) {
+        await fixture.run.write(key, { delay: false });
+        await waitForRows((rows) => !rows.some((row) => row.includes("search:")));
+        await fixture.run.write("/models\r", { delay: false });
+        await waitForRows((rows) => rows.some((row) => row.includes("Fixture 2")));
+      }
       await fixture.run.write("\x1b[B\r", { delay: false });
       await fixture.waitForLogEntry(
         (entry) =>
@@ -60,6 +67,12 @@ export async function exerciseTuiCommandSurface(
         (entry) => entry.method === "listSessions" && objectFieldEquals(entry, "purpose", "picker"),
       );
       await waitForRows((rows) => rows.some((row) => row.includes("Picker target")));
+      for (const key of cancelKeys) {
+        await fixture.run.write(key, { delay: false });
+        await waitForRows((rows) => !rows.some((row) => row.includes("Filter:")));
+        await fixture.run.write("/sessions\r", { delay: false });
+        await waitForRows((rows) => rows.some((row) => row.includes("Picker target")));
+      }
       await fixture.run.write("\x1b[B\r", { delay: false });
       await fixture.waitForLogEntry(
         (entry) =>

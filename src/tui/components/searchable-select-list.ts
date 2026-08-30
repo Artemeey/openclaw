@@ -375,7 +375,7 @@ export class SearchableSelectList implements Component, Focusable {
       return;
     }
 
-    if (matchesKey(keyData, "escape") || keyData === "\u0003") {
+    if (matchesKey(keyData, "escape") || matchesKey(keyData, "ctrl+c")) {
       if (this.onCancel) {
         this.onCancel();
       }

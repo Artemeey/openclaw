@@ -143,16 +143,27 @@ describe("FilterableSelectList", () => {
     expect(cancelled).toBe(true);
   });
 
-  it("calls onCancel when ctrl+c is pressed with an empty filter", () => {
+  it.each([
+    ["legacy", "\u0003"],
+    ["Kitty", "\u001b[99;5u"],
+    ["modifyOtherKeys", "\u001b[27;5;99~"],
+  ])("clears the filter before cancelling with %s Ctrl+C", (_protocol, key) => {
     const list = new FilterableSelectList(testItems, 5, mockTheme);
-    let cancelled = false;
+    let cancellations = 0;
     list.onCancel = () => {
-      cancelled = true;
+      cancellations += 1;
     };
 
-    list.handleInput("\u0003");
+    typeInput(list, "beta");
+    list.handleInput(key);
 
-    expect(cancelled).toBe(true);
+    expect(list.getFilterText()).toBe("");
+    expect(list.getSelectedItem()?.value).toBe("session-1");
+    expect(cancellations).toBe(0);
+
+    list.handleInput(key);
+
+    expect(cancellations).toBe(1);
   });
 
   it("uses native alpha-numeric fuzzy matching", () => {
