@@ -1479,22 +1479,6 @@ extension OpenClawChatViewModel {
         self.inFlightSettingsPatchCountsByTarget[target] = remaining
     }
 
-    /// Internal for the outbox flush, which must honor the same ordering
-    /// behind in-flight settings patches as the live send path.
-    func waitForPendingSessionSettings(
-        in sessionKey: String,
-        canonicalSessionKey: String? = nil,
-        agentID: String? = nil,
-        sessionRoutingContract: String? = nil) async
-    {
-        let target = self.sessionSettingsPatchTarget(
-            in: sessionKey,
-            canonicalSessionKey: canonicalSessionKey,
-            agentID: agentID,
-            sessionRoutingContract: sessionRoutingContract)
-        await self.waitForPendingSessionSettings(for: target)
-    }
-
     func sessionSettingsPatchTarget(
         in sessionKey: String,
         canonicalSessionKey: String?,

@@ -278,13 +278,6 @@ public struct OpenClawChatTransportRouteLease: Sendable {
         _ idempotencyKey: String,
         _ attachments: [OpenClawChatAttachmentPayload]) async throws -> OpenClawChatSendResponse
     public typealias RequestHistory = @Sendable (String) async throws -> OpenClawChatHistoryPayload
-    public typealias SendTargetedMessage = @Sendable (
-        _ sessionKey: String,
-        _ agentID: String?,
-        _ message: String,
-        _ thinking: String,
-        _ idempotencyKey: String,
-        _ attachments: [OpenClawChatAttachmentPayload]) async throws -> OpenClawChatSendResponse
     public typealias SendTargetedMessageWithSettings = @Sendable (
         _ sessionKey: String,
         _ agentID: String?,
@@ -316,26 +309,6 @@ public struct OpenClawChatTransportRouteLease: Sendable {
         self.requestTargetedHistoryImpl = { sessionKey, _ in
             try await requestHistory(sessionKey)
         }
-    }
-
-    public init(
-        sendTargetedMessage: @escaping SendTargetedMessage,
-        requestTargetedHistory: @escaping RequestTargetedHistory,
-        sessionRoutingContract: String? = nil,
-        supportsSessionSettingsCAS: Bool = false)
-    {
-        self.sessionRoutingContract = sessionRoutingContract
-        self.supportsSessionSettingsCAS = supportsSessionSettingsCAS
-        self.sendTargetedMessageImpl = { sessionKey, agentID, _, message, thinking, idempotencyKey, attachments in
-            try await sendTargetedMessage(
-                sessionKey,
-                agentID,
-                message,
-                thinking,
-                idempotencyKey,
-                attachments)
-        }
-        self.requestTargetedHistoryImpl = requestTargetedHistory
     }
 
     public init(
@@ -1393,6 +1366,6 @@ public enum OpenClawChatSessionRoutingContract {
     }
 }
 
-public enum OpenClawChatSessionSettingsContract {
-    public static let changedErrorReason = "session-settings-changed"
+enum OpenClawChatSessionSettingsContract {
+    static let changedErrorReason = "session-settings-changed"
 }

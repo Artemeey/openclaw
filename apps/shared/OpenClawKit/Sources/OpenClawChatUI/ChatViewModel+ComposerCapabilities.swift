@@ -69,10 +69,6 @@ extension OpenClawChatViewModel {
         self.composerCapabilityOwnerMatches && self.composerCapabilityState.phase == .loading
     }
 
-    var composerCapabilitiesFailed: Bool {
-        self.composerCapabilityOwnerMatches && self.composerCapabilityState.phase == .failed
-    }
-
     var composerCapabilityMutationDisabled: Bool {
         !self.composerCapabilityOwnerMatches || !self.composerCapabilityControlsAvailable ||
             self.composerCapabilityState.phase != .loaded ||
