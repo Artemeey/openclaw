@@ -161,7 +161,7 @@ describe("fetchCodexUsage", () => {
           },
           {
             limit_name: "GPT 5.3 Codex Spark",
-            metered_feature: "codex_spark",
+            metered_feature: "codex_bengalfox",
             rate_limit: {
               primary_window: {
                 limit_window_seconds: 18_000,

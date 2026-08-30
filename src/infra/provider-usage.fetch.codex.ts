@@ -92,21 +92,22 @@ function resolveAdditionalRateLimitLabels(
   if (!featureLabel?.toLowerCase().startsWith(featurePrefix)) {
     return { fullLabel, groupLabel: fullLabel };
   }
-  const featureVariant = featureLabel.slice(featurePrefix.length);
-  const suffix = ` ${featureVariant}`;
-  if (!featureVariant || !fullLabel.toLowerCase().endsWith(suffix.toLowerCase())) {
+  const familyMatch = /\bcodex\b/giu.exec(fullLabel);
+  if (!familyMatch) {
     return { fullLabel, groupLabel: fullLabel };
   }
-  const groupLabel = fullLabel.slice(0, -suffix.length).trim();
-  // Split a named variant only when limit_name supplies a broader family.
-  // Bare labels such as codex_other remain one honest quota family.
-  if (!groupLabel || groupLabel.toLowerCase() === "codex") {
+  const familyEnd = familyMatch.index + familyMatch[0].length;
+  const groupLabel = fullLabel.slice(0, familyEnd).trim();
+  const windowPrefix = fullLabel.slice(familyEnd).trim();
+  // metered_feature variants are opaque (for example codex_bengalfox), so
+  // limit_name owns the display split. Bare codex_other remains one family.
+  if (!windowPrefix || groupLabel.toLowerCase() === "codex") {
     return { fullLabel, groupLabel: fullLabel };
   }
   return {
     fullLabel,
     groupLabel,
-    windowPrefix: fullLabel.slice(groupLabel.length).trim(),
+    windowPrefix,
   };
 }
 
