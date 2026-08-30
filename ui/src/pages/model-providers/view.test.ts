@@ -605,8 +605,24 @@ describe("renderModelProviders", () => {
                   windows: [
                     { label: "168h", usedPercent: 5 },
                     { label: "5h", usedPercent: 10 },
-                    { label: "GPT 5.3 Codex Spark · 5h", usedPercent: 20 },
-                    { label: "GPT 5.3 Codex Spark · Week", usedPercent: 30 },
+                    {
+                      label: "GPT 5.3 Codex Spark · 5h",
+                      groupLabel: "GPT 5.3 Codex",
+                      windowLabel: "Spark · 5h",
+                      usedPercent: 20,
+                    },
+                    {
+                      label: "GPT 5.3 Codex Spark · Week",
+                      groupLabel: "GPT 5.3 Codex",
+                      windowLabel: "Spark · Week",
+                      usedPercent: 30,
+                    },
+                    {
+                      label: "codex other · 15m",
+                      groupLabel: "codex other",
+                      windowLabel: "15m",
+                      usedPercent: 40,
+                    },
                   ],
                 },
               },
@@ -617,7 +633,7 @@ describe("renderModelProviders", () => {
     );
 
     const groups = [...container.querySelectorAll<HTMLElement>(".provider-usage-window-group")];
-    expect(groups).toHaveLength(2);
+    expect(groups).toHaveLength(3);
     expect(text(groups[0]?.querySelector(".provider-usage-window-group__title") ?? null)).toBe(
       "Normal limit",
     );
@@ -630,6 +646,12 @@ describe("renderModelProviders", () => {
     expect(
       [...(groups[1]?.querySelectorAll(".provider-usage-window__cadence") ?? [])].map(text),
     ).toEqual(["Spark · 5h", "Spark · Week"]);
+    expect(text(groups[2]?.querySelector(".provider-usage-window-group__title") ?? null)).toBe(
+      "codex other",
+    );
+    expect(
+      [...(groups[2]?.querySelectorAll(".provider-usage-window__cadence") ?? [])].map(text),
+    ).toEqual(["15m"]);
   });
 
   it("keeps provider-scoped usage beside OAuth usage without an inference API key", () => {

@@ -19,22 +19,6 @@ type ProviderUsageDetailsOptions = {
   compactWindowLabels?: boolean;
 };
 
-function splitCompactWindowLabel(label: string) {
-  const separator = label.lastIndexOf(" · ");
-  if (separator < 0) {
-    return { scope: t("usage.providerUsage.normalLimit"), cadence: label };
-  }
-  const prefix = label.slice(0, separator);
-  const cadence = label.slice(separator + 3);
-  const scopeBreak = prefix.lastIndexOf(" ");
-  return scopeBreak < 0
-    ? { scope: "", cadence: label }
-    : {
-        scope: prefix.slice(0, scopeBreak),
-        cadence: `${prefix.slice(scopeBreak + 1)} · ${cadence}`,
-      };
-}
-
 type CompactWindowGroup = {
   scope: string;
   windows: Array<{ cadence: string; window: UsageWindow }>;
@@ -53,7 +37,8 @@ function compactWindowRank(cadence: string): number {
 function groupCompactWindows(windows: UsageWindow[]): CompactWindowGroup[] {
   const groups = new Map<string, CompactWindowGroup>();
   for (const window of windows) {
-    const { scope, cadence } = splitCompactWindowLabel(window.label);
+    const scope = window.groupLabel ?? t("usage.providerUsage.normalLimit");
+    const cadence = window.windowLabel ?? window.label;
     const group = groups.get(scope) ?? { scope, windows: [] };
     group.windows.push({ cadence, window });
     groups.set(scope, group);
