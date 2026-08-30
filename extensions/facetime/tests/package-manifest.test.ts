@@ -32,6 +32,7 @@ describe("FaceTime plugin manifest", () => {
     expect(packageManifest.files).not.toContain("scripts/build-capture.sh");
     expect(packageManifest.files).not.toContain("scripts/build-helper-macabi.sh");
     expect(packageManifest.files).toContain("scripts/stage-helper.sh");
+    expect(packageManifest.files).toContain("scripts/verify-native-helper.sh");
     expect(packageManifest.files).not.toContain("dist/");
     expect(packageManifest.files).not.toContain("doctor-contract-api.ts");
     expect(packageManifest.files).toContain("LICENSE");

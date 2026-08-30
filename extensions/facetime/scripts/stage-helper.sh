@@ -35,7 +35,7 @@ source_hash="$(tr -d '[:space:]' < "${installed_dir}/FaceTimeHelper.build-id")"
 protocol="$(tr -d '[:space:]' < "${installed_dir}/native-protocol.env")"
 if [[ ! "${source_hash}" =~ ^[0-9a-f]{64}$ ]] ||
    [[ "${protocol}" != "NATIVE_PROTOCOL_VERSION=1" ]] ||
-   ! /usr/bin/codesign --verify --strict "${source_dylib}" >/dev/null 2>&1 ||
+   ! "${repo_root}/scripts/verify-native-helper.sh" "${source_dylib}" >/dev/null 2>&1 ||
    ! /usr/bin/strings "${source_dylib}" | /usr/bin/grep -Fx "${source_hash}" >/dev/null; then
   echo "Installed FaceTime native helpers failed compatibility or signature validation. Reinstall openclaw/tap/openclaw-facetime." >&2
   exit 1
@@ -45,12 +45,12 @@ mkdir -p "${staged_dir}" "${auth_dir}"
 "${repo_root}/scripts/ensure-helper-ipc-key.sh" >/dev/null
 if [[ "${1:-}" == "--if-needed" && -f "${staged_dylib}" && -f "${build_stamp_file}" &&
       "$(tr -d '[:space:]' < "${build_stamp_file}")" == "${source_hash}" ]] &&
-   /usr/bin/codesign --verify --strict "${staged_dylib}" >/dev/null 2>&1; then
+   "${repo_root}/scripts/verify-native-helper.sh" "${staged_dylib}" >/dev/null 2>&1; then
   echo "${staged_dylib}"
   exit 0
 fi
 
 /usr/bin/ditto "${source_dylib}" "${staged_dylib}"
-/usr/bin/codesign --verify --strict "${staged_dylib}"
+"${repo_root}/scripts/verify-native-helper.sh" "${staged_dylib}"
 printf '%s\n' "${source_hash}" > "${build_stamp_file}"
 echo "${staged_dylib}"

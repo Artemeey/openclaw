@@ -37,8 +37,11 @@ brew install openclaw/tap/openclaw-facetime
 openclaw plugins enable facetime
 ```
 
-The plugin requires native protocol version 1 and fails closed when the
-installed helper package is missing or incompatible.
+The plugin requires native protocol version 1. Before staging the injected
+helper, it requires the exact `Developer ID Application: OpenClaw Foundation
+(FWJYW4S8P8)` identity and an accepted Apple notarization ticket. It fails
+closed when the installed package is missing, incompatible, or signed by any
+other identity.
 
 ## Configure owner identities
 

@@ -26,7 +26,8 @@ brew install openclaw/tap/openclaw-facetime
   in-flight work on stop.
 - `src/audio-pump.ts` owns the bounded framed parent/native media protocol.
 - `openclaw/openclaw-facetime` owns the native process tap and injected helper.
-  This plugin validates native protocol version 1 before activation.
+  This plugin validates native protocol version 1, the exact OpenClaw
+  Foundation Developer ID identity, and Apple notarization before activation.
 - `src/talk-driver.ts` owns provider response/tool generations and exact agent
   consult cancellation.
 

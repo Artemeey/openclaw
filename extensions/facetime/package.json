@@ -61,6 +61,7 @@
     "scripts/install-driver.sh",
     "scripts/remove-user-artifacts.sh",
     "scripts/stage-helper.sh",
+    "scripts/verify-native-helper.sh",
     "scripts/verify-xcode-trust.sh",
     "skills/facetime/SKILL.md",
     "skills/facetime/agents/openai.yaml",
