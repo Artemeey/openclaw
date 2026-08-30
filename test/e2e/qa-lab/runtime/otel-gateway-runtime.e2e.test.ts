@@ -64,7 +64,7 @@ function expectResolvedParent(
 }
 
 describe("diagnostics-otel gateway runtime", () => {
-  test("exports linked success and failed-tool recovery spans from a real qa-channel run", async () => {
+  test("exports linked success and failed-read recovery spans from a real qa-channel run", async () => {
     const repoRoot = path.resolve(import.meta.dirname, "../../../..");
     const state = createQaBusState();
     const transport = {
@@ -191,33 +191,28 @@ describe("diagnostics-otel gateway runtime", () => {
         plannedToolName?: string;
         plannedWireToolName?: string;
         toolOutputCallId?: string;
+        toolOutput?: string;
       }>;
       const readPlans = scenarioRequests.filter((request) => request.plannedToolName === "read");
-      const finalizations = scenarioRequests.filter((request) =>
-        [
-          "The previous assistant turn completed its tool calls but did not produce a user-visible answer.",
-          CODE_MODE_RECONCILIATION_NEEDLE,
-        ].some((needle) => (request.allInputText ?? "").includes(needle)),
-      );
       expect(readPlans).toHaveLength(1);
       expect(readPlans[0]?.plannedToolCallId).toBeTruthy();
       expect(readPlans[0]?.plannedWireToolName).toBe("exec");
-      expect(finalizations).toHaveLength(1);
-      expect(finalizations[0]?.allInputText).toContain(CODE_MODE_RECONCILIATION_NEEDLE);
-      expect(finalizations[0]?.allInputText).toContain("report exactly what applied");
-      expect(finalizations[0]?.body?.tools?.map((tool) => tool.name)).toEqual(["read"]);
-      const finalizationInput = finalizations[0]?.body?.input ?? [];
-      // The failed exec belongs to the host-owned Code Mode surface, so it must not be replayed
-      // into the model transcript; the following OTel assertion carries its failure evidence.
-      expect(
-        finalizationInput.filter(
-          (item) => item.type === "function_call" || item.type === "function_call_output",
-        ),
-      ).toEqual([]);
-      expect(finalizations[0]?.toolOutputCallId).toBeUndefined();
-      expect(scenarioRequests.indexOf(finalizations[0]!)).toBe(
-        scenarioRequests.indexOf(readPlans[0]!) + 1,
+      expect(scenarioRequests).toHaveLength(2);
+      const continuation = scenarioRequests[1]!;
+      expect(continuation.toolOutputCallId).toBe(readPlans[0]?.plannedToolCallId);
+      expect(continuation.toolOutput).toMatch(/ENOENT|no such file/i);
+      expect(continuation.allInputText).not.toContain(CODE_MODE_RECONCILIATION_NEEDLE);
+      expect(continuation.body?.tools?.map((tool) => tool.name)).toEqual(
+        expect.arrayContaining(["exec", "wait"]),
       );
+      const continuationInput = continuation.body?.input ?? [];
+      for (const type of ["function_call", "function_call_output"]) {
+        expect(
+          continuationInput.filter(
+            (item) => item.type === type && item.call_id === readPlans[0]?.plannedToolCallId,
+          ),
+        ).toHaveLength(1);
+      }
       const failureEvidence = await waitFor(
         () => {
           const toolError = activeReceiver.capturedSpans.find(
@@ -244,7 +239,7 @@ describe("diagnostics-otel gateway runtime", () => {
               span.attributes["openclaw.channel"] === "qa-channel" &&
               span.attributes["openclaw.outcome"] === "completed",
           );
-          return runs.length >= 2 && harnesses.length >= 2 && modelCalls.length >= 2 && terminal
+          return runs.length >= 1 && harnesses.length >= 1 && modelCalls.length >= 2 && terminal
             ? { harnesses, modelCalls, runs, sameTrace, terminal, toolError }
             : undefined;
         },
@@ -255,6 +250,9 @@ describe("diagnostics-otel gateway runtime", () => {
         }),
       );
 
+      expect(failureEvidence.runs).toHaveLength(1);
+      expect(failureEvidence.harnesses).toHaveLength(1);
+      expect(failureEvidence.modelCalls).toHaveLength(2);
       const failureSpansById = indexSpansById(failureEvidence.sameTrace);
       expect(failureEvidence.terminal.parentSpanId).toBeFalsy();
       for (const harness of failureEvidence.harnesses) {
