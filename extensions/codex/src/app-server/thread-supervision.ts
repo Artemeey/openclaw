@@ -1,15 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
-import {
-  embeddedAgentLog,
-  formatErrorMessage,
-  type EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams,
-} from "openclaw/plugin-sdk/agent-harness-runtime";
+import type { EmbeddedRunAttemptParamsV2 as EmbeddedRunAttemptParams } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import {
+  archiveCodexSupervisionThreadBestEffort,
   CODEX_APP_SERVER_UNSUBSCRIBE_TIMEOUT_MS,
   CodexAppServerUnsafeSubscriptionError,
   isCodexAppServerUnsafeSubscriptionError,
-  unsubscribeCodexThreadBestEffort,
 } from "./attempt-client-cleanup.js";
 import { unsubscribeCodexAppServerLiveThread } from "./client-runtime.js";
 import { CodexAppServerRpcError, type CodexAppServerClient } from "./client.js";
@@ -30,11 +26,12 @@ import type {
   CodexTurnEnvironmentParams,
   JsonObject,
 } from "./protocol.js";
-import type {
-  CodexAppServerBindingIdentity,
-  CodexAppServerBindingStore,
-  CodexAppServerPendingSupervisionBranch,
-  CodexAppServerThreadBinding,
+import {
+  resolveCodexBindingReasoningEffort,
+  type CodexAppServerBindingIdentity,
+  type CodexAppServerBindingStore,
+  type CodexAppServerPendingSupervisionBranch,
+  type CodexAppServerThreadBinding,
 } from "./session-binding.js";
 import {
   CodexThreadBindingConflictError,
@@ -129,8 +126,7 @@ export async function materializePendingSupervisionBranch(
   let cleanupExpected: CodexAppServerPendingSupervisionBranch | undefined = pending;
   const trackPendingSupervisionArtifacts = async (cleanupThreadIds: string[]): Promise<void> => {
     const expected = pending;
-    // Native creation is already a fact, even if tracking never writes or throws
-    // after writing. Keep artifact ownership separate from the durable CAS snapshot.
+    // Native creation precedes tracking; keep artifact ownership outside the durable CAS snapshot.
     pending = withPendingSupervisionCleanup(pending, cleanupThreadIds);
     let updated: boolean;
     try {
@@ -209,8 +205,7 @@ export async function materializePendingSupervisionBranch(
         );
       }
     } finally {
-      // Ephemeral probes have no rollout to archive. Release this physical
-      // subscription before creating any durable branch or cleanup artifact.
+      // Probes have no rollout; unsubscribe before creating durable state or cleanup artifacts.
       await unsubscribeCodexAppServerLiveThread(
         params.client,
         probeThreadId,
@@ -281,6 +276,10 @@ export async function materializePendingSupervisionBranch(
     await trackPendingSupervisionArtifacts([finalThreadId]);
     params.throwIfAborted();
     const startResponse = assertCodexThreadStartResponse(rawStartResponse);
+    const reasoningEffort = resolveCodexBindingReasoningEffort(
+      startResponse.reasoningEffort,
+      probeResponse.reasoningEffort,
+    );
     assertExactSupervisionModelSelection(startResponse, {
       model: nativeModel,
       modelProvider: nativeModelProvider,
@@ -307,8 +306,7 @@ export async function materializePendingSupervisionBranch(
           }),
         );
       } catch (error) {
-        // The fresh persistent branch has no rollout yet; delete it and
-        // retain its cleanup artifact for recovery if deletion fails.
+        // Delete the unattested branch; retain it for recovery if cleanup fails.
         const finalCleanupConfirmed = await discardUnattestedCodexPluginThread({
           client: params.client,
           threadId: finalThreadId,
@@ -351,6 +349,7 @@ export async function materializePendingSupervisionBranch(
           ...params.bindingPatch,
           model: nativeModel,
           modelProvider: bindingModelProvider,
+          reasoningEffort,
           historyCoveredThrough,
         },
       });
@@ -393,8 +392,7 @@ export async function materializePendingSupervisionBranch(
         "committing a supervised Codex branch",
       );
     }
-    // This thread now belongs to the durable binding. Later diagnostics must
-    // never route it through provisional artifact cleanup.
+    // The durable binding owns this thread; never route it through provisional cleanup.
     bindingCommitted = true;
     params.lifecycleTiming.mark("thread-ready");
     params.lifecycleTiming.logSummary({
@@ -411,6 +409,7 @@ export async function materializePendingSupervisionBranch(
       pendingSupervisionBranch: undefined,
       model: nativeModel,
       modelProvider: bindingModelProvider,
+      reasoningEffort,
       historyCoveredThrough,
       lifecycle: { action: "forked" },
     };
@@ -683,41 +682,9 @@ async function cleanPendingSupervisionArtifacts(
 ): Promise<{ remaining: string[] }> {
   const remaining: string[] = [];
   for (const threadId of pending.cleanupThreadIds ?? []) {
-    if (!(await archiveSupervisionArtifact(client, threadId))) {
+    if (!(await archiveCodexSupervisionThreadBestEffort(client, threadId))) {
       remaining.push(threadId);
     }
   }
   return { remaining };
-}
-
-async function archiveSupervisionArtifact(
-  client: CodexAppServerClient,
-  threadId: string,
-): Promise<boolean> {
-  try {
-    await client.request(
-      "thread/archive",
-      { threadId },
-      { timeoutMs: CODEX_APP_SERVER_UNSUBSCRIBE_TIMEOUT_MS },
-    );
-    return true;
-  } catch (error) {
-    const message = formatErrorMessage(error).toLowerCase();
-    if (
-      message.includes("no rollout found for thread id") ||
-      message.includes("thread not found") ||
-      message.includes("already archived")
-    ) {
-      return true;
-    }
-    await unsubscribeCodexThreadBestEffort(client, {
-      threadId,
-      timeoutMs: CODEX_APP_SERVER_UNSUBSCRIBE_TIMEOUT_MS,
-    });
-    embeddedAgentLog.warn("failed to archive temporary Codex supervision thread", {
-      threadId,
-      error,
-    });
-    return false;
-  }
 }
