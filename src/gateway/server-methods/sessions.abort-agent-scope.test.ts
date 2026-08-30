@@ -30,13 +30,8 @@ vi.mock("../server-session-key.js", () => ({
   resolveSessionKeyForRun: (...args: unknown[]) => resolveSessionKeyForRunMock(...args),
 }));
 
-vi.mock("./chat.js", () => ({
-  chatHandlers: {
-    "chat.abort": (...args: unknown[]) => chatAbortMock(...args),
-  },
-}));
-
 vi.mock("./chat-abort-handler.js", () => ({
+  handleChatAbortRequest: (...args: unknown[]) => chatAbortMock(...args),
   handleChatAbortRequestWithLifecycle: (...args: unknown[]) => chatAbortMock(...args),
 }));
 

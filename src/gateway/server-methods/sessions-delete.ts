@@ -33,7 +33,7 @@ import { handleSessionStateSessionDeleted } from "../../sessions/session-state-e
 import { resolveRequestedSessionAgentId as resolveRequestedGlobalAgentId } from "../session-request-agent.js";
 import { resolveSessionStoreAgentId } from "../session-store-key.js";
 import { loadSessionEntry } from "../session-utils.js";
-import { chatHandlers } from "./chat.js";
+import { handleChatAbortRequest } from "./chat-abort-handler.js";
 import { emitSessionsChanged } from "./session-change-event.js";
 import {
   loadAccessorSessionEntryForGatewayTarget,
@@ -212,10 +212,6 @@ export const sessionDeleteHandlers: GatewayRequestHandlers = {
       return;
     }
     const abortSessionKey = target.canonicalKey ?? key;
-    const chatAbort = chatHandlers["chat.abort"];
-    if (!chatAbort) {
-      throw new Error("chat.abort handler is not registered");
-    }
     const deleteLifecycleIdentities = [
       target.canonicalKey,
       key,
@@ -365,7 +361,7 @@ export const sessionDeleteHandlers: GatewayRequestHandlers = {
               error?: ReturnType<typeof errorShape>;
             }
           | undefined;
-        await chatAbort({
+        await handleChatAbortRequest({
           req,
           params: {
             sessionKey: abortSessionKey,
