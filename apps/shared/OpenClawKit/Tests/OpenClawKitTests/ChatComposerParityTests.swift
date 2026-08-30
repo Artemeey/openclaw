@@ -120,6 +120,8 @@ struct ChatComposerStateTests {
             selectionID: OpenClawChatViewModel.defaultModelSelectionID,
             currentSelectionID: "claude-opus-4-1",
             choices: choices))
+    }
+
     @Test func `capability notice dismiss keeps a 44 point touch target`() throws {
         let sourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
