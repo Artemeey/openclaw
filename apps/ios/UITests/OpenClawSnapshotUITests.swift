@@ -578,7 +578,7 @@ final class OpenClawSnapshotUITests: XCTestCase {
         inlineModel.tap()
         let inlineSelectedModel = app.buttons["openai/gpt-5.6-sol"]
         XCTAssertTrue(inlineSelectedModel.waitForExistence(timeout: 3))
-        XCTAssertEqual(inlineSelectedModel.value as? String, "Selected")
+        XCTAssertTrue(inlineSelectedModel.isSelected)
         XCTAssertTrue(app.buttons["Default: openai/gpt-5.6-sol"].exists)
         let inlineNonDefaultModel = app.buttons["anthropic/claude-opus-4-1"]
         XCTAssertTrue(inlineNonDefaultModel.waitForExistence(timeout: 3))
@@ -590,7 +590,7 @@ final class OpenClawSnapshotUITests: XCTestCase {
         updatedInlineModel.tap()
         let selectedInlineModel = app.buttons["anthropic/claude-opus-4-1"]
         XCTAssertTrue(selectedInlineModel.waitForExistence(timeout: 3))
-        XCTAssertEqual(selectedInlineModel.value as? String, "Selected")
+        XCTAssertTrue(selectedInlineModel.isSelected)
         XCTAssertTrue(app.buttons["openai/gpt-5.6-sol"].exists)
         app.buttons["openai/gpt-5.6-sol"].tap()
 
