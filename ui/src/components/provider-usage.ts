@@ -223,6 +223,7 @@ function renderProviderCostHistory(snapshot: ProviderUsageDetails) {
 function renderProviderUsageWindow(window: UsageWindow, cadence?: string) {
   const used = Math.max(0, Math.min(100, window.usedPercent));
   const remaining = Math.max(0, 100 - used);
+  const remainingTone = remaining <= 10 ? "danger" : remaining <= 25 ? "warn" : "ok";
   const remainingLabel = t("usage.providerUsage.remaining", {
     percent: remaining.toFixed(0),
   });
@@ -238,15 +239,15 @@ function renderProviderUsageWindow(window: UsageWindow, cadence?: string) {
         <strong>${remainingLabel}</strong>
       </div>
       <div
-        class="provider-usage-progress"
+        class=${`provider-usage-progress provider-usage-progress--${remainingTone}`}
         role="progressbar"
         aria-label=${window.label}
         aria-valuemin="0"
         aria-valuemax="100"
-        aria-valuenow=${used.toFixed(0)}
+        aria-valuenow=${remaining.toFixed(0)}
         aria-valuetext=${remainingLabel}
       >
-        <span style=${`width: ${used}%`}></span>
+        <span style=${`width: ${remaining}%`}></span>
       </div>
       ${reset
         ? html`<div class="provider-usage-reset">

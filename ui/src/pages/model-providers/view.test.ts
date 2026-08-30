@@ -647,8 +647,10 @@ describe("renderModelProviders", () => {
       [...(groups[1]?.querySelectorAll(".provider-usage-window__cadence") ?? [])].map(text),
     ).toEqual(["5h", "Week"]);
     const progress = groups[1]?.querySelector<HTMLElement>("[role='progressbar']");
-    expect(progress?.getAttribute("aria-valuenow")).toBe("20");
+    expect(progress?.getAttribute("aria-valuenow")).toBe("80");
     expect(progress?.getAttribute("aria-valuetext")).toBe("80% left");
+    expect(progress?.classList.contains("provider-usage-progress--ok")).toBe(true);
+    expect(progress?.querySelector<HTMLElement>("span")?.style.width).toBe("80%");
     expect(text(groups[2]?.querySelector(".provider-usage-window-group__title") ?? null)).toBe(
       "codex other",
     );
