@@ -64,9 +64,8 @@ const UNAVAILABLE_HARNESS_MODEL = {
   name: "Account scoped model",
   available: false,
 };
-const fixtureWorkers = new Set<Worker>();
+let fixtureWorkers: () => Worker[] = () => [];
 const retireFixtureGenerations: Array<() => Promise<void>> = [];
-const postWorkerMessage = Worker.prototype.postMessage;
 const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
   afterEach(async () => {
     const completions = retireFixtureGenerations.splice(0).map((retire) => retire());
@@ -74,14 +73,14 @@ const tempDirs = useAutoCleanupTempDirTracker((cleanup) => {
     try {
       await Promise.all(completions);
       await expect
-        .poll(() => [...fixtureWorkers].every((worker) => worker.threadId === -1), {
+        .poll(() => fixtureWorkers().every((worker) => worker.threadId === -1), {
           timeout: 30_000,
         })
         .toBe(true);
     } finally {
       // Failed retirement must still release real workers before deleting their files.
-      await Promise.all([...fixtureWorkers].map((worker) => worker.terminate()));
-      fixtureWorkers.clear();
+      await Promise.all(fixtureWorkers().map((worker) => worker.terminate()));
+      fixtureWorkers = () => [];
       clearRuntimeAuthProfileStoreSnapshots();
       closeOpenClawAgentDatabasesForTest();
       cleanup();
@@ -204,10 +203,9 @@ async function waitForMarker(marker: string): Promise<void> {
 
 describe("prepared model catalog worker boundary", () => {
   beforeEach(() => {
-    vi.spyOn(Worker.prototype, "postMessage").mockImplementation(function (this: Worker, ...args) {
-      fixtureWorkers.add(this);
-      return postWorkerMessage.call(this, ...args);
-    });
+    // Keep the receiver list live through cleanup so late build workers are joined.
+    const contexts = vi.spyOn(Worker.prototype, "postMessage").mockClear().mock.contexts;
+    fixtureWorkers = () => [...new Set(contexts)].filter((worker) => worker instanceof Worker);
     vi.stubEnv("CODEX_HOME", tempDirs.make("openclaw-worker-empty-codex-"));
   });
 
