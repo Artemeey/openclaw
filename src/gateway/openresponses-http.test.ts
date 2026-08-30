@@ -67,12 +67,12 @@ let openResponsesTesting: {
     responseId: string,
     sessionKey: string,
     now: number,
-    scope?: { authSubject: string; agentId: string; requestedSessionKey?: string },
+    scope?: { authSubject: string; agentId: string; user?: string; requestedSessionKey?: string },
   ): void;
   lookupResponseSessionAt(
     responseId: string | undefined,
     now: number,
-    scope?: { authSubject: string; agentId: string; requestedSessionKey?: string },
+    scope?: { authSubject: string; agentId: string; user?: string; requestedSessionKey?: string },
   ): string | undefined;
   getResponseSessionIds(): string[];
   resolveResponsesLimits(config: { maxUrlParts?: number } | undefined): { maxUrlParts: number };
@@ -3242,6 +3242,68 @@ describe("OpenResponses HTTP API (e2e)", () => {
     },
   );
 
+  it("accepts and preserves strict SDK replay items", async () => {
+    const replay: OpenAI.Responses.ResponseInput = [
+      {
+        type: "reasoning",
+        id: "rs_1",
+        summary: [{ type: "summary_text", text: "Use the weather tool." }],
+        content: [{ type: "reasoning_text", text: "Check Taipei." }],
+        encrypted_content: null,
+        status: "completed",
+      },
+      {
+        type: "message",
+        id: "msg_1",
+        role: "assistant",
+        phase: null,
+        status: "completed",
+        content: [
+          {
+            type: "output_text",
+            text: "Checking the weather.",
+            annotations: [],
+            logprobs: [],
+          },
+        ],
+      },
+      {
+        type: "function_call",
+        id: "fc_1",
+        call_id: "call_1",
+        name: "get_weather",
+        namespace: "weather",
+        caller: { type: "direct" },
+        arguments: '{"city":"Taipei"}',
+        status: "completed",
+      },
+      {
+        type: "function_call_output",
+        id: "fco_1",
+        call_id: "call_1",
+        caller: { type: "program", caller_id: "program_1" },
+        created_by: "weather-worker",
+        status: "completed",
+        output: [
+          { type: "input_text", text: "72F" },
+          { type: "input_image", image_url: "https://example.test/weather.png" },
+          { type: "input_file", file_url: "https://example.test/weather.json" },
+        ],
+      } satisfies OpenAI.Responses.ResponseFunctionToolCallOutputItem,
+      { type: "message", role: "user", content: "Summarize the result." },
+    ];
+    agentCommandMock.mockResolvedValueOnce({ payloads: [{ text: "Taipei is 72F." }] } as never);
+
+    const response = await postResponses(enabledPort, { model: "openclaw", input: replay });
+
+    expect(response.status, await response.text()).toBe(200);
+    const prompt = firstAgentOpts().message;
+    expect(prompt).toContain("Checking the weather.");
+    expect(prompt).toContain('tool_call id=call_1 name=get_weather arguments={"city":"Taipei"}');
+    expect(prompt).toContain('"image_url":"https://example.test/weather.png"');
+    expect(fetchWithSsrFGuardMock).not.toHaveBeenCalled();
+  });
+
   it("reuses the prior session when previous_response_id is provided", async () => {
     const port = enabledPort;
     agentCommandMock.mockClear();
@@ -3287,7 +3349,11 @@ describe("OpenResponses HTTP API (e2e)", () => {
     await ensureResponseConsumed(secondResponse);
   });
 
-  it("reuses prior sessions across different user values when auth scope matches", async () => {
+  it.each([
+    ["the same normalized user", "  alice  ", "alice", true],
+    ["a different user", "alice", "bob", false],
+    ["an omitted user", "alice", undefined, false],
+  ] as const)("scopes previous responses to %s", async (_label, firstUser, nextUser, reuses) => {
     const port = enabledPort;
     agentCommandMock.mockClear();
     agentCommandMock.mockResolvedValueOnce({
@@ -3297,7 +3363,7 @@ describe("OpenResponses HTTP API (e2e)", () => {
     const firstResponse = await postResponses(port, {
       stream: false,
       model: "openclaw",
-      user: "alice",
+      user: firstUser,
       input: "hello",
     });
     expect(firstResponse.status).toBe(200);
@@ -3312,13 +3378,17 @@ describe("OpenResponses HTTP API (e2e)", () => {
     const secondResponse = await postResponses(port, {
       stream: false,
       model: "openclaw",
-      user: "bob",
+      ...(nextUser === undefined ? {} : { user: nextUser }),
       previous_response_id: firstJson.id,
       input: "hello again",
     });
     expect(secondResponse.status).toBe(200);
     const secondOpts = firstAgentOpts(1) as { sessionKey?: string } | undefined;
-    expect(secondOpts?.sessionKey).toBe(firstOpts?.sessionKey);
+    if (reuses) {
+      expect(secondOpts?.sessionKey).toBe(firstOpts?.sessionKey);
+    } else {
+      expect(secondOpts?.sessionKey).not.toBe(firstOpts?.sessionKey);
+    }
     await ensureResponseConsumed(secondResponse);
   });
 
