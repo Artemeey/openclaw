@@ -152,7 +152,7 @@
 - **Android sharing:** share text, images, audio, and supported documents into the Android composer from other apps. (#104571, #110941, #130156) Thanks @NianJiuZst.
 - **Native catalog terminals:** open eligible Codex and Claude Code catalog sessions in their native terminal on the owning Gateway or paired device, while retaining the read-only viewer. (#107086)
 - **Control UI cloud workspace conflicts:** surface staged-ref guidance, bounded conflicted paths, structured transcript events, and sidebar attention for cloud worker results that kept local versions. (#111329) Thanks @vincentkoc.
-- **Control UI update recovery:** the "A new version is available" Reload button now waits out the gateway restart that stranded the chunk and reloads as soon as it answers, instead of silently doing nothing and leaving a manual hard reload as the only way out. (#111670) Thanks @vincentkoc.
+- **Control UI update recovery:** make the "A new version is available" Reload button wait for the restarting Gateway, then reload automatically instead of requiring a hard reload. (#111670) Thanks @vincentkoc.
 - **Control UI sender identity polish:** show real user avatars in an always-visible gutter on identity-resolving Gateways, remove profile-UUID suffixes from current and historical sender labels, and fetch profile-ID avatars through the canonical Gateway route. (#111537)
 - **Control UI coding catalogs:** show provider brand icons beside Claude Code and Codex session catalog headings in the sidebar. (#115956) Thanks @vincentkoc.
 - **Control UI workspace shortcut:** toggle the active session Files panel with Shift+Cmd+B while leaving the main app sidebar unchanged.
@@ -216,7 +216,7 @@
 - **Plugin approvals:** accept explicit null optional metadata, and tell agents that a denied request is closed and its unexecuted tool call must not be retried or presented for approval again. (#133112, #130009) Thanks @obviyus, @sunlit-deng, and @haruaiclone-droid.
 - **Policy diagnostics:** derive exec security and approval posture from the configured exec mode, including inherited modes, so Policy and Doctor report the effective configuration correctly. (#125457) Thanks @sunlit-deng, @obviyus, and @omarshahine.
 - **Plugin tool results:** honor termination requested by tool-result middleware so a completed tool can end the agent loop without an extra model turn. (#128505) Thanks @gaoanze888, @obviyus, and @krjcolby-svg.
-- **Install resilience:** prevent low-memory postinstall failures, restore commit-pinned source installs, and keep source bootstrap from rewriting package-manager metadata. (#132555, #132458, #132608) Thanks @vincentkoc.
+- **Install resilience:** fix low-memory postinstall failures and commit-pinned source installs; preserve bootstrap package-manager metadata. Npm packages retain all release notes and link oversized contribution records to the full tagged source. (#132555, #132458, #132608, #133454) Thanks @vincentkoc.
 - **Update rollback safety:** keep a managed Gateway stopped when a rollback rebuild leaves unexpected checkout changes, and show profile-aware repair guidance before the operator retries the update. (#132813) Thanks @PollyBot13 and @obviyus.
 - **Installer completion:** finish successful npm-prefix and daemon-status probes immediately instead of waiting through repeated five-second watchdog delays. (#133190)
 - **CLI certificate discovery:** treat blank extra-CA environment values as unset so Linux certificate discovery and clean child startup still work, while preserving nonblank operator paths. (#117317) Thanks @zenglingbiao and @obviyus.
@@ -517,7 +517,7 @@
 
 ### Complete contribution record
 
-This audited record covers the complete b81666ca6af25c86cc099983a4358cdc5ea9ced8..131fbd6e680996f936ef176b7f8abb3a10795bad history: 16,960 in-range PRs + 0 retained seed-only PRs = 16,960 unique PRs. The generation manifest also supplies direct commits as editorial input; the grouped notes above prioritize user impact.
+This audited record covers the complete b81666ca6af25c86cc099983a4358cdc5ea9ced8..061bffdcabc5b71ef153e3b1fd116a4f7890a089 history: 16,961 in-range PRs + 0 retained seed-only PRs = 16,961 unique PRs. The generation manifest also supplies direct commits as editorial input; the grouped notes above prioritize user impact.
 
 Shipped baseline exclusions: v2026.7.1 (92 PRs: #82366, #88207, #90145, #90263, #91013, #91685, #98021, #98098, #98143, #98620, #98644, #99756, #99803, #99960, #100296, #100648, #100857, #101079, #101685, #101728, #102087, #102289, #102344, #102444, #102600, #102610, #102732, #102780, #102858, #102873, #102896, #102948, #102980, #103070, #103095, #103132, #103157, #103163, #103222, #103244, #103281, #103467, #103549, #103556, #103581, #103596, #103608, #103635, #103650, #103654, #103664, #103680, #103681, #103685, #103695, #103718, #103725, #103760, #103775, #103861, #103906, #103916, #103923, #103946, #103952, #103965, #104000, #104162, #104186, #104230, #104433, #104441, #104491, #104504, #104529, #104555, #104706, #104778, #104848, #104892, #104905, #104956, #104957, #105055, #105401, #105405, #105444, #105488, #105493, #105500, #105518, #106065).
 
@@ -17483,3 +17483,4 @@ Shipped baseline exclusions: v2026.7.1 (92 PRs: #82366, #88207, #90145, #90263, 
 - **PR #133302** Related #133301.
 - **PR #124471** Related #124394. Thanks @MrSwagatRathod and @obviyus and @yetval.
 - **PR #133308**
+- **PR #133454**
