@@ -1,9 +1,7 @@
 // Run Vitest Profile tests cover run vitest profile script behavior.
-import { execFile } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   buildVitestProfileCommandWithArgs,
@@ -12,22 +10,145 @@ import {
 } from "../../scripts/run-vitest-profile.mts";
 import { createScriptTestHarness } from "./test-helpers.js";
 
-function runProfileProcess(command: string, args: string[], root: string) {
-  return promisify(execFile)(command, args, {
-    cwd: root,
-    env: { PATH: process.env.PATH, HOME: root, USERPROFILE: root, CI: "1" },
-  }).then(
-    ({ stdout, stderr }) => ({ code: 0, output: stdout + stderr }),
-    (error: { code: number; stdout: string; stderr: string }) => ({
-      code: error.code,
-      output: error.stdout + error.stderr,
-    }),
-  );
-}
-
 describe("scripts/run-vitest-profile", () => {
-  const { createTempDir, trackTempDir } = createScriptTestHarness();
+  const {
+    createTempDir,
+    trackTempDir,
+    runNodeScript: runProfileProcess,
+  } = createScriptTestHarness();
   const repoRoot = path.resolve(import.meta.dirname, "../..");
+
+  it("joins timed-out script children before removing their fixture roots", async () => {
+    const root = createTempDir("oc-profile-timeout-");
+    fs.symlinkSync(
+      path.join(repoRoot, "node_modules"),
+      path.join(root, "node_modules"),
+      "junction",
+    );
+    fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
+    const config = path.join(root, "vitest.config.mjs");
+    fs.writeFileSync(
+      config,
+      `export default ${JSON.stringify({
+        root,
+        cacheDir: path.join(root, "cache"),
+        test: { include: ["lifetime.test.ts"], pool: "forks", maxWorkers: 1 },
+      })};`,
+    );
+    fs.writeFileSync(
+      path.join(root, "child.mjs"),
+      `import fs from "node:fs";
+const [root, receipt, stopped] = process.argv.slice(2);
+process.on("SIGTERM", () => {
+  fs.writeFileSync(stopped, JSON.stringify({ rootExists: fs.existsSync(root) }));
+  process.exit(0);
+});
+setInterval(() => {}, 1000);
+fs.writeFileSync(receipt + ".tmp", JSON.stringify({ pid: process.pid, root }));
+fs.renameSync(receipt + ".tmp", receipt);`,
+    );
+    fs.writeFileSync(
+      path.join(root, "lifetime.test.ts"),
+      `import fs from "node:fs";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { createScriptTestHarness } from ${JSON.stringify(path.join(repoRoot, "test/scripts/test-helpers.ts"))};
+import { isProcessAlive, waitForFile } from ${JSON.stringify(path.join(repoRoot, "test/helpers/process-wait.ts"))};
+const harness = createScriptTestHarness();
+const receipt = ${JSON.stringify(path.join(root, "child.json"))};
+const stopped = ${JSON.stringify(path.join(root, "stopped.json"))};
+let running;
+describe("ready child", () => {
+  beforeEach(async () => {
+    const fixture = harness.createTempDir("oc-profile-writer-");
+    running = harness.runNodeScript([${JSON.stringify(path.join(root, "child.mjs"))}, fixture, receipt, stopped], fixture);
+    // Observe early startup rejection until the test awaits the command itself.
+    void running.catch(() => {});
+    await waitForFile(receipt, 5000);
+  });
+  it("times out with an owned child", { timeout: 500 }, async () => {
+    await running;
+  });
+});
+it("observes joined writers before fixture removal", () => {
+  const { pid, root } = JSON.parse(fs.readFileSync(receipt, "utf8"));
+  expect(isProcessAlive(pid)).toBe(false);
+  expect(fs.existsSync(root)).toBe(false);
+  // Windows terminates the process without delivering a SIGTERM callback.
+  if (process.platform !== "win32") {
+    expect(JSON.parse(fs.readFileSync(stopped, "utf8")).rootExists).toBe(true);
+  }
+});
+// Keep a regression from abandoning this deliberately stalled fixture child.
+afterAll(async () => {
+  if (fs.existsSync(receipt)) {
+    const { pid } = JSON.parse(fs.readFileSync(receipt, "utf8"));
+    if (isProcessAlive(pid)) process.kill(pid, "SIGTERM");
+  }
+  await running?.catch(() => {});
+});`,
+    );
+    const report = path.join(root, "native.json");
+    const result = await runProfileProcess(
+      [
+        path.join(repoRoot, "scripts/run-vitest.mjs"),
+        "run",
+        "--config",
+        config,
+        path.join(root, "lifetime.test.ts"),
+        "--reporter=verbose",
+        "--reporter=json",
+        `--outputFile=${report}`,
+      ],
+      root,
+    );
+    expect(result.code, result.output).toBe(1);
+    // JSON retains the collection stack; the verbose reporter prints the timeout message.
+    expect(result.output).toContain("Error: Test timed out in 500ms.");
+    const native = JSON.parse(fs.readFileSync(report, "utf8"));
+    expect(native).toMatchObject({
+      success: false,
+      numTotalTests: 2,
+      numPassedTests: 1,
+      numFailedTests: 1,
+      numPendingTests: 0,
+    });
+    expect(native.testResults).toHaveLength(1);
+    expect(native.testResults[0].assertionResults).toEqual([
+      expect.objectContaining({
+        title: "times out with an owned child",
+        status: "failed",
+        failureMessages: [expect.any(String)],
+      }),
+      expect.objectContaining({
+        title: "observes joined writers before fixture removal",
+        status: "passed",
+        failureMessages: [],
+      }),
+    ]);
+  });
+
+  it("confines native child namespaces to the script fixture", async () => {
+    const root = fs.realpathSync(createTempDir("oc-profile-env-"));
+    const result = await runProfileProcess(
+      [
+        "--input-type=module",
+        "-e",
+        `
+import os from "node:os";
+console.log(JSON.stringify({ tmp: os.tmpdir(), home: os.homedir(), ...Object.fromEntries(
+  ["TMPDIR", "TMP", "TEMP", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR", "OPENCLAW_HOME", "OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH", "OPENCLAW_WORKSPACE_DIR"].map(key => [key, process.env[key] ?? null])
+)}));
+`,
+      ],
+      root,
+    );
+    expect(result.code, result.output).toBe(0);
+    const namespaces = JSON.parse(result.output) as Record<string, string | null>;
+    for (const [key, value] of Object.entries(namespaces)) {
+      expect(value, key).toEqual(expect.any(String));
+      expect(value?.startsWith(root + path.sep), key).toBe(true);
+    }
+  });
 
   it("defaults profile output outside the repo", () => {
     const outputDir = trackTempDir(resolveVitestProfileDir({ mode: "main", outputDir: "" }));
@@ -110,7 +231,7 @@ describe("scripts/run-vitest-profile", () => {
         configPath,
         `import fs from "node:fs";
 fs.appendFileSync(${JSON.stringify(configLoads)}, "loaded\\n");
-export default { test: {
+export default { cacheDir: ${JSON.stringify(path.join(root, "vite-cache"))}, test: {
   include: ["*.test.ts"], exclude: ["config-excluded.test.ts"], reporters: ["default", "json"], outputFile: "report.json",
   globalSetup: "./custom-setup.ts",
   ${custom && !projects ? 'runner: "./custom-runner.ts",' : ""}
@@ -143,11 +264,16 @@ export default class extends TestRunner {
         fs.writeFileSync(
           path.join(root, `${name}.test.ts`),
           `import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { isMainThread, threadId } from "node:worker_threads";
 import { expect, inject, it, vi } from "vitest";
 it("retains the selected execution context", async () => {
   vi.resetModules();
   expect(inject("customSetupCount")).toBe(1);
+  for (const namespace of [os.tmpdir(), os.homedir(), process.env.XDG_CACHE_HOME]) {
+    expect(namespace.startsWith(${JSON.stringify(fs.realpathSync(root))} + path.sep)).toBe(true);
+  }
   expect(isMainThread).toBe(${pool === "forks"});
   expect(globalThis.profileCustomRunner === true).toBe(${custom});
   expect(typeof document).toBe(${JSON.stringify(environment === "jsdom" ? "object" : "undefined")});
@@ -185,7 +311,7 @@ it("retains the selected execution context", async () => {
         "cli-excluded.test.ts",
       ];
       if (projects) args.push("--reporter", "dot", "--reporter", "json");
-      const result = await runProfileProcess(process.execPath, args, root);
+      const result = await runProfileProcess(args, root);
       const reportPath = path.join(root, "report.json");
       const reportText = fs.existsSync(reportPath) ? fs.readFileSync(reportPath, "utf8") : "";
       const shouldFail = failRun || failProfile || (unhandled && errorPolicy === "default");
@@ -239,7 +365,7 @@ it("retains the selected execution context", async () => {
       "--",
       ...flags,
     ];
-    const result = await runProfileProcess(process.execPath, args, root);
+    const result = await runProfileProcess(args, root);
     expect(result.code, result.output).toBe(0);
     expect(result.output).toContain("Usage:");
   });
@@ -272,7 +398,7 @@ throw new Error("Invalid CLI options reached config loading");`,
       "native",
       flag,
     ];
-    const result = await runProfileProcess(process.execPath, args, root);
+    const result = await runProfileProcess(args, root);
     expect(result.code, result.output).toBe(1);
     expect(result.output).toContain(error);
     expect(fs.existsSync(marker)).toBe(false);
@@ -299,7 +425,7 @@ throw new Error("Invalid CLI options reached config loading");`,
       outputDir: path.join(root, "missing"),
       vitestArgs: ["--config", "first.config.ts", "--config", "second.config.ts"],
     });
-    const result = await runProfileProcess(plan.command, plan.args, root);
+    const result = await runProfileProcess(plan.args, root);
     expect(result.code, result.output).toBe(1);
     expect(result.output).toContain("Expected a single value");
     expect(result.output).toContain("ENOENT");

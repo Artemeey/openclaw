@@ -4,6 +4,45 @@ import fsPromises from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach } from "vitest";
+import { runVitestShutdownCommand } from "../helpers/vitest-shutdown-command.js";
+
+/** Keep script children secretless and all of their writable namespaces fixture-owned. */
+export function createScriptTestEnv(root: string): NodeJS.ProcessEnv {
+  const ownedRoot = fs.realpathSync(root);
+  const home = path.join(ownedRoot, "home");
+  const tmp = path.join(ownedRoot, "tmp");
+  const directories = {
+    HOME: home,
+    USERPROFILE: home,
+    OPENCLAW_HOME: home,
+    OPENCLAW_STATE_DIR: path.join(ownedRoot, "state"),
+    OPENCLAW_WORKSPACE_DIR: path.join(ownedRoot, "workspace"),
+    XDG_CONFIG_HOME: path.join(ownedRoot, "config"),
+    XDG_CACHE_HOME: path.join(ownedRoot, "cache"),
+    XDG_DATA_HOME: path.join(ownedRoot, "data"),
+    XDG_STATE_HOME: path.join(ownedRoot, "xdg-state"),
+    XDG_RUNTIME_DIR: path.join(ownedRoot, "runtime"),
+    TMPDIR: tmp,
+    TMP: tmp,
+    TEMP: tmp,
+  };
+  for (const directory of new Set(Object.values(directories))) {
+    fs.mkdirSync(directory, { recursive: true });
+  }
+  const configPath = path.join(directories.XDG_CONFIG_HOME, "openclaw.json");
+  fs.writeFileSync(configPath, "{}\n");
+  return {
+    PATH: process.env.PATH,
+    SystemRoot: process.env.SystemRoot,
+    ...directories,
+    OPENCLAW_CONFIG_PATH: configPath,
+    OPENCLAW_TEST_PROJECTS_TIMINGS: "0",
+    TSX_DISABLE_CACHE: "1",
+    CI: "1",
+    NO_COLOR: "1",
+    FORCE_COLOR: "0",
+  };
+}
 
 export function linkPnpmBootstrapShellTools(binDir: string): void {
   // Omit package managers: absence must not depend on the host's installed tools.
@@ -67,8 +106,28 @@ else if (query.includes("{id: .profileId")) {
 
 export function createScriptTestHarness() {
   const tempDirs: string[] = [];
+  const commands: { controller: AbortController; completion: Promise<unknown> }[] = [];
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Vitest timeouts abandon the test promise. Join its writers before removing
+    // their roots; failed process-tree verification must retain the fixtures.
+    const pending = commands.slice();
+    for (const { controller } of pending) {
+      controller.abort();
+    }
+    const failures: unknown[] = [];
+    for (const result of await Promise.allSettled(pending.map(({ completion }) => completion))) {
+      if (result.status === "rejected") {
+        const error: unknown = result.reason;
+        if (!(error instanceof Error && "code" in error && error.code === "ABORT_ERR")) {
+          failures.push(error);
+        }
+      }
+    }
+    if (failures.length) {
+      throw new AggregateError(failures, "Script child cleanup failed; retained fixture roots.");
+    }
+    commands.splice(0, pending.length);
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
       if (dir) {
@@ -94,9 +153,22 @@ export function createScriptTestHarness() {
     return dir;
   }
 
+  function runNodeScript(args: string[], root: string) {
+    const controller = new AbortController();
+    const completion = runVitestShutdownCommand({
+      args,
+      cwd: root,
+      env: createScriptTestEnv(root),
+      signal: controller.signal,
+    });
+    commands.push({ controller, completion });
+    return completion.then(({ code, stdout, stderr }) => ({ code, output: stdout + stderr }));
+  }
+
   return {
     createTempDir,
     createTempDirAsync,
     trackTempDir,
+    runNodeScript,
   };
 }

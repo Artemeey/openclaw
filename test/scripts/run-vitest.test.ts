@@ -6,6 +6,7 @@ import os from "node:os";
 import nodePath from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
+import { parseCLI } from "vitest/node";
 import {
   resolveTestProjectsRunnerEnv,
   resolveTestProjectsRunnerSpawnParams,
@@ -37,6 +38,7 @@ import {
   spawnWatchedVitestProcess,
   shouldSuppressVitestStderrLine,
 } from "../../scripts/run-vitest.mts";
+import { parseTestProjectsArgs } from "../../scripts/test-projects.test-support.mts";
 import { forceKillVitestProcessGroup } from "../../scripts/vitest-process-group.mts";
 
 const posixIt = process.platform === "win32" ? it.skip : it;
@@ -354,33 +356,123 @@ describe("scripts/run-vitest", () => {
     expect(resolveImplicitVitestArgs(argv)).toBe(argv);
   });
 
-  it("fails explicit test-file runs when scoped configs would otherwise pass with no tests", () => {
-    expect(
-      resolveExplicitTestFileNoPassArgs([
+  it.each([
+    [],
+    ["--passWithNoTests=false"],
+    ["--passWithNoTests=true"],
+    ["--passWithNoTests", "false"],
+    ["--passWithNoTests", "true"],
+    ["--passWithNoTests"],
+    ["--no-passWithNoTests"],
+    ["--passWithNoTests=true", "--no-passWithNoTests"],
+    ["--no-passWithNoTests", "--no-passWithNoTests"],
+    ["--", "--passWithNoTests=true", "--passWithNoTests=false"],
+    ["--passWithNoTests", "false", "--", "--passWithNoTests=true"],
+    ["--pass-with-no-tests=true"],
+    ["--passWithNoTests=true", "--pass-with-no-tests=true"],
+    ["--pass-with-no-tests=true", "--passWithNoTests=true"],
+    ["--passWith-no-tests=true", "--pass-withNoTests=true"],
+    ["--passWithNoTests.foo=true"],
+    ["--passWithNoTests=pattern"],
+    ["--passWithNoTests=3"],
+    ["--passWithNoTests", "pattern"],
+    ["--passWithNoTests", "3"],
+  ])(
+    "forces native no-test failure without changing caller filters or reporters: %j",
+    async (...flags) => {
+      const argv = [
         "run",
-        "--config",
-        "test/vitest/vitest.tooling.config.ts",
         "test/scripts/run-vitest.test.ts",
-      ]),
-    ).toEqual([
-      "run",
-      "--config",
-      "test/vitest/vitest.tooling.config.ts",
-      "test/scripts/run-vitest.test.ts",
-      "--passWithNoTests=false",
-    ]);
+        "--reporter=verbose",
+        "--reporter=json",
+        ...flags,
+      ];
+      const original = [...argv];
+      const native = parseCLI(["vitest", ...argv]);
+      const guarded = await resolveExplicitTestFileNoPassArgs(argv);
+      expect(parseCLI(["vitest", ...guarded])).toEqual({
+        ...native,
+        options: { ...native.options, passWithNoTests: false },
+      });
+      expect(argv).toEqual(original);
+    },
+  );
+
+  it.each([
+    ["--passWithNoTests=false", "--passWithNoTests=false"],
+    ["--passWithNoTests", "true", "--passWithNoTests=false"],
+    ["--no-passWithNoTests", "--passWithNoTests=true"],
+    ["--pass-with-no-tests=true", "--pass-with-no-tests=false"],
+    ["--no-pass-with-no-tests", "--pass-with-no-tests=true"],
+    ["--passWithNoTests=true", "--passWithNoTests=false", "--help"],
+  ])("rejects native-invalid caller arguments before no-test policy: %j", async (...flags) => {
+    const argv = ["run", "test/scripts/run-vitest.test.ts", ...flags];
+    expect(() => parseCLI(["vitest", ...argv])).toThrow();
+    await expect(resolveExplicitTestFileNoPassArgs(argv)).rejects.toThrow();
   });
 
-  it("inserts explicit no-test failure before Vitest passthrough args", () => {
-    expect(
-      resolveExplicitTestFileNoPassArgs(["run", "test/scripts/run-vitest.test.ts", "--", "-x"]),
-    ).toEqual(["run", "test/scripts/run-vitest.test.ts", "--passWithNoTests=false", "--", "-x"]);
-  });
-
-  it("does not force no-test failure for globs or basename filters", () => {
+  it("does not force no-test failure for globs or basename filters", async () => {
     const argv = ["run", "run-vitest.test.ts", "test/**/*.test.ts"];
-    expect(resolveExplicitTestFileNoPassArgs(argv)).toBe(argv);
+    expect(await resolveExplicitTestFileNoPassArgs(argv)).toBe(argv);
   });
+
+  it.each([
+    ["--passWithNoTests=false"],
+    ["--passWithNoTests=true"],
+    ["--passWithNoTests", "false"],
+    ["--passWithNoTests", "true"],
+    ["--passWithNoTests"],
+    ["--no-passWithNoTests"],
+    ["--passWithNoTests=true", "--no-passWithNoTests"],
+    ["--no-passWithNoTests", "--no-passWithNoTests"],
+    ["--passWithNoTests=false", "--passWithNoTests=false"],
+    ["--no-passWithNoTests", "--passWithNoTests=true"],
+  ])("round-trips native scalar validation through delegation: %j", (...flags) => {
+    const file = "test/scripts/run-vitest.test.ts";
+    // A bare boolean before a file leaves that file positional in native CAC.
+    for (const argv of [
+      ["run", file, ...flags],
+      ["run", ...flags, file],
+    ]) {
+      argv.push("--reporter=verbose", "--reporter=json");
+      const delegated = resolveTestProjectsDelegationArgs(argv);
+      expect(delegated).not.toBeNull();
+      const { forwardedArgs, targetArgs } = parseTestProjectsArgs(delegated!);
+      expect(targetArgs).toEqual([file]);
+      const parse = (args: string[]) => {
+        try {
+          return parseCLI(["vitest", ...args]);
+        } catch (error) {
+          return (error as Error).message;
+        }
+      };
+      expect(parse(["run", ...forwardedArgs])).toEqual(parse(argv));
+    }
+  });
+
+  it.each(["passWithNoTests", "isolate", "globals", "fileParallelism"])(
+    "preserves native boolean token ownership for %s",
+    (option) => {
+      const file = "test/scripts/run-vitest.test.ts";
+      for (const value of ["true", "false"]) {
+        for (const flag of [`--${option}`, `--no-${option}`]) {
+          for (const args of [
+            [file, flag, value],
+            [flag, value, file],
+          ]) {
+            const argv = ["run", ...args, "--reporter=verbose", "--reporter=json"];
+            const delegated = resolveTestProjectsDelegationArgs(argv);
+            expect(delegated).not.toBeNull();
+            const { forwardedArgs, targetArgs } = parseTestProjectsArgs(delegated!);
+            expect(targetArgs).toEqual([file]);
+            expect(parseCLI(["vitest", "run", ...forwardedArgs])).toEqual(
+              parseCLI(["vitest", ...argv]),
+            );
+          }
+        }
+      }
+    },
+  );
 
   it("delegates bare explicit test files to the project router", () => {
     const file = "test/scripts/run-vitest.test.ts";

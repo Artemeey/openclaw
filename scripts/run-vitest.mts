@@ -471,7 +471,7 @@ function resolveExplicitVitestMode(argv: string[]): "run" | "watch" | null {
       }
       continue;
     }
-    if (optionConsumesNextArg(arg)) {
+    if (optionConsumesNextArg(arg, argv[index + 1])) {
       index += 1;
       continue;
     }
@@ -713,11 +713,13 @@ function hasExplicitVitestConfigArg(argv: string[]): boolean {
   return argv.some((arg) => arg === "--config" || arg === "-c" || arg.startsWith("--config="));
 }
 
-function optionConsumesNextArg(arg: string): boolean {
-  if (arg.includes("=")) {
+function optionConsumesNextArg(arg: string, nextArg?: string): boolean {
+  if (!arg.startsWith("-") || arg.startsWith("--no-") || arg.includes("=")) {
     return false;
   }
   return (
+    nextArg === "true" ||
+    nextArg === "false" ||
     VITEST_OPTIONS_WITH_VALUE.has(arg) ||
     VITEST_DOTTED_OPTIONS_WITH_VALUE_PREFIXES.some((prefix) => arg.startsWith(prefix))
   );
@@ -813,7 +815,7 @@ function collectExplicitFileTargetArgs(
     if (arg === "--") {
       break;
     }
-    if (optionConsumesNextArg(arg)) {
+    if (optionConsumesNextArg(arg, argv[index + 1])) {
       index += 1;
       continue;
     }
@@ -870,15 +872,42 @@ function collectExplicitTestFileArgs(argv: string[]): string[] {
 /**
  * Forces explicit test-file targets to fail when Vitest finds no matching tests.
  */
-export function resolveExplicitTestFileNoPassArgs(argv: string[]): string[] {
+export async function resolveExplicitTestFileNoPassArgs(argv: string[]): Promise<string[]> {
   if (collectExplicitTestFileArgs(argv).length === 0) {
     return argv;
   }
-  const sentinelIndex = argv.indexOf("--");
-  if (sentinelIndex === -1) {
-    return [...argv, "--passWithNoTests=false"];
+  const policyArgs: string[] = [];
+  const spellings = new Set(["passWithNoTests"]);
+  for (const [index, arg] of argv.entries()) {
+    if (arg === "--") {
+      break;
+    }
+    const spelling = /^--(?:no-)?([^=.]+)/u.exec(arg)?.[1];
+    if (
+      !spelling ||
+      spelling.replace(/([a-z])-([a-z])/g, (_, a, b) => a + b.toUpperCase()) !== "passWithNoTests"
+    ) {
+      continue;
+    }
+    policyArgs.push(arg);
+    spellings.add(spelling);
+    const value = argv[index + 1];
+    if (arg === `--${spelling}` && (value === "true" || value === "false")) {
+      policyArgs.push(value);
+    }
   }
-  return [...argv.slice(0, sentinelIndex), "--passWithNoTests=false", ...argv.slice(sentinelIndex)];
+  if (policyArgs.length > 0) {
+    const { parseCLI } = await import("vitest/node");
+    // Validate only what policy can overwrite. The child owns help/version and
+    // unrelated errors, including unknown malformed negative names under help.
+    parseCLI(["vitest", ...policyArgs], { allowUnknownOptions: true });
+  }
+  // CAC camelcases keys after parsing; a later raw spelling can overwrite the
+  // canonical key. Negate every encountered spelling without rewriting operands.
+  return insertVitestTargets(
+    argv,
+    Array.from(spellings, (name) => `--no-${name}`),
+  );
 }
 
 function hasAlternateVitestRootArg(argv: string[]): boolean {
@@ -907,7 +936,7 @@ function hasExplicitDisabledRunFlag(argv: string[]): boolean {
     }
     const runFlag = resolveBooleanModeFlag(argv, index, "run");
     if (!runFlag) {
-      if (optionConsumesNextArg(arg)) {
+      if (optionConsumesNextArg(arg, argv[index + 1])) {
         index += 1;
       }
       continue;
@@ -941,7 +970,7 @@ function resolveDelegatedVitestArgs(argv: string[]): string[] {
       optionArgs.push(arg);
       continue;
     }
-    if (optionConsumesNextArg(arg)) {
+    if (optionConsumesNextArg(arg, argv[index + 1])) {
       optionArgs.push(arg);
       const optionValue = argv[index + 1];
       if (optionValue !== undefined) {
@@ -973,7 +1002,7 @@ function hasNonRunVitestSubcommand(argv: string[]): boolean {
     if (arg === "--") {
       return false;
     }
-    if (optionConsumesNextArg(arg)) {
+    if (optionConsumesNextArg(arg, argv[index + 1])) {
       index += 1;
       continue;
     }
@@ -1441,7 +1470,7 @@ async function main(
 
   let failedExitCode = 0;
   for (const [index, invocation] of invocations.entries()) {
-    const guardedVitestArgs = resolveExplicitTestFileNoPassArgs(invocation);
+    const guardedVitestArgs = await resolveExplicitTestFileNoPassArgs(invocation);
     const spawnEnv = resolveRunVitestSpawnEnv(invocationEnv, guardedVitestArgs);
     if (invocations.length > 1) {
       console.error("[vitest] bounded process " + (index + 1) + "/" + invocations.length);

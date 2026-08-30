@@ -5,7 +5,7 @@ import { createBoundedChildOutput } from "./bounded-child-output.ts";
 export async function runVitestShutdownCommand(
   options: Pick<
     Parameters<typeof runManagedCommand>[0],
-    "args" | "cwd" | "env" | "timeoutMs" | "onReady"
+    "args" | "cwd" | "env" | "timeoutMs" | "onReady" | "signal"
   >,
 ) {
   const maxBytes = 2 * 1024 * 1024;
@@ -20,7 +20,9 @@ export async function runVitestShutdownCommand(
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       requireProcessTreeExit: process.platform !== "win32",
-      signal: controller.signal,
+      signal: options.signal
+        ? AbortSignal.any([options.signal, controller.signal])
+        : controller.signal,
       onReady(child) {
         for (const [pipe, output] of [
           [child.stdout, stdout],
