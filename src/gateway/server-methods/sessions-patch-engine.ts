@@ -705,12 +705,10 @@ export async function executeSessionPatch(params: {
   return {
     ok: true,
     result: await projectSessionPatchResult({
-      canonicalKey: prepared.canonicalKey,
+      ...prepared,
       cfg: executed.cfg,
       entry: outcome.entry,
       modelCatalogByAgent: executed.modelCatalogByAgent,
-      storePath: prepared.storePath,
-      targetAgentId: prepared.targetAgentId,
     }),
   };
 }

@@ -35,10 +35,6 @@ import {
 } from "../chat-abort.js";
 import { authorizeGatewaySessionCreation, resolveCreatorSandbox } from "../operator-role-policy.js";
 import { PENDING_CHAT_SEND_DEDUPE_PREFIX, type DedupeEntry } from "../server-shared.js";
-import {
-  normalizeSessionToolOverrides,
-  sessionToolOverridesEqual,
-} from "../session-tool-overrides.js";
 import { loadSessionEntry } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
 import {
@@ -59,12 +55,14 @@ import {
   respondChatSessionRoutingChanged,
 } from "./chat-send-pre-admission.js";
 import type { NormalizedChatSendRequest } from "./chat-send-request.js";
+import {
+  captureAdmittedChatSendSessionSettings,
+  SESSION_SETTINGS_CHANGED_ERROR_REASON,
+} from "./chat-send-session-settings.js";
 import type { PreparedChatSendSession } from "./chat-send-session.js";
 import { normalizeOptionalChatText, normalizeUnknownChatText } from "./chat-text-normalization.js";
 import { resolveOperatorSessionCreation } from "./session-creation-provenance.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
-
-const SESSION_SETTINGS_CHANGED_ERROR_REASON = "session-settings-changed";
 
 /** Reserve the session lifecycle and register the abortable run before attachment work. */
 export async function admitChatSend(params: {
@@ -186,9 +184,7 @@ export async function admitChatSend(params: {
   let admittedRunAbort: ReturnType<typeof registerChatAbortController> | undefined;
   let restartSafeAdmission: ReturnType<typeof resolveRestartSafeChatAdmission>;
   let initialSessionEntry: SessionEntry | undefined;
-  let admittedSessionSettings:
-    | Readonly<Pick<SessionEntry, "permissionMode" | "toolOverrides">>
-    | undefined;
+  let admittedSessionSettings: ReturnType<typeof captureAdmittedChatSendSessionSettings>;
   let messageInjectionTarget: ReturnType<
     typeof replyRunRegistry.resolveCurrentMessageInjectionTarget
   >;
@@ -254,23 +250,13 @@ export async function admitChatSend(params: {
       throw new Error(SESSION_ROUTING_CHANGED_ERROR_REASON);
     }
     const latestEntry = latestSession.entry;
-    const settingsChanged =
-      (p.expectedPermissionMode !== undefined &&
-        (latestEntry?.permissionMode ?? null) !== p.expectedPermissionMode) ||
-      (p.expectedToolOverrides !== undefined &&
-        !sessionToolOverridesEqual(latestEntry?.toolOverrides, p.expectedToolOverrides));
-    if (settingsChanged) {
-      throw new Error(SESSION_SETTINGS_CHANGED_ERROR_REASON);
-    }
-    if (commitOutcome) {
-      // Freeze the writer-barrier snapshot. Later reply preparation may reload
-      // the session after awaited workspace/media work, but this run must keep
-      // the authority under which it was admitted.
-      admittedSessionSettings = Object.freeze({
-        permissionMode: latestEntry?.permissionMode,
-        toolOverrides: normalizeSessionToolOverrides(latestEntry?.toolOverrides),
-      });
-    }
+    // Freeze the writer-barrier snapshot; later preparation must retain this authority.
+    admittedSessionSettings = captureAdmittedChatSendSessionSettings({
+      commit: commitOutcome,
+      entry: latestEntry,
+      expectedPermissionMode: p.expectedPermissionMode,
+      expectedToolOverrides: p.expectedToolOverrides,
+    });
     if (
       request.goalOperation &&
       (isCompetingSessionWorkAdmissionActive(storePath, [sessionKey, backingSessionId]) ||
