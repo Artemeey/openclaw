@@ -45,6 +45,7 @@ import {
 import { logMessageQueuedWithBacklogPolicy } from "../../logging/diagnostic-runtime.js";
 import { diagnosticLogger as diag, logSessionStateChange } from "../../logging/diagnostic.js";
 import { hasPromptImageInput } from "../../media/prompt-image-input.js";
+import type { AdmittedRunContext } from "../admitted-run-context.js";
 import { resolveSessionAgentId } from "../agent-scope.js";
 import { resolveSessionPlacementForcedTerminalSettlement } from "../session-placement-admission.js";
 import { getGatewayToolCallerIdentity } from "../tools/gateway-caller-context.js";
@@ -124,6 +125,24 @@ export type EmbeddedAgentMessageInjectionTarget = {
   readonly runId: string;
   readonly sessionId: string;
 };
+
+const embeddedRunTargetObservers = new WeakMap<
+  AdmittedRunContext,
+  (target: EmbeddedAgentMessageInjectionTarget) => void
+>();
+
+/** Observe the exact active handle created for one admitted operational instance. */
+export function observeEmbeddedAgentMessageInjectionTarget(
+  context: AdmittedRunContext,
+  observer: (target: EmbeddedAgentMessageInjectionTarget) => void,
+): () => void {
+  embeddedRunTargetObservers.set(context, observer);
+  return () => {
+    if (embeddedRunTargetObservers.get(context) === observer) {
+      embeddedRunTargetObservers.delete(context);
+    }
+  };
+}
 
 function createQueueFailureOutcome(
   sessionId: string,
@@ -1323,6 +1342,7 @@ export function setActiveEmbeddedRun(
   handle: EmbeddedAgentQueueHandle,
   sessionKey?: string,
   sessionFile?: string,
+  admittedRunContext?: AdmittedRunContext,
 ) {
   const currentLifecycleGeneration = getAgentEventLifecycleGeneration();
   const incomingLifecycleGeneration = setActiveEmbeddedRunLifecycleGeneration(
@@ -1406,6 +1426,19 @@ export function setActiveEmbeddedRun(
   });
   if (!sessionId.startsWith("probe-")) {
     diag.debug(`run registered: sessionId=${sessionId} totalActive=${ACTIVE_EMBEDDED_RUNS.size}`);
+  }
+  const observer = admittedRunContext
+    ? embeddedRunTargetObservers.get(admittedRunContext)
+    : undefined;
+  if (admittedRunContext && observer && handle.runId) {
+    embeddedRunTargetObservers.delete(admittedRunContext);
+    // Publish only after both active indexes own this exact handle; delayed
+    // controls then cannot bind to a predecessor or an unregistered run.
+    observer({
+      [embeddedAgentMessageInjectionTargetHandle]: handle,
+      runId: handle.runId,
+      sessionId,
+    });
   }
 }
 

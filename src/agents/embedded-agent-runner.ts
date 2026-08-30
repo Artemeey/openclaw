@@ -13,10 +13,12 @@ export {
   isEmbeddedAgentRunActive,
   isEmbeddedAgentRunHandleActive,
   isEmbeddedAgentRunStreaming,
+  observeEmbeddedAgentMessageInjectionTarget,
   queueEmbeddedAgentMessageWithOutcome,
   resolveActiveEmbeddedRunSessionIdBySessionFile,
   waitForEmbeddedAgentRunEnd,
 } from "./embedded-agent-runner/runs.js";
+export type { EmbeddedAgentMessageInjectionTarget } from "./embedded-agent-runner/runs.js";
 export type {
   EmbeddedAgentMeta,
   EmbeddedAgentCompactResult,

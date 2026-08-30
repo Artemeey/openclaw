@@ -12,6 +12,7 @@ import {
   abortEmbeddedAgentMessageInjectionTarget,
   clearActiveEmbeddedRun,
   formatEmbeddedAgentQueueFailureSummary,
+  observeEmbeddedAgentMessageInjectionTarget,
   preemptAndDrainEmbeddedHeartbeatRun,
   queueEmbeddedAgentMessageInjectionTarget,
   queueEmbeddedAgentMessageWithOutcome,
@@ -29,6 +30,28 @@ describe("embedded-agent active-run steering", () => {
     resetDiagnosticSessionStateForTest();
     setDiagnosticsEnabledForProcess(false);
     vi.restoreAllMocks();
+  });
+
+  it("publishes an admitted run target only after active registration", async () => {
+    const context = {
+      operationalRunInstance: { instanceId: "instance-talk", runId: "run-talk" },
+    };
+    const observer = vi.fn();
+    observeEmbeddedAgentMessageInjectionTarget(context, observer);
+    expect(observer).not.toHaveBeenCalled();
+
+    const queueMessage = vi.fn(async () => {});
+    const handle = createEmbeddedRunHandle({ queueMessage });
+    Object.assign(handle, { runId: "run-talk", toolAuthorityFingerprint: "authority-talk" });
+    setActiveEmbeddedRun("session-talk", handle, "agent:main:main", undefined, context);
+
+    expect(observer).toHaveBeenCalledOnce();
+    await expect(
+      queueEmbeddedAgentMessageInjectionTarget(observer.mock.calls[0]![0], "early steer"),
+    ).resolves.toMatchObject({ queued: true });
+    expect(queueMessage).toHaveBeenCalledWith("early steer", {
+      toolAuthorityFingerprint: "authority-talk",
+    });
   });
 
   it("projects authority only into the exact captured run", async () => {

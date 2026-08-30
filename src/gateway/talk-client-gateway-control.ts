@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { EmbeddedAgentMessageInjectionTarget } from "../agents/embedded-agent.js";
 import { normalizeTalkSection } from "../config/talk.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createPluginRuntime } from "../plugins/runtime/index.js";
@@ -92,6 +93,8 @@ const loadTalkAgentExecution = createLazyRuntimeModule(async () => {
   ]);
   return {
     runEmbeddedAgent: embeddedAgent.runEmbeddedAgent,
+    observeEmbeddedAgentMessageInjectionTarget:
+      embeddedAgent.observeEmbeddedAgentMessageInjectionTarget,
     createOperationalRunInstanceRef: admission.createOperationalRunInstanceRef,
     prepareAgentRunAdmission: admission.prepareAgentRunAdmission,
   };
@@ -108,12 +111,14 @@ function createTalkClientAgentRuntime(params: {
   config: OpenClawConfig;
   agentId: string;
   rawSourceRef?: string;
+  onControlTargetReady?: (target: EmbeddedAgentMessageInjectionTarget) => void;
 }) {
   const agentRuntime = createPluginRuntime().agent;
   const runEmbeddedAgent: typeof agentRuntime.runEmbeddedAgent = async (runParams) => {
     runParams.abortSignal?.throwIfAborted();
     const execution = await loadTalkAgentExecution();
     runParams.abortSignal?.throwIfAborted();
+    let stopObserving = () => {};
     const preparedRunAdmission = execution.prepareAgentRunAdmission({
       cfg: params.config,
       operationalRunInstance: execution.createOperationalRunInstanceRef(runParams.runId),
@@ -126,6 +131,14 @@ function createTalkClientAgentRuntime(params: {
           state: "present",
           ...(params.rawSourceRef ? { rawSourceRef: params.rawSourceRef } : {}),
         },
+      },
+      onAdmitted: (context) => {
+        if (params.onControlTargetReady) {
+          stopObserving = execution.observeEmbeddedAgentMessageInjectionTarget(
+            context,
+            params.onControlTargetReady,
+          );
+        }
       },
     });
     let closed = false;
@@ -142,6 +155,7 @@ function createTalkClientAgentRuntime(params: {
       runParams.abortSignal?.throwIfAborted();
       return await execution.runEmbeddedAgent({ ...runParams, preparedRunAdmission });
     } finally {
+      stopObserving();
       runParams.abortSignal?.removeEventListener("abort", close);
       close();
     }
@@ -243,7 +257,7 @@ export function boundTalkClientRealtimeInitialItems(
   return newestFirst.toReversed();
 }
 
-export function createTalkClientAgentConsultRunner<CapturedControl = undefined>(params: {
+export function createTalkClientAgentConsultRunner(params: {
   config: OpenClawConfig;
   context: Pick<GatewayRequestContext, "chatAbortControllers" | "logGateway">;
   agentId: string;
@@ -255,14 +269,13 @@ export function createTalkClientAgentConsultRunner<CapturedControl = undefined>(
   runIdPrefix?: string;
   surface?: string;
   registerRun?: (params: { runId: string }) => void;
-  captureRunControl?: () => CapturedControl | undefined;
+  captureRunControl?: () => EmbeddedAgentMessageInjectionTarget | undefined;
 }) {
   const authority = params.authority ?? resolveTalkAgentConsultAuthority(undefined);
-  let agentRuntime: ReturnType<typeof createPluginRuntime>["agent"] | undefined;
   const runArgs = async (
     args: unknown,
     signal?: AbortSignal,
-    onRunControlReady?: (captured: CapturedControl | undefined) => void,
+    onRunControlReady?: (captured: EmbeddedAgentMessageInjectionTarget | undefined) => void,
   ) => {
     const parsedArgs = parseRealtimeVoiceAgentConsultArgs(args);
     const voiceSessionId = params.getVoiceSessionId();
@@ -285,10 +298,15 @@ export function createTalkClientAgentConsultRunner<CapturedControl = undefined>(
           confirmationId: parsedArgs.confirmationId,
         })
       : undefined;
-    agentRuntime ??= createTalkClientAgentRuntime({
+    const agentRuntime = createTalkClientAgentRuntime({
       config: params.config,
       agentId: params.agentId,
       ...(params.ownerConnId ? { rawSourceRef: params.ownerConnId } : {}),
+      ...(onRunControlReady
+        ? {
+            onControlTargetReady: onRunControlReady,
+          }
+        : {}),
     });
     const talkConfig = normalizeTalkSection(params.config.talk);
     return await consultRealtimeVoiceAgent({
@@ -338,7 +356,6 @@ export function createTalkClientAgentConsultRunner<CapturedControl = undefined>(
           controlUiVisible: false,
           kind: "chat-send",
         });
-        onRunControlReady?.(params.captureRunControl?.());
         return { abortSignal: registration.controller.signal, cleanup: registration.cleanup };
       },
     });
