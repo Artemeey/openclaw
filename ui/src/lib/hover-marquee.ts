@@ -77,10 +77,9 @@ function startHoverMarquee(host: HTMLElement): void {
     return;
   }
   observeMarquee(label);
-  if (label.classList.contains("hover-marquee--scrolling")) {
+  if (label.classList.contains("hover-marquee--scrolling") || pendingMarquees.has(label)) {
     return;
   }
-  clearPendingMarquee(label);
   // Hover-only row actions change the title width in CSS after mouseenter.
   // Measure on the next frame so the animation owns the visible width instead
   // of depending on a later ResizeObserver notification to correct it.

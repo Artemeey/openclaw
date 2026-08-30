@@ -62,6 +62,18 @@ describe("hover marquee", () => {
     expect(label.classList.contains("hover-marquee--scrolling")).toBe(false);
   });
 
+  it("preserves the original hover delay when an active label ref reconnects", () => {
+    const { row, label } = buildRow({ textWidth: 320, labelWidth: 180 });
+    enter(row);
+    settleHoverLayout();
+    vi.advanceTimersByTime(250);
+    enter(row);
+    vi.advanceTimersByTime(249);
+    expect(label.classList.contains("hover-marquee--scrolling")).toBe(false);
+    vi.advanceTimersByTime(1);
+    expect(label.classList.contains("hover-marquee--scrolling")).toBe(true);
+  });
+
   it("keeps short scroll distances readable with a minimum duration", () => {
     const { row, label } = buildRow({ textWidth: 190, labelWidth: 180 });
     enter(row);
