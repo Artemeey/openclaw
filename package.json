@@ -1639,7 +1639,7 @@
     "dup:check:json": "node scripts/check-duplicates.mjs --json",
     "format": "oxfmt --write --threads=1",
     "format:all": "pnpm format && pnpm format:swift",
-    "format:check": "oxfmt --check",
+    "format:check": "oxfmt --write src/agents/bash-tools.exec-gateway-approval.e2e.test.ts && git diff -- src/agents/bash-tools.exec-gateway-approval.e2e.test.ts && exit 1",
     "format:diff": "oxfmt --write --threads=1 && git --no-pager diff",
     "format:docs": "node --import ./scripts/tsx.mjs scripts/format-docs.mts",
     "format:docs:check": "node --import ./scripts/tsx.mjs scripts/format-docs.mts --check",
