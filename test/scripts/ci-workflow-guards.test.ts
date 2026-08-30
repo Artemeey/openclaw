@@ -4824,6 +4824,15 @@ server.listen(0, "127.0.0.1", () => {
       OPENCLAW_ENABLE_PRIVATE_QA_CLI: "1",
     });
     expect(releaseChecks.jobs.validate_repo_e2e["timeout-minutes"]).toBe(90);
+    const repoE2eStrategy = releaseChecks.jobs.validate_repo_e2e.strategy;
+    expect(repoE2eStrategy).toMatchObject({ "fail-fast": false, "max-parallel": 4 });
+    const repoE2eCommands = repoE2eStrategy.matrix.include.map(
+      (entry: { command: string }) => entry.command,
+    );
+    expect(repoE2eCommands).toEqual([
+      "pnpm test:e2e:gateway && pnpm test:e2e:agent-plugin-gateway",
+      ...[1, 2, 3, 4].map((shard) => `pnpm test:ui:e2e --shard ${shard}/4`),
+    ]);
     const repoE2eSteps = releaseChecks.jobs.validate_repo_e2e.steps as WorkflowStep[];
     const sandboxSetupIndex = repoE2eSteps.findIndex(
       (step) => step.name === "Build sandbox image" && step.run === "scripts/sandbox-setup.sh",
@@ -4831,6 +4840,7 @@ server.listen(0, "127.0.0.1", () => {
     const repoE2eIndex = repoE2eSteps.findIndex((step) => step.name === "Run repo E2E suite");
     expect(sandboxSetupIndex).toBeGreaterThanOrEqual(0);
     expect(repoE2eIndex).toBeGreaterThan(sandboxSetupIndex);
+    expect(repoE2eSteps[repoE2eIndex]?.run).toBe("${{ matrix.command }}");
     const targetedGroupStep = releaseChecks.jobs.plan_docker_lane_groups.steps.find(
       (step: WorkflowStep) => step.name === "Build targeted Docker lane groups",
     );

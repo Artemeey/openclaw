@@ -1036,6 +1036,7 @@ jobs:
           done
 
   validate_repo_e2e:
+    name: Repo E2E (${{ matrix.name }})
     needs: validate_selected_ref
     if: inputs.include_repo_e2e && inputs.live_suite_filter == ''
     continue-on-error: ${{ inputs.advisory }}
@@ -1045,6 +1046,23 @@ jobs:
       OPENCLAW_BUILD_PRIVATE_QA: "1"
       OPENCLAW_ENABLE_PRIVATE_QA_CLI: "1"
       OPENCLAW_VITEST_MAX_WORKERS: "2"
+    # Gateway and serial Chromium coverage cannot share one 90-minute budget.
+    # Keep every suite, with the same duration-weighted UI shards used by CI.
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - name: gateway-and-plugins
+            command: pnpm test:e2e:gateway && pnpm test:e2e:agent-plugin-gateway
+          - name: control-ui-1
+            command: pnpm test:ui:e2e --shard 1/4
+          - name: control-ui-2
+            command: pnpm test:ui:e2e --shard 2/4
+          - name: control-ui-3
+            command: pnpm test:ui:e2e --shard 3/4
+          - name: control-ui-4
+            command: pnpm test:ui:e2e --shard 4/4
     steps:
       - name: Checkout selected ref
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1075,7 +1093,7 @@ jobs:
         env:
           OPENCLAW_E2E_WORKERS: "2"
           OPENCLAW_E2E_USE_PREBUILT_DIST: "1"
-        run: pnpm test:e2e
+        run: ${{ matrix.command }}
 
   validate_special_e2e:
     needs: validate_selected_ref
