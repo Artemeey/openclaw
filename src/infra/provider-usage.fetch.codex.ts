@@ -68,20 +68,71 @@ function formatWindowDuration(seconds: number): string {
   return `${minutes}m`;
 }
 
+type RateLimitLabels = {
+  fullLabel: string;
+  groupLabel: string;
+  windowPrefix?: string;
+};
+
+function normalizeRateLimitLabel(value: string | undefined): string | undefined {
+  const normalized = value?.replace(/[_-]+/gu, " ").replace(/\s+/gu, " ").trim();
+  return normalized || undefined;
+}
+
+function resolveAdditionalRateLimitLabels(
+  limitName: string | undefined,
+  meteredFeature: string | undefined,
+): RateLimitLabels | undefined {
+  const fullLabel = normalizeRateLimitLabel(limitName ?? meteredFeature);
+  if (!fullLabel) {
+    return undefined;
+  }
+  const featureLabel = normalizeRateLimitLabel(meteredFeature);
+  const featurePrefix = "codex ";
+  if (!featureLabel?.toLowerCase().startsWith(featurePrefix)) {
+    return { fullLabel, groupLabel: fullLabel };
+  }
+  const featureVariant = featureLabel.slice(featurePrefix.length);
+  const suffix = ` ${featureVariant}`;
+  if (!featureVariant || !fullLabel.toLowerCase().endsWith(suffix.toLowerCase())) {
+    return { fullLabel, groupLabel: fullLabel };
+  }
+  const groupLabel = fullLabel.slice(0, -suffix.length).trim();
+  // Split a named variant only when limit_name supplies a broader family.
+  // Bare labels such as codex_other remain one honest quota family.
+  if (!groupLabel || groupLabel.toLowerCase() === "codex") {
+    return { fullLabel, groupLabel: fullLabel };
+  }
+  return {
+    fullLabel,
+    groupLabel,
+    windowPrefix: fullLabel.slice(groupLabel.length).trim(),
+  };
+}
+
 function appendRateLimitWindows(
   windows: UsageWindow[],
   rawRateLimit: unknown,
-  limitName?: string,
+  labels?: RateLimitLabels,
 ): void {
   const rateLimit = asOptionalRecord(rawRateLimit);
-  const prefix = limitName?.replace(/[_-]+/gu, " ").replace(/\s+/gu, " ").trim();
-  const label = (windowLabel: string) => (prefix ? `${prefix} · ${windowLabel}` : windowLabel);
+  const windowFields = (windowLabel: string) => ({
+    label: labels ? `${labels.fullLabel} · ${windowLabel}` : windowLabel,
+    ...(labels
+      ? {
+          groupLabel: labels.groupLabel,
+          windowLabel: labels.windowPrefix
+            ? `${labels.windowPrefix} · ${windowLabel}`
+            : windowLabel,
+        }
+      : {}),
+  });
   const primary = asOptionalRecord(rateLimit?.primary_window);
   if (primary) {
     const limitSeconds = readFiniteNumber(primary.limit_window_seconds) ?? 10_800;
     const resetAt = readFiniteNumber(primary.reset_at);
     windows.push({
-      label: label(formatWindowDuration(limitSeconds)),
+      ...windowFields(formatWindowDuration(limitSeconds)),
       usedPercent: clampPercent(readFiniteNumber(primary.used_percent) ?? 0),
       resetAt: resetAt ? resetAt * 1000 : undefined,
     });
@@ -91,14 +142,13 @@ function appendRateLimitWindows(
   if (secondary) {
     const limitSeconds = readFiniteNumber(secondary.limit_window_seconds) ?? 86_400;
     const resetAt = readFiniteNumber(secondary.reset_at);
+    const windowLabel = resolveSecondaryWindowLabel({
+      windowHours: Math.round(limitSeconds / 3600),
+      primaryResetAt: readFiniteNumber(primary?.reset_at),
+      secondaryResetAt: resetAt,
+    });
     windows.push({
-      label: label(
-        resolveSecondaryWindowLabel({
-          windowHours: Math.round(limitSeconds / 3600),
-          primaryResetAt: readFiniteNumber(primary?.reset_at),
-          secondaryResetAt: resetAt,
-        }),
-      ),
+      ...windowFields(windowLabel),
       usedPercent: clampPercent(readFiniteNumber(secondary.used_percent) ?? 0),
       resetAt: resetAt ? resetAt * 1000 : undefined,
     });
@@ -153,13 +203,14 @@ export async function fetchCodexUsage(
     if (!additional) {
       continue;
     }
-    const limitName =
-      typeof additional.limit_name === "string"
-        ? additional.limit_name
-        : typeof additional.metered_feature === "string"
-          ? additional.metered_feature
-          : undefined;
-    appendRateLimitWindows(windows, additional.rate_limit, limitName);
+    const limitName = typeof additional.limit_name === "string" ? additional.limit_name : undefined;
+    const meteredFeature =
+      typeof additional.metered_feature === "string" ? additional.metered_feature : undefined;
+    appendRateLimitWindows(
+      windows,
+      additional.rate_limit,
+      resolveAdditionalRateLimitLabels(limitName, meteredFeature),
+    );
   }
 
   const plan = typeof data.plan_type === "string" ? data.plan_type : undefined;

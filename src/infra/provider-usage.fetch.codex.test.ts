@@ -159,6 +159,22 @@ describe("fetchCodexUsage", () => {
               },
             },
           },
+          {
+            limit_name: "GPT 5.3 Codex Spark",
+            metered_feature: "codex_spark",
+            rate_limit: {
+              primary_window: {
+                limit_window_seconds: 18_000,
+                used_percent: 20,
+                reset_at: 1_700_001_800,
+              },
+              secondary_window: {
+                limit_window_seconds: 604_800,
+                used_percent: 30,
+                reset_at: 1_700_604_800,
+              },
+            },
+          },
         ],
       }),
     );
@@ -166,7 +182,27 @@ describe("fetchCodexUsage", () => {
     const result = await fetchCodexUsage("token", undefined, 5000, mockFetch);
     expect(result.windows).toEqual([
       { label: "5h", usedPercent: 8, resetAt: 1_700_000_000_000 },
-      { label: "codex other · 15m", usedPercent: 70, resetAt: 1_700_000_900_000 },
+      {
+        label: "codex other · 15m",
+        groupLabel: "codex other",
+        windowLabel: "15m",
+        usedPercent: 70,
+        resetAt: 1_700_000_900_000,
+      },
+      {
+        label: "GPT 5.3 Codex Spark · 5h",
+        groupLabel: "GPT 5.3 Codex",
+        windowLabel: "Spark · 5h",
+        usedPercent: 20,
+        resetAt: 1_700_001_800_000,
+      },
+      {
+        label: "GPT 5.3 Codex Spark · Week",
+        groupLabel: "GPT 5.3 Codex",
+        windowLabel: "Spark · Week",
+        usedPercent: 30,
+        resetAt: 1_700_604_800_000,
+      },
     ]);
   });
 
