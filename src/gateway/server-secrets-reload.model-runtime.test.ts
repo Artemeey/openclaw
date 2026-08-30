@@ -1,3 +1,4 @@
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import { getRuntimeAuthProfileStoreCredentialsRevision } from "../agents/auth-profiles/runtime-snapshots.js";
@@ -9,6 +10,7 @@ import {
 } from "../agents/prepared-model-runtime.js";
 import { resetPreparedModelRuntimeSnapshotsForTest } from "../agents/prepared-model-runtime.test-support.js";
 import { writeConfigFile } from "../config/config.js";
+import { migratePersistedImplicitMainRoster } from "../config/legacy.roster.js";
 import { getRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { preparePluginMetadata } from "../plugins/plugin-metadata-collection.js";
@@ -91,8 +93,16 @@ afterEach(async () => {
   await state.cleanup();
 });
 
-async function coldRuntime(clients: SharedGatewayAuthClient[] = [], config = sourceConfig()) {
+async function coldRuntime(
+  clients: SharedGatewayAuthClient[] = [],
+  config: OpenClawConfig = sourceConfig(),
+) {
   await state.writeConfig(config);
+  const pluginMetadata = preparePluginMetadata({
+    config,
+    workspaceDir: state.workspaceDir,
+    allowCurrent: false,
+  });
   const initial = await prepareSecretsRuntimeSnapshot({
     config,
     allowUnavailableSecretOwners: true,
@@ -107,11 +117,6 @@ async function coldRuntime(clients: SharedGatewayAuthClient[] = [], config = sou
     ]),
   );
   activateSecretsRuntimeSnapshot(initial);
-  const pluginMetadata = preparePluginMetadata({
-    config: requireRuntimeConfig(),
-    workspaceDir: state.workspaceDir,
-    allowCurrent: false,
-  });
   await refreshPreparedModelRuntimeSnapshots(requireRuntimeConfig(), {
     catalogMode: "static",
     gatewayLifecycle: true,
@@ -197,26 +202,40 @@ describe("secret reload model-runtime publication", () => {
     );
   });
 
-  it("restores the authoritative runtime model config after a publication failure", async () => {
-    const { reload } = await coldRuntime();
-    vi.spyOn(providerCatalog, "prepareImplicitProviderStaticCatalog").mockRejectedValueOnce(
-      new Error("catalog build failed"),
-    );
+  it.each([false, true])(
+    "restores the authoritative runtime model config after a publication failure (upgraded roster: %s)",
+    async (upgradedRoster) => {
+      const baseConfig = sourceConfig();
+      const config = upgradedRoster
+        ? (migratePersistedImplicitMainRoster({
+            ...baseConfig,
+            agents: {
+              ...baseConfig.agents,
+              entries: { main: { default: true }, ops: {} },
+            },
+          }).config as OpenClawConfig)
+        : baseConfig;
+      const { reload, pluginMetadata } = await coldRuntime([], config);
+      vi.spyOn(providerCatalog, "prepareImplicitProviderStaticCatalog").mockRejectedValueOnce(
+        new Error("catalog build failed"),
+      );
 
-    await expect(reload()).rejects.toThrow("catalog build failed");
+      await expect(reload()).rejects.toThrow("catalog build failed");
 
-    const current = requireRuntimeConfig();
-    const published = await prepareModelRuntimeSnapshot({
-      config: current,
-      agentId: "main",
-      agentDir: state.agentDir(),
-    });
-    expect(published.config).toBe(current);
-    // The canonical restore retains this now-resolved Ref, rather than the cold predecessor bytes.
-    expect(current.models?.providers?.["recoverable-fixture"]?.apiKey).toBe(
-      "recovered-fixture-key",
-    );
-  });
+      const current = requireRuntimeConfig();
+      const published = await prepareModelRuntimeSnapshot({
+        config: current,
+        agentId: "main",
+        agentDir: state.agentDir(),
+      });
+      expect(published.config).toBe(current);
+      expect(published.metadataSnapshot).toBe(pluginMetadata.workspaces.get(state.workspaceDir));
+      // The canonical restore retains this now-resolved Ref, rather than the cold predecessor bytes.
+      expect(current.models?.providers?.["recoverable-fixture"]?.apiKey).toBe(
+        "recovered-fixture-key",
+      );
+    },
+  );
 
   it("observes model rejection when activation throws after starting publication", async () => {
     const { reload, activator } = await coldRuntime();
@@ -300,7 +319,10 @@ describe("secret reload model-runtime publication", () => {
       try {
         await started.promise;
         const next = structuredClone(config);
-        next.models.providers["recoverable-fixture"].baseUrl = "https://newer.example/v1";
+        expectDefined(
+          next.models?.providers?.["recoverable-fixture"],
+          "recoverable model provider fixture",
+        ).baseUrl = "https://newer.example/v1";
         await writeConfigFile(next);
         const current = requireRuntimeConfig();
         expect(current.models?.providers?.["recoverable-fixture"]?.baseUrl).toBe(

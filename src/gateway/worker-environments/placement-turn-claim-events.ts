@@ -1,5 +1,5 @@
+import type { ProviderModelRef } from "@openclaw/model-catalog-core/model-catalog-refs";
 import type { OperationalRunInstanceRef } from "../../agents/admitted-run-context.js";
-import type { ModelRef } from "../../agents/model-ref-shared.js";
 import type { ExecutionIdentityAdmissionToken } from "../../audit/execution-identity-admission.js";
 import type { PrepareAssistantTranscriptMessage } from "../../config/sessions/transcript-assistant-delivery.js";
 import {
@@ -64,7 +64,7 @@ type BoundWorkerTurnOwner = {
     prepareAssistantTranscriptMessage?: PrepareAssistantTranscriptMessage;
     scope?: GatewayRootWorkAdmissionContinuationScope;
     store: WorkerTurnExecutionIdentityStore;
-    expectedInitialModel?: Readonly<ModelRef>;
+    expectedInitialModel?: Readonly<ProviderModelRef>;
   };
 };
 
@@ -168,7 +168,7 @@ export function bindWorkerTurnAdmission(
   claim: WorkerSessionTurnClaim,
   operationalRunInstance: OperationalRunInstanceRef,
   options?: {
-    expectedInitialModel?: Readonly<ModelRef>;
+    expectedInitialModel?: Readonly<ProviderModelRef>;
     prepareAssistantTranscriptMessage?: PrepareAssistantTranscriptMessage;
   },
 ): void {

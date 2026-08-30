@@ -140,7 +140,10 @@ function resolveModelManifestNormalizationContext(
     return context;
   }
   const current =
-    !owner && !scoped && !runtimeGeneration && params.workspaceDir
+    !owner &&
+    !scoped &&
+    !runtimeGeneration &&
+    (params.workspaceDir || params.manifestPlugins !== undefined || params.pluginMetadataSnapshot)
       ? undefined
       : getCurrentPluginMetadataSnapshot({
           config: params.cfg,

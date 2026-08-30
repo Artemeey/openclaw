@@ -96,7 +96,7 @@ function createPreparedDispatchRuntime(
   const config = overrides.config ?? {
     channels: { telegram: { botToken: "resolved-telegram-token" } },
     agents: {
-      defaults: { userTimezone: "America/New_York" },
+      defaults: { model: "openai/gpt-4o-mini", userTimezone: "America/New_York" },
       list: [{ id: "main", default: true }],
     },
   };
