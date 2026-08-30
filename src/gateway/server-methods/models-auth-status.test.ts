@@ -11,6 +11,7 @@ import {
   replaceRuntimeAuthProfileStoreSnapshots,
   type AuthProfileStore,
 } from "../../agents/auth-profiles.js";
+import type { RuntimeAuthProfileStore } from "../../agents/auth-profiles/types.js";
 import { NON_ENV_SECRETREF_MARKER } from "../../agents/model-auth-markers.js";
 import type { UsageSummary } from "../../infra/provider-usage.types.js";
 import { resolveInstalledPluginIndexPolicyHash } from "../../plugins/installed-plugin-index-policy.js";
@@ -237,10 +238,10 @@ function createOrderOptions(
 }
 
 const requireRecord = createRequireRecord("record", "expected-non-array-record");
-let preparedAuthStore: AuthProfileStore = { version: 1, profiles: {} };
+let preparedAuthStore: RuntimeAuthProfileStore = { version: 1, profiles: {} };
 let preparedMetadataSnapshot: unknown;
 
-function setPreparedAuthStore(store: AuthProfileStore): void {
+function setPreparedAuthStore(store: RuntimeAuthProfileStore): void {
   preparedAuthStore = store;
   replaceRuntimeAuthProfileStoreSnapshots([{ agentDir: "/tmp/agent", store }]);
 }
