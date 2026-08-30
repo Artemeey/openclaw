@@ -1,11 +1,5 @@
-import {
-  ErrorCodes,
-  errorShape,
-  type ErrorShape,
-  type SessionsPatchParams,
-} from "../../../packages/gateway-protocol/src/index.js";
+import type { SessionsPatchParams } from "../../../packages/gateway-protocol/src/index.js";
 import type { SessionEntry } from "../../config/sessions.js";
-import { SESSION_LIFECYCLE_CHANGED_ERROR_REASON } from "../../config/sessions/lifecycle.js";
 import { sessionToolOverridesEqual } from "../session-tool-overrides.js";
 
 export function resolveSessionPatchExpectationError(
@@ -50,10 +44,4 @@ export function sessionPatchTargetIdentity(patch: SessionsPatchParams) {
       : {}),
     expectedMarkedUnreadAt: patch.expectedMarkedUnreadAt,
   };
-}
-
-export function sessionChangedError(key: string): ErrorShape {
-  return errorShape(ErrorCodes.INVALID_REQUEST, `Session ${key} changed before patch. Retry.`, {
-    details: { reason: SESSION_LIFECYCLE_CHANGED_ERROR_REASON },
-  });
 }
