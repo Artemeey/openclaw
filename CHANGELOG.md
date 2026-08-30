@@ -287,7 +287,7 @@
 - **Swabble status config:** honor the global `--config` path when reading service status instead of silently using the default configuration.
 - **ClawHub retry timing:** reject fractional delay-seconds and calendar-normalized invalid Retry-After dates so runtime and release reads stay on their bounded fallback schedule. (#105479) Thanks @qingminlong.
 - **Cron delivery status:** keep successful isolated agent turns at `status=ok` when downstream delivery fails, while preserving the send failure separately in delivery state and run logs. (#105215) Thanks @Alix-007, @needtocalmdown, and @vincentkoc.
-- **Installed plugin loading:** make native-module fallback use jiti's transform path instead of retrying the same synchronous ESM load, preventing Node 24 startup races when official plugins import SDK contract modules. Thanks @vincentkoc.
+- **Plugin SDK:** restore shipped `resolveStorePath`, `resolvePluginProviders`, and thinking-catalog `loadModelCatalog` contracts; use jiti transforms for native-module fallback to prevent Node 24 plugin startup races. Thanks @vincentkoc.
 - **Plugin session catalogs:** reject unknown catalog filters, report catalogs as plugin capabilities, and preserve them in SDK registration captures instead of silently returning empty results or classifying catalog-only plugins as capability-free. Thanks @vincentkoc.
 - **Plugin inspection:** show the owning package's install provenance in CLI and chat inspection, including child plugins contributed by a package, without borrowing records when package ownership is ambiguous. (#133140)
 - **Gateway service audit:** treat POSIX shell `-c` wrappers as opaque for the gateway-subcommand check, avoiding false missing-command warnings for shell-wrapped macOS LaunchAgents without parsing inner commands or ports. Fixes #81751. (#81778) Thanks @liaoandi.
@@ -517,7 +517,7 @@
 
 ### Complete contribution record
 
-This audited record covers the complete b81666ca6af25c86cc099983a4358cdc5ea9ced8..061bffdcabc5b71ef153e3b1fd116a4f7890a089 history: 16,961 in-range PRs + 0 retained seed-only PRs = 16,961 unique PRs. The generation manifest also supplies direct commits as editorial input; the grouped notes above prioritize user impact.
+This audited record covers the complete b81666ca6af25c86cc099983a4358cdc5ea9ced8..e1199b107f435d97563617efe1080862c5713b7f history: 16,962 in-range PRs + 0 retained seed-only PRs = 16,962 unique PRs. The generation manifest also supplies direct commits as editorial input; the grouped notes above prioritize user impact.
 
 Shipped baseline exclusions: v2026.7.1 (92 PRs: #82366, #88207, #90145, #90263, #91013, #91685, #98021, #98098, #98143, #98620, #98644, #99756, #99803, #99960, #100296, #100648, #100857, #101079, #101685, #101728, #102087, #102289, #102344, #102444, #102600, #102610, #102732, #102780, #102858, #102873, #102896, #102948, #102980, #103070, #103095, #103132, #103157, #103163, #103222, #103244, #103281, #103467, #103549, #103556, #103581, #103596, #103608, #103635, #103650, #103654, #103664, #103680, #103681, #103685, #103695, #103718, #103725, #103760, #103775, #103861, #103906, #103916, #103923, #103946, #103952, #103965, #104000, #104162, #104186, #104230, #104433, #104441, #104491, #104504, #104529, #104555, #104706, #104778, #104848, #104892, #104905, #104956, #104957, #105055, #105401, #105405, #105444, #105488, #105493, #105500, #105518, #106065).
 
@@ -17484,3 +17484,4 @@ Shipped baseline exclusions: v2026.7.1 (92 PRs: #82366, #88207, #90145, #90263, 
 - **PR #124471** Related #124394. Thanks @MrSwagatRathod and @obviyus and @yetval.
 - **PR #133308**
 - **PR #133454**
+- **PR #133471**
