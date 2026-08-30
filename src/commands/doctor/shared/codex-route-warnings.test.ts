@@ -460,7 +460,12 @@ describe("collectCodexRouteWarnings", () => {
         },
         entries: {
           coder: {
-            params: { topP: 0.8, fastMode: { enabled: true }, temperature: 0.6 },
+            params: {
+              topP: 0.8,
+              fastMode: { enabled: true },
+              fastAutoOnSeconds: 30,
+              temperature: 0.6,
+            },
             models: {
               "openai/gpt-5.6-sol": {
                 params: { fast_mode: true, temperature: 0.1, thinking: "medium", topK: 40 },
@@ -501,7 +506,8 @@ describe("collectCodexRouteWarnings", () => {
       "agents.entries.coder.models.openai/gpt-5.6-sol.params.topK",
     );
     expect(result.warnings.join("\n")).toContain("agents.entries.coder.params.temperature");
-    expect(result.warnings.join("\n")).not.toContain("agents.defaults.params.thinking");
+    expect(result.warnings.join("\n")).toContain("agents.defaults.params.thinking");
+    expect(result.warnings.join("\n")).toContain("agents.entries.coder.params.fastAutoOnSeconds");
     expect(result.warnings.join("\n")).toContain("agents.entries.coder.params.fastMode");
     expect(result.warnings.join("\n")).not.toContain(
       "agents.entries.coder.models.openai/gpt-5.6-sol.params.thinking",

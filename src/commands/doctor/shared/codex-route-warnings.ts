@@ -233,7 +233,7 @@ function collectCodexModelParamHits(
       sources,
     )) {
       const sourcePath = sourcePaths[sourceIndex];
-      if (!sourcePath || isAgentRuntimeModelParam(effectiveKey, value)) {
+      if (!sourcePath || (sourceIndex === 1 && isAgentRuntimeModelParam(effectiveKey, value))) {
         continue;
       }
       const path = `${sourcePath}.${key}`;
