@@ -1181,7 +1181,7 @@ final class ChatCommandOutboxStoreTests: ClientDatabaseTestSuite, @unchecked Sen
         let claimedCommand = try #require(await claimed.store(gatewayID: "gw-a").loadCommands().first)
         #expect(claimedCommand.status == .failed)
         #expect(claimedCommand.lastError == OpenClawChatSQLiteTranscriptCache.outboxSettingsUpgradeRequiredError)
-        #expect(claimedCommand.expectedSessionSettings == nil)
+        #expect(claimedCommand.sendContext?.expectedSessionSettings == nil)
         try claimed.close()
 
         try withRawDatabase(at: stateURL) { raw in
@@ -1201,7 +1201,7 @@ final class ChatCommandOutboxStoreTests: ClientDatabaseTestSuite, @unchecked Sen
         let retried = try OpenClawClientDatabases(directoryURL: directory)
         let retriedCommand = try #require(await retried.store(gatewayID: "gw-a").loadCommands().first)
         #expect(retriedCommand.status == .failed)
-        #expect(retriedCommand.expectedSessionSettings == nil)
+        #expect(retriedCommand.sendContext?.expectedSessionSettings == nil)
     }
 
     @Test func `pre v7 upgrade reopens and fences a settings bound retry`() async throws {
