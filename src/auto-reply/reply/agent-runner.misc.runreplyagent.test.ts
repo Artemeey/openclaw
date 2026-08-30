@@ -17,7 +17,7 @@ import {
   type TestModelFallbackRunnerParams,
 } from "../../agents/test-helpers/model-fallback-runner.test-support.js";
 import type { InboundEventKind } from "../../channels/inbound-event/kind.js";
-import { clearRuntimeConfigSnapshot } from "../../config/config.js";
+import { clearRuntimeConfigSnapshot, setRuntimeConfigSnapshot } from "../../config/config.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { loadSessionEntry, replaceSessionEntry } from "../../config/sessions/session-accessor.js";
@@ -624,6 +624,26 @@ describe("runReplyAgent auto-compaction token update", () => {
       compactionCount: 0,
     };
     const prompt = "What is two plus two? Answer in one short sentence without tools.";
+    const config: OpenClawConfig = {
+      models: {
+        providers: {
+          anthropic: {
+            baseUrl: "https://example.test",
+            models: [
+              {
+                id: "claude-opus-4-6",
+                name: "Test model",
+                contextTokens: 32_768,
+                reasoning: false,
+                input: ["text"],
+                maxTokens: 8_192,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              },
+            ],
+          },
+        },
+      },
+    };
     registerMemoryFlushPlanResolverForTest(({ cfg, contextWindowTokens }) => {
       expect(cfg?.models?.providers?.anthropic?.models).toMatchObject([
         { id: "claude-opus-4-6", contextTokens: 32_768 },
@@ -650,7 +670,10 @@ describe("runReplyAgent auto-compaction token update", () => {
       },
     });
     runEmbeddedAgentMock.mockImplementation(
-      async (params: { trigger?: string; prompt?: string }) => {
+      async (params: { trigger?: string; prompt?: string; config?: OpenClawConfig }) => {
+        expect(params.config?.models?.providers?.anthropic?.models).toEqual(
+          config.models?.providers?.anthropic?.models,
+        );
         if (params.trigger === "memory") {
           await replaceTranscriptEvents(scope, [terminalEvent(7_039, 34)]);
           return {
@@ -663,10 +686,11 @@ describe("runReplyAgent auto-compaction token update", () => {
       },
     );
     try {
+      // Memory-flush persistence reads runtime config again; share its authoritative source
+      // with the queued turn so the selected model cannot escape into real catalog discovery.
+      setRuntimeConfigSnapshot(config, config);
       await replaceSessionEntry(scope, sessionEntry);
       await replaceTranscriptEvents(scope, [terminalEvent(10_920, 10)]);
-      // Store preparation can populate the shared test config snapshot.
-      clearRuntimeConfigSnapshot();
       const result = await createBaseRun({
         followup: { prompt },
         run: {
@@ -676,26 +700,7 @@ describe("runReplyAgent auto-compaction token update", () => {
           sessionFile: path.join(tmp, "session.jsonl"),
           workspaceDir: tmp,
           model: "claude-opus-4-6",
-          config: {
-            models: {
-              providers: {
-                anthropic: {
-                  baseUrl: "https://example.test",
-                  models: [
-                    {
-                      id: "claude-opus-4-6",
-                      name: "Test model",
-                      contextTokens: 32_768,
-                      reasoning: false,
-                      input: ["text"],
-                      maxTokens: 8_192,
-                      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                    },
-                  ],
-                },
-              },
-            },
-          },
+          config,
         },
         reply: {
           commandBody: prompt,
