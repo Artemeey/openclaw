@@ -21,6 +21,7 @@ import {
   setAuthProfileOrder,
 } from "../../agents/auth-profiles.js";
 import { getRuntimeExternalCliProfileIds } from "../../agents/auth-profiles/runtime-external-profile-references.js";
+import { resolveInheritedAuthProfileWriteAgentDir } from "../../agents/legacy-inherited-auth-dir.js";
 import {
   clearCurrentProviderAuthState,
   warmCurrentProviderAuthStateOffMainThread,
@@ -321,7 +322,11 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
         throw new AuthProfileOrderChangedError();
       }
       const updated = await setAuthProfileOrder({
-        agentDir: preparedSnapshot.agentDir,
+        agentDir: resolveInheritedAuthProfileWriteAgentDir(
+          preparedSnapshot.config,
+          scope.agentId,
+          preparedSnapshot.agentDir,
+        ),
         ...(preparedSnapshot.inheritedAuthDir
           ? { inheritedAuthDir: preparedSnapshot.inheritedAuthDir }
           : {}),

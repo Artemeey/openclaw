@@ -277,6 +277,31 @@ describe("buildModelProviderCards", () => {
     expect(firstCard(cards).profileOrderLockedProviders).toEqual(["openai"]);
   });
 
+  it("projects auth-config priority locks onto the owning card", () => {
+    const cards = buildModelProviderCards({
+      ...EMPTY_INPUT,
+      authStatus: authStatus([
+        {
+          provider: "openai",
+          authProvider: "openai",
+          displayName: "OpenAI",
+          status: "ok",
+          profiles: [
+            { profileId: "p1", type: "oauth", status: "ok", source: "saved" },
+            { profileId: "p2", type: "oauth", status: "ok", source: "saved" },
+          ],
+          profileOrder: ["p1"],
+          profileOrderLocked: "auth-config",
+        },
+      ]),
+    });
+
+    expect(firstCard(cards)).toMatchObject({
+      profileOrders: { openai: ["p1"] },
+      profileOrderLockedProviders: ["openai"],
+    });
+  });
+
   it("keeps a credential-less missing route visible beside CLI OAuth", () => {
     const cards = buildModelProviderCards({
       ...EMPTY_INPUT,
