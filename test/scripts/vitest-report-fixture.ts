@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnOwnedVitestProcess } from "../../scripts/lib/vitest-process.mts";
-import { waitForFile } from "../helpers/process-wait.js";
+import { waitForPidFile } from "../helpers/process-wait.js";
 
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const configs = [
@@ -80,9 +80,11 @@ export function createVitestReportFixture(root: string, evidence = path.join(roo
     OPENCLAW_VITEST_NO_OUTPUT_RETRY: "0",
     OPENCLAW_VITEST_NO_OUTPUT_TIMEOUT_MS: "20000",
   };
-  for (const [key, value] of Object.entries(env))
-    if (value?.startsWith(root) && key !== "OPENCLAW_CONFIG_PATH")
+  for (const [key, value] of Object.entries(env)) {
+    if (value?.startsWith(root) && key !== "OPENCLAW_CONFIG_PATH") {
       fs.mkdirSync(value, { recursive: true });
+    }
+  }
   write(env.OPENCLAW_CONFIG_PATH!, "{}");
 
   return async (
@@ -139,11 +141,12 @@ ${index === 0 ? "test('alpha/two',()=>expect(2).toBe(2));" : "test.skip('beta/sk
         "extensions/telegram/src/owned-one.test.ts",
         "extensions/telegram/src/owned-two.test.ts",
       ];
-      for (const [i, file] of files.entries())
+      for (const [i, file] of files.entries()) {
         write(
           path.join(root, file),
           `import {test,expect} from 'vitest';test('chunk/${i}',()=>expect(1).toBe(1));`,
         );
+      }
       write(
         path.join(root, "test/vitest/vitest.extension-telegram.config.ts"),
         `import fs from 'node:fs';const file=process.env.OPENCLAW_VITEST_INCLUDE_FILE;export default {root:${JSON.stringify(root)},cacheDir:${JSON.stringify(path.join(root, "vite-chunks"))},test:{name:'chunks',include:file?JSON.parse(fs.readFileSync(file,'utf8')):${JSON.stringify(files)},pool:'forks',maxWorkers:1,cache:false,experimental:{fsModuleCache:false}}};`,
@@ -158,18 +161,27 @@ ${index === 0 ? "test('alpha/two',()=>expect(2).toBe(2));" : "test.skip('beta/sk
       "--configLoader=runner",
       mode === "dotted" ? `--outputFile.json=${output}` : `--outputFile=${output}`,
     ];
-    if (options.report === false) args.splice(0, args.length, "--configLoader=runner");
+    if (options.report === false) {
+      args.splice(0, args.length, "--configLoader=runner");
+    }
     args.push(...(options.nativeArgs ?? []));
-    if (mode === "dotted") args.push("--reporter", "json");
-    if (["metadata", "coverage-missing"].includes(mode)) args.push("--coverage");
+    if (mode === "dotted") {
+      args.push("--reporter", "json");
+    }
+    if (["metadata", "coverage-missing"].includes(mode)) {
+      args.push("--coverage");
+    }
     if (mode === "publish-write") {
       fs.mkdirSync(output);
       write(path.join(output, "old"), "old");
-    } else if (["missing", "corrupt", "merge-failure", "final-write", "identity"].includes(mode))
+    } else if (["missing", "corrupt", "merge-failure", "final-write", "identity"].includes(mode)) {
       write(output, "old report");
+    }
     let command = [path.join(repoRoot, "scripts/run-vitest.mjs"), "run", ...targets, ...args];
     if (options.entry === "projects" || mode === "overlap") {
-      if (mode === "overlap") targets = [configs[0]!, `./${configs[0]}`];
+      if (mode === "overlap") {
+        targets = [configs[0]!, `./${configs[0]}`];
+      }
       command = [
         "--import",
         path.join(repoRoot, "node_modules/tsx/dist/loader.mjs"),
@@ -239,7 +251,7 @@ ${index === 0 ? "test('alpha/two',()=>expect(2).toBe(2));" : "test.skip('beta/sk
     );
     try {
       if (["cancel", "batch-cancel"].includes(mode)) {
-        await waitForFile(ready, 15000);
+        await waitForPidFile(ready, 15000);
         child.kill("SIGTERM");
       }
       const result = await completion;
@@ -264,7 +276,9 @@ ${index === 0 ? "test('alpha/two',()=>expect(2).toBe(2));" : "test.skip('beta/sk
       return { ...result, stdout, stderr, output, reportSet };
     } finally {
       clearTimeout(timeout);
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+      }
       await completion;
     }
   };

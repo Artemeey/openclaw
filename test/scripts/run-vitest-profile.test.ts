@@ -43,14 +43,15 @@ process.on("SIGTERM", () => {
   fs.writeFileSync(stopped, JSON.stringify({ rootExists: fs.existsSync(root) }));
   process.exit(0);
 });
-setInterval(() => {}, 1000);
+// Bound this fault fixture even if harness cancellation regresses.
+setTimeout(() => process.exit(1), 10_000);
 fs.writeFileSync(receipt + ".tmp", JSON.stringify({ pid: process.pid, root }));
 fs.renameSync(receipt + ".tmp", receipt);`,
     );
     fs.writeFileSync(
       path.join(root, "lifetime.test.ts"),
       `import fs from "node:fs";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { createScriptTestHarness } from ${JSON.stringify(path.join(repoRoot, "test/scripts/test-helpers.ts"))};
 import { isProcessAlive, waitForFile } from ${JSON.stringify(path.join(repoRoot, "test/helpers/process-wait.ts"))};
 const harness = createScriptTestHarness();
@@ -77,14 +78,6 @@ it("observes joined writers before fixture removal", () => {
   if (process.platform !== "win32") {
     expect(JSON.parse(fs.readFileSync(stopped, "utf8")).rootExists).toBe(true);
   }
-});
-// Keep a regression from abandoning this deliberately stalled fixture child.
-afterAll(async () => {
-  if (fs.existsSync(receipt)) {
-    const { pid } = JSON.parse(fs.readFileSync(receipt, "utf8"));
-    if (isProcessAlive(pid)) process.kill(pid, "SIGTERM");
-  }
-  await running?.catch(() => {});
 });`,
     );
     const report = path.join(root, "native.json");
@@ -206,13 +199,12 @@ console.log(JSON.stringify({ tmp: os.tmpdir(), home: os.homedir(), ...Object.fro
         })),
       ),
       { pool: "forks", isolate: false, custom: false, failRun: false, unhandled: true },
-    ].map((testCase) => ({
-      projects: false,
-      failProfile: false,
-      unhandled: false,
-      errorPolicy: "default",
-      ...testCase,
-    })),
+    ].map((testCase) =>
+      Object.assign(
+        { projects: false, failProfile: false, unhandled: false, errorPolicy: "default" },
+        testCase,
+      ),
+    ),
   )(
     "profiles selected $pool runner (isolated: $isolate, custom: $custom, failed: $failRun, projects: $projects, write failure: $failProfile, unhandled: $unhandled, policy: $errorPolicy)",
     async ({ pool, isolate, custom, failRun, projects, failProfile, unhandled, errorPolicy }) => {
@@ -310,7 +302,9 @@ it("retains the selected execution context", async () => {
         "--exclude",
         "cli-excluded.test.ts",
       ];
-      if (projects) args.push("--reporter", "dot", "--reporter", "json");
+      if (projects) {
+        args.push("--reporter", "dot", "--reporter", "json");
+      }
       const result = await runProfileProcess(args, root);
       const reportPath = path.join(root, "report.json");
       const reportText = fs.existsSync(reportPath) ? fs.readFileSync(reportPath, "utf8") : "";
@@ -320,8 +314,12 @@ it("retains the selected execution context", async () => {
       if (shouldFail) {
         expect(result.output.trimEnd()).toMatch(/\[run-vitest-profile\] FAILED \(exit 1\)$/u);
       }
-      if (failRun) expect(result.output).toContain("intentional profiling sibling failure");
-      if (unhandled) expect(result.output).toContain("intentional unhandled profiling workload");
+      if (failRun) {
+        expect(result.output).toContain("intentional profiling sibling failure");
+      }
+      if (unhandled) {
+        expect(result.output).toContain("intentional unhandled profiling workload");
+      }
       const report = JSON.parse(reportText);
       expect(report.numTotalTests).toBe(2);
       expect(report.numFailedTests).toBe(failRun ? 1 : 0);

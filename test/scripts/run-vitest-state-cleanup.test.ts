@@ -1,15 +1,13 @@
-import { execFile } from "node:child_process";
+import { execFile, type ExecException } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { promisify } from "node:util";
 import { afterEach, expect, it, vi } from "vitest";
 import type { JsonTestResults } from "vitest/reporters";
 import packageJson from "../../package.json" with { type: "json" };
 import { spawnOwnedVitestProcess } from "../../scripts/lib/vitest-process.mts";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 
-const execFileAsync = promisify(execFile);
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 const repoRoot = path.resolve(import.meta.dirname, "../..");
 const posixIt = process.platform === "win32" ? it.skip : it;
@@ -19,11 +17,14 @@ const counterfactualFailure = "counterfactual first-file failure after allocatio
 const fixtureTests = [
   [
     "tui-pty-harness.e2e.test.ts",
-    "opens actual fallback SQLite and retains it until the worker finishes",
+    [
+      "opens actual fallback SQLite and retains it until the worker finishes",
+      "opens caller-owned SQLite and retains both handles until the worker finishes",
+    ],
   ],
   [
     "tui-pty-local.e2e.test.ts",
-    "keeps the same worker namespace alive across files and module resets",
+    ["keeps the same worker namespace alive across files and module resets"],
   ],
 ] as const;
 
@@ -36,7 +37,7 @@ function expectFixtureResults(
   expect(report.testResults.map((file) => file.name)).toEqual(
     fixtureTests.map(([filename]) => path.join(testRoot, filename)),
   );
-  for (const [index, [, title]] of fixtureTests.entries()) {
+  for (const [index, [, titles]] of fixtureTests.entries()) {
     const file = report.testResults[index]!;
     const failure =
       index === 0
@@ -47,7 +48,6 @@ function expectFixtureResults(
           ? intentionalFailure
           : undefined;
     const expectedStatus = failure ? "failed" : "passed";
-    expect(file.status, file.name).toBe(expectedStatus);
     expect(file.message, file.name).toBe("");
     expect(
       file.assertionResults.map(({ ancestorTitles, fullName, title, status, failureMessages }) => ({
@@ -58,20 +58,24 @@ function expectFixtureResults(
         failureMessages: failureMessages?.map((message) => message.split("\n")[0]),
       })),
       file.name,
-    ).toEqual([
-      {
-        ancestorTitles: [],
-        fullName: title,
-        title,
-        status: expectedStatus,
-        failureMessages: failure ? [`AssertionError: ${failure}`] : [],
-      },
-    ]);
+    ).toEqual(
+      titles.map((title, testIndex) => {
+        const testFailure = testIndex === titles.length - 1 ? failure : undefined;
+        return {
+          ancestorTitles: [],
+          fullName: title,
+          title,
+          status: testFailure ? "failed" : "passed",
+          failureMessages: testFailure ? [`AssertionError: ${testFailure}`] : [],
+        };
+      }),
+    );
+    expect(file.status, file.name).toBe(expectedStatus);
   }
   const failed = Number(failRun) + Number(failFirstFile);
   expect(report).toMatchObject({
-    numTotalTests: 2,
-    numPassedTests: 2 - failed,
+    numTotalTests: 3,
+    numPassedTests: 3 - failed,
     numFailedTests: failed,
     numPendingTests: 0,
     numTodoTests: 0,
@@ -96,11 +100,17 @@ const cleanupCases = [
     { route, pool: "forks", failRun: false },
     { route, pool: "threads", failRun: true },
   ]),
-].map((testCase) => ({ ...testCase, pauseAfterAck: false }));
-cleanupCases.push({ route: "profile-runner", pool: "forks", failRun: true, pauseAfterAck: true });
+].map((testCase) => Object.assign(testCase, { pauseAfterAck: false, failFirstFile: false }));
+cleanupCases.push({
+  route: "profile-runner",
+  pool: "forks",
+  failRun: true,
+  pauseAfterAck: true,
+  failFirstFile: false,
+});
 
 posixIt.each([
-  ...cleanupCases.map((testCase) => ({ ...testCase, failFirstFile: false })),
+  ...cleanupCases,
   ...["threads", "forks"].map((pool) => ({
     route: "main",
     pool,
@@ -167,6 +177,8 @@ export async function allocateResources() {
 }
 `,
     );
+    // Independent fallback and caller-owned allocations get separate timed cases in
+    // the same file, so file cleanup cannot intervene before both handles are retained.
     fs.writeFileSync(
       path.join(testRoot, fixtureTests[0][0]),
       `import fs from "node:fs";
@@ -174,12 +186,15 @@ import { expect, it } from "vitest";
 import { openOpenClawStateDatabase, closeOpenClawStateDatabaseForTest } from ${databaseModule};
 import { allocateResources } from "../../resources.ts";
 const resources = await allocateResources();
-it(${JSON.stringify(fixtureTests[0][1])}, () => {
+let reopened;
+it(${JSON.stringify(fixtureTests[0][1][0])}, () => {
   const first = openOpenClawStateDatabase();
   expect(first.db.prepare("SELECT count(*) AS count FROM sqlite_schema").get().count).toBeGreaterThan(0);
   closeOpenClawStateDatabaseForTest();
   expect(first.db.isOpen).toBe(false);
-  const reopened = openOpenClawStateDatabase();
+  reopened = openOpenClawStateDatabase();
+});
+it(${JSON.stringify(fixtureTests[0][1][1])}, () => {
   const explicit = openOpenClawStateDatabase({ env: { OPENCLAW_STATE_DIR: ${JSON.stringify(path.dirname(path.dirname(explicitPath)))} } });
   globalThis[Symbol.for("openclaw.stateLeakFixture")] = { reopened, explicit, resources, pid: process.pid };
   fs.writeFileSync(${JSON.stringify(receiptPath)}, JSON.stringify({ path: reopened.path }));
@@ -196,7 +211,7 @@ vi.resetModules();
 const { openOpenClawStateDatabase } = await import(${databaseModule});
 const { allocateResources } = await import("../../resources.ts");
 const resources = await allocateResources();
-it(${JSON.stringify(fixtureTests[1][1])}, () => {
+it(${JSON.stringify(fixtureTests[1][1][0])}, () => {
   expect(process.pid).toBe(previous.pid);
   expect(previous.reopened.db.isOpen).toBe(true);
   expect(previous.explicit.db.isOpen).toBe(true);
@@ -327,15 +342,17 @@ process.exitCode = await runVitestBatch({ config: ${JSON.stringify(configPath)},
                   ...vitestArgs,
                 ];
     try {
-      const result = await execFileAsync(process.execPath, args, { cwd: root, env }).then(
-        ({ stdout, stderr }) => ({ code: 0, output: stdout + stderr }),
-        (error: { code: number; stdout: string; stderr: string }) => ({
-          code: error.code,
-          output: error.stdout + error.stderr,
-        }),
+      const result = await new Promise<{ code: ExecException["code"]; output: string }>(
+        (resolve) => {
+          execFile(process.execPath, args, { cwd: root, env }, (error, stdout, stderr) => {
+            resolve({ code: error ? error.code : 0, output: stdout + stderr });
+          });
+        },
       );
       expect(result.code, result.output).toBe(failRun ? 1 : 0);
-      if (failRun) expect(result.output).toContain(intentionalFailure);
+      if (failRun) {
+        expect(result.output).toContain(intentionalFailure);
+      }
       if (pauseAfterAck) {
         expect(JSON.parse(fs.readFileSync(pauseReceipt, "utf8"))).toEqual({
           paused: true,
@@ -361,11 +378,12 @@ process.exitCode = await runVitestBatch({ config: ${JSON.stringify(configPath)},
           artifacts.some((file) => file.endsWith(".cpuprofile")),
           profileEvidence,
         ).toBe(true);
-        if (route === "profile-runner")
+        if (route === "profile-runner") {
           expect(
             artifacts.some((file) => file.endsWith(".heapprofile")),
             profileEvidence,
           ).toBe(true);
+        }
         for (const artifact of artifacts) {
           const profile = JSON.parse(fs.readFileSync(path.join(profileDir, artifact), "utf8"));
           if (artifact.endsWith(".cpuprofile")) {
@@ -378,8 +396,9 @@ process.exitCode = await runVitestBatch({ config: ${JSON.stringify(configPath)},
           }
         }
       }
-      if (route === "pty")
+      if (route === "pty") {
         expect(fs.readFileSync(mirrorPath, "utf8")).toContain("namespace fixture frame");
+      }
       expect(fs.existsSync(path.dirname(path.dirname(receipt.path)))).toBe(false);
       expect(sibling.prepare("PRAGMA quick_check").get()).toEqual({ quick_check: "ok" });
       expect(fs.existsSync(siblingRoot)).toBe(true);
@@ -401,8 +420,20 @@ process.exitCode = await runVitestBatch({ config: ${JSON.stringify(configPath)},
         expectFixtureResults(report, testRoot, failRun, true);
         expect(() => expectFixtureResults(report, testRoot, failRun)).toThrowError(
           expect.objectContaining({
-            actual: "failed",
-            expected: "passed",
+            actual: expect.arrayContaining([
+              expect.objectContaining({
+                title: fixtureTests[0][1][1],
+                status: "failed",
+                failureMessages: [`AssertionError: ${counterfactualFailure}`],
+              }),
+            ]),
+            expected: expect.arrayContaining([
+              expect.objectContaining({
+                title: fixtureTests[0][1][1],
+                status: "passed",
+                failureMessages: [],
+              }),
+            ]),
             message: expect.stringContaining(path.join(testRoot, fixtureTests[0][0])),
           }),
         );
@@ -445,11 +476,15 @@ posixIt(
       ],
       options: { env: { TMPDIR: root }, stdio: "ignore" },
     });
-    const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+    const closed = new Promise<void>((resolve) => {
+      child.once("close", () => resolve());
+    });
     const nativeKill = process.kill.bind(process);
     const failure = Object.assign(new Error("injected group probe failure"), { code: "EIO" });
     const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
-      if (pid === -child.pid! && signal === 0) throw failure;
+      if (pid === -child.pid! && signal === 0) {
+        throw failure;
+      }
       return nativeKill(pid, signal);
     });
     try {

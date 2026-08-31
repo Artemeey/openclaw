@@ -1,8 +1,9 @@
 // Runs grouped batches through the repository's installed Vitest entrypoint.
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { resolveVitestCliEntry, resolveVitestNodeArgs } from "../run-vitest.mts";
 import { installVitestProcessGroupCleanup } from "../vitest-process-group.mts";
+import { resolveVitestCliEntry } from "./vitest-build-prerequisites.mts";
+import { resolveVitestNodeArgs } from "./vitest-process-env.mts";
 import { spawnOwnedVitestProcess } from "./vitest-process.mts";
 import type { VitestReportOutcome } from "./vitest-report-owner.mts";
 
