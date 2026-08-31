@@ -170,9 +170,23 @@ assert_package_dry_run() {
 dev_channel_args=(--channel dev)
 # Legacy package acceptance permits missing channel persistence; keep its explicit switch.
 if [ "$OPENCLAW_PACKAGE_ACCEPTANCE_LEGACY_COMPAT" != "1" ]; then
-  echo "==> package dry-run channel and one-off tag precedence"
+  echo "==> package dry-run channel capability and one-off tag precedence"
   openclaw config set update.channel dev
-  assert_package_dry_run git dev
+  stored_dev_preview="$(openclaw update --dry-run --json --no-restart)"
+  printf "%s\n" "$stored_dev_preview"
+  stored_dev_route="$(UPDATE_JSON="$stored_dev_preview" node scripts/e2e/lib/update-channel-switch/assertions.mjs resolve-stored-dev-route)"
+  case "$stored_dev_route" in
+    git)
+      dev_channel_args=()
+      ;;
+    package)
+      # Frozen packages before stored-channel git routing still support explicit dev.
+      ;;
+    *)
+      echo "unknown stored dev route: $stored_dev_route" >&2
+      exit 1
+      ;;
+  esac
   assert_package_dry_run git dev --channel dev
   assert_package_dry_run git dev --channel dev --tag beta
   assert_package_dry_run package dev --tag beta

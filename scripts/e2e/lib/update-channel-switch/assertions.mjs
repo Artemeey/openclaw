@@ -9,7 +9,7 @@ const controlUiHtml = "<!doctype html><title>fixture</title>\n";
 
 function usage() {
   console.error(
-    "usage: assertions.mjs <prepare-git-fixture|write-control-ui|assert-update|assert-dry-run|assert-config-channel|assert-status-kind|assert-installed-version> [...]",
+    "usage: assertions.mjs <prepare-git-fixture|write-control-ui|assert-update|assert-dry-run|resolve-stored-dev-route|assert-config-channel|assert-status-kind|assert-installed-version> [...]",
   );
   process.exit(2);
 }
@@ -214,6 +214,28 @@ function assertDryRun(kind, channel) {
   assert.equal(preview.switchToPackage, false);
 }
 
+function resolveStoredDevRoute() {
+  const preview = JSON.parse(process.env.UPDATE_JSON ?? "");
+  assert.equal(preview.dryRun, true);
+  assert.equal(preview.installKind, "package");
+  assert.equal(preview.storedChannel, "dev");
+  assert.equal(preview.effectiveChannel, "dev");
+  assert.equal(preview.switchToPackage, false);
+  if (preview.updateInstallKind === "git") {
+    assert.equal(preview.mode, "git");
+    assert.equal(preview.switchToGit, true);
+    return "git";
+  }
+  if (preview.updateInstallKind === "package") {
+    assert.equal(preview.mode, "npm");
+    assert.equal(preview.switchToGit, false);
+    return "package";
+  }
+  throw new Error(
+    `expected stored dev dry run to advertise git or package routing, got ${String(preview.updateInstallKind)}`,
+  );
+}
+
 function assertStatusKind(kind) {
   const payload = JSON.parse(process.env.STATUS_JSON ?? "");
   if (payload.update?.installKind !== kind) {
@@ -245,6 +267,9 @@ switch (command) {
     break;
   case "assert-dry-run":
     assertDryRun(args[0], args[1]);
+    break;
+  case "resolve-stored-dev-route":
+    console.log(resolveStoredDevRoute());
     break;
   case "assert-status-kind":
     assertStatusKind(args[0]);
