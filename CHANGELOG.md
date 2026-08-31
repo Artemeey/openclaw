@@ -144,6 +144,7 @@ Docs: https://docs.openclaw.ai
 - **Docker sandbox command output:** fail and terminate Docker sandbox operations when stdout/stderr capture breaks instead of returning success with incomplete output. (#100523) Thanks @cxbAsDev.
 - **Background refresh isolation:** keep remote skill-bin refreshes running when one node fails, and contain periodic subagent-sweeper failures without hiding errors from direct callers. (#100393, #100390) Thanks @cxbAsDev.
 - **Skill scan diagnostics:** report directory enumeration failures through the existing resource diagnostics instead of silently dropping affected skills. (#100380) Thanks @wendy-chsy.
+- **Skills refresh:** detect skill roots created after startup, including nested project-agent directories, while keeping ancestor watches scoped to their intended roots.
 - **Exec output sanitization:** remove complete ANSI sequences and render residual C0/C1 controls as visible escapes instead of silently discarding output bytes. (#100327) Thanks @LavyaTandel.
 - **Assistant visible text:** unwrap leaked standalone `<parameter>` tags while preserving their content and literal code/XML examples. (#100302) Thanks @nankingjing.
 - **Android microphone capture:** treat negative `AudioRecord.read` results as fatal shared-session errors so both transcription and Talk capture stop cleanly after device loss. (#100028) Thanks @NianJiuZst.
