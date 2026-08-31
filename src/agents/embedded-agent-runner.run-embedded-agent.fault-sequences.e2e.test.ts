@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { wrapRunWithTestAdmission } from "./admitted-run-context.test-support.js";
+import { wrapRunWithTestPreparedAdmission } from "./admitted-run-context.test-support.js";
 import { ensureAuthProfileStore, saveAuthProfileStore } from "./auth-profiles/store.js";
 import {
   classifyEmbeddedAgentRunResultForModelFallback,
@@ -23,10 +23,6 @@ import {
   installEmbeddedRunnerBaseE2eMocks,
   installEmbeddedRunnerFastRunE2eMocks,
 } from "./test-helpers/embedded-agent-runner-e2e-mocks.js";
-import {
-  captureRoutingDecisionWork,
-  createModelRoutingTestAdmission,
-} from "./test-helpers/model-routing-decision-e2e-fixtures.js";
 
 type ProviderFault =
   | { status: 200; text: string }
@@ -77,6 +73,8 @@ type TestRunEmbeddedAgent = (
 let runEmbeddedAgent: TestRunEmbeddedAgent;
 let runEmbeddedAgentWithPreparedAdmission: ProductionRunEmbeddedAgent;
 let runWithModelFallback: typeof import("./model-fallback-runner.js").runWithModelFallback;
+let captureRoutingDecisionWork: typeof import("./test-helpers/model-routing-decision-e2e-fixtures.js").captureRoutingDecisionWork;
+let createModelRoutingTestAdmission: typeof import("./test-helpers/model-routing-decision-e2e-fixtures.js").createModelRoutingTestAdmission;
 
 beforeAll(async () => {
   vi.resetModules();
@@ -95,8 +93,10 @@ beforeAll(async () => {
 
   runEmbeddedAgentWithPreparedAdmission = (await import("./embedded-agent-runner/run.js"))
     .runEmbeddedAgent;
-  runEmbeddedAgent = wrapRunWithTestAdmission(runEmbeddedAgentWithPreparedAdmission);
+  runEmbeddedAgent = wrapRunWithTestPreparedAdmission(runEmbeddedAgentWithPreparedAdmission);
   ({ runWithModelFallback } = await import("./model-fallback-runner.js"));
+  ({ captureRoutingDecisionWork, createModelRoutingTestAdmission } =
+    await import("./test-helpers/model-routing-decision-e2e-fixtures.js"));
 });
 
 beforeEach(() => {
@@ -363,9 +363,10 @@ async function expectPreparationInvalidationToDropRoutingWork(
       }
       return await realMkdir(target, options);
     });
+    let run: ReturnType<ProductionRunEmbeddedAgent> | undefined;
     try {
       const { decisionWork } = await captureRoutingDecisionWork(async () => {
-        const run = runEmbeddedAgentWithPreparedAdmission({
+        run = runEmbeddedAgentWithPreparedAdmission({
           preparedRunAdmission: preparedAdmission,
           sessionId: `session:${runId}`,
           sessionKey: `agent:test:${runId}`,
@@ -379,7 +380,12 @@ async function expectPreparationInvalidationToDropRoutingWork(
           runId,
           enqueue: async (task) => await task(),
         });
-        await reachedPreparation.promise;
+        await Promise.race([
+          reachedPreparation.promise,
+          run.then(() => {
+            throw new Error("embedded run settled before attempt preparation");
+          }),
+        ]);
         if (mode === "close") {
           preparedAdmission.close();
         } else {
@@ -400,6 +406,8 @@ async function expectPreparationInvalidationToDropRoutingWork(
       releasePreparation.resolve();
       replacementAdmission?.close();
       preparedAdmission.close();
+      // The rejection is observed above; join all run work before restoring its checkpoint.
+      await Promise.allSettled(run ? [run] : []);
       mkdirSpy.mockRestore();
     }
   });
