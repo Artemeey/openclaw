@@ -65,6 +65,7 @@ env:
   OCM_VERSION: v0.2.15
   OCM_LINUX_X64_SHA256: b849b8de5d77e97e0df9319703254ae95e29d7f26a7552ea79bf173ff110ea0a
   KOVA_REPOSITORY: openclaw/Kova
+  KOVA_ARCHIVE_SHA256: 8cb2f4dd90e1bd5a5615d5d14f7766136057c4c5e66d399b5efb4d59a50dee7e
   PERFORMANCE_MODEL_ID: gpt-5.5
   KOVA_SCENARIO_TIMEOUT_MS: "300000"
 
@@ -241,6 +242,7 @@ jobs:
             --retry 8 --retry-max-time 180 --retry-all-errors --retry-connrefused \
             -o "$kova_archive" \
             "https://codeload.github.com/${KOVA_REPOSITORY}/tar.gz/${KOVA_REF}"
+          echo "${KOVA_ARCHIVE_SHA256}  ${kova_archive}" | sha256sum -c -
           tar -xzf "$kova_archive" --strip-components=1 -C "$KOVA_SRC"
           npm --prefix "$KOVA_SRC" ci --ignore-scripts --no-audit --no-fund
           node - "$KOVA_SRC" <<'NODE'
