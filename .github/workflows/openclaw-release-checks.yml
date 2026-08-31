@@ -601,6 +601,7 @@ jobs:
     with:
       ref: ${{ needs.resolve_target.outputs.revision }}
       run_bun_global_install_smoke: true
+      update_baseline_version: 2026.7.1-2
 
   cross_os_release_checks:
     needs: [resolve_target, prepare_release_package]
