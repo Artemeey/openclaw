@@ -228,11 +228,14 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
     }
 
     func patchSessionSettings(
-        sessionKey _: String,
+        sessionKey: String,
         agentID _: String?,
-        patch _: OpenClawChatSessionSettingsPatch) async throws -> OpenClawChatModelPatchResult?
+        patch: OpenClawChatSessionSettingsPatch) async throws -> OpenClawChatModelPatchResult?
     {
         try await self.sessionSettingsPatchHook?()
+        if let model = patch.model {
+            try await self.setSessionModel(sessionKey: sessionKey, model: model)
+        }
         return nil
     }
 
@@ -446,8 +449,8 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
         self.modelPatchGate.continuation.yield(())
     }
 
-    func waitUntilModelPatchStarted() async {
-        await self.modelPatchStarted.wait()
+    func modelPatchHasStarted() async -> Bool {
+        await self.modelPatchStarted.opened()
     }
 
     func setSessionModel(sessionKey _: String, model _: String?) async throws {
@@ -526,7 +529,10 @@ func makeOutboxViewModel(
             activeAgentId: activeAgentID,
             sessionRoutingContract: sessionRoutingContract,
             transcriptCache: transcriptCache,
-            outbox: outbox)
+            outbox: outbox,
+            modelPickerStore: ChatModelPickerStore(
+                defaults: UserDefaults(
+                    suiteName: "ChatViewModelOutboxTests.\(UUID().uuidString)") ?? .standard))
         vm.outboxRetryDelaysMs = retryDelaysMs
         return vm
     }
@@ -1901,6 +1907,9 @@ struct ChatViewModelOutboxTests {
         try await waitUntil("expired-then-retried command drained") {
             await store.loadCommands().isEmpty
         }
+        try await waitUntil("expired-then-retried bubble clears") {
+            await MainActor.run { vm.outboxState(for: messageID) == nil }
+        }
         #expect(await transport.state.sentMessages == ["old message"])
     }
 
@@ -2297,6 +2306,10 @@ actor DeleteGate {
         }
         await withCheckedContinuation { self.waiters.append($0) }
     }
+
+    func opened() -> Bool {
+        self.isOpen
+    }
 }
 
 extension ChatViewModelOutboxTests {
@@ -2517,7 +2530,9 @@ extension ChatViewModelOutboxTests {
         // must honor the same ordering as live sends and hold until the
         // patch resolves, or the run would start on the stale model.
         await MainActor.run { vm.selectModel("anthropic/claude-test") }
-        await transport.waitUntilModelPatchStarted()
+        try await waitUntil("model patch starts before outbox flush") {
+            await transport.modelPatchHasStarted()
+        }
         await transport.goOnline()
         try await Task.sleep(nanoseconds: 100_000_000)
         #expect(await transport.state.sentMessages.isEmpty)
@@ -2541,7 +2556,9 @@ extension ChatViewModelOutboxTests {
             vm.input = "enqueue after model patch"
             vm.send()
         }
-        await transport.waitUntilModelPatchStarted()
+        try await waitUntil("model patch starts before offline enqueue") {
+            await transport.modelPatchHasStarted()
+        }
         try await Task.sleep(for: .milliseconds(50))
         #expect(await store.loadCommands().isEmpty)
 
