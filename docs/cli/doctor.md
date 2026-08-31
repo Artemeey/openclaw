@@ -250,6 +250,8 @@ the container normally.
 
 `openclaw doctor --fix` is the only owner for persistent file-to-SQLite migrations. It validates and claims each recognized source, writes and verifies canonical rows, records a migration receipt, then removes the retired source. Runtime code does not perform lazy imports or fallback reads.
 
+Doctor reports interrupted auth-profile archive recovery even when no new migration remains or you decline another migration. If recovery cannot finish, its warning includes the failure cause and leaves the pending source for recovery; do not delete it to silence the warning.
+
 Agent database schema upgrades are reported with the database path and the observed before and after versions, independently of media rewrites. The media persistence message appears only when transcript sessions or trajectory rows were rewritten and includes both counts. A run that does both reports both; an unchanged rerun reports neither.
 
 Device Pair and Active Memory legacy JSON imports check namespace capacity before writing. If the missing entries do not fit, doctor warns and leaves the source unchanged. These imports also verify that source keys and pre-existing destination keys remain in SQLite before reporting completion and archiving the source. A retention warning keeps the source available for inspection and retry; do not delete it to silence the warning, because it may contain state that SQLite did not retain. Resolve the capacity problem before rerunning `openclaw doctor --fix`.
@@ -462,9 +464,16 @@ it writes the local support report and prints a prefilled issue URL.
 
 `restore` remains the lower-level undo operation. It uses manifest
 `sourcePath -> archivePath` records, moves archived artifacts back only when the
-original path is missing, reports conflicts when both paths exist, and leaves
-the SQLite database in place. When several manifests recorded the same original
-path, restore plans all candidates before moving any of them. Identical archives
+original path is missing, reports conflicts for independently existing originals,
+and leaves the SQLite database in place. Publication is exclusive: a file or
+symbolic link created during verification is not replaced. Restore moves the
+original without copying its contents, and fails without consuming the archive
+if the filesystem cannot publish it safely. Recorded interrupted publications
+can be retried, including with older manifests or after the replacement SQLite
+database has been removed. If restore recreates a missing sessions directory,
+retries repeat its parent-directory durability check before consuming the archive.
+When several manifests recorded the same original path, restore plans all
+candidates before moving any of them. Identical archives
 are safe duplicates, and one nonempty legacy `sessions.json` may supersede empty
 copies created by older writers. Distinct nonempty indexes, distinct transcript
 archives, invalid archives, and archives missing without a recorded prior
