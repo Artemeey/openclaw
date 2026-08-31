@@ -17,6 +17,7 @@ function card(overrides: Partial<ModelProviderCard> = {}): ModelProviderCard {
     profileProviderIds: {},
     profileOrders: {},
     profileOrderStoredProviders: [],
+    profileOrderLockedProviders: [],
     credentialProviderIds: ["openai"],
     logoutTargets: [],
     hasConfigApiKey: false,

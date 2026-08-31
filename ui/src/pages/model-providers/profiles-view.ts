@@ -31,11 +31,30 @@ function profileIdentity(profile: ProviderProfile): string {
   return profile.email || profile.displayName || profile.profileId;
 }
 
+function profileSource(profile: ProviderProfile): string | undefined {
+  switch (profile.source) {
+    case "config":
+      return t("modelProviders.profiles.sourceConfig");
+    case "external":
+      return profile.displayName || t("modelProviders.profiles.sourceExternal");
+    case "inherited":
+      return t("modelProviders.profiles.sourceInherited");
+    case "saved":
+      return t("modelProviders.profiles.sourceSaved");
+    default:
+      return undefined;
+  }
+}
+
 function profileMeta(profile: ProviderProfile): string {
   const parts: string[] = [];
-  if (profile.email && profile.displayName) {
+  const source = profileSource(profile);
+  if (source) {
+    parts.push(source);
+  }
+  if (profile.email && profile.displayName && profile.displayName !== source) {
     parts.push(profile.displayName);
-  } else if (profileIdentity(profile) !== profile.profileId) {
+  } else if (!source && profileIdentity(profile) !== profile.profileId) {
     parts.push(profile.profileId);
   }
   if (profile.lastUsedAt) {
@@ -186,8 +205,8 @@ function startPointerDrag(params: {
       candidate.dataset.profileId === params.sourceId
     ) {
       target = null;
-      for (const row of rowsIn(section, `.${DROP_BEFORE_CLASS}, .${DROP_AFTER_CLASS}`)) {
-        row.classList.remove(DROP_BEFORE_CLASS, DROP_AFTER_CLASS);
+      for (const dropRow of rowsIn(section, `.${DROP_BEFORE_CLASS}, .${DROP_AFTER_CLASS}`)) {
+        dropRow.classList.remove(DROP_BEFORE_CLASS, DROP_AFTER_CLASS);
       }
       return;
     }
@@ -235,10 +254,16 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
   const providers = [
     ...new Set(profiles.map((profile) => card.profileProviderIds[profile.profileId] ?? card.id)),
   ];
+  const lockedProviders = new Set(card.profileOrderLockedProviders);
   const reorderOffered = providers.some((provider) => {
     const order = movableOrder(card, provider, props.profileOrders);
-    return order.length > 1 && order.length === profilesForProvider(card, provider).length;
+    return (
+      !lockedProviders.has(provider) &&
+      order.length > 1 &&
+      order.length === profilesForProvider(card, provider).length
+    );
   });
+  const priorityManaged = providers.some((provider) => lockedProviders.has(provider));
   return html`
     <section class="model-providers__profiles" aria-label=${t("modelProviders.profiles.title")}>
       <div class="model-providers__profiles-heading">
@@ -250,7 +275,11 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
                 ? "modelProviders.profiles.accountOne"
                 : "modelProviders.profiles.accounts",
               { count: String(profiles.length) },
-            )}${reorderOffered ? ` · ${t("modelProviders.profiles.reorderHint")}` : ""}</span
+            )}${reorderOffered
+              ? ` · ${t("modelProviders.profiles.reorderHint")}`
+              : ""}${priorityManaged
+              ? ` · ${t("modelProviders.profiles.priorityManaged")}`
+              : ""}</span
           >
         </span>
         <span class="model-providers__profiles-heading-actions">
@@ -280,7 +309,9 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
             const order = movableOrder(card, provider, props.profileOrders);
             const index = order.indexOf(profile.profileId);
             const complete = order.length === profilesForProvider(card, provider).length;
-            const canMove = props.canMutate && complete && order.length > 1 && index >= 0;
+            const locked = lockedProviders.has(provider);
+            const canMove =
+              props.canMutate && !locked && complete && order.length > 1 && index >= 0;
             const identity = profileIdentity(profile);
             const logoutLabel = t("modelProviders.logout.actionFor", { account: identity });
             const logoutBlocked = !props.canMutate
@@ -288,9 +319,11 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
               : logoutLabel;
             const reorderBlocked = !props.canMutate
               ? (props.mutationBlockedReason ?? "")
-              : !complete
-                ? t("modelProviders.profiles.partialOrder")
-                : "";
+              : locked
+                ? t("modelProviders.profiles.priorityManaged")
+                : !complete
+                  ? t("modelProviders.profiles.partialOrder")
+                  : "";
             const move = (targetId: string, position: ArrayDropPosition) => {
               const next = moveArrayEntry(order, profile.profileId, targetId, position);
               if (next.some((profileId, candidate) => profileId !== order[candidate])) {
@@ -304,39 +337,45 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
                 data-profile-id=${profile.profileId}
                 data-profile-provider=${provider}
               >
-                <button
-                  type="button"
-                  class="model-providers__profile-grip"
-                  ?disabled=${!canMove}
-                  aria-label=${t("modelProviders.profiles.reorder", {
-                    account: identity,
-                    position: String(index + 1),
-                  })}
-                  aria-keyshortcuts=${canMove ? "ArrowUp ArrowDown" : nothing}
-                  title=${reorderBlocked}
-                  @pointerdown=${(event: PointerEvent) =>
-                    startPointerDrag({
-                      event,
-                      canMove,
-                      sourceId: profile.profileId,
-                      provider,
-                      move,
-                    })}
-                  @keydown=${(event: KeyboardEvent) => {
-                    if (!canMove) {
-                      return;
-                    }
-                    const delta = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
-                    const targetId = order[index + delta];
-                    if (!delta || !targetId) {
-                      return;
-                    }
-                    event.preventDefault();
-                    move(targetId, delta < 0 ? "before" : "after");
-                  }}
-                >
-                  ${icons.gripVertical}
-                </button>
+                ${locked
+                  ? html`<span
+                      class="model-providers__profile-grip-spacer"
+                      aria-hidden="true"
+                    ></span>`
+                  : html`<button
+                      type="button"
+                      class="model-providers__profile-grip"
+                      ?disabled=${!canMove}
+                      aria-label=${t("modelProviders.profiles.reorder", {
+                        account: identity,
+                        position: String(index + 1),
+                      })}
+                      aria-keyshortcuts=${canMove ? "ArrowUp ArrowDown" : nothing}
+                      title=${reorderBlocked}
+                      @pointerdown=${(event: PointerEvent) =>
+                        startPointerDrag({
+                          event,
+                          canMove,
+                          sourceId: profile.profileId,
+                          provider,
+                          move,
+                        })}
+                      @keydown=${(event: KeyboardEvent) => {
+                        if (!canMove) {
+                          return;
+                        }
+                        const delta =
+                          event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
+                        const targetId = order[index + delta];
+                        if (!delta || !targetId) {
+                          return;
+                        }
+                        event.preventDefault();
+                        move(targetId, delta < 0 ? "before" : "after");
+                      }}
+                    >
+                      ${icons.gripVertical}
+                    </button>`}
                 <span class="model-providers__profile-avatar" aria-hidden="true"
                   >${profileInitials(profile)}</span
                 >

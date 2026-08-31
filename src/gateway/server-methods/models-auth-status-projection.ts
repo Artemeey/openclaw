@@ -8,6 +8,8 @@ import type {
 import { formatRemainingShort } from "../../agents/auth-health.js";
 import {
   type AuthProfileStore,
+  getRuntimeLocalOrderProviders,
+  getRuntimeLocalProfileIds,
   resolveAuthProfileMetadata,
   resolveExplicitAuthOrderSelection,
 } from "../../agents/auth-profiles.js";
@@ -118,6 +120,8 @@ function mapAuthStatusProfile(params: {
   pendingUsageProfileIds: ReadonlySet<string>;
   logoutProfileIds: ReadonlySet<string>;
   configBoundProfileIds: ReadonlySet<string>;
+  externalProfileIds: ReadonlySet<string>;
+  localProfileIds: ReadonlySet<string>;
   externalCliProfileIds: ReadonlySet<string>;
   includeProfileDetails: boolean;
 }): ModelAuthStatusProfile {
@@ -134,6 +138,13 @@ function mapAuthStatusProfile(params: {
     type: profile.type,
     status: profile.status,
     reasonCode: profile.reasonCode,
+    source: params.configBoundProfileIds.has(profile.profileId)
+      ? "config"
+      : params.externalProfileIds.has(profile.profileId)
+        ? "external"
+        : params.localProfileIds.has(profile.profileId)
+          ? "saved"
+          : "inherited",
     expiry: buildExpiry(profile.remainingMs, profile.expiresAt),
     ...(params.externalCliProfileIds.has(profile.profileId) ? { externallyManaged: true } : {}),
     ...(params.includeProfileDetails && metadata.displayName
@@ -163,6 +174,8 @@ export function mapAuthStatusProvider(params: {
   apiKeys: ReadonlyMap<string, ModelAuthStatusProvider["apiKey"]>;
   logoutProfileIds: ReadonlySet<string>;
   configBoundProfileIds: ReadonlySet<string>;
+  configBoundAuthProviders: ReadonlySet<string>;
+  externalProfileIds: ReadonlySet<string>;
   externalCliProfileIds: ReadonlySet<string>;
   includeProfileDetails: boolean;
 }): ModelAuthStatusProvider {
@@ -175,6 +188,13 @@ export function mapAuthStatusProvider(params: {
     providerKey,
     providerAuthKey: authProviderKey,
   });
+  const localOrderProviders = new Set(
+    getRuntimeLocalOrderProviders(store).map((providerId) =>
+      resolveProviderIdForAuth(providerId, params.authAliasLookupParams),
+    ),
+  );
+  const localProfileIds = new Set(getRuntimeLocalProfileIds(store));
+  const providerOrderLocked = params.configBoundAuthProviders.has(authProviderKey);
   const effectiveProfiles = provider.effectiveProfiles ?? provider.profiles;
   const usageProfile =
     effectiveProfiles.find((profile) => profile.type === "oauth" || profile.type === "token") ??
@@ -227,12 +247,17 @@ export function mapAuthStatusProvider(params: {
         pendingUsageProfileIds: params.pendingUsageProfileIds,
         logoutProfileIds: params.logoutProfileIds,
         configBoundProfileIds: params.configBoundProfileIds,
+        externalProfileIds: params.externalProfileIds,
+        localProfileIds,
         externalCliProfileIds: params.externalCliProfileIds,
         includeProfileDetails: params.includeProfileDetails,
       }),
     ),
     ...(profileOrder.order !== undefined ? { profileOrder: profileOrder.order } : {}),
-    ...(profileOrder.fromStore ? { profileOrderStored: true } : {}),
+    ...(profileOrder.fromStore && localOrderProviders.has(authProviderKey)
+      ? { profileOrderStored: true }
+      : {}),
+    ...(providerOrderLocked ? { profileOrderLocked: "provider-config" as const } : {}),
     ...(apiKey ? { apiKey } : {}),
     usage: usage && usageKey ? mapUsageStatus(usage) : undefined,
     ...(usageScope ? { usageScope } : {}),

@@ -150,6 +150,7 @@
 }
 
 .model-providers__profile-grip,
+.model-providers__profile-grip-spacer,
 .model-providers__profile-logout {
   display: inline-grid;
   width: 44px;
@@ -159,6 +160,10 @@
   background: transparent;
   color: color-mix(in srgb, var(--muted) 72%, transparent);
   place-items: center;
+}
+
+.model-providers__profile-grip-spacer {
+  pointer-events: none;
 }
 
 .model-providers__profile-grip:not(:disabled) {
