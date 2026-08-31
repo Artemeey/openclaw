@@ -325,22 +325,29 @@ describe("buildModelProviderCards", () => {
   it("keeps the newest account usage snapshot scoped to the account", () => {
     const input = {
       ...EMPTY_INPUT,
-      authStatus: authStatus([
-        {
-          provider: "openai",
-          displayName: "OpenAI",
-          status: "ok",
-          profiles: [
-            {
-              profileId: "p1",
-              type: "oauth",
-              status: "ok",
-              email: "owner@example.com",
-              usage: { providerId: "openai", windows: [{ label: "5h", usedPercent: 10 }] },
-            },
-          ],
-        },
-      ]),
+      authStatus: {
+        ...authStatus([
+          {
+            provider: "openai",
+            displayName: "OpenAI",
+            status: "ok",
+            profiles: [
+              {
+                profileId: "p1",
+                type: "oauth",
+                status: "ok",
+                email: "owner@example.com",
+                usage: {
+                  providerId: "openai",
+                  refreshedAt: 1,
+                  windows: [{ label: "5h", usedPercent: 10 }],
+                },
+              },
+            ],
+          },
+        ]),
+        ts: 10,
+      },
       providerUsage: {
         updatedAt: 2,
         providers: [
@@ -371,7 +378,10 @@ describe("buildModelProviderCards", () => {
       },
     } satisfies Parameters<typeof buildModelProviderCards>[0];
     const refreshedInput = structuredClone(input);
-    refreshedInput.authStatus.ts = 3;
+    const refreshedProfile = refreshedInput.authStatus.providers[0]?.profiles[0];
+    if (refreshedProfile?.usage) {
+      refreshedProfile.usage.refreshedAt = 3;
+    }
     const cards = buildModelProviderCards(input);
     expect(cards).toHaveLength(1);
     expect(firstCard(cards).profiles[0]?.usage?.windows).toEqual([
@@ -386,6 +396,40 @@ describe("buildModelProviderCards", () => {
     ]);
     expect(firstCard(refreshed).profiles[0]?.usage?.costHistory).toBeUndefined();
     expect(firstCard(refreshed).usage).toBeUndefined();
+  });
+
+  it("does not repeat an account-scoped auth rollup below its profile", () => {
+    const cards = buildModelProviderCards({
+      ...EMPTY_INPUT,
+      authStatus: authStatus([
+        {
+          provider: "openai",
+          displayName: "OpenAI",
+          status: "ok",
+          profiles: [
+            {
+              profileId: "openai:account",
+              type: "oauth",
+              status: "ok",
+              usage: {
+                providerId: "openai",
+                refreshedAt: 1,
+                windows: [{ label: "Account week", usedPercent: 10 }],
+              },
+            },
+          ],
+          usage: {
+            providerId: "openai",
+            refreshedAt: 1,
+            windows: [{ label: "Account week", usedPercent: 10 }],
+          },
+          usageScope: "account",
+        },
+      ]),
+    });
+
+    expect(firstCard(cards).profiles[0]?.usage?.windows[0]?.label).toBe("Account week");
+    expect(firstCard(cards).usage).toBeUndefined();
   });
 
   it("preserves provider-scoped auth usage beside account usage", () => {

@@ -114,7 +114,7 @@ function normalizeAccountEmail(value: string | undefined): string | undefined {
 function attachAccountUsageSnapshot(
   card: ModelProviderCard,
   snapshot: ProviderUsageSnapshot,
-  replaceExisting: boolean,
+  refreshedAt: number,
 ): boolean {
   const accountEmail = normalizeAccountEmail(snapshot.accountEmail);
   if (!accountEmail) {
@@ -132,11 +132,12 @@ function attachAccountUsageSnapshot(
   if (!profile) {
     return false;
   }
-  if (profile.usage && !replaceExisting) {
+  if (profile.usage && refreshedAt < (profile.usage.refreshedAt ?? 0)) {
     return true;
   }
   profile.usage = {
     providerId: snapshot.provider,
+    refreshedAt,
     windows: snapshot.windows,
     ...(snapshot.summary ? { summary: snapshot.summary } : {}),
     ...(snapshot.plan ? { plan: snapshot.plan } : {}),
@@ -347,7 +348,9 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
     draft.card.apiKey ??= provider.apiKey;
     draft.hasAuthRow = true;
     const usage = provider.usage;
-    if (usage && !draft.card.usage) {
+    const duplicatesProfileUsage =
+      provider.usageScope === "account" && provider.profiles.some((profile) => profile.usage);
+    if (usage && !draft.card.usage && !duplicatesProfileUsage) {
       draft.card.usage = {
         provider: usage.providerId,
         displayName: provider.displayName,
@@ -394,13 +397,7 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
     draft.ids.add(id);
     // A targeted auth refresh can outrun cached usage.status. Only let its
     // account snapshot replace an existing profile when it is at least as new.
-    if (
-      attachAccountUsageSnapshot(
-        draft.card,
-        snapshot,
-        providerUsageUpdatedAt >= (input.authStatus?.ts ?? 0),
-      )
-    ) {
+    if (attachAccountUsageSnapshot(draft.card, snapshot, providerUsageUpdatedAt)) {
       draft.hasUsageSnapshot = true;
       continue;
     }
