@@ -29,6 +29,7 @@ export function buildDraftSessionCreateParams(draft: {
   key?: string;
   agentId: string;
   message: string;
+  label?: string;
   model?: string;
   contextWindow?: string;
   thinkingLevel?: string;
@@ -64,6 +65,9 @@ export function buildDraftSessionCreateParams(draft: {
     ...(normalizeOptionalString(draft.key) ? { key: normalizeOptionalString(draft.key) } : {}),
     agentId: normalizeAgentId(draft.agentId),
     message: draft.message,
+    ...(normalizeOptionalString(draft.label)
+      ? { label: normalizeOptionalString(draft.label) }
+      : {}),
     ...(draft.visibility === "incognito" ? { incognito: true } : {}),
     ...(draft.visibility === "draft" ? { visibility: "draft" } : {}),
     ...(draft.attachments?.length ? { attachments: draft.attachments } : {}),

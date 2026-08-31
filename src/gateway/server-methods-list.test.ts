@@ -77,7 +77,7 @@ describe("listGatewayMethods", () => {
   });
 
   it("appends new methods after model probing without shifting older method indices", () => {
-    expect(listGatewayMethods().slice(-66)).toEqual([
+    expect(listGatewayMethods().slice(-67)).toEqual([
       "models.probe",
       "migrations.memory.plan",
       "migrations.memory.apply",
@@ -144,6 +144,7 @@ describe("listGatewayMethods", () => {
       "diagnostics.lanes",
       "session.members.listEvidence",
       "plugins.inspect",
+      "sessions.title.prepare",
     ]);
     const methods = listGatewayMethods();
     expect(methods.indexOf("node.pluginSurface.refresh")).toBe(
@@ -235,6 +236,16 @@ describe("listGatewayMethods", () => {
     expect(methods).not.toContain("sessions.usage");
   });
 
+  it("rate-limits speculative inference under operator write authority", () => {
+    const descriptors = createCoreGatewayMethodDescriptors(coreGatewayHandlers);
+    expect(
+      descriptors.find((descriptor) => descriptor.name === "sessions.title.prepare"),
+    ).toMatchObject({
+      scope: "operator.write",
+      controlPlaneWrite: true,
+    });
+  });
+
   it("registers the hidden node protocol feature publication method", () => {
     const descriptor = createCoreGatewayMethodDescriptors(coreGatewayHandlers).find(
       (candidate) => candidate.name === "node.runnerInventory.update",
@@ -266,7 +277,7 @@ describe("listGatewayMethods", () => {
       "exec.approval.get",
     ]);
     expect(methods).toContain("tts.speak");
-    expect(coreMethods.slice(-73)).toEqual([
+    expect(coreMethods.slice(-74)).toEqual([
       "sessions.catalog.continue",
       "sessions.catalog.archive",
       "approval.get",
@@ -340,6 +351,7 @@ describe("listGatewayMethods", () => {
       "diagnostics.lanes",
       "session.members.listEvidence",
       "plugins.inspect",
+      "sessions.title.prepare",
     ]);
     expect(methods.indexOf("approval.get")).toBeGreaterThan(methods.indexOf("tts.speak"));
     expect(methods.indexOf("approval.resolve")).toBe(methods.indexOf("approval.get") + 1);
