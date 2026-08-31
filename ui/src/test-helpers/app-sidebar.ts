@@ -5,6 +5,7 @@ import type {
   SessionsCatalogListResult,
   SessionsPatchManyParams,
   SessionsPatchManyResult,
+  WorktreeRepositoryStatus,
 } from "../../../packages/gateway-protocol/src/index.ts";
 import type { GatewayBrowserClient } from "../api/gateway.ts";
 import type { AgentsListResult, SessionsListResult } from "../api/types.ts";
@@ -88,7 +89,7 @@ export type SidebarLifecycleState = HTMLElement & {
     home: string;
     entries: Array<{ name: string; path: string; type: "directory" | "file" }>;
   }>;
-  inspectSessionGroupRepository(path?: string): Promise<"git" | "not_git" | "unavailable">;
+  inspectSessionGroupRepository(path?: string): Promise<WorktreeRepositoryStatus>;
   requestUpdate: () => void;
   updateComplete: Promise<boolean>;
   updateAvailable: { currentVersion: string; latestVersion: string; channel: string } | null;

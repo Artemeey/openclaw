@@ -311,6 +311,29 @@ describe("AppSidebar group mutation collapsed state", () => {
     );
   });
 
+  it("verifies the default agent workspace before offering group worktrees", async () => {
+    const request = vi.fn(async (method: string, _params?: unknown) => {
+      if (method === "worktrees.branches") {
+        return { branches: [], repositoryStatus: "unavailable" };
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    const gatewayHarness = createGatewayHarness({ request } as unknown as GatewayBrowserClient);
+    const harness = createSessionsHarness("main", ["agent:main:main"]);
+    const { sidebar } = await mountSidebar(gatewayHarness.gateway, harness.sessions, "panel", {
+      defaultId: "main",
+      mainKey: "main",
+      scope: "per-sender",
+      agents: [{ id: "main", workspace: "/workspace", workspaceGit: true }],
+    });
+
+    await expect(sidebar.inspectSessionGroupRepository()).resolves.toBe("unavailable");
+    expect(request).toHaveBeenCalledWith("worktrees.branches", {
+      repoRoot: "/workspace",
+      includeRepositoryStatus: true,
+    });
+  });
+
   it("leaves the catalog alone when the delete confirm is cancelled", async () => {
     const { sidebar, harness } = await mountCollapsedGroup({});
     const menu = await openGroupMenu(sidebar);

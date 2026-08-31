@@ -101,12 +101,9 @@ class AppSidebar extends AppSidebarSessionNavigationElement implements SessionLi
   async inspectSessionGroupRepository(path?: string): Promise<WorktreeRepositoryStatus> {
     const requestedPath = path?.trim();
     const agent = this.activeChipAgent().agent;
-    if (!requestedPath) {
-      return agent?.workspaceGit === true
-        ? "git"
-        : agent?.workspaceGit === false
-          ? "not_git"
-          : "unavailable";
+    const repoRoot = requestedPath || agent?.workspace;
+    if (!repoRoot) {
+      return "unavailable";
     }
     const sessions = this.context?.sessions;
     const scope = sessions?.captureConnectionScope();
@@ -114,7 +111,7 @@ class AppSidebar extends AppSidebarSessionNavigationElement implements SessionLi
       throw new Error(t("sessionsView.groupDefaultsStale"));
     }
     const result = await scope.client.request<WorktreesBranchesResult>("worktrees.branches", {
-      repoRoot: requestedPath,
+      repoRoot,
       includeRepositoryStatus: true,
     });
     if (this.context?.sessions !== sessions || !sessions.isConnectionScopeCurrent(scope)) {
