@@ -687,9 +687,6 @@ async function runWithModelFallbackInternal<T>(
     // there are remaining candidates.  Only abort/context-overflow errors
     // (handled above) are truly non-retryable.
     const isKnownFailover = isFailoverError(normalized);
-    if (!isKnownFailover && !hasRemainingCandidate) {
-      throw err;
-    }
 
     // Record auth-class failures in the session-scoped skip cache so the
     // next turn does not re-attempt the same broken candidate. Only mark
@@ -725,6 +722,11 @@ async function runWithModelFallbackInternal<T>(
       error: normalized,
       nextCandidate: candidates[failedNextCandidateIndex],
     });
+    // Preserve the original final error, but record exhaustion before leaving
+    // so lifecycle owners do not keep waiting for another candidate.
+    if (!isKnownFailover && !hasRemainingCandidate) {
+      throw err;
+    }
     await params.onError?.({
       ...candidateRef,
       error: isKnownFailover ? normalized : err,

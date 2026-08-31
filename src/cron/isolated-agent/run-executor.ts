@@ -395,6 +395,7 @@ function createCronPromptExecutor(
     // A retry can fail during preparation, before any backend start callback.
     params.lifecycle.beginAttempt();
     let candidateStarted = false;
+    let fallbackExhaustedFailure = false;
     const sessionTarget = {
       agentId: params.agentId,
       sessionId: params.cronSession.sessionEntry.sessionId,
@@ -508,6 +509,11 @@ function createCronPromptExecutor(
         return classification && currentAttemptCommittedMedia() ? undefined : classification;
       },
       canFallbackAfterError: () => !currentAttemptCommittedMedia(),
+      // Thrown exhaustion retains the original error shape; use the fallback
+      // owner's recorded outcome, not error text or attempted-candidate counts.
+      onFallbackStep: ({ fallbackStepFinalOutcome }) => {
+        fallbackExhaustedFailure = fallbackStepFinalOutcome === "chain_exhausted";
+      },
       mergeExhaustedResult: mergeEmbeddedAgentRunResultForModelFallbackExhaustion,
       run: async (providerOverride, modelOverride, runOptions) => {
         // Default native and direct CLI candidates skip harness preparation.
@@ -843,6 +849,11 @@ function createCronPromptExecutor(
       },
     })
       .catch(async (error: unknown) => {
+        params.lifecycle.capture(
+          "error",
+          error,
+          fallbackExhaustedFailure ? { fallbackExhaustedFailure: true } : undefined,
+        );
         await contextEngineLogicalTurnLease.dispose();
         throw error;
       })
@@ -852,13 +863,14 @@ function createCronPromptExecutor(
       });
     const executionError =
       params.lifecycle.getDeferredError() ??
-      (fallbackResult.result.meta.error ? "Agent run failed" : undefined);
+      (fallbackResult.result.meta.error || fallbackResult.outcome === "exhausted"
+        ? "Agent run failed"
+        : undefined);
     if (executionError) {
-      params.lifecycle.capture(
-        "error",
-        executionError,
-        resolveAgentLifecycleTerminalMetadata(fallbackResult.result.meta),
-      );
+      params.lifecycle.capture("error", executionError, {
+        ...resolveAgentLifecycleTerminalMetadata(fallbackResult.result.meta),
+        ...(fallbackResult.outcome === "exhausted" ? { fallbackExhaustedFailure: true } : {}),
+      });
     } else {
       params.lifecycle.capture("end", fallbackResult.result);
     }

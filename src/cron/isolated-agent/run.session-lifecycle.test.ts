@@ -3,11 +3,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { resolvePreparedRunAdmission } from "../../agents/admitted-run-context.js";
 import type { RunCliAgentParams } from "../../agents/cli-runner/types.js";
+import {
+  classifyEmbeddedAgentRunResultForModelFallback,
+  mergeEmbeddedAgentRunResultForModelFallbackExhaustion,
+} from "../../agents/embedded-agent-runner/result-fallback-classifier.js";
 import { prepareEmbeddedAttemptStream } from "../../agents/embedded-agent-runner/run/attempt-stream-prepare.js";
 import type { RunEmbeddedAgentParams } from "../../agents/embedded-agent-runner/run/params.js";
 import { clearActiveEmbeddedRun } from "../../agents/embedded-agent-runner/runs.js";
 import { createStubSessionHarness } from "../../agents/embedded-agent-subscribe.e2e-harness.js";
 import { FailoverError } from "../../agents/failover-error.js";
+import { GENERIC_EXTERNAL_RUN_FAILURE_TEXT } from "../../agents/failover/user-copy.js";
 import { runWithModelFallback } from "../../agents/model-fallback-runner.js";
 import { AuthStorage } from "../../agents/sessions/auth-storage.js";
 import { ModelRegistry } from "../../agents/sessions/model-registry.js";
@@ -38,6 +43,8 @@ import {
 } from "../../sessions/session-lifecycle-admission.js";
 import { makeIsolatedAgentJobFixture, makeIsolatedAgentParamsFixture } from "./job-fixtures.js";
 import {
+  classifyEmbeddedAgentRunResultForModelFallbackMock,
+  mergeEmbeddedAgentRunResultForModelFallbackExhaustionMock,
   dispatchCronDeliveryMock,
   loadRunCronIsolatedAgentTurn,
   loadSessionEntryMock,
@@ -90,11 +97,14 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
     "cli-success",
     "cli-cancelled",
     "cli-timeout",
+    "cli-exhausted-throw",
+    "cli-exhausted-result",
     "outer-failure",
     "finalize-failure",
     "continuation-failure",
     "post-execution-abort",
     "retry-prepare-failure",
+    "retry-exhausted",
   ] as const)("keeps a cron fallback active until outer $0 settlement", async (outcome) => {
     const sessionKey = "agent:main:cron:lifecycle-fallback";
     const sessionId = "cron-lifecycle-fallback";
@@ -117,8 +127,8 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
     resolveAllowedModelRefMock.mockReturnValue({
       ref: { provider: "openai", model: "gpt-5.6-luna" },
     });
-    const cliFallback =
-      outcome === "cli-success" || outcome === "cli-cancelled" || outcome === "cli-timeout";
+    const exhausted = outcome.includes("exhausted") || outcome === "retry-prepare-failure";
+    const cliFallback = outcome.startsWith("cli-");
     const cancelled = outcome === "cancelled" || outcome === "cli-cancelled";
     resolveAgentModelFallbacksOverrideMock.mockReturnValue([
       cliFallback ? "claude-cli/fallback-model" : "openai/fallback-model",
@@ -127,7 +137,9 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
       isCliProviderMock.mockImplementation((provider: string) => provider === "claude-cli");
     }
     const retryPreparationFailure = outcome === "retry-prepare-failure";
-    if (outcome === "outer-failure" || retryPreparationFailure) {
+    const retryPreparationError = new Error("retry preparation failed");
+    const retriesInterimAck = retryPreparationFailure || outcome === "retry-exhausted";
+    if (outcome === "outer-failure" || retriesInterimAck) {
       resolveCronPayloadOutcomeMock.mockImplementation(
         (await vi.importActual<typeof import("./helpers.js")>("./helpers.js"))
           .resolveCronPayloadOutcome,
@@ -137,6 +149,12 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
       dispatchCronDeliveryMock.mockRejectedValueOnce(new Error("delivery finalization failed"));
     }
     runWithModelFallbackMock.mockImplementation(runWithModelFallback);
+    classifyEmbeddedAgentRunResultForModelFallbackMock.mockImplementation(
+      classifyEmbeddedAgentRunResultForModelFallback,
+    );
+    mergeEmbeddedAgentRunResultForModelFallbackExhaustionMock.mockImplementation(
+      mergeEmbeddedAgentRunResultForModelFallbackExhaustion,
+    );
     const firstStarted = createDeferred();
     const releaseFirst = createDeferred();
     const secondPreparing = createDeferred();
@@ -171,6 +189,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
     }
     const chatRunState = createChatRunState();
     const broadcast = vi.fn();
+    const clearTrackedActiveRun = vi.fn();
     const persist = vi.fn<
       NonNullable<AgentEventHandlerOptions["persistGatewaySessionLifecycleEventForEvent"]>
     >(async () => {});
@@ -186,6 +205,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
       sessionEventSubscribers: createSessionEventSubscriberRegistry(),
       sessionMessageSubscribers: createSessionMessageSubscriberRegistry(),
       persistGatewaySessionLifecycleEventForEvent: persist,
+      clearTrackedActiveRun,
     });
     const unsubscribe = onAgentRuntimeEvent(handler);
     let attemptIndex = 0;
@@ -194,6 +214,17 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
       runParams.onExecutionStarted?.();
       secondPreparing.resolve();
       await releaseSecond.promise;
+      if (outcome === "cli-exhausted-throw") {
+        throw new FailoverError("CLI provider unavailable", { reason: "server_error" });
+      }
+      if (outcome === "cli-exhausted-result") {
+        // The real classifier rejects generic CLI failure copy; exhaustion
+        // merges this candidate's metadata with the native incomplete reply.
+        return {
+          payloads: [{ text: GENERIC_EXTERNAL_RUN_FAILURE_TEXT }],
+          meta: { agentMeta: {} },
+        };
+      }
       if (cancelled || outcome === "cli-timeout") {
         return {
           payloads: [],
@@ -210,8 +241,10 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
     });
     runEmbeddedAgentMock.mockImplementation(async (runParams: RunEmbeddedAgentParams) => {
       const first = attemptIndex++ === 0;
-      if (retryPreparationFailure && attemptIndex > 2) {
-        throw new Error("retry preparation failed");
+      if (retriesInterimAck && attemptIndex > 2) {
+        throw retryPreparationFailure
+          ? retryPreparationError
+          : new FailoverError("retry provider unavailable", { reason: "server_error" });
       }
       if (!first) {
         secondPreparing.resolve();
@@ -294,16 +327,35 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
             firstStarted.resolve();
             await releaseFirst.promise;
           }
+          const incomplete = outcome === "cli-exhausted-result";
           native.emit({
             type: "message_update",
             message: makeAssistantMessageFixture({
               provider,
               model,
-              errorMessage: "429 rate limit",
-              content: [],
+              stopReason: incomplete ? "stop" : "error",
+              errorMessage: incomplete ? undefined : "429 rate limit",
+              content: incomplete ? [{ type: "thinking", thinking: "Still reasoning" }] : [],
             }),
           });
           native.emit({ type: "agent_end" });
+          if (incomplete) {
+            // Native terminal resolution preserves a safe incomplete reply after
+            // its internal retries; the later CLI candidate supplies no liveness.
+            return {
+              payloads: [{ text: "Incomplete provider response", isError: true }],
+              meta: {
+                agentMeta: {},
+                livenessState: "abandoned",
+                replayInvalid: true,
+                error: {
+                  kind: "incomplete_turn",
+                  message: "Incomplete provider response",
+                  fallbackSafe: true,
+                },
+              },
+            };
+          }
           throw new FailoverError("429 rate limit", { reason: "rate_limit", provider, model });
         }
         if (outcome === "cancelled") {
@@ -320,7 +372,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
           native.emit({ type: "agent_end" });
           return { payloads: [], meta: { aborted: true, stopReason: "aborted", agentMeta: {} } };
         }
-        const text = retryPreparationFailure ? "On it." : "Final report";
+        const text = retriesInterimAck ? "On it." : "Final report";
         const assistantMessage = makeAssistantMessageFixture({
           provider,
           model,
@@ -371,6 +423,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
         persist.mock.calls.filter(([params]) => params.event.data?.phase === "error"),
       ).toHaveLength(0);
       expect(getAgentRunContextOwnership(sessionId)?.clearRequested).toBe(false);
+      expect(clearTrackedActiveRun).not.toHaveBeenCalled();
       if (cancelled) {
         controller.abort();
       }
@@ -400,12 +453,35 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
         await expect(run).resolves.toMatchObject({
           error: expect.stringContaining("retry preparation failed"),
         });
-        await vi.advanceTimersByTimeAsync(15_000);
+        await expect(runWithModelFallbackMock.mock.results[1]?.value).rejects.toBe(
+          retryPreparationError,
+        );
+      }
+      // Exhaustion settles persistence and active tracking without advancing the
+      // retry-grace clock, even when the last candidate emitted no blocked metadata.
+      if (exhausted) {
+        if (outcome === "cli-exhausted-result") {
+          await expect(runWithModelFallbackMock.mock.results[0]?.value).resolves.toMatchObject({
+            outcome: "exhausted",
+            result: { meta: { error: { kind: "incomplete_turn" } } },
+          });
+        }
+        expect({
+          terminalWrites: persist.mock.calls.filter(
+            ([params]) => params.event.data?.phase === "error",
+          ).length,
+          activityClears: clearTrackedActiveRun.mock.calls.length,
+        }).toEqual({ terminalWrites: 1, activityClears: 1 });
+        expect(clearTrackedActiveRun).toHaveBeenCalledExactlyOnceWith({
+          runId: sessionId,
+          clientRunId: sessionId,
+          sessionKey,
+        });
       }
       expect(onExecutionStarted).toHaveBeenCalledTimes(2);
       const state = cancelled
         ? "aborted"
-        : outcome === "failure" || outcome === "cli-timeout" || retryPreparationFailure
+        : outcome === "failure" || outcome === "cli-timeout" || retryPreparationFailure || exhausted
           ? "error"
           : "final";
       expect(
