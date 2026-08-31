@@ -109,6 +109,10 @@ function mapProviderUsage(usage: Awaited<ReturnType<typeof loadProviderUsageSumm
   return usageByProvider;
 }
 
+function isTransientUsageTimeout(error: string | undefined): boolean {
+  return error === "Timeout" || error === "Refresh queue timeout";
+}
+
 function retainLastGoodOnTimeout(
   summary: UsageSummary,
   lastGood: UsageSummary | undefined,
@@ -122,13 +126,14 @@ function retainLastGoodOnTimeout(
       .map((provider) => [provider.provider, provider]),
   );
   const retainedLastGood = summary.providers.some(
-    (provider) => provider.error === "Timeout" && lastGoodByProvider.has(provider.provider),
+    (provider) =>
+      isTransientUsageTimeout(provider.error) && lastGoodByProvider.has(provider.provider),
   );
   return {
     ...summary,
     updatedAt: retainedLastGood ? lastGood.updatedAt : summary.updatedAt,
     providers: summary.providers.map((provider) =>
-      provider.error === "Timeout"
+      isTransientUsageTimeout(provider.error)
         ? (lastGoodByProvider.get(provider.provider) ?? provider)
         : provider,
     ),
