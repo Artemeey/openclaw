@@ -183,6 +183,24 @@ function resolveRetryableHistoryDelayMs(error: unknown): number | null {
   return null;
 }
 
+function resolveGatewayErrorReason(error: unknown): string | undefined {
+  let current = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (typeof current !== "object" || current === null || Array.isArray(current)) {
+      return undefined;
+    }
+    const shaped = current as { cause?: unknown; details?: unknown };
+    if (typeof shaped.details === "object" && shaped.details !== null) {
+      const reason = (shaped.details as { reason?: unknown }).reason;
+      if (typeof reason === "string") {
+        return reason;
+      }
+    }
+    current = shaped.cause;
+  }
+  return undefined;
+}
+
 async function waitForChatHistory(params: {
   gateway: GatewayHandle;
   sessionKey: string;
@@ -668,16 +686,20 @@ describe("Gateway chat RPCs", () => {
         "/debug/request-cursor",
       );
       const rejectedPrompt = "REJECT_CHANGED_SETTINGS_BEFORE_IO";
-      await expect(
-        gateway.call("chat.send", {
+      const rejectedError = await gateway
+        .call("chat.send", {
           sessionKey,
           message: rejectedPrompt,
           deliver: false,
           idempotencyKey: randomUUID(),
           expectedPermissionMode: "read-only",
           expectedToolOverrides: { webSearch: false },
-        }),
-      ).rejects.toMatchObject({ details: { reason: "session-settings-changed" } });
+        })
+        .then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+      expect(resolveGatewayErrorReason(rejectedError)).toBe("session-settings-changed");
       const cursorAfterRejected = await readMockJson<MockRequestCursor>(
         mock.baseUrl,
         "/debug/request-cursor",
