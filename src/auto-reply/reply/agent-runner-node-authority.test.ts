@@ -28,7 +28,7 @@ vi.mock("../../agents/agent-tools.js", () => ({
   }),
 }));
 
-const state = setupAgentRunnerExecutionTestState();
+const state = await setupAgentRunnerExecutionTestState();
 
 let execute: Awaited<ReturnType<typeof getExecuteAgentTurnForTest>>;
 let fixture: typeof import("../../gateway/worker-environments/worker-turn-launcher.test-support.js");

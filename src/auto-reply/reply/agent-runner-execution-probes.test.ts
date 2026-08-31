@@ -22,7 +22,7 @@ import type {
   EmbeddedAgentParams,
 } from "./agent-runner-execution.test-support.js";
 
-const state = setupAgentRunnerExecutionTestState();
+const state = await setupAgentRunnerExecutionTestState();
 
 describe("executeAgentTurn: primary probe routing", () => {
   it("rechecks queued auto fallback primary probes before running", async () => {

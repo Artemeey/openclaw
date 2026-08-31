@@ -27,7 +27,7 @@ import {
 import { buildKnownAgentRunFailureReplyPayload } from "./agent-runner-failure-reply.js";
 import { createReplyOperation } from "./reply-run-registry.js";
 
-const state = setupAgentRunnerExecutionTestState();
+const state = await setupAgentRunnerExecutionTestState();
 
 describe("executeAgentTurn: terminal failures", () => {
   it("surfaces billing guidance for mixed-cause fallback exhaustion", async () => {

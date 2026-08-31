@@ -1,8 +1,36 @@
 // Persistent cron session tests cover lifecycle admission and mutation races.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { resolvePreparedRunAdmission } from "../../agents/admitted-run-context.js";
+import type { RunCliAgentParams } from "../../agents/cli-runner/types.js";
+import { prepareEmbeddedAttemptStream } from "../../agents/embedded-agent-runner/run/attempt-stream-prepare.js";
+import type { RunEmbeddedAgentParams } from "../../agents/embedded-agent-runner/run/params.js";
+import { clearActiveEmbeddedRun } from "../../agents/embedded-agent-runner/runs.js";
+import { createStubSessionHarness } from "../../agents/embedded-agent-subscribe.e2e-harness.js";
+import { FailoverError } from "../../agents/failover-error.js";
+import { runWithModelFallback } from "../../agents/model-fallback-runner.js";
+import { AuthStorage } from "../../agents/sessions/auth-storage.js";
+import { ModelRegistry } from "../../agents/sessions/model-registry.js";
+import { makeAssistantMessageFixture } from "../../agents/test-helpers/assistant-message-fixtures.js";
+import { makeProviderModelFixture } from "../../agents/test-helpers/provider-model-fixture.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import {
+  createChatRunState,
+  createSessionEventSubscriberRegistry,
+  createSessionMessageSubscriberRegistry,
+} from "../../gateway/server-chat-state.js";
+import {
+  createAgentEventHandler,
+  type AgentEventHandlerOptions,
+} from "../../gateway/server-chat.js";
+import { onAgentRuntimeEvent } from "../../infra/agent-events.js";
+import {
+  clearAgentRunContext,
+  getAgentRunContextOwnership,
+} from "../../infra/agent-run-registry.js";
+import { createDiagnosticEmbeddedRunOwner } from "../../logging/diagnostic-run-activity.js";
 import * as diagnostic from "../../logging/diagnostic.js";
+import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import {
   interruptSessionWorkAdmissions,
   isSessionWorkAdmissionActive,
@@ -25,20 +53,25 @@ import {
   resolveCronPayloadOutcomeMock,
   resolveDeliveryTargetMock,
   runEmbeddedAgentMock,
+  runCliAgentMock,
+  isCliProviderMock,
+  runWithModelFallbackMock,
+  resolveConfiguredModelRefMock,
+  resolveAllowedModelRefMock,
+  resolveAgentModelFallbacksOverrideMock,
 } from "./run.test-harness.js";
 
 const runCronIsolatedAgentTurn = await loadRunCronIsolatedAgentTurn();
 const inMemoryStorePath = "/tmp/store.json";
 
-function makePersistentCronParams(sessionKey: string) {
+function makeCronLifecycleParams(sessionKey: string, useRunSession = false) {
   return makeIsolatedAgentParamsFixture({
     agentId: "main",
     sessionKey,
     job: makeIsolatedAgentJobFixture({
-      // Bind the run to the persistent session key so the run operates on it
-      // directly; `current`/`isolated` targets derive a detached `cron:<id>`
-      // run session instead, which the lifecycle claim assertions do not target.
-      sessionTarget: `session:${sessionKey}`,
+      // Lease cases use the persistent key; continuation cases enter through
+      // the normal isolated target and get its exact hidden run session.
+      sessionTarget: useRunSession ? "isolated" : `session:${sessionKey}`,
       delivery: { mode: "none" },
     }),
   });
@@ -48,6 +81,357 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
   beforeEach(() => {
     resetRunCronIsolatedAgentTurnHarness();
     mockRunCronFallbackPassthrough();
+  });
+
+  it.each([
+    "success",
+    "failure",
+    "cancelled",
+    "cli-success",
+    "cli-cancelled",
+    "cli-timeout",
+    "outer-failure",
+    "finalize-failure",
+    "continuation-failure",
+    "post-execution-abort",
+    "retry-prepare-failure",
+  ] as const)("keeps a cron fallback active until outer $0 settlement", async (outcome) => {
+    const sessionKey = "agent:main:cron:lifecycle-fallback";
+    const sessionId = "cron-lifecycle-fallback";
+    const usesContinuation =
+      outcome === "continuation-failure" || outcome === "post-execution-abort";
+    const initialSessionEntry = makeCronSessionEntry({ sessionId });
+    resolveCronSessionMock.mockReturnValue(
+      makeCronSession({
+        storePath: inMemoryStorePath,
+        store: { [sessionKey]: { ...initialSessionEntry } },
+        initialSessionEntry,
+        isNewSession: usesContinuation,
+        sessionEntry: { ...initialSessionEntry },
+      }),
+    );
+    loadSessionEntryMock.mockImplementation((_storePath, key) =>
+      key === sessionKey ? { ...initialSessionEntry } : undefined,
+    );
+    resolveConfiguredModelRefMock.mockReturnValue({ provider: "openai", model: "gpt-5.6-luna" });
+    resolveAllowedModelRefMock.mockReturnValue({
+      ref: { provider: "openai", model: "gpt-5.6-luna" },
+    });
+    const cliFallback =
+      outcome === "cli-success" || outcome === "cli-cancelled" || outcome === "cli-timeout";
+    const cancelled = outcome === "cancelled" || outcome === "cli-cancelled";
+    resolveAgentModelFallbacksOverrideMock.mockReturnValue([
+      cliFallback ? "claude-cli/fallback-model" : "openai/fallback-model",
+    ]);
+    if (cliFallback) {
+      isCliProviderMock.mockImplementation((provider: string) => provider === "claude-cli");
+    }
+    const retryPreparationFailure = outcome === "retry-prepare-failure";
+    if (outcome === "outer-failure" || retryPreparationFailure) {
+      resolveCronPayloadOutcomeMock.mockImplementation(
+        (await vi.importActual<typeof import("./helpers.js")>("./helpers.js"))
+          .resolveCronPayloadOutcome,
+      );
+    }
+    if (outcome === "finalize-failure") {
+      dispatchCronDeliveryMock.mockRejectedValueOnce(new Error("delivery finalization failed"));
+    }
+    runWithModelFallbackMock.mockImplementation(runWithModelFallback);
+    const firstStarted = createDeferred();
+    const releaseFirst = createDeferred();
+    const secondPreparing = createDeferred();
+    const releaseSecond = createDeferred();
+    const postExecutionWriteStarted = createDeferred();
+    const releasePostExecutionWrite = createDeferred();
+    const controller = new AbortController();
+    const onExecutionStarted = vi.fn();
+    let completedContinuationSessionKey: string | undefined;
+    if (usesContinuation) {
+      const patchSessionEntry = patchSessionEntryMock.getMockImplementation();
+      if (!patchSessionEntry) {
+        throw new Error("expected guarded cron writer");
+      }
+      patchSessionEntryMock.mockImplementation(
+        async (
+          ...args: Parameters<
+            typeof import("../../config/sessions/session-accessor.js").patchSessionEntryCore
+          >
+        ) => {
+          if (args[0].sessionKey === completedContinuationSessionKey) {
+            completedContinuationSessionKey = undefined;
+            if (outcome === "continuation-failure") {
+              throw new Error("continuation write failed");
+            }
+            postExecutionWriteStarted.resolve();
+            await releasePostExecutionWrite.promise;
+          }
+          return patchSessionEntry(...args);
+        },
+      );
+    }
+    const chatRunState = createChatRunState();
+    const broadcast = vi.fn();
+    const persist = vi.fn<
+      NonNullable<AgentEventHandlerOptions["persistGatewaySessionLifecycleEventForEvent"]>
+    >(async () => {});
+    const handler = createAgentEventHandler({
+      broadcast,
+      broadcastToConnIds: vi.fn(),
+      nodeSendToSession: vi.fn(),
+      agentRunSeq: new Map(),
+      chatRunState,
+      clearAgentRunContext,
+      resolveSessionKeyForRun: () => sessionKey,
+      toolEventRecipients: chatRunState.toolEventRecipients,
+      sessionEventSubscribers: createSessionEventSubscriberRegistry(),
+      sessionMessageSubscribers: createSessionMessageSubscriberRegistry(),
+      persistGatewaySessionLifecycleEventForEvent: persist,
+    });
+    const unsubscribe = onAgentRuntimeEvent(handler);
+    let attemptIndex = 0;
+    runCliAgentMock.mockImplementation(async (runParams: RunCliAgentParams) => {
+      attemptIndex++;
+      runParams.onExecutionStarted?.();
+      secondPreparing.resolve();
+      await releaseSecond.promise;
+      if (cancelled || outcome === "cli-timeout") {
+        return {
+          payloads: [],
+          meta: {
+            agentMeta: {},
+            aborted: true,
+            providerStarted: true,
+            stopReason: cancelled ? "aborted" : "timeout",
+            ...(outcome === "cli-timeout" ? { timeoutPhase: "provider" } : {}),
+          },
+        };
+      }
+      return { payloads: [{ text: "Final report" }], meta: { agentMeta: {} } };
+    });
+    runEmbeddedAgentMock.mockImplementation(async (runParams: RunEmbeddedAgentParams) => {
+      const first = attemptIndex++ === 0;
+      if (retryPreparationFailure && attemptIndex > 2) {
+        throw new Error("retry preparation failed");
+      }
+      if (!first) {
+        secondPreparing.resolve();
+        await releaseSecond.promise;
+      }
+      const { provider, model, thinkLevel } = runParams;
+      if (!provider || !model || !thinkLevel) {
+        throw new Error("Cron did not prepare the model attempt");
+      }
+      const admittedRunContext = await resolvePreparedRunAdmission({
+        ...runParams,
+        runtimeKind: "embedded",
+      });
+      runParams.onExecutionStarted?.();
+      const authStorage = AuthStorage.inMemory();
+      const native = createStubSessionHarness();
+      const stream = prepareEmbeddedAttemptStream({
+        attempt: {
+          runId: runParams.runId,
+          sessionId: runParams.sessionId,
+          sessionKey: runParams.sessionKey,
+          agentId: runParams.agentId,
+          workspaceDir: runParams.workspaceDir,
+          prompt: runParams.prompt,
+          timeoutMs: runParams.timeoutMs,
+          config: runParams.config,
+          trigger: runParams.trigger,
+          abortSignal: runParams.abortSignal,
+          deferTerminalLifecycle: runParams.deferTerminalLifecycle,
+          onAgentEvent: runParams.onAgentEvent,
+          admittedRunContext,
+          provider,
+          modelId: model,
+          model: makeProviderModelFixture({
+            provider,
+            id: model,
+            api: "openai-responses",
+            baseUrl: "https://provider.test",
+          }),
+          thinkLevel,
+          sessionFile: sessionKey,
+          authStorage,
+          authProfileStore: { version: 1, profiles: {} },
+          modelRegistry: ModelRegistry.inMemory(authStorage),
+          startedAtMs: Date.now(),
+        },
+        activeSession: native.session,
+        hookRunner: getGlobalHookRunner(),
+        hookAgentId: "main",
+        diagnosticTrace: { traceId: "1".repeat(32) },
+        diagnosticOwner: createDiagnosticEmbeddedRunOwner({
+          sessionId,
+          sessionKey,
+          runId: runParams.runId,
+        }),
+        clientToolCallSlots: [],
+        nestedToolActivities: [],
+        isReplaySafeTool: () => false,
+        runAbortController: new AbortController(),
+        abortRun: vi.fn(),
+        markExternalAbort: vi.fn(),
+        getRunState: () => ({
+          aborted: controller.signal.aborted,
+          promptError: undefined,
+          timedOut: false,
+          yieldDetected: false,
+        }),
+        hasDeliveredSourceReply: () => false,
+        markSourceReplyDelivered: vi.fn(),
+        onBlockReply: undefined,
+        onBlockReplyFlush: undefined,
+        sandboxSessionKey: sessionKey,
+        builtinToolNames: new Set(),
+        replaySafeToolNames: new Set(),
+      });
+      try {
+        native.emit({ type: "agent_start" });
+        if (first || outcome === "failure") {
+          if (first) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+          }
+          native.emit({
+            type: "message_update",
+            message: makeAssistantMessageFixture({
+              provider,
+              model,
+              errorMessage: "429 rate limit",
+              content: [],
+            }),
+          });
+          native.emit({ type: "agent_end" });
+          throw new FailoverError("429 rate limit", { reason: "rate_limit", provider, model });
+        }
+        if (outcome === "cancelled") {
+          native.emit({
+            type: "message_update",
+            message: makeAssistantMessageFixture({
+              provider,
+              model,
+              stopReason: "aborted",
+              errorMessage: undefined,
+              content: [],
+            }),
+          });
+          native.emit({ type: "agent_end" });
+          return { payloads: [], meta: { aborted: true, stopReason: "aborted", agentMeta: {} } };
+        }
+        const text = retryPreparationFailure ? "On it." : "Final report";
+        const assistantMessage = makeAssistantMessageFixture({
+          provider,
+          model,
+          stopReason: "stop",
+          errorMessage: undefined,
+          content: [{ type: "text", text }],
+          timestamp: Date.now(),
+        });
+        native.emit({ type: "message_start", message: assistantMessage });
+        native.emit({ type: "message_end", message: assistantMessage });
+        native.emit({ type: "agent_end" });
+        if (usesContinuation) {
+          expect(runParams.sessionKey).toContain(":run:");
+          completedContinuationSessionKey = runParams.sessionKey;
+        }
+        return {
+          payloads: [
+            { text },
+            ...(outcome === "outer-failure"
+              ? [{ text: "Tool execution failed", isError: true }]
+              : []),
+          ],
+          meta: { agentMeta: {}, stopReason: "stop" },
+        };
+      } finally {
+        stream.subscription.unsubscribe();
+        clearActiveEmbeddedRun(sessionId, stream.queueHandle, sessionKey);
+      }
+    });
+    const run = runCronIsolatedAgentTurn({
+      ...makeCronLifecycleParams(sessionKey, usesContinuation),
+      abortSignal: controller.signal,
+      onExecutionStarted,
+    });
+    const exited = run.then((result) => {
+      throw new Error(`Cron exited before fallback boundary: ${JSON.stringify(result)}`);
+    });
+    try {
+      await Promise.race([firstStarted.promise, exited]);
+      vi.useFakeTimers();
+      releaseFirst.resolve();
+      await Promise.race([secondPreparing.promise, exited]);
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(attemptIndex).toBe(2);
+      expect(runCliAgentMock).toHaveBeenCalledTimes(cliFallback ? 1 : 0);
+      expect(broadcast.mock.calls.filter(([event]) => event === "chat")).toHaveLength(0);
+      expect(
+        persist.mock.calls.filter(([params]) => params.event.data?.phase === "error"),
+      ).toHaveLength(0);
+      expect(getAgentRunContextOwnership(sessionId)?.clearRequested).toBe(false);
+      if (cancelled) {
+        controller.abort();
+      }
+      releaseSecond.resolve();
+      if (outcome === "post-execution-abort") {
+        await Promise.race([postExecutionWriteStarted.promise, exited]);
+        controller.abort(new Error("post-execution abort"));
+        releasePostExecutionWrite.resolve();
+      }
+      const succeeded = outcome === "success" || outcome === "cli-success";
+      await expect(run).resolves.toMatchObject({ status: succeeded ? "ok" : "error" });
+      if (outcome === "outer-failure" || outcome === "finalize-failure") {
+        const error =
+          outcome === "outer-failure" ? "Tool execution failed" : "delivery finalization failed";
+        await expect(run).resolves.toMatchObject({ error });
+      }
+      if (outcome === "finalize-failure") {
+        await expect(run).resolves.toMatchObject({ executionStarted: true });
+      }
+      if (outcome === "continuation-failure") {
+        await expect(run).resolves.toMatchObject({ error: "continuation write failed" });
+      }
+      if (outcome === "post-execution-abort") {
+        await expect(run).resolves.toMatchObject({ error: "post-execution abort" });
+      }
+      if (retryPreparationFailure) {
+        await expect(run).resolves.toMatchObject({
+          error: expect.stringContaining("retry preparation failed"),
+        });
+        await vi.advanceTimersByTimeAsync(15_000);
+      }
+      expect(onExecutionStarted).toHaveBeenCalledTimes(2);
+      const state = cancelled
+        ? "aborted"
+        : outcome === "failure" || outcome === "cli-timeout" || retryPreparationFailure
+          ? "error"
+          : "final";
+      expect(
+        broadcast.mock.calls.filter(
+          ([event, payload]) => event === "chat" && payload.state !== "delta",
+        ),
+      ).toEqual([
+        [
+          "chat",
+          expect.objectContaining({
+            runId: sessionId,
+            state,
+            ...(outcome === "cli-timeout" ? { stopReason: "timeout", errorKind: "timeout" } : {}),
+          }),
+          expect.anything(),
+        ],
+      ]);
+    } finally {
+      releaseFirst.resolve();
+      releaseSecond.resolve();
+      releasePostExecutionWrite.resolve();
+      await run.catch(() => {});
+      unsubscribe();
+      handler.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it("rejects a session that rotates before async setup", async () => {
@@ -67,7 +451,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
       sessionId: "session-after-setup",
     });
     await expect(
-      runCronIsolatedAgentTurn(makePersistentCronParams(sessionKey)),
+      runCronIsolatedAgentTurn(makeCronLifecycleParams(sessionKey)),
     ).resolves.toMatchObject({
       status: "error",
       error: `Session "${sessionKey}" changed while starting work. Retry.`,
@@ -107,7 +491,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
       return { status: "available" };
     });
 
-    const run = runCronIsolatedAgentTurn(makePersistentCronParams(sessionKey));
+    const run = runCronIsolatedAgentTurn(makeCronLifecycleParams(sessionKey));
     await vi.waitFor(() => expect(preflightCronModelProviderMock).toHaveBeenCalledTimes(1));
     releasePreflight.resolve();
 
@@ -185,7 +569,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
     loadSessionEntryMock.mockReturnValue(undefined);
 
     await expect(
-      runCronIsolatedAgentTurn(makePersistentCronParams(sessionKey)),
+      runCronIsolatedAgentTurn(makeCronLifecycleParams(sessionKey)),
     ).resolves.toMatchObject({
       status: "error",
       error: `Session "${sessionKey}" changed while starting work. Retry.`,
@@ -230,7 +614,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
       },
     );
 
-    const run = runCronIsolatedAgentTurn(makePersistentCronParams(sessionKey));
+    const run = runCronIsolatedAgentTurn(makeCronLifecycleParams(sessionKey));
     await runnerStarted.promise;
     let mutationCommitted = false;
     const mutation = runExclusiveSessionLifecycleMutation({
@@ -286,7 +670,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
       });
 
     try {
-      await expect(runCronIsolatedAgentTurn(makePersistentCronParams(sessionKey))).rejects.toThrow(
+      await expect(runCronIsolatedAgentTurn(makeCronLifecycleParams(sessionKey))).rejects.toThrow(
         "simulated final lifecycle failure",
       );
       expect(isSessionWorkAdmissionActive(inMemoryStorePath, [sessionKey, sessionId])).toBe(false);
@@ -477,7 +861,7 @@ describe("runCronIsolatedAgentTurn session lifecycle", () => {
     );
 
     await expect(
-      runCronIsolatedAgentTurn(makePersistentCronParams(sessionKey)),
+      runCronIsolatedAgentTurn(makeCronLifecycleParams(sessionKey)),
     ).resolves.toMatchObject({
       status: "error",
       error: `Session "${sessionKey}" changed while starting work. Retry.`,
