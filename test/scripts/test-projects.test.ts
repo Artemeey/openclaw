@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { listExtensionTestFilesForRoots } from "../../scripts/lib/extension-test-plan.mts";
+import { readTestSelectorSourceFacts } from "../../scripts/lib/test-selector-source-facts.mts";
 import { resolveVitestPretestBuildMode } from "../../scripts/lib/vitest-build-prerequisites.mts";
 import {
   CHANNEL_CONTRACT_CONFIG_PATTERNS,
@@ -31,6 +32,7 @@ import {
   withRetryNoOutputTimeout,
   writeVitestIncludeFile,
 } from "../../scripts/test-projects.test-support.mts";
+import { withEnv } from "../../src/test-utils/env.js";
 import { toRepoPath } from "../../src/test-utils/repo-files.js";
 import { agentVitestProjectOwners } from "../vitest/vitest.agents-paths.mjs";
 import {
@@ -683,7 +685,7 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/ci-git-owner.test.ts",
         "test/scripts/ci-linux-git.test.ts",
         "test/scripts/ci-platform-checkout.test.ts",
-        "src/scripts/ci-changed-scope.test.ts",
+        "src/scripts/ci-changed-scope.git-owner.test.ts",
         "test/scripts/ci-workflow-guards.test.ts",
       ],
     });
@@ -774,6 +776,7 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/ci-workflow-guards.test.ts",
         "test/scripts/frv-proof-broker.test.ts",
         "test/scripts/frv.test.ts",
+        "test/scripts/full-release-artifact-contract.test.ts",
         "test/scripts/full-release-validation-continuation-workflow.test.ts",
         "test/scripts/openclaw-performance-workflow.test.ts",
         "test/scripts/release-plan-producer.test.ts",
@@ -839,13 +842,16 @@ describe("scripts/test-projects changed-target routing", () => {
   it.each([
     {
       changedPath: ".github/workflows/plugin-npm-release.yml",
-      exactTarget: "test/scripts/plugin-npm-extended-stable-workflow.test.ts",
+      exactTargets: [
+        "test/scripts/plugin-npm-extended-stable-workflow.test.ts",
+        "test/scripts/plugin-release-git-lifecycle.test.ts",
+      ],
     },
     {
       changedPath: ".github/actions/setup-node-env/action.yml",
-      exactTarget: "test/scripts/install-trufflehog.test.ts",
+      exactTargets: ["test/scripts/install-trufflehog.test.ts"],
     },
-  ])("unions exact owners and references for $changedPath", ({ changedPath, exactTarget }) => {
+  ])("unions exact owners and references for $changedPath", ({ changedPath, exactTargets }) => {
     withTinyGitRepo(
       {
         [changedPath]: "name: fixture\n",
@@ -854,12 +860,38 @@ describe("scripts/test-projects changed-target routing", () => {
       (cwd) => {
         const targets = resolveChangedTestTargetPlan([changedPath], { cwd }).targets;
 
-        expect(targets).toContain(exactTarget);
+        for (const exactTarget of exactTargets) expect(targets).toContain(exactTarget);
         expect(targets).toContain("test/scripts/direct-workflow-reference.test.ts");
         expect(targets).toContain("test/scripts/ci-workflow-guards.test.ts");
       },
     );
   });
+
+  it("routes ClawHub publication through lifecycle and release workflow proof", () => {
+    expect(
+      resolveChangedTestTargetPlan([".github/workflows/plugin-clawhub-release.yml"]).targets,
+    ).toEqual(
+      expect.arrayContaining([
+        "test/scripts/ci-git-owner.test.ts",
+        "test/scripts/ci-linux-git.test.ts",
+        "test/scripts/ci-platform-checkout.test.ts",
+        "test/scripts/ci-workflow-guards.test.ts",
+        "test/scripts/package-acceptance-workflow.test.ts",
+        "test/scripts/plugin-release-git-lifecycle.test.ts",
+      ]),
+    );
+  });
+
+  it.each(["scripts/write-plugin-sdk-entry-dts.ts", "scripts/lib/local-check-runtime.mts"])(
+    "selects SDK publication regressions for %s",
+    (source) => {
+      const plan = resolveChangedTestTargetPlan([source]);
+      expect(plan.targets).toContain("test/scripts/write-plugin-sdk-entry-dts.test.ts");
+      if (source === "scripts/lib/local-check-runtime.mts") {
+        expect(plan.targets).toContain("test/scripts/local-check-runtime.test.ts");
+      }
+    },
+  );
 
   it("does not scan direct references for semantic non-YAML tooling", () => {
     withTinyGitRepo(
@@ -886,6 +918,7 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/ci-workflow-guards.test.ts",
         "test/scripts/openclaw-npm-resume-run.test.ts",
         "test/scripts/package-source-preflight.test.ts",
+        "test/scripts/release-candidate-checklist.test.ts",
         "test/scripts/release-plan-producer.test.ts",
       ],
     );
@@ -913,6 +946,7 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/release-candidate-checklist.test.ts",
         "test/scripts/release-no-push-workflow.test.ts",
         "test/scripts/release-plan-producer.test.ts",
+        "test/scripts/validate-release-publish-approval.test.ts",
         "test/scripts/ci-workflow-guards.test.ts",
       ],
     },
@@ -944,8 +978,8 @@ describe("scripts/test-projects changed-target routing", () => {
               "test/scripts/ci-git-owner.test.ts",
               "test/scripts/ci-linux-git.test.ts",
               "test/scripts/ci-platform-checkout.test.ts",
+              "src/scripts/ci-changed-scope.git-owner.test.ts",
               "test/scripts/ci-workflow-guards.test.ts",
-              "src/scripts/ci-changed-scope.test.ts",
             ]
           : ["test/scripts/ci-workflow-guards.test.ts"],
       );
@@ -1078,7 +1112,7 @@ describe("scripts/test-projects changed-target routing", () => {
         "test/scripts/ci-git-owner.test.ts",
         "test/scripts/ci-linux-git.test.ts",
         "test/scripts/ci-platform-checkout.test.ts",
-        "src/scripts/ci-changed-scope.test.ts",
+        "src/scripts/ci-changed-scope.git-owner.test.ts",
         "test/scripts/ci-workflow-guards.test.ts",
       ],
     );
@@ -1093,7 +1127,7 @@ describe("scripts/test-projects changed-target routing", () => {
       "test/scripts/ci-git-owner.test.ts",
       "test/scripts/ci-linux-git.test.ts",
       "test/scripts/ci-platform-checkout.test.ts",
-      "src/scripts/ci-changed-scope.test.ts",
+      "src/scripts/ci-changed-scope.git-owner.test.ts",
     ];
     const workflowTargets = new Map([
       [".github/workflows/mantis-discord-smoke.yml", [...packageAcceptanceTargets]],
@@ -1438,11 +1472,11 @@ describe("scripts/test-projects changed-target routing", () => {
     withTinyGitRepo(
       {
         "src/value.ts": 'export * from "./left/bridge.js";\n',
-        "src/left/bridge.ts": 'export * from "../value.js";\n',
+        "src/left/bridge.ts": 'export\n * from\n "../value.js";\n',
         "src/right/bridge.ts": 'export * from "../value.js";\n',
         "src/other/bridge.ts": "export const unrelated = 1;\n",
         "src/combined.consumer.test.ts":
-          'import "./left/bridge.js";\nimport("./right/bridge.js");\n',
+          'import\u00a0"./left/bridge.js";\nimport(\n"./right/bridge.js"\n);\n',
         "src/right.consumer.test.ts": 'import "./right/bridge.js";\n',
         "src/other.consumer.test.ts": 'import "./other/bridge.js";\n',
         "src/after-test.consumer.test.ts": 'import "./combined.consumer.test.js";\n',
@@ -1455,6 +1489,39 @@ describe("scripts/test-projects changed-target routing", () => {
         ]);
       },
     );
+  });
+
+  it("completes broad-name fallback without synchronous source opens", () => {
+    const files: Record<string, string> = {
+      "src/owner/value.ts": "export const value = 1;\n",
+      "src/owner/barrel.ts": 'export\n { value } from\n "./value.js";\n',
+      "src/owner/directory/index.ts": 'export * from "../barrel.js";\n',
+      "src/owner/consumer.test.ts": 'import(\n "./directory"\n);\n',
+      "src/owner/type.consumer.test.ts": 'import type {\n Value\n } from "./value.js";\n',
+      "src/owner/deleted.test.ts": 'import "./value.js";\n',
+      "src/owner/value.live.test.ts": 'import "./value.js";\n',
+    };
+    // Only the broad basename appears in these files; the 800-candidate cap
+    // must fall back to a complete graph, not silently drop the real consumers.
+    for (let index = 0; index < 801; index += 1) {
+      files[`src/padding/${index}.ts`] = "// value\n";
+    }
+    withTinyGitRepo(files, (cwd) => {
+      fs.unlinkSync(path.join(cwd, "src/owner/deleted.test.ts"));
+      fs.writeFileSync(path.join(cwd, "src/owner/untracked.test.ts"), 'import "./value.js";\n');
+      const reads = vi.spyOn(fs, "readFileSync");
+      try {
+        expect(resolveChangedTestTargetPlan(["src/owner/value.ts"], { cwd }).targets).toEqual([
+          "src/owner/consumer.test.ts",
+          "src/owner/type.consumer.test.ts",
+        ]);
+        expect(
+          reads.mock.calls.filter(([file]) => typeof file === "string" && file.startsWith(cwd)),
+        ).toEqual([]);
+      } finally {
+        reads.mockRestore();
+      }
+    });
   });
 
   it("keeps tooling imports direct while preserving literal file references", () => {
@@ -1957,8 +2024,11 @@ describe("scripts/test-projects changed-target routing", () => {
     ]);
   });
 
-  it("chunks the broad shell helper tooling shard after isolated targets", () => {
-    const plans = buildVitestRunPlans(["test/scripts"], process.cwd());
+  it.each([
+    ["chunks the broad shell helper tooling shard after isolated targets", "test/scripts"],
+    ["chunks broad shell helper globs after isolated targets", "test/scripts/*.test.ts"],
+  ])("%s", (_title, target) => {
+    const plans = buildVitestRunPlans([target], process.cwd());
     expect(plans.slice(0, 4)).toEqual([
       expect.objectContaining({
         config: "test/vitest/vitest.unit-fast.config.ts",
@@ -2145,70 +2215,6 @@ describe("scripts/test-projects changed-target routing", () => {
     expect(() => buildVitestRunPlans(["--watch", "src/cli"])).toThrow(
       "watch mode with mixed test suites is not supported",
     );
-  });
-
-  it("chunks broad shell helper globs after isolated targets", () => {
-    const plans = buildVitestRunPlans(["test/scripts/*.test.ts"], process.cwd());
-    expect(plans.slice(0, 4)).toEqual([
-      expect.objectContaining({
-        config: "test/vitest/vitest.unit-fast.config.ts",
-        includePatterns: expect.arrayContaining(["test/scripts/arg-utils.test.ts"]),
-        watchMode: false,
-      }),
-      {
-        config: "test/vitest/vitest.unit-fast-isolated.config.ts",
-        forwardedArgs: [],
-        includePatterns: [
-          "test/scripts/android-version.test.ts",
-          "test/scripts/ios-release-plan.test.ts",
-        ],
-        watchMode: false,
-      },
-      {
-        config: "test/vitest/vitest.tooling-docker.config.ts",
-        forwardedArgs: [],
-        includePatterns: ["test/scripts/docker-build-helper.test.ts"],
-        watchMode: false,
-      },
-      {
-        config: "test/vitest/vitest.tooling-isolated.config.ts",
-        forwardedArgs: [],
-        includePatterns: [
-          "test/scripts/check-extension-package-tsc-boundary.test.ts",
-          "test/scripts/check-plugin-sdk-wildcard-reexports.test.ts",
-          "test/scripts/control-ui-i18n.test.ts",
-          "test/scripts/openclaw-e2e-instance.test.ts",
-          "test/scripts/test-projects-build-admission.test.ts",
-          "test/scripts/vitest-fork-shutdown.test.ts",
-        ],
-        watchMode: false,
-      },
-    ]);
-    const e2ePlans = plans.filter((plan) => plan.config === "test/vitest/vitest.e2e.config.ts");
-    const toolingPlans = plans
-      .slice(4)
-      .filter((plan) => plan.config === "test/vitest/vitest.tooling.config.ts");
-    const toolingTargets = toolingPlans.flatMap((plan) => plan.includePatterns ?? []);
-
-    expect(toolingPlans.length).toBeGreaterThan(1);
-    expect(toolingPlans.every((plan) => (plan.includePatterns?.length ?? 0) <= 60)).toBe(true);
-    expect(toolingTargets).toContain("test/scripts/run-opengrep.test.ts");
-    expect(toolingTargets).not.toContain("test/scripts/docker-build-helper.test.ts");
-    expect(toolingTargets).not.toContain("test/scripts/openclaw-e2e-instance.test.ts");
-    expect(new Set(toolingTargets).size).toBe(toolingTargets.length);
-    expect(e2ePlans).toEqual([
-      {
-        config: "test/vitest/vitest.e2e.config.ts",
-        forwardedArgs: [
-          "test/scripts/doctor-config-preflight-plugin-index.built-cli.e2e.test.ts",
-          "test/scripts/mcp-channels-seed.built-cli.e2e.test.ts",
-          "test/scripts/sqlite-sessions-transcripts-flip-proof.built-cli.e2e.test.ts",
-          "test/scripts/sqlite-sessions-transcripts-flip-proof.e2e.test.ts",
-        ],
-        includePatterns: null,
-        watchMode: false,
-      },
-    ]);
   });
 
   it("keeps broad shell helper watch targets in one tooling shard", () => {
@@ -2408,7 +2414,7 @@ describe("scripts/test-projects changed-target routing", () => {
     {
       title: "keeps public plugin SDK changes focused by default",
       changedPath: "src/plugin-sdk/provider-entry.ts",
-      config: "test/vitest/vitest.unit-fast.config.ts",
+      config: "test/vitest/vitest.plugin-sdk-light.config.ts",
       testPath: "src/plugin-sdk/provider-entry.test.ts",
     },
     {
@@ -2692,7 +2698,7 @@ describe("scripts/test-projects changed-target routing", () => {
 
     expect(plans).toEqual([
       {
-        config: "test/vitest/vitest.unit-fast.config.ts",
+        config: "test/vitest/vitest.plugin-sdk-light.config.ts",
         forwardedArgs: [],
         includePatterns: ["src/plugin-sdk/provider-entry.test.ts"],
         watchMode: false,
@@ -3554,6 +3560,94 @@ describe("scripts/test-projects changed-target routing", () => {
   });
 });
 
+describe("test selector native source facts", () => {
+  it("reads complete files without installed packages, inherited hooks, or reparsing cached imports", () => {
+    withTinyFileTree(
+      {
+        "large.mts": `${"// padding\n".repeat(220_000)}export type {\n Value\n } from "./barrel.js";\nimport(\n "./dynamic.mjs"\n);\nconst fixture = "scripts/tool.mts";`,
+      },
+      (cwd) => {
+        const files = [
+          { file: "large.mts", parseImports: true },
+          { file: "deleted.ts", parseImports: true },
+        ];
+        const expectedFacts = {
+          imports: ["./barrel.js", "./dynamic.mjs"],
+          reexports: ["./barrel.js"],
+          matches: ["scripts/tool.mts", "scripts/tool"],
+          references: ["scripts/tool.mts"],
+        };
+        const scanner = path.join(fs.realpathSync(cwd), "test-selector-source-facts.mts");
+        fs.copyFileSync(path.resolve("scripts/lib/test-selector-source-facts.mts"), scanner);
+        const native = spawnSync(process.execPath, [scanner], {
+          cwd,
+          input: JSON.stringify({ files, terms: ["scripts/tool.mts", "scripts/tool"] }),
+          encoding: "utf8",
+        });
+        expect(native.error).toBeUndefined();
+        expect(native.status, native.stderr).toBe(0);
+        expect(JSON.parse(native.stdout)).toEqual([expectedFacts, null]);
+        vi.stubEnv(
+          "NODE_OPTIONS",
+          "--import=data:text/javascript,throw%20Error('inherited-loader')",
+        );
+        try {
+          expect(
+            readTestSelectorSourceFacts(
+              cwd,
+              files,
+              ["scripts/tool.mts", "scripts/tool"],
+              16 * 1024 * 1024,
+            ),
+          ).toEqual([{ file: "large.mts", ...expectedFacts }]);
+          expect(
+            readTestSelectorSourceFacts(
+              cwd,
+              [{ file: "large.mts", parseImports: false }],
+              ["scripts/tool.mts"],
+              16 * 1024 * 1024,
+            ),
+          ).toEqual([
+            {
+              file: "large.mts",
+              imports: [],
+              reexports: [],
+              matches: ["scripts/tool.mts"],
+              references: ["scripts/tool.mts"],
+            },
+          ]);
+        } finally {
+          vi.unstubAllEnvs();
+        }
+      },
+    );
+  });
+
+  it("fails loudly on child launch, output overflow, and invalid native requests", () => {
+    withTinyFileTree({ "value.ts": 'import "./dependency.js";' }, (cwd) => {
+      const files = [{ file: "value.ts", parseImports: true }];
+      expect(() => readTestSelectorSourceFacts(path.join(cwd, "missing"), files, [], 1024)).toThrow(
+        "Test selector source scan failed",
+      );
+      expect(() => readTestSelectorSourceFacts(cwd, files, [], 1)).toThrow(
+        "Test selector source scan failed",
+      );
+      const result = spawnSync(
+        process.execPath,
+        [path.resolve("scripts/lib/test-selector-source-facts.mts")],
+        {
+          cwd,
+          input: '{"files":false}',
+          encoding: "utf8",
+        },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain("[test-selector-source-facts] FAILED (exit 1)");
+    });
+  });
+});
+
 describe("scripts/test-projects full-suite sharding", () => {
   it("interleaves heavy and light configs for cold parallel full-suite runs", () => {
     const specs = [
@@ -3777,215 +3871,108 @@ describe("scripts/test-projects full-suite sharding", () => {
   });
 
   it("keeps serial untargeted local runs on leaf project configs", () => {
-    const previousParallel = process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-    const previousSerial = process.env.OPENCLAW_TEST_PROJECTS_SERIAL;
-    const previousCi = process.env.CI;
-    const previousActions = process.env.GITHUB_ACTIONS;
-    delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-    delete process.env.OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD;
-    delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-    delete process.env.CI;
-    delete process.env.GITHUB_ACTIONS;
-    process.env.OPENCLAW_TEST_PROJECTS_SERIAL = "1";
-    try {
-      const configs = buildFullSuiteVitestRunPlans([], process.cwd()).map((plan) => plan.config);
+    withEnv(
+      {
+        OPENCLAW_TEST_PROJECTS_LEAF_SHARDS: "1",
+        OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD: "1",
+      },
+      () => {
+        withEnv(
+          {
+            OPENCLAW_TEST_PROJECTS_LEAF_SHARDS: undefined,
+            OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD: undefined,
+            OPENCLAW_TEST_PROJECTS_PARALLEL: undefined,
+            CI: undefined,
+            GITHUB_ACTIONS: undefined,
+            OPENCLAW_TEST_PROJECTS_SERIAL: "1",
+          },
+          () => {
+            const configs = buildFullSuiteVitestRunPlans([], process.cwd()).map(
+              (plan) => plan.config,
+            );
 
-      expect(configs).toContain("test/vitest/vitest.gateway-server.config.ts");
-      expect(configs).toContain("test/vitest/vitest.auto-reply-reply.config.ts");
-      expect(configs).toContain("test/vitest/vitest.extension-telegram.config.ts");
-      expect(configs).not.toContain("test/vitest/vitest.full-agentic.config.ts");
-      expect(configs).not.toContain("test/vitest/vitest.full-extensions.config.ts");
-    } finally {
-      if (previousParallel === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_PARALLEL = previousParallel;
-      }
-      if (previousSerial === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_SERIAL;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_SERIAL = previousSerial;
-      }
-      if (previousCi === undefined) {
-        delete process.env.CI;
-      } else {
-        process.env.CI = previousCi;
-      }
-      if (previousActions === undefined) {
-        delete process.env.GITHUB_ACTIONS;
-      } else {
-        process.env.GITHUB_ACTIONS = previousActions;
-      }
-    }
+            expect(configs).toContain("test/vitest/vitest.gateway-server.config.ts");
+            expect(configs).toContain("test/vitest/vitest.auto-reply-reply.config.ts");
+            expect(configs).toContain("test/vitest/vitest.extension-telegram.config.ts");
+            expect(configs).not.toContain("test/vitest/vitest.full-agentic.config.ts");
+            expect(configs).not.toContain("test/vitest/vitest.full-extensions.config.ts");
+          },
+        );
+
+        expect(process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS).toBe("1");
+        expect(process.env.OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD).toBe("1");
+      },
+    );
   });
 
   it("expands untargeted local runs to leaf project configs by default", () => {
-    const previousLeafShards = process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-    const previousParallel = process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-    const previousSerial = process.env.OPENCLAW_TEST_PROJECTS_SERIAL;
-    const previousCi = process.env.CI;
-    const previousActions = process.env.GITHUB_ACTIONS;
-    const previousVitestMaxWorkers = process.env.OPENCLAW_VITEST_MAX_WORKERS;
-    const previousTestWorkers = process.env.OPENCLAW_TEST_WORKERS;
-    delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-    delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-    delete process.env.OPENCLAW_TEST_PROJECTS_SERIAL;
-    delete process.env.CI;
-    delete process.env.GITHUB_ACTIONS;
-    delete process.env.OPENCLAW_VITEST_MAX_WORKERS;
-    delete process.env.OPENCLAW_TEST_WORKERS;
-    try {
-      const plans = buildFullSuiteVitestRunPlans([], process.cwd());
-      const configs = plans.map((plan) => plan.config);
+    withEnv(
+      {
+        OPENCLAW_TEST_PROJECTS_LEAF_SHARDS: undefined,
+        OPENCLAW_TEST_PROJECTS_PARALLEL: undefined,
+        OPENCLAW_TEST_PROJECTS_SERIAL: undefined,
+        CI: undefined,
+        GITHUB_ACTIONS: undefined,
+        OPENCLAW_VITEST_MAX_WORKERS: undefined,
+        OPENCLAW_TEST_WORKERS: undefined,
+      },
+      () => {
+        const plans = buildFullSuiteVitestRunPlans([], process.cwd());
+        const configs = plans.map((plan) => plan.config);
 
-      expect(configs).toContain("test/vitest/vitest.gateway-server.config.ts");
-      expect(configs).toContain("test/vitest/vitest.extension-telegram.config.ts");
-      expect(configs).not.toContain("test/vitest/vitest.full-agentic.config.ts");
-      expect(configs).not.toContain("test/vitest/vitest.full-core-unit-fast.config.ts");
+        expect(configs).toContain("test/vitest/vitest.gateway-server.config.ts");
+        expect(configs).toContain("test/vitest/vitest.extension-telegram.config.ts");
+        expect(configs).not.toContain("test/vitest/vitest.full-agentic.config.ts");
+        expect(configs).not.toContain("test/vitest/vitest.full-core-unit-fast.config.ts");
 
-      const targetedPlans = (config: string) =>
-        plans.filter((plan) => plan.config === config && plan.forwardedArgs.length > 0);
-      const unitFastPlans = targetedPlans("test/vitest/vitest.unit-fast.config.ts");
-      expect(unitFastPlans.length).toBeGreaterThan(1);
-      expect(unitFastPlans.every((plan) => plan.forwardedArgs.length <= 70)).toBe(true);
-      const toolingPlans = targetedPlans("test/vitest/vitest.tooling.config.ts");
-      expect(toolingPlans.length).toBeGreaterThan(1);
-      expect(toolingPlans.every((plan) => plan.forwardedArgs.length <= 2)).toBe(true);
-    } finally {
-      if (previousLeafShards === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS = previousLeafShards;
-      }
-      if (previousParallel === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_PARALLEL = previousParallel;
-      }
-      if (previousSerial === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_SERIAL;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_SERIAL = previousSerial;
-      }
-      if (previousCi === undefined) {
-        delete process.env.CI;
-      } else {
-        process.env.CI = previousCi;
-      }
-      if (previousActions === undefined) {
-        delete process.env.GITHUB_ACTIONS;
-      } else {
-        process.env.GITHUB_ACTIONS = previousActions;
-      }
-      if (previousVitestMaxWorkers === undefined) {
-        delete process.env.OPENCLAW_VITEST_MAX_WORKERS;
-      } else {
-        process.env.OPENCLAW_VITEST_MAX_WORKERS = previousVitestMaxWorkers;
-      }
-      if (previousTestWorkers === undefined) {
-        delete process.env.OPENCLAW_TEST_WORKERS;
-      } else {
-        process.env.OPENCLAW_TEST_WORKERS = previousTestWorkers;
-      }
-    }
+        const targetedPlans = (config: string) =>
+          plans.filter((plan) => plan.config === config && plan.forwardedArgs.length > 0);
+        const unitFastPlans = targetedPlans("test/vitest/vitest.unit-fast.config.ts");
+        expect(unitFastPlans.length).toBeGreaterThan(1);
+        expect(unitFastPlans.every((plan) => plan.forwardedArgs.length <= 70)).toBe(true);
+        const toolingPlans = targetedPlans("test/vitest/vitest.tooling.config.ts");
+        expect(toolingPlans.length).toBeGreaterThan(1);
+        expect(toolingPlans.every((plan) => plan.forwardedArgs.length <= 2)).toBe(true);
+      },
+    );
   });
 
   it("expands conservative local worker runs to leaf project configs", () => {
-    const previousLeafShards = process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-    const previousParallel = process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-    const previousSerial = process.env.OPENCLAW_TEST_PROJECTS_SERIAL;
-    const previousCi = process.env.CI;
-    const previousActions = process.env.GITHUB_ACTIONS;
-    const previousVitestMaxWorkers = process.env.OPENCLAW_VITEST_MAX_WORKERS;
-    const previousTestWorkers = process.env.OPENCLAW_TEST_WORKERS;
-    delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-    delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-    delete process.env.OPENCLAW_TEST_PROJECTS_SERIAL;
-    delete process.env.CI;
-    delete process.env.GITHUB_ACTIONS;
-    process.env.OPENCLAW_VITEST_MAX_WORKERS = "1";
-    delete process.env.OPENCLAW_TEST_WORKERS;
-    try {
-      const configs = buildFullSuiteVitestRunPlans([], process.cwd()).map((plan) => plan.config);
+    withEnv(
+      {
+        OPENCLAW_TEST_PROJECTS_LEAF_SHARDS: undefined,
+        OPENCLAW_TEST_PROJECTS_PARALLEL: undefined,
+        OPENCLAW_TEST_PROJECTS_SERIAL: undefined,
+        CI: undefined,
+        GITHUB_ACTIONS: undefined,
+        OPENCLAW_VITEST_MAX_WORKERS: "1",
+        OPENCLAW_TEST_WORKERS: undefined,
+      },
+      () => {
+        const configs = buildFullSuiteVitestRunPlans([], process.cwd()).map((plan) => plan.config);
 
-      expect(configs).toContain("test/vitest/vitest.gateway-server.config.ts");
-      expect(configs).toContain("test/vitest/vitest.auto-reply-reply.config.ts");
-      expect(configs).not.toContain("test/vitest/vitest.full-agentic.config.ts");
-    } finally {
-      if (previousLeafShards === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS = previousLeafShards;
-      }
-      if (previousParallel === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_PARALLEL = previousParallel;
-      }
-      if (previousSerial === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_SERIAL;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_SERIAL = previousSerial;
-      }
-      if (previousCi === undefined) {
-        delete process.env.CI;
-      } else {
-        process.env.CI = previousCi;
-      }
-      if (previousActions === undefined) {
-        delete process.env.GITHUB_ACTIONS;
-      } else {
-        process.env.GITHUB_ACTIONS = previousActions;
-      }
-      if (previousVitestMaxWorkers === undefined) {
-        delete process.env.OPENCLAW_VITEST_MAX_WORKERS;
-      } else {
-        process.env.OPENCLAW_VITEST_MAX_WORKERS = previousVitestMaxWorkers;
-      }
-      if (previousTestWorkers === undefined) {
-        delete process.env.OPENCLAW_TEST_WORKERS;
-      } else {
-        process.env.OPENCLAW_TEST_WORKERS = previousTestWorkers;
-      }
-    }
+        expect(configs).toContain("test/vitest/vitest.gateway-server.config.ts");
+        expect(configs).toContain("test/vitest/vitest.auto-reply-reply.config.ts");
+        expect(configs).not.toContain("test/vitest/vitest.full-agentic.config.ts");
+      },
+    );
   });
 
   it("can skip the aggregate extension shard when CI runs dedicated extension shards", () => {
-    const previous = process.env.OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD;
-    const previousParallel = process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-    const previousSerial = process.env.OPENCLAW_TEST_PROJECTS_SERIAL;
-    const previousCi = process.env.CI;
-    delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-    process.env.OPENCLAW_TEST_PROJECTS_SERIAL = "1";
-    process.env.CI = "true";
-    process.env.OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD = "1";
-    try {
-      const configs = buildFullSuiteVitestRunPlans([], process.cwd()).map((plan) => plan.config);
+    withEnv(
+      {
+        OPENCLAW_TEST_PROJECTS_PARALLEL: undefined,
+        OPENCLAW_TEST_PROJECTS_SERIAL: "1",
+        CI: "true",
+        OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD: "1",
+      },
+      () => {
+        const configs = buildFullSuiteVitestRunPlans([], process.cwd()).map((plan) => plan.config);
 
-      expect(configs).not.toContain("test/vitest/vitest.full-extensions.config.ts");
-      expect(configs).toContain("test/vitest/vitest.full-auto-reply.config.ts");
-    } finally {
-      if (previous === undefined) {
-        delete process.env.OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD;
-      } else {
-        process.env.OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD = previous;
-      }
-      if (previousParallel === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_PARALLEL = previousParallel;
-      }
-      if (previousSerial === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_SERIAL;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_SERIAL = previousSerial;
-      }
-      if (previousCi === undefined) {
-        delete process.env.CI;
-      } else {
-        process.env.CI = previousCi;
-      }
-    }
+        expect(configs).not.toContain("test/vitest/vitest.full-extensions.config.ts");
+        expect(configs).toContain("test/vitest/vitest.full-auto-reply.config.ts");
+      },
+    );
   });
 
   it("runs explicit leaf project config targets as whole configs", () => {
@@ -4063,75 +4050,48 @@ describe("scripts/test-projects full-suite sharding", () => {
   });
 
   it("skips extension project configs when leaf sharding and the aggregate extension shard is disabled", () => {
-    const previousLeafShards = process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-    const previousSkipExtensions = process.env.OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD;
-    process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS = "1";
-    process.env.OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD = "1";
-    try {
-      const configs = buildFullSuiteVitestRunPlans([], process.cwd()).map((plan) => plan.config);
+    withEnv(
+      {
+        OPENCLAW_TEST_PROJECTS_LEAF_SHARDS: "1",
+        OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD: "1",
+      },
+      () => {
+        const configs = buildFullSuiteVitestRunPlans([], process.cwd()).map((plan) => plan.config);
 
-      expect(configs).not.toContain("test/vitest/vitest.extensions.config.ts");
-      expect(configs).not.toContain("test/vitest/vitest.extension-providers.config.ts");
-      expect(configs).toContain("test/vitest/vitest.auto-reply-reply.config.ts");
-    } finally {
-      if (previousLeafShards === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS = previousLeafShards;
-      }
-      if (previousSkipExtensions === undefined) {
-        delete process.env.OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD;
-      } else {
-        process.env.OPENCLAW_TEST_SKIP_FULL_EXTENSIONS_SHARD = previousSkipExtensions;
-      }
-    }
+        expect(configs).not.toContain("test/vitest/vitest.extensions.config.ts");
+        expect(configs).not.toContain("test/vitest/vitest.extension-providers.config.ts");
+        expect(configs).toContain("test/vitest/vitest.auto-reply-reply.config.ts");
+      },
+    );
   });
 
   it("expands full-suite shards before running them in parallel", () => {
-    const previousLeafShards = process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-    const previousParallel = process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-    delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-    process.env.OPENCLAW_TEST_PROJECTS_PARALLEL = "6";
-    try {
-      const configs = buildFullSuiteVitestRunPlans([], process.cwd()).map((plan) => plan.config);
+    withEnv(
+      {
+        OPENCLAW_TEST_PROJECTS_LEAF_SHARDS: undefined,
+        OPENCLAW_TEST_PROJECTS_PARALLEL: "6",
+      },
+      () => {
+        const configs = buildFullSuiteVitestRunPlans([], process.cwd()).map((plan) => plan.config);
 
-      expect(configs).toContain("test/vitest/vitest.extension-telegram.config.ts");
-      expect(configs).not.toContain("test/vitest/vitest.full-extensions.config.ts");
-    } finally {
-      if (previousLeafShards === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS = previousLeafShards;
-      }
-      if (previousParallel === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_PARALLEL = previousParallel;
-      }
-    }
+        expect(configs).toContain("test/vitest/vitest.extension-telegram.config.ts");
+        expect(configs).not.toContain("test/vitest/vitest.full-extensions.config.ts");
+      },
+    );
   });
 
   it("rejects malformed full-suite expansion parallel overrides", () => {
-    const previousLeafShards = process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-    const previousParallel = process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-    delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-    process.env.OPENCLAW_TEST_PROJECTS_PARALLEL = "6x";
-    try {
-      expect(() => buildFullSuiteVitestRunPlans([], process.cwd())).toThrow(
-        "OPENCLAW_TEST_PROJECTS_PARALLEL must be a positive integer; got: 6x",
-      );
-    } finally {
-      if (previousLeafShards === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_LEAF_SHARDS = previousLeafShards;
-      }
-      if (previousParallel === undefined) {
-        delete process.env.OPENCLAW_TEST_PROJECTS_PARALLEL;
-      } else {
-        process.env.OPENCLAW_TEST_PROJECTS_PARALLEL = previousParallel;
-      }
-    }
+    withEnv(
+      {
+        OPENCLAW_TEST_PROJECTS_LEAF_SHARDS: undefined,
+        OPENCLAW_TEST_PROJECTS_PARALLEL: "6x",
+      },
+      () => {
+        expect(() => buildFullSuiteVitestRunPlans([], process.cwd())).toThrow(
+          "OPENCLAW_TEST_PROJECTS_PARALLEL must be a positive integer; got: 6x",
+        );
+      },
+    );
   });
 
   it("keeps untargeted watch mode on the native root config", () => {
@@ -4476,7 +4436,10 @@ it.each([
   "test/scripts/openclaw-performance-workflow.test.ts",
   "test/scripts/openclaw-performance-workflow.test-support.ts",
   "test/scripts/openclaw-performance-git-lifecycle.test.ts",
+  "test/scripts/plugin-release-git-lifecycle.test.ts",
   "test/scripts/release-workflow-git-lifecycle.test.ts",
+  ".github/workflows/plugin-clawhub-release.yml",
+  ".github/workflows/plugin-npm-release.yml",
   ".github/actions/publish-generated-pr/action.yml",
   ".github/actions/publish-generated-pr/policy.py",
   ".github/workflows/maturity-scorecard.yml",
@@ -4543,6 +4506,25 @@ it("routes release admission lifecycle ownership through serial native proof", (
   );
   expect(
     buildVitestRunPlans(["test/scripts/release-workflow-git-lifecycle.test.ts"]).map(
+      ({ config }) => config,
+    ),
+  ).toEqual(["test/vitest/vitest.tooling.config.ts"]);
+});
+
+it("routes plugin publication lifecycle ownership through serial native proof", () => {
+  expect(
+    resolveChangedTestTargetPlan(["test/scripts/plugin-release-git-lifecycle.test.ts"]).targets,
+  ).toEqual(
+    expect.arrayContaining([
+      "test/scripts/ci-git-owner.test.ts",
+      "test/scripts/ci-linux-git.test.ts",
+      "test/scripts/ci-platform-checkout.test.ts",
+      "test/scripts/plugin-release-git-lifecycle.test.ts",
+      "test/scripts/ci-workflow-guards.test.ts",
+    ]),
+  );
+  expect(
+    buildVitestRunPlans(["test/scripts/plugin-release-git-lifecycle.test.ts"]).map(
       ({ config }) => config,
     ),
   ).toEqual(["test/vitest/vitest.tooling.config.ts"]);
