@@ -86,6 +86,15 @@ function killProcessGroup(child) {
   } catch {}
 }
 
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== "ESRCH";
+  }
+}
+
 function sanitizeOutput(value, args) {
   let output = value.toString("utf8");
   for (const [source, replacement] of [
@@ -176,6 +185,7 @@ async function run(argv) {
 
   let stdout = Buffer.alloc(0);
   let stderr = Buffer.alloc(0);
+  let rssMeasurementFailed = false;
   let rssExceeded = false;
   let timedOut = false;
   const child = spawn(
@@ -205,7 +215,10 @@ async function run(argv) {
       return;
     }
     const rssBytes = processGroupRssBytes(child.pid);
-    if (rssBytes !== null && rssBytes > rssLimitBytes) {
+    if (rssBytes === null && processExists(child.pid)) {
+      rssMeasurementFailed = true;
+      killProcessGroup(child);
+    } else if (rssBytes !== null && rssBytes > rssLimitBytes) {
       rssExceeded = true;
       killProcessGroup(child);
     }
@@ -231,6 +244,10 @@ async function run(argv) {
   }
   if (timedOut) {
     writeFailureReport(args, "timed out");
+    return 1;
+  }
+  if (rssMeasurementFailed) {
+    writeFailureReport(args, "could not measure RSS");
     return 1;
   }
   if (rssExceeded) {

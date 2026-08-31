@@ -72,6 +72,7 @@ jobs:
       plugin_prerelease_static_matrix: ${{ steps.manifest.outputs.plugin_prerelease_static_matrix }}
       run_plugin_prerelease_node: ${{ steps.manifest.outputs.run_plugin_prerelease_node }}
       plugin_prerelease_node_matrix: ${{ steps.manifest.outputs.plugin_prerelease_node_matrix }}
+      node_test_exclude_patterns_json: ${{ steps.node_test_exclusions.outputs.patterns_json }}
       run_plugin_prerelease_extensions: ${{ steps.manifest.outputs.run_plugin_prerelease_extensions }}
       plugin_prerelease_extension_matrix: ${{ steps.manifest.outputs.plugin_prerelease_extension_matrix }}
       run_plugin_prerelease_inspector: ${{ steps.manifest.outputs.run_plugin_prerelease_inspector }}
@@ -124,6 +125,67 @@ jobs:
             echo "phase=candidate requires the complete immutable package and Docker image artifact tuple." >&2
             exit 1
           fi
+
+      - name: Validate frozen-target Node exclusions
+        id: node_test_exclusions
+        env:
+          FULL_RELEASE_VALIDATION: ${{ inputs.full_release_validation && 'true' || 'false' }}
+          NODE_TEST_EXCLUDE_PATTERNS_JSON: ${{ inputs.node_test_exclude_patterns_json }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'EOF'
+          import { appendFileSync } from "node:fs";
+
+          const rawPatterns = process.env.NODE_TEST_EXCLUDE_PATTERNS_JSON ?? "";
+          let patterns;
+          try {
+            patterns = JSON.parse(rawPatterns);
+          } catch (error) {
+            console.error(`node_test_exclude_patterns_json must be valid JSON: ${error.message}`);
+            process.exit(1);
+          }
+          if (!Array.isArray(patterns)) {
+            console.error("node_test_exclude_patterns_json must be a JSON array");
+            process.exit(1);
+          }
+          const invalidPattern = patterns.find((pattern) => {
+            if (typeof pattern !== "string" || pattern.length === 0 || pattern !== pattern.trim()) {
+              return true;
+            }
+            const segments = pattern.split("/");
+            return (
+              !pattern.startsWith("src/plugins/") ||
+              !pattern.endsWith(".test.ts") ||
+              pattern.includes("\\") ||
+              pattern.includes("..") ||
+              segments.some((segment) => segment.length === 0 || segment === ".") ||
+              !/^[A-Za-z0-9._/-]+$/u.test(pattern)
+            );
+          });
+          if (invalidPattern !== undefined) {
+            console.error(
+              `Invalid frozen-target Node test omission: ${JSON.stringify(invalidPattern)}`,
+            );
+            process.exit(1);
+          }
+          if (new Set(patterns).size !== patterns.length) {
+            console.error("node_test_exclude_patterns_json must not contain duplicate paths");
+            process.exit(1);
+          }
+          const fullReleaseValidation = process.env.FULL_RELEASE_VALIDATION === "true";
+          if (!fullReleaseValidation && rawPatterns !== "[]") {
+            console.error(
+              "node_test_exclude_patterns_json may differ from [] only when full_release_validation=true",
+            );
+            process.exit(1);
+          }
+          appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `patterns_json=${JSON.stringify(patterns)}\n`,
+            "utf8",
+          );
+          EOF
 
       - name: Checkout target
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -588,6 +650,7 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ needs.preflight.outputs.checkout_revision }}
           EXPECTED_PACKAGES_JSON: ${{ needs.plugin-npm-security-plan.outputs.packages_json }}
+          PACKAGE_RESULT: ${{ needs.plugin-npm-security-package.result }}
           TARGET_CONTEXT_REF: ${{ inputs.target_context_ref }}
           TOOLING_SHA: ${{ github.sha }}
         shell: bash
@@ -595,6 +658,7 @@ jobs:
           set -euo pipefail
           report="$RUNNER_TEMP/plugin-npm-security-scan.json"
           mkdir -p "$RUNNER_TEMP/plugin-npm-security-packages"
+          status=0
           node scripts/plugin-npm-security-scan-runner.mjs \
             --artifact-plan "$RUNNER_TEMP/plugin-npm-security-artifact-download-plan.json" \
             --artifact-root "$RUNNER_TEMP/plugin-npm-security-packages" \
@@ -602,7 +666,12 @@ jobs:
             --expected-packages-json "$EXPECTED_PACKAGES_JSON" \
             --target-context-ref "$TARGET_CONTEXT_REF" \
             --tooling-sha "$TOOLING_SHA" \
-            --report "$report"
+            --report "$report" || status=$?
+          if [[ "$PACKAGE_RESULT" != "success" ]]; then
+            echo "::error::plugin package preparation ended with $PACKAGE_RESULT"
+            status=1
+          fi
+          exit "$status"
 
       - name: Upload plugin npm security scan report
         if: always()
@@ -683,6 +752,7 @@ jobs:
       - name: Run release-only plugin Node shard
         env:
           NODE_OPTIONS: --max-old-space-size=8192
+          NODE_TEST_EXCLUDE_PATTERNS_JSON: ${{ needs.preflight.outputs.node_test_exclude_patterns_json }}
           OPENCLAW_NODE_TEST_CONFIGS_JSON: ${{ toJson(matrix.configs) }}
           OPENCLAW_NODE_TEST_INCLUDE_PATTERNS_JSON: ${{ toJson(matrix.includePatterns) }}
           OPENCLAW_VITEST_SHARD_NAME: ${{ matrix.shard_name }}
@@ -703,6 +773,16 @@ jobs:
           const includePatterns = JSON.parse(
             process.env.OPENCLAW_NODE_TEST_INCLUDE_PATTERNS_JSON ?? "null",
           );
+          const excludePatterns = JSON.parse(
+            process.env.NODE_TEST_EXCLUDE_PATTERNS_JSON ?? "[]",
+          );
+          if (
+            !Array.isArray(excludePatterns) ||
+            excludePatterns.some((pattern) => typeof pattern !== "string")
+          ) {
+            console.error("Invalid frozen-target Node exclusions");
+            process.exit(1);
+          }
           const childEnv = { ...process.env };
           if (Array.isArray(includePatterns) && includePatterns.length > 0) {
             const includeFile = join(
@@ -713,7 +793,10 @@ jobs:
             childEnv.OPENCLAW_VITEST_INCLUDE_FILE = includeFile;
           }
 
-          const result = spawnSync("pnpm", ["test", "--", ...configs], {
+          const excludeArgs = excludePatterns.map(
+            (pattern) => `--exclude=${pattern.slice("src/plugins/".length)}`,
+          );
+          const result = spawnSync("pnpm", ["test", "--", ...configs, "--", ...excludeArgs], {
             env: childEnv,
             stdio: "inherit",
           });

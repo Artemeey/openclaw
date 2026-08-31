@@ -751,6 +751,12 @@ function isExcludedTestFileName(name: string): boolean {
   return TEST_FILE_NAME_PATTERN.test(name);
 }
 
+export function isExcludedTestFilePath(filePath: string): boolean {
+  const segments = filePath.split(/[\\/]+/u).filter(Boolean);
+  const fileName = segments.pop() ?? "";
+  return segments.some(isExcludedTestDirectoryName) || isExcludedTestFileName(fileName);
+}
+
 function pathContainsNodeModulesSegment(relativePath: string): boolean {
   return relativePath.split(/[\\/]+/u).includes("node_modules");
 }

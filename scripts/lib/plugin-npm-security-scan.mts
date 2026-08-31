@@ -14,6 +14,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
+  isExcludedTestFilePath,
   isScannable,
   scanDirectoryWithSummary,
   type SkillScanFinding,
@@ -78,12 +79,12 @@ export type PluginNpmSecurityScanReport = {
 
 const execFileAsync = promisify(execFile);
 export const MAX_PUBLISHABLE_PLUGIN_PACKAGES = 256;
-export const MAX_PLUGIN_PACKAGE_MANIFEST_BYTES = 256 * 1024;
-export const MAX_PLUGIN_SCAN_FINDINGS_PER_PACKAGE = 10_000;
-export const MAX_PLUGIN_SCAN_TOTAL_FINDINGS = 50_000;
-export const MAX_PLUGIN_SCAN_REPORT_BYTES = 1024 * 1024;
-export const MAX_PLUGIN_SECURITY_WORKFLOW_ARTIFACT_BYTES = 128 * 1024 * 1024;
-export const MAX_PLUGIN_SECURITY_WORKFLOW_ARTIFACT_TOTAL_BYTES = 512 * 1024 * 1024;
+const MAX_PLUGIN_PACKAGE_MANIFEST_BYTES = 256 * 1024;
+const MAX_PLUGIN_SCAN_FINDINGS_PER_PACKAGE = 10_000;
+const MAX_PLUGIN_SCAN_TOTAL_FINDINGS = 50_000;
+const MAX_PLUGIN_SCAN_REPORT_BYTES = 1024 * 1024;
+const MAX_PLUGIN_SECURITY_WORKFLOW_ARTIFACT_BYTES = 128 * 1024 * 1024;
+const MAX_PLUGIN_SECURITY_WORKFLOW_ARTIFACT_TOTAL_BYTES = 512 * 1024 * 1024;
 const MAX_PLUGIN_SECURITY_ARTIFACT_METADATA_BYTES = 64 * 1024;
 const MAX_PLUGIN_TARBALL_BYTES = 128 * 1024 * 1024;
 const MAX_PLUGIN_TARBALL_TOTAL_BYTES = 512 * 1024 * 1024;
@@ -97,7 +98,7 @@ const MAX_SCANNABLE_TOTAL_BYTES_PER_PACKAGE = 64 * 1024 * 1024;
 const PACKAGE_SCAN_CONCURRENCY = 4;
 const CANONICAL_NPM_PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/u;
 
-const COMMON_REVIEWED_CRITICAL_FINDING_COUNTS = new Map<string, number>([
+const CURRENT_REQUIRED_REVIEWED_SOURCE_FINDING_COUNTS = new Map<string, number>([
   ["@openclaw/acpx:dangerous-exec:src/codex-auth-bridge.ts", 1],
   ["@openclaw/acpx:dangerous-exec:src/runtime-internals/mcp-proxy.mjs", 1],
   ["@openclaw/codex:dangerous-exec:src/app-server/transport-stdio.ts", 1],
@@ -111,6 +112,17 @@ const COMMON_REVIEWED_CRITICAL_FINDING_COUNTS = new Map<string, number>([
   ["@openclaw/voice-call:dangerous-exec:src/tunnel.ts", 1],
 ]);
 
+type ReviewedReleaseLayout = {
+  id: string;
+  findings: ReadonlyMap<string, number>;
+};
+
+type PluginSecurityInventoryPolicy = {
+  layout: ReviewedReleaseLayout;
+  optionalPackedFindingCounts: ReadonlyMap<string, number>;
+  requiredSourceFindingCounts: ReadonlyMap<string, number>;
+};
+
 const CURRENT_REVIEWED_RELEASE_LAYOUT = {
   id: "current",
   findings: new Map<string, number>([
@@ -119,24 +131,7 @@ const CURRENT_REVIEWED_RELEASE_LAYOUT = {
   ]),
 };
 
-const FROZEN_EXTENDED_STABLE_2026_6_33_LAYOUT = {
-  id: "extended-stable-2026.6.33",
-  findings: new Map<string, number>([
-    ["@openclaw/codex:dangerous-exec:src/app-server/sandbox-exec-server/http.ts", 1],
-    ["@openclaw/codex:dangerous-exec:src/app-server/sandbox-exec-server/processes.ts", 1],
-    ["@openclaw/codex:dangerous-exec:src/node-cli-sessions.ts", 1],
-    ["@openclaw/opencode-provider:dangerous-exec:session-catalog.ts", 1],
-    ["@openclaw/opencode-provider:dangerous-exec:session-catalog.test.ts", 1],
-  ]),
-};
-
-const FROZEN_RELEASE_LAYOUTS = new Map<string, typeof CURRENT_REVIEWED_RELEASE_LAYOUT>([
-  ["extended-stable/2026.6.33", FROZEN_EXTENDED_STABLE_2026_6_33_LAYOUT],
-]);
-
-// Generated chunks can contain multiple reviewed execution sites. Counts are
-// part of the contract so an added or missing site fails the release scan.
-const OPTIONAL_REVIEWED_DIST_CRITICAL_FINDING_COUNTS = new Map<string, number>([
+const CURRENT_OPTIONAL_REVIEWED_PACKED_FINDING_COUNTS = new Map<string, number>([
   ["@openclaw/acpx:dangerous-exec:dist/mcp-proxy.mjs", 1],
   ["@openclaw/acpx:dangerous-exec:dist/service-<hash>.js", 1],
   ["@openclaw/codex:dangerous-exec:dist/api.js", 1],
@@ -147,6 +142,63 @@ const OPTIONAL_REVIEWED_DIST_CRITICAL_FINDING_COUNTS = new Map<string, number>([
   ["@openclaw/slack:dynamic-code-execution:dist/outbound-payload.test-harness-<hash>.js", 1],
   ["@openclaw/voice-call:dangerous-exec:dist/runtime-entry-<hash>.js", 1],
 ]);
+
+const CURRENT_SECURITY_INVENTORY_POLICY: PluginSecurityInventoryPolicy = {
+  layout: CURRENT_REVIEWED_RELEASE_LAYOUT,
+  optionalPackedFindingCounts: CURRENT_OPTIONAL_REVIEWED_PACKED_FINDING_COUNTS,
+  requiredSourceFindingCounts: CURRENT_REQUIRED_REVIEWED_SOURCE_FINDING_COUNTS,
+};
+
+const FROZEN_RELEASE_REQUIRED_REVIEWED_SOURCE_FINDING_COUNTS = new Map<string, number>([
+  ["@openclaw/acpx:dangerous-exec:src/codex-auth-bridge.ts", 1],
+  ["@openclaw/acpx:dangerous-exec:src/runtime-internals/mcp-proxy.mjs", 1],
+  ["@openclaw/codex:dangerous-exec:src/app-server/transport-stdio.ts", 1],
+  ["@openclaw/codex:dangerous-exec:src/node-cli-sessions.ts", 1],
+  ["@openclaw/discord:dangerous-exec:src/voice/audio.ts", 1],
+  ["@openclaw/google-meet:dangerous-exec:src/node-host.ts", 1],
+  ["@openclaw/google-meet:dangerous-exec:src/realtime.ts", 1],
+  ["@openclaw/matrix:dangerous-exec:src/matrix/deps.ts", 1],
+  ["@openclaw/raft:dangerous-exec:src/gateway.ts", 1],
+  ["@openclaw/signal:dangerous-exec:src/daemon.ts", 1],
+  ["@openclaw/voice-call:dangerous-exec:src/tunnel.ts", 1],
+  ["@openclaw/voice-call:dangerous-exec:src/webhook/tailscale.ts", 1],
+]);
+
+const FROZEN_RELEASE_OPTIONAL_REVIEWED_PACKED_FINDING_COUNTS = new Map<string, number>([
+  ["@openclaw/acpx:dangerous-exec:dist/mcp-proxy.mjs", 1],
+  ["@openclaw/acpx:dangerous-exec:dist/service-<hash>.js", 1],
+  ["@openclaw/codex:dangerous-exec:dist/client-<hash>.js", 1],
+  ["@openclaw/google-meet:dangerous-exec:dist/index.js", 1],
+  ["@openclaw/slack:dynamic-code-execution:dist/outbound-payload.test-harness-<hash>.js", 1],
+  ["@openclaw/voice-call:dangerous-exec:dist/runtime-entry-<hash>.js", 1],
+]);
+
+const FROZEN_EXTENDED_STABLE_2026_6_33_LAYOUT = {
+  id: "extended-stable-2026.6.33",
+  findings: new Map<string, number>([
+    ["@openclaw/codex:dangerous-exec:src/app-server/sandbox-exec-server/http.ts", 1],
+    ["@openclaw/codex:dangerous-exec:src/app-server/sandbox-exec-server/processes.ts", 1],
+  ]),
+};
+
+const FROZEN_RELEASE_SECURITY_INVENTORY_POLICIES = new Map<string, PluginSecurityInventoryPolicy>([
+  [
+    "extended-stable/2026.6.33",
+    {
+      layout: FROZEN_EXTENDED_STABLE_2026_6_33_LAYOUT,
+      optionalPackedFindingCounts: FROZEN_RELEASE_OPTIONAL_REVIEWED_PACKED_FINDING_COUNTS,
+      requiredSourceFindingCounts: FROZEN_RELEASE_REQUIRED_REVIEWED_SOURCE_FINDING_COUNTS,
+    },
+  ],
+]);
+
+function selectPluginSecurityInventoryPolicy(
+  targetContextRef: string,
+): PluginSecurityInventoryPolicy | undefined {
+  return targetContextRef === ""
+    ? CURRENT_SECURITY_INVENTORY_POLICY
+    : FROZEN_RELEASE_SECURITY_INVENTORY_POLICIES.get(targetContextRef);
+}
 
 const REVIEWED_LAYOUT_FINDING_COUNTS = new Map<string, number>([
   ...CURRENT_REVIEWED_RELEASE_LAYOUT.findings,
@@ -172,8 +224,11 @@ function arraysEqual(left: readonly string[], right: readonly string[]): boolean
 export function resolveReviewedSourceLayout(
   reviewedCriticalFindings: readonly string[],
   targetContextRef = "",
-): typeof CURRENT_REVIEWED_RELEASE_LAYOUT | undefined {
-  const layout = FROZEN_RELEASE_LAYOUTS.get(targetContextRef) ?? CURRENT_REVIEWED_RELEASE_LAYOUT;
+): ReviewedReleaseLayout | undefined {
+  const layout = selectPluginSecurityInventoryPolicy(targetContextRef)?.layout;
+  if (!layout) {
+    return undefined;
+  }
   const observedLayoutFindings = sortStrings(
     reviewedCriticalFindings.filter((key) => REVIEWED_LAYOUT_FINDING_COUNTS.has(key)),
   );
@@ -184,12 +239,14 @@ export function resolveReviewedSourceLayout(
 
 export function normalizePackedFindingPath(packedPath: string): string {
   for (const prefix of [
+    "client",
     "dynamic-tools",
     "outbound-payload.test-harness",
     "run-attempt",
     "runtime-entry",
     "service",
     "session-catalog",
+    "shared-client",
     "transport-stdio",
   ]) {
     if (new RegExp(`^dist/${prefix}-[A-Za-z0-9_-]{8}\\.js$`, "u").test(packedPath)) {
@@ -202,22 +259,26 @@ export function normalizePackedFindingPath(packedPath: string): string {
 function expectedOptionalReviewedFindingsForPackedPath(
   packageName: string,
   packedPath: string,
+  policy: PluginSecurityInventoryPolicy | undefined,
 ): string[] {
   const normalizedPath = normalizePackedFindingPath(packedPath);
   const keyPrefix = `${packageName}:`;
   const keySuffix = `:${normalizedPath}`;
-  return [...OPTIONAL_REVIEWED_DIST_CRITICAL_FINDING_COUNTS].flatMap(([key, count]) =>
+  return [...(policy?.optionalPackedFindingCounts ?? [])].flatMap(([key, count]) =>
     key.startsWith(keyPrefix) && key.endsWith(keySuffix)
       ? Array.from({ length: count }, () => key)
       : [],
   );
 }
 
-function isReviewedCriticalFinding(key: string): boolean {
+function isReviewedCriticalFinding(
+  key: string,
+  policy: PluginSecurityInventoryPolicy | undefined,
+): boolean {
   return (
-    COMMON_REVIEWED_CRITICAL_FINDING_COUNTS.has(key) ||
-    REVIEWED_LAYOUT_FINDING_COUNTS.has(key) ||
-    OPTIONAL_REVIEWED_DIST_CRITICAL_FINDING_COUNTS.has(key)
+    policy?.requiredSourceFindingCounts.has(key) === true ||
+    policy?.layout.findings.has(key) === true ||
+    policy?.optionalPackedFindingCounts.has(key) === true
   );
 }
 
@@ -911,6 +972,9 @@ export function stageScannerRelevantPluginTarballFiles(tarballPath: string): {
         if (!isScannable(packedPath)) {
           return;
         }
+        if (isExcludedTestFilePath(packedPath)) {
+          return;
+        }
         if (content.byteLength > MAX_SCANNABLE_FILE_BYTES) {
           throw new Error(`Packed scanner input exceeds the per-file byte limit: ${packedPath}`);
         }
@@ -966,6 +1030,7 @@ export function assertCompleteScannerSummary(
 
 async function scanSupplementalInertPluginInput(
   plugin: PluginNpmSecurityArtifact,
+  policy: PluginSecurityInventoryPolicy | undefined,
 ): Promise<ScanPackageResult> {
   const reviewedCriticalFindings: string[] = [];
   const expectedReviewedCriticalFindings: string[] = [];
@@ -982,12 +1047,11 @@ async function scanSupplementalInertPluginInput(
     }
     for (const packedFile of staged.packedFiles) {
       expectedReviewedCriticalFindings.push(
-        ...expectedOptionalReviewedFindingsForPackedPath(plugin.packageName, packedFile),
+        ...expectedOptionalReviewedFindingsForPackedPath(plugin.packageName, packedFile, policy),
       );
     }
     const summary = await scanDirectoryWithSummary(staged.stageDir, {
       excludeTestFiles: true,
-      excludeTestFiles: false,
       maxFileBytes: MAX_SCANNABLE_FILE_BYTES,
       maxFiles: MAX_SCANNABLE_FILES_PER_PACKAGE,
     });
@@ -1007,7 +1071,7 @@ async function scanSupplementalInertPluginInput(
       }
       const record = findingRecord(staged.stageDir, finding);
       const key = findingKey(plugin.packageName, record);
-      if (isReviewedCriticalFinding(key)) {
+      if (isReviewedCriticalFinding(key, policy)) {
         reviewedCriticalFindings.push(key);
       } else {
         unexpectedCriticalFindings.push(record);
@@ -1033,10 +1097,11 @@ async function scanSupplementalInertPluginInput(
 
 function expectedRequiredFindingsForPackage(
   packageName: string,
-  layout: typeof CURRENT_REVIEWED_RELEASE_LAYOUT,
+  policy: PluginSecurityInventoryPolicy,
 ): string[] {
-  return [...COMMON_REVIEWED_CRITICAL_FINDING_COUNTS, ...layout.findings].flatMap(([key, count]) =>
-    key.startsWith(`${packageName}:`) ? Array.from({ length: count }, () => key) : [],
+  return [...policy.requiredSourceFindingCounts, ...policy.layout.findings].flatMap(
+    ([key, count]) =>
+      key.startsWith(`${packageName}:`) ? Array.from({ length: count }, () => key) : [],
   );
 }
 
@@ -1054,7 +1119,9 @@ export function buildPluginNpmSecurityScanReport(params: {
     (total, result) => total + result.scanFindingCount,
     0,
   );
-  const layout = resolveReviewedSourceLayout(allReviewedFindings, params.targetContextRef);
+  const targetContextRef = params.targetContextRef ?? "";
+  const policy = selectPluginSecurityInventoryPolicy(targetContextRef);
+  const layout = resolveReviewedSourceLayout(allReviewedFindings, targetContextRef);
   const errors: string[] = sortStrings(params.scanErrors ?? []);
 
   if (totalFindingCount > (params.maxTotalFindings ?? MAX_PLUGIN_SCAN_TOTAL_FINDINGS)) {
@@ -1069,8 +1136,8 @@ export function buildPluginNpmSecurityScanReport(params: {
 
   const publishablePackageNames = new Set(packageResults.map((result) => result.packageName));
   const requiredFindingCounts = new Map<string, number>([
-    ...COMMON_REVIEWED_CRITICAL_FINDING_COUNTS,
-    ...(layout?.findings ?? []),
+    ...(policy?.requiredSourceFindingCounts ?? []),
+    ...(policy?.layout.findings ?? []),
   ]);
   const missingPackages = [
     ...new Set([...requiredFindingCounts.keys()].map((key) => key.slice(0, key.indexOf(":")))),
@@ -1087,11 +1154,11 @@ export function buildPluginNpmSecurityScanReport(params: {
         `${result.packageName}: unexpected critical findings: ${JSON.stringify(result.unexpectedCriticalFindings)}`,
       );
     }
-    if (!layout) {
+    if (!policy || !layout) {
       continue;
     }
     const expected = sortStrings([
-      ...expectedRequiredFindingsForPackage(result.packageName, layout),
+      ...expectedRequiredFindingsForPackage(result.packageName, policy),
       ...result.expectedReviewedCriticalFindings,
     ]);
     const observed = sortStrings(result.reviewedCriticalFindings);
@@ -1171,8 +1238,10 @@ function sanitizePackageScanError(plugin: PluginNpmSecurityArtifact, error: unkn
 
 export async function scanPublishablePluginPackages(
   packages: readonly PluginNpmSecurityArtifact[],
+  targetContextRef = "",
 ): Promise<{ packageResults: ScanPackageResult[]; scanErrors: string[] }> {
   const scanErrors: string[] = [];
+  const policy = selectPluginSecurityInventoryPolicy(targetContextRef);
   const { results } = await runTasksWithConcurrency({
     errorMode: "continue",
     limit: PACKAGE_SCAN_CONCURRENCY,
@@ -1182,7 +1251,7 @@ export async function scanPublishablePluginPackages(
         plugin ? sanitizePackageScanError(plugin, error) : "Unknown package: package scan failed.",
       );
     },
-    tasks: packages.map((plugin) => () => scanSupplementalInertPluginInput(plugin)),
+    tasks: packages.map((plugin) => () => scanSupplementalInertPluginInput(plugin, policy)),
   });
   return {
     packageResults: results.filter((result): result is ScanPackageResult => result !== undefined),
@@ -1214,7 +1283,10 @@ export async function runPluginNpmSecurityScan(params: {
     rejectedPackageNames: params.preDownloadRejectedPackageNames,
     toolingSha,
   });
-  const { packageResults, scanErrors } = await scanPublishablePluginPackages(loaded.artifacts);
+  const { packageResults, scanErrors } = await scanPublishablePluginPackages(
+    loaded.artifacts,
+    params.targetContextRef,
+  );
   return constrainPluginNpmSecurityScanReport(
     buildPluginNpmSecurityScanReport({
       candidateSha: params.candidateSha,

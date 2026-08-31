@@ -1,6 +1,6 @@
 // Plugin Prerelease Test Plan tests cover plugin prerelease test plan script behavior.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it } from "vitest";
@@ -48,6 +48,35 @@ function getDockerLane(name: string) {
     throw new Error(`Missing Docker E2E lane ${name}`);
   }
   return lane;
+}
+
+function runFrozenTargetNodeExclusionValidation(params: {
+  fullReleaseValidation: boolean;
+  patternsJson: string;
+}) {
+  const workflow = readPluginPrereleaseWorkflow();
+  const validationStep = workflow.jobs.preflight.steps.find(
+    (step: WorkflowStep) => step.name === "Validate frozen-target Node exclusions",
+  );
+  if (!validationStep?.run) {
+    throw new Error("Missing frozen-target Node exclusion validation step");
+  }
+
+  const root = tempDirs.make("openclaw-plugin-prerelease-excludes-");
+  const outputPath = join(root, "github-output");
+  const result = spawnSync("bash", ["-c", validationStep.run], {
+    encoding: "utf8",
+    env: {
+      FULL_RELEASE_VALIDATION: String(params.fullReleaseValidation),
+      GITHUB_OUTPUT: outputPath,
+      NODE_TEST_EXCLUDE_PATTERNS_JSON: params.patternsJson,
+      PATH: process.env.PATH,
+    },
+  });
+  return {
+    ...result,
+    output: existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "",
+  };
 }
 
 function pluginCandidateArtifactJson(selectedSha = "a".repeat(40)) {
@@ -365,6 +394,56 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
     expect(fixtureServer).toContain("/versions/${fixture.version}/artifact");
   });
 
+  it("validates and forwards frozen-target Node omissions", () => {
+    const patterns = ["src/plugins/example.test.ts"];
+    const result = runFrozenTargetNodeExclusionValidation({
+      fullReleaseValidation: true,
+      patternsJson: JSON.stringify(patterns),
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.output).toBe(`patterns_json=${JSON.stringify(patterns)}\n`);
+
+    const workflow = readPluginPrereleaseWorkflow();
+    const preflight = workflow.jobs.preflight;
+    const nodeShard = workflow.jobs["plugin-prerelease-node-shard"];
+    const runNodeShard = nodeShard.steps.find(
+      (step: WorkflowStep) => step.name === "Run release-only plugin Node shard",
+    );
+    expect(preflight.outputs.node_test_exclude_patterns_json).toBe(
+      "${{ steps.node_test_exclusions.outputs.patterns_json }}",
+    );
+    expect(runNodeShard?.env?.NODE_TEST_EXCLUDE_PATTERNS_JSON).toBe(
+      "${{ needs.preflight.outputs.node_test_exclude_patterns_json }}",
+    );
+    if (!runNodeShard?.run) {
+      throw new Error("Missing release-only plugin Node shard");
+    }
+
+    const root = tempDirs.make("openclaw-plugin-prerelease-node-shard-");
+    const pnpmPath = join(root, "pnpm");
+    const argsPath = join(root, "pnpm-args");
+    writeFileSync(pnpmPath, '#!/bin/sh\nprintf "%s\\n" "$@" > "$PNPM_ARGS_PATH"\n', "utf8");
+    chmodSync(pnpmPath, 0o755);
+    const shardResult = spawnSync("bash", ["-c", runNodeShard.run], {
+      encoding: "utf8",
+      env: {
+        NODE_TEST_EXCLUDE_PATTERNS_JSON: JSON.stringify(patterns),
+        OPENCLAW_NODE_TEST_CONFIGS_JSON: JSON.stringify(["test/vitest/vitest.plugins.config.ts"]),
+        OPENCLAW_NODE_TEST_INCLUDE_PATTERNS_JSON: "null",
+        PATH: `${root}:${process.env.PATH}`,
+        PNPM_ARGS_PATH: argsPath,
+      },
+    });
+    expect(shardResult.status, shardResult.stderr).toBe(0);
+    expect(readFileSync(argsPath, "utf8").trim().split("\n")).toEqual([
+      "test",
+      "--",
+      "test/vitest/vitest.plugins.config.ts",
+      "--",
+      "--exclude=example.test.ts",
+    ]);
+  });
+
   it("keeps the trusted security scanner outside the candidate test process", () => {
     const workflow = readPluginPrereleaseWorkflow();
     const securityPlan = workflow.jobs["plugin-npm-security-plan"];
@@ -394,6 +473,16 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
         (step: WorkflowStep) => step.name === "Scan supplemental inert plugin inputs",
       )?.run,
     ).toContain('--target-context-ref "$TARGET_CONTEXT_REF"');
+    expect(
+      securityScan.steps.find(
+        (step: WorkflowStep) => step.name === "Scan supplemental inert plugin inputs",
+      )?.env?.PACKAGE_RESULT,
+    ).toBe("${{ needs.plugin-npm-security-package.result }}");
+    expect(
+      securityScan.steps.find(
+        (step: WorkflowStep) => step.name === "Scan supplemental inert plugin inputs",
+      )?.run,
+    ).toContain('[[ "$PACKAGE_RESULT" != "success" ]]');
     expect(source).not.toContain("npm-install-security-scan.release.test.ts");
     expect(workflow.on.workflow_dispatch.inputs.target_context_ref).toEqual({
       default: "",
@@ -402,7 +491,6 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
       type: "string",
     });
   });
-
 
   it("wires the full plugin prerelease plan into its release workflow", () => {
     const workflow = readCiWorkflow();
@@ -631,7 +719,9 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
     const pluginNodeShardScript = pluginWorkflow.jobs["plugin-prerelease-node-shard"].steps.find(
       (step: WorkflowStep) => step.name === "Run release-only plugin Node shard",
     ).run;
-    expect(pluginNodeShardScript).toContain('spawnSync("pnpm", ["test", "--", ...configs]');
+    expect(pluginNodeShardScript).toContain(
+      'spawnSync("pnpm", ["test", "--", ...configs, "--", ...excludeArgs]',
+    );
     expect(pluginNodeShardScript).not.toContain("scripts/test-projects.mts");
     expect(pluginWorkflow.on.workflow_dispatch.inputs.target_ref).toEqual({
       default: "main",
@@ -678,6 +768,7 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
       plugin_prerelease_extension_matrix:
         "${{ steps.manifest.outputs.plugin_prerelease_extension_matrix }}",
       plugin_prerelease_node_matrix: "${{ steps.manifest.outputs.plugin_prerelease_node_matrix }}",
+      node_test_exclude_patterns_json: "${{ steps.node_test_exclusions.outputs.patterns_json }}",
       plugin_prerelease_static_matrix:
         "${{ steps.manifest.outputs.plugin_prerelease_static_matrix }}",
       run_plugin_prerelease_docker: "${{ steps.manifest.outputs.run_plugin_prerelease_docker }}",
