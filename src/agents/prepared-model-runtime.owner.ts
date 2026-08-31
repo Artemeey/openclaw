@@ -420,7 +420,11 @@ function resolveConfiguredRuntimePluginSelections(
   config: OpenClawConfig,
   agentId: string,
 ): PreparedModelRuntimeInput["runtimePluginSelections"] {
-  const configured = resolveDefaultModelForAgent({ cfg: config, agentId });
+  const configured = resolveDefaultModelForAgent({
+    cfg: config,
+    agentId,
+    allowPluginNormalization: false,
+  });
   const subagentModel = resolveSubagentConfiguredModelSelection({
     cfg: config,
     agentId,
@@ -430,6 +434,7 @@ function resolveConfiguredRuntimePluginSelections(
     cfg: config,
     agentId,
     manifestPlugins: [],
+    allowPluginNormalization: false,
     provider: configured.provider || DEFAULT_PROVIDER,
     model: configured.model || DEFAULT_MODEL,
     requestedRouteResolution: "resolved",

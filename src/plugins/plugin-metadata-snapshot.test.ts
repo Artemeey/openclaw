@@ -781,7 +781,7 @@ describe("plugin metadata snapshot", () => {
           ).toBeUndefined();
           expect(resolveDefaultModelForAgent({ cfg })).toEqual({
             provider: "demo",
-            model: "final-model",
+            model: "middle-model",
           });
           expect(buildConfiguredModelCatalog({ cfg })).toMatchObject([
             { provider: "demo", id: "middle-model" },

@@ -13,6 +13,7 @@ import {
 import { resolveContextWindowInfo } from "../context-window-guard.js";
 import { DEFAULT_CONTEXT_TOKENS, DEFAULT_PROVIDER } from "../defaults.js";
 import { splitTrailingAuthProfile } from "../model-ref-profile.js";
+import type { ModelManifestNormalizationContext, ModelRefSelection } from "../model-ref-shared.js";
 import {
   buildModelAliasIndex,
   inferUniqueProviderFromConfiguredModels,
@@ -108,12 +109,15 @@ export function resolveEmbeddedCompactionTarget(params: {
   modelSelectionLocked?: boolean;
   defaultProvider?: string;
   defaultModel?: string;
+  allowPluginNormalization?: boolean;
+  manifestPlugins?: ModelManifestNormalizationContext["manifestPlugins"];
 }): {
   provider: string | undefined;
   runtimeProvider?: string;
   contextProvider?: string;
   nativeHarnessCompaction?: boolean;
   model: string | undefined;
+  normalization: ModelRefSelection["normalization"];
   authProfileId: string | undefined;
 } {
   const provider = params.provider?.trim() || params.defaultProvider;
@@ -151,7 +155,11 @@ export function resolveEmbeddedCompactionTarget(params: {
       ...(useNativeHarnessRuntime ? { nativeHarnessCompaction: true } : {}),
     };
   };
-  const assembleTarget = (targetProvider: string | undefined, targetModel: string | undefined) => {
+  const assembleTarget = (
+    targetProvider: string | undefined,
+    targetModel: string | undefined,
+    normalization: ModelRefSelection["normalization"] = "pending",
+  ) => {
     // A provider switch cannot inherit credentials selected for the session's
     // original provider; all target paths share that boundary.
     const authProfileId =
@@ -160,6 +168,7 @@ export function resolveEmbeddedCompactionTarget(params: {
       provider: targetProvider,
       ...resolveTargetProviders(targetProvider, authProfileId),
       model: targetModel,
+      normalization,
       authProfileId,
     };
   };
@@ -198,10 +207,15 @@ export function resolveEmbeddedCompactionTarget(params: {
   const alias = listModelAliasCandidates(config).some(
     ({ alias: candidate }) => normalizeCompactionConfigKey(candidate) === aliasKey,
   )
-    ? buildModelAliasIndex({ cfg: config, defaultProvider }).byAlias.get(aliasKey)
+    ? buildModelAliasIndex({
+        cfg: config,
+        defaultProvider,
+        allowPluginNormalization: params.allowPluginNormalization,
+        manifestPlugins: params.manifestPlugins,
+      }).byAlias.get(aliasKey)
     : undefined;
   if (alias) {
-    return assembleTarget(alias.ref.provider, alias.ref.model);
+    return assembleTarget(alias.ref.provider, alias.ref.model, "applied");
   }
   return assembleTarget(provider, override);
 }

@@ -82,13 +82,6 @@ describe("model-selection plugin runtime normalization", () => {
       provider: "custom-provider",
       model: "custom-modern-model",
     });
-    expect(normalizeProviderModelIdWithPluginMock).toHaveBeenCalledWith({
-      provider: "custom-provider",
-      context: {
-        provider: "custom-provider",
-        modelId: "custom-legacy-model",
-      },
-    });
   });
 
   it("keeps static normalization while skipping plugin runtime hooks when disabled", async () => {
@@ -336,10 +329,7 @@ describe("model-selection plugin runtime normalization", () => {
       ["stored-legacy", "stored-modern"],
       ["fallback-legacy", "fallback-modern"],
     ]);
-    normalizeProviderModelIdWithPluginMock.mockImplementation(({ context, plugins }) => {
-      if (plugins) {
-        expect(plugins.length).toBeGreaterThan(0);
-      }
+    normalizeProviderModelIdWithPluginMock.mockImplementation(({ context }) => {
       const modelId = (context as { modelId?: string }).modelId ?? "";
       return aliases.get(modelId);
     });
@@ -400,35 +390,38 @@ describe("model-selection plugin runtime normalization", () => {
     ).toEqual(expect.arrayContaining(["configured-legacy", "stored-legacy", "fallback-legacy"]));
   });
 
-  it("forwards manifestPlugins to the runtime normalization call so it can skip the slot-or-load disk walk", async () => {
-    normalizeProviderModelIdWithPluginMock.mockReturnValue(undefined);
-    const preparedPlugins = [
-      {
-        modelIdNormalization: {
-          providers: {
-            custom: { prefixWhenBare: "prepared" },
+  it.each([false, true])(
+    "normalizes manifest aliases before provider hooks (prepared=%s)",
+    async (prepared) => {
+      normalizeProviderModelIdWithPluginMock.mockReturnValue(undefined);
+      const preparedPlugins = [
+        {
+          id: "custom-model-normalizer",
+          modelIdNormalization: {
+            providers: {
+              custom: {
+                aliases: { latest: "manifest-model", "manifest-model": "reapplied-model" },
+              },
+            },
           },
         },
-      },
-    ];
-    const { normalizeModelRef } = await import("./model-ref-shared.js");
-    normalizeModelRef("custom", "my-model", { manifestPlugins: preparedPlugins });
-    expect(normalizeProviderModelIdWithPluginMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "custom",
-        plugins: preparedPlugins,
-      }),
-    );
-  });
-
-  it("omits plugins from the runtime call when no manifestPlugins are prepared (preserves current behavior)", async () => {
-    normalizeProviderModelIdWithPluginMock.mockReturnValue(undefined);
-    const { normalizeModelRef } = await import("./model-ref-shared.js");
-    normalizeModelRef("custom", "my-model");
-    const callArgs = normalizeProviderModelIdWithPluginMock.mock.calls[0]?.[0] as
-      | { plugins?: unknown }
-      | undefined;
-    expect(callArgs).toBeDefined();
-    expect(callArgs?.plugins).toBeUndefined();
-  });
+      ];
+      getCurrentPluginMetadataSnapshotMock.mockReturnValue(
+        createPluginMetadataSnapshotFixture({ plugins: preparedPlugins }),
+      );
+      const { resolveConfiguredModelRef } = await import("./model-selection.js");
+      const resolve = () =>
+        resolveConfiguredModelRef({
+          cfg: { agents: { defaults: { model: "custom/latest" } } },
+          defaultProvider: "custom",
+          defaultModel: "default",
+          manifestPlugins: prepared ? preparedPlugins : undefined,
+        });
+      expect(resolve()).toEqual({ provider: "custom", model: "manifest-model" });
+      normalizeProviderModelIdWithPluginMock.mockImplementation(
+        ({ context }: { context: { modelId: string } }) => `runtime/${context.modelId}`,
+      );
+      expect(resolve()).toEqual({ provider: "custom", model: "runtime/manifest-model" });
+    },
+  );
 });

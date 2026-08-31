@@ -27,9 +27,9 @@ import { splitTrailingAuthProfile } from "./model-ref-profile.js";
 import {
   createConfiguredProviderCatalogModelIdNormalizer,
   normalizeConfiguredProviderCatalogModelId,
-  normalizeStaticProviderModelId,
   type ModelManifestNormalizationContext,
   type ModelRef,
+  type ModelRefSelection,
   modelKey,
   normalizeModelRef,
   normalizeProviderId,
@@ -563,17 +563,10 @@ function normalizeExactConfiguredProviderRef(
   const provider = normalizeLowercaseStringOrEmpty(configuredProvider);
   return {
     provider,
-    model: normalizeConfiguredProviderCatalogModelId(
-      provider,
-      normalizeStaticProviderModelId(provider, modelRaw.trim(), {
-        allowManifestNormalization: params.allowManifestNormalization,
-        manifestPlugins: params.manifestPlugins,
-      }),
-      {
-        allowManifestNormalization: params.allowManifestNormalization,
-        manifestPlugins: params.manifestPlugins,
-      },
-    ),
+    model: normalizeConfiguredProviderCatalogModelId(provider, modelRaw.trim(), {
+      allowManifestNormalization: params.allowManifestNormalization,
+      manifestPlugins: params.manifestPlugins,
+    }),
   };
 }
 
@@ -814,17 +807,24 @@ export function resolveModelAliasFromPair(
     : null;
 }
 
+type ConfiguredModelRefParams = {
+  cfg: OpenClawConfig;
+  agentId?: string;
+  defaultProvider: string;
+  defaultModel: string;
+  allowManifestNormalization?: boolean;
+  allowPluginNormalization?: boolean;
+} & ModelManifestNormalizationContext;
+
 /** Resolve the default configured model ref, including aliases and fallback provider rows. */
-export function resolveConfiguredModelRef(
-  params: {
-    cfg: OpenClawConfig;
-    agentId?: string;
-    defaultProvider: string;
-    defaultModel: string;
-    allowManifestNormalization?: boolean;
-    allowPluginNormalization?: boolean;
-  } & ModelManifestNormalizationContext,
-): ModelRef {
+export function resolveConfiguredModelRef(params: ConfiguredModelRefParams): ModelRef {
+  return resolveConfiguredModelSelection(params).ref;
+}
+
+/** Preserve whether selection normalized a ref or returned an unparsed fallback. */
+export function resolveConfiguredModelSelection(
+  params: ConfiguredModelRefParams,
+): ModelRefSelection {
   const rawModel =
     (params.agentId
       ? resolveAgentModelPrimaryValue(resolveAgentConfig(params.cfg, params.agentId)?.model)
@@ -866,7 +866,7 @@ export function resolveConfiguredModelRef(
     if (profileAliasCandidate) {
       // Auth-profile suffixes are not part of alias matching; resolve the alias
       // target while preserving the provider/model semantics of the key.
-      return profileAliasCandidate.ref;
+      return { ref: profileAliasCandidate.ref, normalization: "applied" };
     }
     const primaryWithoutProfile = modelWithoutProfile || trimmed;
     const exactConfiguredPrimary = findExactConfiguredProviderRefParts({
@@ -874,10 +874,13 @@ export function resolveConfiguredModelRef(
       raw: primaryWithoutProfile,
     });
     if (exactConfiguredPrimary) {
-      return normalizeExactConfiguredProviderRef(exactConfiguredPrimary, {
-        allowManifestNormalization: params.allowManifestNormalization,
-        manifestPlugins: manifestPluginContext.get(),
-      });
+      return {
+        ref: normalizeExactConfiguredProviderRef(exactConfiguredPrimary, {
+          allowManifestNormalization: params.allowManifestNormalization,
+          manifestPlugins: manifestPluginContext.get(),
+        }),
+        normalization: "applied",
+      };
     }
     const aliasCandidate = profileStripped ? undefined : exactAliasCandidate;
     const manifestPlugins = manifestPluginContext.peek();
@@ -896,11 +899,11 @@ export function resolveConfiguredModelRef(
         manifestPlugins: manifestPluginContext.get(),
       });
       if (primaryRef) {
-        return primaryRef;
+        return { ref: primaryRef, normalization: "applied" };
       }
     }
     if (aliasCandidate) {
-      return aliasCandidate.ref;
+      return { ref: aliasCandidate.ref, normalization: "applied" };
     }
 
     if (!trimmed.includes("/")) {
@@ -920,7 +923,7 @@ export function resolveConfiguredModelRef(
           : manifestPlugins,
       });
       if (openrouterCompatRef) {
-        return openrouterCompatRef;
+        return { ref: openrouterCompatRef, normalization: "applied" };
       }
 
       let inferredProvider = inferUniqueProviderFromConfiguredModels({
@@ -948,13 +951,16 @@ export function resolveConfiguredModelRef(
           }) ?? inferredProvider;
       }
       if (inferredProvider) {
-        return normalizeModelRef(inferredProvider, trimmed, {
-          allowManifestNormalization: inferredProviderManifestPlugins
-            ? params.allowManifestNormalization
-            : false,
-          allowPluginNormalization: params.allowPluginNormalization,
-          manifestPlugins: inferredProviderManifestPlugins,
-        });
+        return {
+          ref: normalizeModelRef(inferredProvider, trimmed, {
+            allowManifestNormalization: inferredProviderManifestPlugins
+              ? params.allowManifestNormalization
+              : false,
+            allowPluginNormalization: params.allowPluginNormalization,
+            manifestPlugins: inferredProviderManifestPlugins,
+          }),
+          normalization: "applied",
+        };
       }
 
       const safeTrimmed = sanitizeModelWarningValue(trimmed);
@@ -962,7 +968,10 @@ export function resolveConfiguredModelRef(
       getLog().warn(
         `Model "${safeTrimmed}" specified without provider. Falling back to "${safeResolved}". Please use "${safeResolved}" in your config.`,
       );
-      return { provider: params.defaultProvider, model: trimmed };
+      return {
+        ref: { provider: params.defaultProvider, model: trimmed },
+        normalization: "pending",
+      };
     }
 
     const resolved = resolveModelRefFromString({
@@ -975,7 +984,7 @@ export function resolveConfiguredModelRef(
       manifestPlugins: manifestPluginContext.get(),
     });
     if (resolved) {
-      return resolved.ref;
+      return { ref: resolved.ref, normalization: "applied" };
     }
 
     const safe = sanitizeForLog(trimmed);
@@ -990,9 +999,12 @@ export function resolveConfiguredModelRef(
     defaultModel: params.defaultModel,
   });
   if (fallbackProvider) {
-    return fallbackProvider;
+    return { ref: fallbackProvider, normalization: "pending" };
   }
-  return { provider: params.defaultProvider, model: params.defaultModel };
+  return {
+    ref: { provider: params.defaultProvider, model: params.defaultModel },
+    normalization: "pending",
+  };
 }
 
 type ModelPolicyPreparationParams = BuildModelAliasIndexParams & {

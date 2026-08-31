@@ -19,6 +19,7 @@ export {
   getModelRefStatus,
   normalizeModelSelection,
   resolveConfiguredModelRef,
+  resolveConfiguredModelSelection,
   resolveHooksGmailModel,
   resolveModelAliasFromPair,
   resolveModelRefFromString,

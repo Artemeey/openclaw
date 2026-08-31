@@ -19,6 +19,7 @@ import {
   ensureAuthProfileStore,
   ensureAuthProfileStoreWithoutExternalProfiles,
 } from "../model-auth.js";
+import type { ModelManifestNormalizationContext } from "../model-ref-shared.js";
 import { isOpenAIProvider } from "../openai-routing.js";
 import {
   providerUsesCredentialScopedModelMetadata,
@@ -50,6 +51,8 @@ export function resolveCompactionRuntimeSelection(params: {
   preparedRuntimePlan?: AgentRuntimePlan;
   runtimeAuthPlan?: AgentRuntimeAuthPlan;
   selectedHarnessRuntime?: string;
+  allowPluginNormalization?: boolean;
+  manifestPlugins?: ModelManifestNormalizationContext["manifestPlugins"];
 }) {
   const runtimePolicySessionKey = params.sandboxSessionKey ?? params.sessionKey ?? undefined;
   const runtimePolicyAgentId =
@@ -57,7 +60,7 @@ export function resolveCompactionRuntimeSelection(params: {
     (params.sandboxSessionKey && parseAgentSessionKey(params.sandboxSessionKey)
       ? undefined
       : params.agentId);
-  const policyTarget = resolveEmbeddedCompactionTarget({
+  const targetParams = {
     config: params.config,
     provider: params.provider,
     modelId: params.modelId,
@@ -65,7 +68,10 @@ export function resolveCompactionRuntimeSelection(params: {
     modelSelectionLocked: params.modelSelectionLocked,
     defaultProvider: DEFAULT_PROVIDER,
     defaultModel: DEFAULT_MODEL,
-  });
+    allowPluginNormalization: params.allowPluginNormalization,
+    manifestPlugins: params.manifestPlugins,
+  };
+  const policyTarget = resolveEmbeddedCompactionTarget(targetParams);
   const policyProvider = policyTarget.provider ?? DEFAULT_PROVIDER;
   const policyModelId = policyTarget.model ?? DEFAULT_MODEL;
   const policy = resolveAgentHarnessPolicy({
@@ -92,14 +98,8 @@ export function resolveCompactionRuntimeSelection(params: {
       modelId: policyModelId,
     });
   const target = resolveEmbeddedCompactionTarget({
-    config: params.config,
-    provider: params.provider,
-    modelId: params.modelId,
-    authProfileId: params.authProfileId,
+    ...targetParams,
     harnessRuntime: selectedHarnessRuntime,
-    modelSelectionLocked: params.modelSelectionLocked,
-    defaultProvider: DEFAULT_PROVIDER,
-    defaultModel: DEFAULT_MODEL,
   });
   const provider = target.provider ?? DEFAULT_PROVIDER;
   const modelId = target.model ?? DEFAULT_MODEL;
