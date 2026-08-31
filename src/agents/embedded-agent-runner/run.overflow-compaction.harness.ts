@@ -822,7 +822,11 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
   // real handle shape without rediscovering every bundled provider plugin.
   vi.doMock("../../plugins/provider-hook-runtime.js", () => ({
     attachModelProviderRuntimePluginHandle: (model: object) => model,
+    resolveLoadedProviderPluginsForHooks: vi.fn(() => undefined),
+    resolveLoadedProviderRuntimePlugin: vi.fn(() => undefined),
     resolveProviderRuntimePluginHandle: vi.fn((params: Record<string, unknown>) => params),
+    resolveProviderHookPlugin: vi.fn(() => undefined),
+    resolveProviderPluginsForHooks: vi.fn(() => []),
   }));
   vi.doMock("../auth-profiles.js", () => ({
     isProfileInCooldown: mockedIsProfileInCooldown,
@@ -1080,9 +1084,7 @@ export async function loadRunOverflowCompactionHarness(): Promise<{
 export async function warmRunOverflowCompactionHarness(
   runEmbeddedAgent: TestRunEmbeddedAgent,
   state: Pick<OpenClawTestState, "workspaceDir">,
-  params?: Partial<
-    Omit<Parameters<typeof runEmbeddedAgent>[0], "compactionCountOwner" | "onCompactionAccounting">
-  >,
+  params?: Partial<Parameters<typeof runEmbeddedAgent>[0]>,
 ): Promise<void> {
   resetRunOverflowCompactionHarnessMocks();
   mockedGlobalHookRunner.hasHooks.mockReturnValue(false);

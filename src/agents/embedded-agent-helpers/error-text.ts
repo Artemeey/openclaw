@@ -48,6 +48,7 @@ const TOOL_CALL_INPUT_PATH_RE =
 type AssistantErrorTextOptions = {
   cfg?: OpenClawConfig;
   sessionKey?: string;
+  agentId?: string;
   provider?: string;
   providerOwner?: PreparedProviderFailoverOwner;
   model?: string;
@@ -80,10 +81,12 @@ export function formatAssistantErrorText(
     return formatCopy;
   }
   const providerOwner = opts?.providerOwner?.id ?? opts?.provider;
-  const providerRuntimeFailureKind = classifyProviderRuntimeFailureKind({
-    ...buildAssistantFailoverSignal(msg, { provider: providerOwner }),
-    message: raw,
-  });
+  // Rendering can reuse a prepared owner, but must not discover runtime plugins.
+  const providerPlugin = opts?.providerOwner ?? null;
+  const providerRuntimeFailureKind = classifyProviderRuntimeFailureKind(
+    { ...buildAssistantFailoverSignal(msg, { provider: providerOwner }), message: raw },
+    { providerPlugin },
+  );
   const unknownTool =
     raw.match(/unknown tool[:\s]+["']?([a-z0-9_-]+)["']?/i) ??
     raw.match(/tool\s+["']?([a-z0-9_-]+)["']?\s+(?:not found|is not available)/i);
@@ -92,6 +95,7 @@ export function formatAssistantErrorText(
     const rewritten = formatSandboxToolPolicyBlockedMessage({
       cfg: opts?.cfg,
       sessionKey: opts?.sessionKey,
+      agentId: opts?.agentId,
       toolName: unknownTool[1],
       audit,
     });
@@ -167,7 +171,7 @@ export function formatAssistantErrorText(
   if (providerRuntimeFailureKind === "model_not_found") {
     return MODEL_NOT_FOUND_USER_TEXT;
   }
-  if (isContextOverflowError(raw)) {
+  if (isContextOverflowError(raw, { providerPlugin })) {
     return (
       "Context overflow: prompt too large for the model. " +
       "Try /reset (or /new) to start a fresh session, or use a larger-context model."
@@ -222,7 +226,7 @@ export function formatAssistantErrorText(
 
   const failoverReason = classifyFailoverReason(raw, {
     provider: providerOwner,
-    providerPlugin: opts?.providerOwner,
+    providerPlugin,
   });
   if (failoverReason === "billing") {
     return formatBillingErrorMessage(opts?.provider, opts?.model ?? msg.model, opts?.authMode);
