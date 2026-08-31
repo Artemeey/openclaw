@@ -825,8 +825,8 @@ describe("plugin authoring commands", () => {
     });
 
     const indexSource = fs.readFileSync(path.join(projectDir, "src/index.ts"), "utf8");
-    expect(indexSource).toContain("definePluginEntry");
-    expect(indexSource).toContain("api.registerProvider");
+    expect(indexSource).toContain("defineSingleProviderPluginEntry");
+    expect(indexSource).not.toContain("resolveProviderApiKey");
     const hostPackage = JSON.parse(
       fs.readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
     ) as { exports: Record<string, { types?: string }> };

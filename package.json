@@ -158,7 +158,6 @@
     "!dist/plugin-sdk/provider-auth-runtime.d.ts",
     "!dist/plugin-sdk/provider-catalog-live-runtime.d.ts",
     "!dist/plugin-sdk/provider-catalog-shared.d.ts",
-    "!dist/plugin-sdk/provider-entry.d.ts",
     "!dist/plugin-sdk/provider-env-vars.d.ts",
     "!dist/plugin-sdk/provider-http.d.ts",
     "!dist/plugin-sdk/provider-http-test-mocks.js",
@@ -1345,6 +1344,7 @@
       "default": "./dist/plugin-sdk/provider-catalog-shared.js"
     },
     "./plugin-sdk/provider-entry": {
+      "types": "./dist/plugin-sdk/provider-entry.d.ts",
       "default": "./dist/plugin-sdk/provider-entry.js"
     },
     "./plugin-sdk/provider-env-vars": {

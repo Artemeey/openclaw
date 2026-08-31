@@ -55,12 +55,41 @@ function assertCleanInspectorReport(report: InspectorReport): void {
 
 fs.rmSync(projectDir, { force: true, recursive: true });
 fs.mkdirSync(artifactRoot, { recursive: true });
+for (const entry of fs.readdirSync(artifactRoot)) {
+  if (entry.endsWith(".tgz")) {
+    fs.rmSync(path.join(artifactRoot, entry));
+  }
+}
+
+run("pnpm", ["build"], process.cwd());
+const hostPackageTarball = "openclaw-provider-scaffold.tgz";
+run(
+  "node",
+  [
+    "scripts/package-openclaw-for-docker.mjs",
+    "--allow-unreleased-changelog",
+    "--skip-build",
+    "--pnpm-pack",
+    "--output-dir",
+    artifactRoot,
+    "--output-name",
+    hostPackageTarball,
+  ],
+  process.cwd(),
+);
 
 await runPluginsInitCommand("plugin-init-test", {
   directory: projectDir,
   name: "Plugin Init Test",
   type: "provider",
 });
+
+const generatedPackagePath = path.join(projectDir, "package.json");
+const generatedPackage = JSON.parse(fs.readFileSync(generatedPackagePath, "utf8")) as {
+  devDependencies: Record<string, string>;
+};
+generatedPackage.devDependencies.openclaw = `file:../${hostPackageTarball}`;
+fs.writeFileSync(generatedPackagePath, `${JSON.stringify(generatedPackage, null, 2)}\n`);
 
 run("npm", ["install", "--no-audit", "--fund=false"], projectDir);
 run("npm", ["run", "build"], projectDir);
