@@ -8,7 +8,7 @@ import {
   validateModelsAuthLogoutParams,
   validateModelsAuthOrderSetParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import { listAgentIds, tryResolveAmbientOwnerAgentId } from "../../agents/agent-scope-config.js";
+import { tryResolveAmbientOwnerAgentId } from "../../agents/agent-scope-config.js";
 import {
   type AuthHealthSummary,
   type AuthProfileHealthStatus,
@@ -18,9 +18,12 @@ import {
   formatRemainingShort,
 } from "../../agents/auth-health.js";
 import {
+  AuthProfileOrderChangedError,
   type AuthProfileStore,
   ensureAuthProfileStoreWithoutExternalProfiles,
   externalCliDiscoveryForConfigStatus,
+  getRuntimeLocalOrderProviders,
+  getRuntimeLocalProfileIds,
   listProfilesForProvider,
   removeAuthProfilesAcrossOwnerStores,
   removeProviderAuthProfilesWithLock,
@@ -30,7 +33,6 @@ import {
   setAuthProfileOrder,
 } from "../../agents/auth-profiles.js";
 import { getRuntimeExternalCliProfileIds } from "../../agents/auth-profiles/runtime-external-profile-references.js";
-import { resolveLegacyInheritedAuthAgentId } from "../../agents/legacy-inherited-auth-dir.js";
 import {
   isNonSecretApiKeyMarker,
   NON_ENV_SECRETREF_MARKER,
@@ -40,7 +42,7 @@ import {
   clearCurrentProviderAuthState,
   warmCurrentProviderAuthStateOffMainThread,
 } from "../../agents/model-provider-auth.js";
-import { refreshPreparedModelRuntimeSnapshots } from "../../agents/prepared-model-runtime.js";
+import { preparedModelRuntimeConfigsMatch } from "../../agents/prepared-model-runtime.js";
 import {
   type ProviderAuthAliasLookupParams,
   resolveProviderIdForAuth,
@@ -323,6 +325,8 @@ function mapProvider(
   apiKeys: ReadonlyMap<string, ModelAuthStatusProvider["apiKey"]>,
   logoutProfileIds: ReadonlySet<string>,
   configBoundProfileIds: ReadonlySet<string>,
+  configBoundAuthProviders: ReadonlySet<string>,
+  externalProfileIds: ReadonlySet<string>,
   externalCliProfileIds: ReadonlySet<string>,
   includeProfileIdentity: boolean,
 ): ModelAuthStatusProvider {
@@ -334,6 +338,13 @@ function mapProvider(
     providerKey,
     providerAuthKey: authProviderKey,
   });
+  const localOrderProviders = new Set(
+    getRuntimeLocalOrderProviders(store).map((provider) =>
+      resolveProviderIdForAuth(provider, authAliasLookupParams),
+    ),
+  );
+  const localProfileIds = new Set(getRuntimeLocalProfileIds(store));
+  const providerOrderLocked = configBoundAuthProviders.has(authProviderKey);
   const usageProfile =
     prov.profiles.find((profile) => profile.type === "oauth" || profile.type === "token") ??
     prov.profiles.find((profile) => profile.type === "api_key");
@@ -381,6 +392,13 @@ function mapProvider(
         type: prof.type,
         status: prof.status,
         reasonCode: prof.reasonCode,
+        source: configBoundProfileIds.has(prof.profileId)
+          ? "config"
+          : externalProfileIds.has(prof.profileId)
+            ? "external"
+            : localProfileIds.has(prof.profileId)
+              ? "saved"
+              : "inherited",
         expiry: buildExpiry(prof.remainingMs, prof.expiresAt),
         ...(externalCliProfileIds.has(prof.profileId) ? { externallyManaged: true } : {}),
         ...(includeProfileIdentity && metadata.displayName
@@ -396,7 +414,10 @@ function mapProvider(
       };
     }),
     ...(profileOrder.order !== undefined ? { profileOrder: profileOrder.order } : {}),
-    ...(profileOrder.fromStore ? { profileOrderStored: true } : {}),
+    ...(profileOrder.fromStore && localOrderProviders.has(authProviderKey)
+      ? { profileOrderStored: true }
+      : {}),
+    ...(providerOrderLocked ? { profileOrderLocked: "provider-config" as const } : {}),
     ...(apiKey ? { apiKey } : {}),
     usage:
       usage && usageKey
@@ -406,7 +427,9 @@ function mapProvider(
             ...(usage.summary ? { summary: usage.summary } : {}),
             ...(usage.plan ? { plan: usage.plan } : {}),
             ...(usage.billing?.length ? { billing: usage.billing } : {}),
-            ...(usage.accountEmail ? { accountEmail: usage.accountEmail } : {}),
+            ...(includeProfileIdentity && usage.accountEmail
+              ? { accountEmail: usage.accountEmail }
+              : {}),
           }
         : undefined,
   };
@@ -530,6 +553,25 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
             resolveProviderIdForAuth(credential.provider, authAliasLookupParams) === authProvider,
         )
         .map(([profileId]) => profileId);
+      const configBoundProfileIds = resolveConfigBoundProfileIds(
+        preparedSnapshot.config,
+        preparedSnapshot.authStore,
+        authAliasLookupParams,
+      );
+      if (
+        selection.profileIds &&
+        availableProfileIds.some((profileId) => configBoundProfileIds.has(profileId))
+      ) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            `profile priority for provider ${provider} is controlled by provider configuration`,
+          ),
+        );
+        return;
+      }
       const invalidProfile = selection.profileIds?.find((profileId) => {
         const credential = preparedSnapshot.authStore.profiles[profileId];
         return (
@@ -559,10 +601,21 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
         );
         return;
       }
+      if (!preparedModelRuntimeConfigsMatch(preparedSnapshot.config, context.getRuntimeConfig())) {
+        throw new AuthProfileOrderChangedError();
+      }
       const updated = await setAuthProfileOrder({
         agentDir: preparedSnapshot.agentDir,
+        ...(preparedSnapshot.inheritedAuthDir
+          ? { inheritedAuthDir: preparedSnapshot.inheritedAuthDir }
+          : {}),
         provider: authProvider,
         order: selection.profileIds,
+        authAliasLookupParams,
+        expectedProviderProfileIds: availableProfileIds,
+        expectedLocalProviderProfileIds: availableProfileIds.filter((profileId) =>
+          getRuntimeLocalProfileIds(preparedSnapshot.authStore).includes(profileId),
+        ),
       });
       if (!updated) {
         respond(
@@ -574,25 +627,33 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
       }
       invalidateModelAuthStatusCache();
       await refreshActiveProviderAuthRuntimeSnapshot();
-      const affectedAgentIds =
-        scope.agentId === resolveLegacyInheritedAuthAgentId(cfg)
-          ? new Set(listAgentIds(cfg))
-          : new Set([scope.agentId]);
-      await Promise.all([
-        refreshPreparedModelRuntimeSnapshots(cfg, {
-          catalogMode: "static",
-          allowGatewaySubagentBinding: true,
-          agentIds: affectedAgentIds,
-          pluginMetadataSnapshot: preparedSnapshot.metadataSnapshot,
-        }),
-        warmCurrentProviderAuthStateOffMainThread(cfg),
-      ]);
+      // Store publication already invalidates and rebuilds the affected prepared owners. Starting
+      // a second config publication here can race hot reload and revive its older config snapshot.
+      // Join that owner's publication before acknowledging the write so an immediate selection
+      // observes the new order instead of the invalidated generation.
+      await loadDeferredCatalog(context, scope.agentId, { readOnly: true });
+      void warmCurrentProviderAuthStateOffMainThread(context.getRuntimeConfig()).catch(
+        (err: unknown) => {
+          log.warn(`provider auth state rewarm after priority update failed: ${formatForLog(err)}`);
+        },
+      );
       const result: ModelAuthOrderSetResult = {
         provider,
         profileIds: selection.profileIds,
       };
       respond(true, result, undefined);
     } catch (err) {
+      if (err instanceof AuthProfileOrderChangedError) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.UNAVAILABLE,
+            "provider accounts changed while priority was being saved; refresh and try again",
+          ),
+        );
+        return;
+      }
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
     }
   },
@@ -828,6 +889,12 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
           .map(([profileId]) => profileId),
       );
       const configBoundProfileIds = resolveConfigBoundProfileIds(cfg, store, authAliasLookupParams);
+      const configBoundAuthProviders = new Set(
+        [...configBoundProfileIds].flatMap((profileId) => {
+          const profile = store.profiles[profileId];
+          return profile ? [resolveProviderIdForAuth(profile.provider, authAliasLookupParams)] : [];
+        }),
+      );
       const providers = authHealth.providers.map((prov) =>
         mapProvider(
           prov,
@@ -839,6 +906,8 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
           apiKeys,
           logoutProfileIds,
           configBoundProfileIds,
+          configBoundAuthProviders,
+          externalProfileIds,
           externalCliProfileIds,
           includeProfileIdentity,
         ),
