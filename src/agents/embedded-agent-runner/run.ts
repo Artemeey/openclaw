@@ -4230,10 +4230,12 @@ async function runEmbeddedAgentInternal(
               durationMs: Date.now() - started,
               agentMeta,
               aborted,
-              systemPromptReport: attempt.systemPromptReport,
-              finalPromptText: attempt.finalPromptText,
+              // Keep terminal text ahead of large diagnostic reports so truncated
+              // harness output still exposes the user-visible result.
               finalAssistantVisibleText,
               finalAssistantRawText,
+              systemPromptReport: attempt.systemPromptReport,
+              finalPromptText: attempt.finalPromptText,
               replayInvalid,
               livenessState,
               agentHarnessResultClassification: attempt.agentHarnessResultClassification,
