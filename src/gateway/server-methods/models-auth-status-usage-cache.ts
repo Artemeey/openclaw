@@ -1,4 +1,3 @@
-import pLimit from "p-limit";
 // Stale-while-revalidate cache for models.authStatus provider usage enrichment.
 import type { AuthProfileStore } from "../../agents/auth-profiles.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
@@ -18,8 +17,6 @@ import {
 
 const log = createSubsystemLogger("provider-usage-cache");
 const USAGE_CACHE_TTL_MS = 60_000;
-const PROFILE_USAGE_REFRESH_CONCURRENCY = 3;
-const profileUsageRefreshLimit = pLimit(PROFILE_USAGE_REFRESH_CONCURRENCY);
 
 export type ProviderUsageStatus = Pick<
   ProviderUsageSnapshot,
@@ -56,7 +53,6 @@ let cacheGeneration = 0;
 
 export function clearModelAuthStatusUsageCache(): void {
   cacheGeneration += 1;
-  profileUsageRefreshLimit.clearQueue();
   usageCacheByAgentId.clear();
   usageRefreshByAgentId.clear();
   clearProviderUsageRuntimeSnapshot();
@@ -161,16 +157,8 @@ function scheduleProviderUsageRefresh(params: {
   }
   const publishGeneration = cacheGeneration;
   const ownerToken = {};
-  const load = () => {
-    // Profile work may wait behind the shared concurrency limit. Recheck its
-    // owner at dequeue time so a removed or replaced profile never reaches I/O.
-    if (
-      params.authProfile &&
-      usageRefreshByAgentId.get(params.cacheOwnerKey)?.ownerToken !== ownerToken
-    ) {
-      return Promise.resolve({ updatedAt: Date.now(), providers: [] });
-    }
-    return loadProviderUsageSummary({
+  const load = () =>
+    loadProviderUsageSummary({
       providers: params.providerIds,
       ...(params.authProfile ? { authProfile: params.authProfile } : {}),
       ...(params.authProfile
@@ -186,8 +174,7 @@ function scheduleProviderUsageRefresh(params: {
       config: params.configRef,
       timeoutMs: PROVIDER_USAGE_TIMEOUT_MS,
     });
-  };
-  const promise = (params.authProfile ? profileUsageRefreshLimit(load) : load())
+  const promise = load()
     .then((freshUsage) => {
       const usage = retainLastGoodOnTimeout(freshUsage, params.lastGood);
       if (

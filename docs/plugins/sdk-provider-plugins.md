@@ -674,7 +674,7 @@ catalog, API-key auth, and dynamic model resolution.
           return auth ? { token: auth.token } : null;
         },
         fetchUsageSnapshot: async (ctx) => {
-          return await fetchAcmeUsage(ctx.token, ctx.timeoutMs);
+          return await fetchAcmeUsage(ctx.token, ctx.timeoutMs, ctx.fetchFn);
         },
         ```
 
@@ -694,6 +694,9 @@ catalog, API-key auth, and dynamic model resolution.
         provider-wide environment or administrator key, and never substitute a
         different account when the selected profile cannot supply usage auth.
         OpenClaw passes the same `authProfileId` to `fetchUsageSnapshot`.
+        Use `ctx.fetchFn` for provider HTTP so a removed selected profile is
+        rechecked at final I/O. Hooks with a custom transport must call
+        `ctx.isAuthProfileCurrent?.()` immediately before starting that I/O.
 
         Declare the provider id in `contracts.usageProviders`. When that manifest
         contract and **both** hooks are present, OpenClaw automatically includes

@@ -221,6 +221,8 @@ export type ProviderFetchUsageSnapshotContext = {
   /** Account email captured on the resolved credential, when known. */
   email?: string;
   timeoutMs: number;
+  /** Recheck immediately before custom provider I/O for a selected saved profile. */
+  isAuthProfileCurrent?: () => boolean;
   fetchFn: typeof fetch;
 };
 
