@@ -6562,6 +6562,43 @@ server.listen(0, "127.0.0.1", () => {
       ],
     ] as const;
 
+    const actionPath = path.resolve(".github/actions/prepare-testbox-shell");
+    const action = parse(readFileSync(path.join(actionPath, "action.yml"), "utf8"));
+    const run = action.runs.steps[0].run as string;
+    const root = tempDirs.make("openclaw-testbox-base-");
+    const origin = path.join(root, "origin");
+    mkdirSync(path.join(origin, "scripts/lib"), { recursive: true });
+    for (const name of ["merge-head-diff-base.mjs", "arg-utils.runtime.mjs"]) {
+      writeFileSync(path.join(origin, "scripts/lib", name), readFileSync(`scripts/lib/${name}`));
+    }
+    runGit(origin, ["init", "-q", "-b", "main"]);
+    runGit(origin, ["config", "commit.gpgsign", "false"]);
+    runGit(origin, ["config", "user.email", "ci-fixture@example.com"]);
+    runGit(origin, ["config", "user.name", "CI Fixture"]);
+    runGit(origin, ["add", "."]);
+    runGit(origin, ["commit", "-q", "-m", "event base"]);
+    const eventBaseSha = runGit(origin, ["rev-parse", "HEAD"]);
+    runGit(origin, ["checkout", "-q", "-b", "feature"]);
+    writeFileSync(path.join(origin, "pr.txt"), "PR change\n");
+    runGit(origin, ["add", "."]);
+    runGit(origin, ["commit", "-q", "-m", "PR change"]);
+    const featureSha = runGit(origin, ["rev-parse", "HEAD"]);
+    runGit(origin, ["checkout", "-q", "main"]);
+    writeFileSync(path.join(origin, "main.txt"), "main advanced\n");
+    runGit(origin, ["add", "."]);
+    runGit(origin, ["commit", "-q", "-m", "main advanced"]);
+    const mergeBaseSha = runGit(origin, ["rev-parse", "HEAD"]);
+    runGit(origin, ["merge", "-q", "--no-ff", "feature", "-m", "PR merge"]);
+    const mergeSha = runGit(origin, ["rev-parse", "HEAD"]);
+    const bin = path.join(root, "bin");
+    mkdirSync(bin);
+    // Only privileged tool publication is stubbed; base resolution and pinning use real Git.
+    writeFileSync(
+      path.join(bin, "sudo"),
+      '#!/bin/sh\nprintf "%s\\n" "$*" >> "$TESTBOX_TOOLS_LOG"\nif [ "$1" = tee ]; then cat >/dev/null; fi\n',
+      { mode: 0o755 },
+    );
+
     for (const [workflowPath, dispatchFetchDepth, baseRef] of workflowPaths) {
       const workflow = parse(readFileSync(workflowPath, "utf8"));
       const job = Object.values(workflow.jobs)[0] as { steps: WorkflowStep[] };
@@ -6582,29 +6619,91 @@ server.listen(0, "127.0.0.1", () => {
           }),
           `${workflowPath} ${eventName}`,
         ).toBe(expectedDepth);
+        const checkout = path.join(root, `${path.basename(workflowPath)}-${eventName}`);
+        runGit(root, [
+          "clone",
+          "-q",
+          "--no-local",
+          ...(expectedDepth === "0" ? [] : [`--depth=${expectedDepth}`]),
+          "--branch",
+          eventName === "pull_request" ? "main" : "feature",
+          origin,
+          checkout,
+        ]);
+        const tracePath = path.join(root, `${path.basename(checkout)}.trace`);
+        const selectedBase = runInNewContext(baseRef.slice(3, -2), {
+          github: {
+            event_name: eventName,
+            event: {
+              pull_request: { base: { sha: eventName === "pull_request" ? eventBaseSha : "" } },
+            },
+          },
+        }) as string;
+        const result = runWorkflowShellScript(run, {
+          cwd: checkout,
+          env: {
+            ...process.env,
+            PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+            TESTBOX_TOOLS_LOG: path.join(root, "tools.log"),
+            TESTBOX_BASE_REF: selectedBase,
+            GITHUB_ACTION_PATH: actionPath,
+            GITHUB_EVENT_NAME: eventName,
+            GITHUB_BASE_REF: eventName === "pull_request" ? "main" : "",
+            GIT_TRACE2_EVENT: tracePath,
+            GIT_ALLOW_PROTOCOL: "",
+          },
+        });
+        expect(result.status, `${workflowPath} ${eventName}: ${result.stderr}`).toBe(0);
+        expect(runGit(checkout, ["rev-parse", "origin/main"])).toBe(
+          eventName === "pull_request"
+            ? mergeBaseSha
+            : dispatchFetchDepth === "1"
+              ? featureSha
+              : mergeSha,
+        );
+        if (eventName === "pull_request") {
+          expect(runGit(checkout, ["diff", "--name-only", "origin/main", "HEAD"])).toBe("pr.txt");
+        }
+        expect(readFileSync(tracePath, "utf8")).not.toContain('"fetch"');
       }
       expect(prepareStep?.uses, workflowPath).toBe("./.github/actions/prepare-testbox-shell");
       expect(prepareStep?.with?.["base-ref"], workflowPath).toBe(baseRef);
       const ensureBaseStep = job.steps.find(
         (step: WorkflowStep) => step.name === "Ensure Testbox base commit",
       );
-      expect(ensureBaseStep?.if, workflowPath).toBe("github.event_name == 'pull_request'");
-      expect(ensureBaseStep?.uses, workflowPath).toBe("./.github/actions/ensure-base-commit");
-      expect(ensureBaseStep?.with, workflowPath).toEqual({
-        "base-sha": "${{ github.event.pull_request.base.sha }}",
-        "fetch-ref": "${{ github.event.pull_request.base.ref }}",
-      });
+      expect(ensureBaseStep, workflowPath).toBeUndefined();
       expect(JSON.stringify(job.steps), workflowPath).not.toContain(
         "+refs/heads/main:refs/remotes/origin/main",
       );
     }
 
-    const action = parse(readFileSync(".github/actions/prepare-testbox-shell/action.yml", "utf8"));
-    const run = action.runs.steps[0].run as string;
     expect(run).toContain('base_ref="${TESTBOX_BASE_REF:-HEAD}"');
     expect(run).toContain('git rev-parse --verify "${base_ref}^{commit}"');
     expect(run).toContain('git update-ref refs/remotes/origin/main "$base_sha"');
     expect(run).not.toContain("git fetch");
+
+    const checkout = path.join(root, "ci-check-testbox.yml-workflow_dispatch");
+    const toolsLog = path.join(root, "failed-tools.log");
+    const missingBase = "f".repeat(40);
+    const result = runWorkflowShellScript(run, {
+      cwd: checkout,
+      env: {
+        ...process.env,
+        PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+        TESTBOX_TOOLS_LOG: toolsLog,
+        TESTBOX_BASE_REF: missingBase,
+        GITHUB_ACTION_PATH: actionPath,
+        GITHUB_EVENT_NAME: "pull_request",
+        GITHUB_BASE_REF: "main",
+        GIT_ALLOW_PROTOCOL: "",
+      },
+    });
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stdout).toContain(
+      `Base commit still unavailable after fetch attempts: ${missingBase}`,
+    );
+    expect(runGit(checkout, ["rev-parse", "origin/main"])).toBe(featureSha);
+    expect(existsSync(toolsLog)).toBe(false);
   });
 
   it("bounds the workflow sanity ShellCheck download", () => {
