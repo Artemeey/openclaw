@@ -104,7 +104,11 @@ async function fetchEndpoint(params: {
   dispatcherPolicy: ReturnType<typeof resolveProviderHttpRequestConfig>["dispatcherPolicy"];
   timeoutMs: number;
   fetchFn: typeof fetch;
+  isAuthProfileCurrent?: () => boolean;
 }): Promise<EndpointResult> {
+  if (params.isAuthProfileCurrent?.() === false) {
+    return { ok: false, reason: "transport" };
+  }
   let guardedResponse: Awaited<ReturnType<typeof fetchWithSsrFGuard>>;
   try {
     guardedResponse = await fetchWithSsrFGuard({
@@ -150,6 +154,7 @@ export async function fetchOpenRouterUsage(params: {
   request?: ModelProviderConfig["request"];
   timeoutMs: number;
   fetchFn: typeof fetch;
+  isAuthProfileCurrent?: () => boolean;
 }): Promise<ProviderUsageSnapshot> {
   const requestConfig = resolveProviderHttpRequestConfig({
     provider: "openrouter",
@@ -169,6 +174,7 @@ export async function fetchOpenRouterUsage(params: {
     dispatcherPolicy: requestConfig.dispatcherPolicy,
     timeoutMs: params.timeoutMs,
     fetchFn: params.fetchFn,
+    isAuthProfileCurrent: params.isAuthProfileCurrent,
   };
   const [creditsResult, keyResult] = await Promise.all([
     fetchEndpoint({ ...request, path: "credits" }),
