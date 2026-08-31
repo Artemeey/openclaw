@@ -1,0 +1,575 @@
+name: Candidate output proof
+run-name: Candidate output proof PR134140 ${{ github.run_id }}
+
+on:
+  push:
+    branches: [codex/frv-candidate-output-proof-134140]
+    paths: [.github/workflows/frv-candidate-output-proof.yml]
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+  pull-requests: read
+
+concurrency:
+  group: candidate-output-proof-134140
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  GH_TRANSIENT_SERVER_OR_NETWORK_PATTERN: "HTTP 5[0-9][0-9]|Server Error|invalid character .* looking for beginning of value|error connecting to|context deadline exceeded|connection reset by peer|connection refused|TLS handshake timeout|i/o timeout|network is unreachable|(^|[^A-Za-z0-9_])EOF([^A-Za-z0-9_]|$)|ETIMEDOUT|ECONNRESET|EAI_AGAIN"
+
+jobs:
+  preflight:
+    name: Verify retained candidate before acquisition
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      request_json: ${{ steps.discover.outputs.request_json }}
+      request_sha256: ${{ steps.discover.outputs.request_sha256 }}
+      binding_json: ${{ steps.discover.outputs.binding_json }}
+    steps:
+      - name: Checkout exact reviewed contract owners
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: df957d0b9407c73653fe40d8ee7970fb451b05cb
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            scripts/full-release-candidate-contract.mjs
+            scripts/full-release-candidate-reuse.mjs
+            scripts/full-release-validation-policy.mjs
+            scripts/lib/actions-artifact-archive.mjs
+            scripts/lib/canonical-json.mjs
+            scripts/lib/full-release-candidate-reuse.mjs
+            scripts/lib/record-shared.mjs
+            scripts/lib/upgrade-survivor-policy.mjs
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Discover actual retained candidate
+        id: discover
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUEST_JSON: >-
+            {"allowFrozenTargetScenarioOmissions":false,"allowUnreleasedChangelog":true,"contractVersions":{"package":1,"prepublishPluginRegistry":1,"sharedImage":1},"releaseProfile":"full","releaseSoak":true,"repository":"openclaw/openclaw","schema":"openclaw.full-release-candidate-request/v1","sharedImagePolicy":"no-push-artifact","targetSha":"5f2602a71e520e40fd8433d6f8aed5aef530a8cf","toolingSha":"23bd8fb98adce84f6f87c6c4f7c082bbe991e536","upgradeSurvivorBaselines":["openclaw@latest"],"upgradeSurvivorScenarios":["acpx-openclaw-tools-bridge","base","bootstrap-persona","channel-post-core-restore","configured-plugin-installs","cron-scheduled-authority","feishu-channel","meeting-transcripts-sqlite","plugin-deps-cleanup","stale-source-plugin-shadow","tilde-log-path","versioned-runtime-deps"]}
+          REQUEST_SHA256: 241c3bfc92a3c1fe5ae4fde243124d3c070e9841f41d04ea999b07702b91caa5
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "openclaw/openclaw" ]]
+          [[ "$GITHUB_EVENT_NAME" == "push" ]]
+          [[ "$GITHUB_REF" == "refs/heads/codex/frv-candidate-output-proof-134140" ]]
+          input="$RUNNER_TEMP/retained-candidate-request.json"
+          printf '%s\n' "$REQUEST_JSON" > "$input"
+          node scripts/full-release-candidate-reuse.mjs discover \
+            --request-input "$input" --expected-request-sha256 "$REQUEST_SHA256"
+      - name: Require the exact previously sealed candidate
+        env:
+          DISCOVERY_STATE: ${{ steps.discover.outputs.state }}
+          BINDING_JSON: ${{ steps.discover.outputs.binding_json }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {validateCandidateBinding} from './scripts/lib/full-release-candidate-reuse.mjs';
+          assert.equal(process.env.DISCOVERY_STATE,'hit');
+          const binding=validateCandidateBinding(JSON.parse(process.env.BINDING_JSON),{minimumRemainingMs:14*60*60*1000});
+          assert.equal(binding.evidenceArtifact.id,'9740374827');
+          assert.equal(binding.requestSha256,'241c3bfc92a3c1fe5ae4fde243124d3c070e9841f41d04ea999b07702b91caa5');
+          assert.equal(binding.manifestSha256,'20e5e2c5c0d4f93fe1cd0f3ad6982297d7ce715f4a1cc126c714427c44fb870b');
+          NODE
+
+  acquisition:
+    name: Exact reviewed acquisition with retained request
+    needs: preflight
+    uses: openclaw/openclaw/.github/workflows/full-release-candidate.yml@df957d0b9407c73653fe40d8ee7970fb451b05cb
+    with:
+      ref: 5f2602a71e520e40fd8433d6f8aed5aef530a8cf
+      request_json: ${{ needs.preflight.outputs.request_json }}
+      request_sha256: ${{ needs.preflight.outputs.request_sha256 }}
+
+  rejected_acquisition:
+    name: Exact reviewed acquisition with a mismatched digest
+    needs: preflight
+    uses: openclaw/openclaw/.github/workflows/full-release-candidate.yml@df957d0b9407c73653fe40d8ee7970fb451b05cb
+    with:
+      ref: 5f2602a71e520e40fd8433d6f8aed5aef530a8cf
+      request_json: ${{ needs.preflight.outputs.request_json }}
+      request_sha256: 041c3bfc92a3c1fe5ae4fde243124d3c070e9841f41d04ea999b07702b91caa5
+
+  candidate_dispatch:
+    name: Dispatch real candidate-dependent plugin validation
+    needs: [preflight, acquisition]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.acquisition.result == 'success' && needs.acquisition.outputs.state == 'ready' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: read
+      packages: read
+      pull-requests: read
+    outputs:
+      run_id: ${{ steps.dispatch.outputs.run_id }}
+      run_attempt: ${{ steps.dispatch.outputs.run_attempt }}
+      url: ${{ steps.dispatch.outputs.url }}
+    steps:
+      - name: Checkout exact reviewed contract owners
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: df957d0b9407c73653fe40d8ee7970fb451b05cb
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            scripts/full-release-candidate-contract.mjs
+            scripts/full-release-candidate-reuse.mjs
+            scripts/full-release-validation-policy.mjs
+            scripts/lib/actions-artifact-archive.mjs
+            scripts/lib/canonical-json.mjs
+            scripts/lib/full-release-candidate-reuse.mjs
+            scripts/lib/record-shared.mjs
+            scripts/lib/upgrade-survivor-policy.mjs
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Verify propagated binding against live authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACQUISITION_SOURCE: ${{ needs.acquisition.outputs.source }}
+          BINDING_JSON: ${{ needs.acquisition.outputs.binding_json }}
+          PREFLIGHT_BINDING_JSON: ${{ needs.preflight.outputs.binding_json }}
+          CANDIDATE_ARTIFACT_JSON: ${{ needs.acquisition.outputs.candidate_artifact_json }}
+          REQUEST_JSON: ${{ needs.acquisition.outputs.request_json }}
+          REQUEST_SHA256: ${{ needs.acquisition.outputs.request_sha256 }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import {candidateRequestSha256} from './scripts/full-release-candidate-contract.mjs';
+          import {candidateArtifactJsonFromBinding,validateCandidateBinding} from './scripts/lib/full-release-candidate-reuse.mjs';
+          assert.equal(process.env.ACQUISITION_SOURCE,'reused');
+          assert.equal(process.env.REQUEST_SHA256,'241c3bfc92a3c1fe5ae4fde243124d3c070e9841f41d04ea999b07702b91caa5');
+          const request=JSON.parse(process.env.REQUEST_JSON);
+          assert.equal(candidateRequestSha256(request),process.env.REQUEST_SHA256);
+          const binding=validateCandidateBinding(JSON.parse(process.env.BINDING_JSON),{request});
+          assert.deepEqual(binding,validateCandidateBinding(JSON.parse(process.env.PREFLIGHT_BINDING_JSON),{request}));
+          assert.equal(process.env.CANDIDATE_ARTIFACT_JSON,candidateArtifactJsonFromBinding(binding));
+          fs.writeFileSync(process.env.RUNNER_TEMP+'/candidate-proof-plan.json',JSON.stringify({candidate:binding})+'\n');
+          NODE
+          node scripts/full-release-candidate-reuse.mjs verify \
+            --plan "$RUNNER_TEMP/candidate-proof-plan.json" \
+            --consumer-run-id "$GITHUB_RUN_ID" --consumer-run-attempt "$GITHUB_RUN_ATTEMPT"
+      - name: Dispatch plugin prerelease candidate phase
+        id: dispatch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHILD_WORKFLOW_KIND: plugin-prerelease
+          PHASE: candidate
+          TARGET_REF: 5f2602a71e520e40fd8433d6f8aed5aef530a8cf
+          TARGET_CONTEXT_REF: ""
+          TARGET_SHA: 5f2602a71e520e40fd8433d6f8aed5aef530a8cf
+          CHILD_WORKFLOW_REF: release-ci/23bd8fb98adc-1788134629337
+          PARENT_WORKFLOW_SHA: 23bd8fb98adce84f6f87c6c4f7c082bbe991e536
+          CANDIDATE_ARTIFACT_JSON: ${{ needs.acquisition.outputs.candidate_artifact_json }}
+          PLUGIN_PRERELEASE_NODE_EXCLUDE_PATTERNS_JSON: "[]"
+        run: |
+          set -euo pipefail
+
+          gh_with_retry() {
+            local output status attempt
+            for attempt in 1 2 3 4 5 6; do
+              set +e
+              output="$(gh "$@" 2>&1)"
+              status=$?
+              set -e
+              if [[ "$status" -eq 0 ]]; then
+                printf '%s\n' "$output"
+                return 0
+              fi
+              if [[ "$output" == *"Bad credentials"* || "$output" == *"HTTP 401"* || "$output" == *"secondary rate limit"* || "$output" == *"API rate limit"* || "$output" == *"HTTP 429"* || "$output" == *"abuse detection"* || "$output" == *"Sorry. Your account was suspended"* || "$output" =~ $GH_TRANSIENT_SERVER_OR_NETWORK_PATTERN ]]; then
+                echo "::warning::gh $* failed on attempt ${attempt}: ${output}" >&2
+                sleep $((attempt * 10))
+                continue
+              fi
+              printf '%s\n' "$output" >&2
+              return "$status"
+            done
+            printf '%s\n' "$output" >&2
+            return "$status"
+          }
+
+          validate_child_run() {
+            local candidate_run_id="$1"
+            local candidate_run_json attempt
+            if [[ ! "$candidate_run_id" =~ ^[0-9]+$ ]]; then
+              echo "::error::Refusing to adopt invalid ${workflow} run ID ${candidate_run_id}." >&2
+              return 1
+            fi
+            # GitHub materializes a dispatched run asynchronously: the API can 404 the
+            # fresh run id (read-after-write lag) and can briefly report the default
+            # display_title before run-name evaluates. Both are retryable; a REAL run
+            # object with mismatched identity fields still refuses immediately.
+            for attempt in $(seq 1 12); do
+              if ! candidate_run_json="$(
+                gh_with_retry api "repos/${GITHUB_REPOSITORY}/actions/runs/${candidate_run_id}"
+              )" || ! jq -e --argjson id "$candidate_run_id" '.id == $id' \
+                <<< "$candidate_run_json" >/dev/null 2>&1; then
+                echo "Waiting for ${workflow} run ${candidate_run_id} to become readable (attempt ${attempt})." >&2
+                sleep 5
+                continue
+              fi
+              if ! jq -e \
+                --argjson workflow_id "$expected_workflow_id" \
+                --arg branch "$CHILD_WORKFLOW_REF" \
+                '(.workflow_id == $workflow_id)
+                  and (.head_branch == $branch)
+                  and (.event == "workflow_dispatch")' \
+                <<< "$candidate_run_json" >/dev/null; then
+                echo "::error::Refusing to adopt unvalidated ${workflow} run ${candidate_run_id}." >&2
+                jq '{id, workflow_id, path, display_title, head_branch, head_sha, event, html_url}' \
+                  <<< "$candidate_run_json" >&2
+                return 1
+              fi
+              if jq -e --arg title "$dispatch_run_name" '.display_title == $title' \
+                <<< "$candidate_run_json" >/dev/null; then
+                printf '%s\n' "$candidate_run_json"
+                return 0
+              fi
+              echo "Waiting for ${workflow} run ${candidate_run_id} display title (attempt ${attempt})." >&2
+              sleep 5
+            done
+            echo "::error::Refusing to adopt ${workflow} run ${candidate_run_id}: run never became readable with display title ${dispatch_run_name}." >&2
+            jq '{id, workflow_id, path, display_title, head_branch, head_sha, event, html_url}' \
+              <<< "$candidate_run_json" >&2 || printf '%s\n' "$candidate_run_json" >&2
+            return 1
+          }
+
+          dispatch_child() {
+            local workflow="$1"
+            local dispatch_run_name="$2"
+            shift 2
+            local dispatch_output dispatch_status dispatch_run_ids matches_json match_count run_id run_json child_head_sha child_run_attempt url encoded_workflow_ref current_workflow_sha expected_workflow_id
+
+            encoded_workflow_ref="$(jq -rn --arg value "$CHILD_WORKFLOW_REF" '$value | @uri')"
+            current_workflow_sha="$(
+              gh_with_retry api "repos/${GITHUB_REPOSITORY}/commits/${encoded_workflow_ref}" --jq .sha
+            )"
+            if [[ "$current_workflow_sha" != "$PARENT_WORKFLOW_SHA" ]]; then
+              echo "::error::Child workflow ref ${CHILD_WORKFLOW_REF} moved to ${current_workflow_sha}, expected ${PARENT_WORKFLOW_SHA}; refusing dispatch." >&2
+              return 1
+            fi
+            expected_workflow_id="$(
+              gh_with_retry api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}" --jq .id
+            )"
+
+            # The dispatch POST is one-shot: adopt its returned identity when available.
+            # If absent or ambiguous, exact-name recovery avoids a duplicate child.
+            set +e
+            dispatch_output="$(gh workflow run "$workflow" --ref "$CHILD_WORKFLOW_REF" "$@" 2>&1)"
+            dispatch_status=$?
+            set -e
+            printf '%s\n' "$dispatch_output"
+            if [[ "$dispatch_status" -ne 0 && ! "$dispatch_output" =~ $GH_TRANSIENT_SERVER_OR_NETWORK_PATTERN ]]; then
+              echo "::error::${workflow} dispatch failed with non-ambiguous status ${dispatch_status}; refusing adoption polling." >&2
+              exit "$dispatch_status"
+            fi
+
+            run_id=""
+            dispatch_run_ids="$(
+              sed -nE "s#^https://github[.]com/${GITHUB_REPOSITORY}/actions/runs/([0-9]+)\$#\1#p" \
+                <<< "$dispatch_output" | sort -u
+            )"
+            if [[ "$dispatch_run_ids" == *$'\n'* ]]; then
+              echo "::error::${workflow} dispatch returned multiple run identities; refusing to guess." >&2
+              exit 1
+            elif [[ -n "$dispatch_run_ids" ]]; then
+              run_id="$dispatch_run_ids"
+            else
+              for _ in $(seq 1 60); do
+                if matches_json="$(
+                  DISPATCH_RUN_NAME="$dispatch_run_name" CHILD_WORKFLOW_REF="$CHILD_WORKFLOW_REF" \
+                    gh_with_retry api -X GET "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs" \
+                    -F event=workflow_dispatch \
+                    -F per_page=100 \
+                    --jq '[.workflow_runs[] | select(.display_title == env.DISPATCH_RUN_NAME and .head_branch == env.CHILD_WORKFLOW_REF) | .id]'
+                )"; then
+                  match_count="$(jq 'length' <<< "$matches_json")"
+                  if (( match_count > 1 )); then
+                    echo "::error::Multiple runs matched ${dispatch_run_name}; refusing to guess." >&2
+                    exit 1
+                  fi
+                  if (( match_count == 1 )); then
+                    run_id="$(jq -r '.[0]' <<< "$matches_json")"
+                    break
+                  fi
+                fi
+                sleep 5
+              done
+            fi
+            if [[ -z "$run_id" ]]; then
+              echo "::error::Could not find exact dispatched run ${dispatch_run_name}; dispatch status ${dispatch_status}. The dispatch was not retried to avoid creating a duplicate child." >&2
+              exit 1
+            fi
+
+            run_json="$(validate_child_run "$run_id")"
+            {
+              echo "- Adopted child: \`${workflow}\` run \`${run_id}\`"
+              echo "- Release Decision owns blocking policy; Diagnostic Drain owns terminal collection."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            child_head_sha="$(jq -r '.head_sha // ""' <<< "$run_json")"
+            if [[ "$child_head_sha" != "$PARENT_WORKFLOW_SHA" ]]; then
+              echo "::error::${workflow} child run used workflow SHA ${child_head_sha}, expected parent workflow SHA ${PARENT_WORKFLOW_SHA}." >&2
+              exit 1
+            fi
+
+            if [[ "$dispatch_status" -ne 0 ]]; then
+              echo "::warning::${workflow} dispatch returned status ${dispatch_status}; adopted exact run ${run_id}." >&2
+            fi
+            child_run_attempt="$(jq -r '.run_attempt // ""' <<< "$run_json")"
+            url="$(jq -r '.html_url // ""' <<< "$run_json")"
+            if [[ ! "$child_run_attempt" =~ ^[1-9][0-9]*$ || -z "${url// }" ]]; then
+              echo "::error::${workflow} child run omitted its attempt or URL." >&2
+              exit 1
+            fi
+            echo "Dispatched ${workflow}: ${url} (attempt ${child_run_attempt})"
+            echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+            echo "run_attempt=${child_run_attempt}" >> "$GITHUB_OUTPUT"
+            echo "url=${url}" >> "$GITHUB_OUTPUT"
+          }
+
+          case "$CHILD_WORKFLOW_KIND" in
+            ci)
+              {
+                echo "### Normal CI"
+                echo
+                echo "- Target ref: \`${TARGET_REF}\`"
+                echo "- Target SHA: \`${TARGET_SHA}\`"
+              } >> "$GITHUB_STEP_SUMMARY"
+              dispatch_id="full-release-validation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-ci"
+              dispatch_run_name="CI ${dispatch_id}"
+              args=(-f target_ref="$TARGET_SHA" -f include_android=true -f dispatch_id="$dispatch_id")
+              if [[ "$TARGET_REF" =~ ^v[0-9]{4}\.[0-9]+\.[0-9]+(-(alpha|beta)\.[0-9]+)?$ ]]; then
+                args+=(-f historical_target_tag="$TARGET_REF")
+              elif [[ "$TARGET_CONTEXT_REF" =~ ^v[0-9]{4}\.[0-9]+\.[0-9]+(-(alpha|beta)\.[0-9]+)?$ ]]; then
+                args+=(-f historical_target_tag="$TARGET_CONTEXT_REF")
+              elif [[ "$TARGET_CONTEXT_REF" =~ ^(release/[0-9]{4}\.[0-9]+\.[0-9]+|extended-stable/[0-9]{4}\.[0-9]+\.33)$ ]]; then
+                args+=(-f target_context_ref="$TARGET_CONTEXT_REF")
+              fi
+              dispatch_child ci.yml "$dispatch_run_name" "${args[@]}"
+              ;;
+            plugin-prerelease)
+              case "$PHASE" in
+                independent|candidate) ;;
+                *)
+                  echo "::error::Unsupported plugin prerelease phase ${PHASE}." >&2
+                  exit 2
+                  ;;
+              esac
+              plugin_prerelease_node_exclusions="$(
+                jq -c . <<< "$PLUGIN_PRERELEASE_NODE_EXCLUDE_PATTERNS_JSON"
+              )"
+              {
+                echo "### Plugin prerelease"
+                echo
+                echo "- Target ref: \`${TARGET_REF}\`"
+                echo "- Target SHA: \`${TARGET_SHA}\`"
+                echo "- Phase: \`${PHASE}\`"
+                echo "- Frozen-target Node test omissions: \`${plugin_prerelease_node_exclusions}\`"
+              } >> "$GITHUB_STEP_SUMMARY"
+              dispatch_id="full-release-validation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-plugin-prerelease-${PHASE}"
+              dispatch_run_name="Plugin Prerelease ${dispatch_id}"
+              args=(-f target_ref="$TARGET_SHA" -f expected_sha="$TARGET_SHA" -f full_release_validation=true -f phase="$PHASE" -f dispatch_id="$dispatch_id" -f node_test_exclude_patterns_json="$PLUGIN_PRERELEASE_NODE_EXCLUDE_PATTERNS_JSON")
+              if [[ -n "${TARGET_CONTEXT_REF:-}" ]]; then
+                args+=(-f target_context_ref="$TARGET_CONTEXT_REF")
+              fi
+              if [[ -n "${CANDIDATE_ARTIFACT_JSON// }" ]]; then
+                args+=(-f candidate_artifact_json="$CANDIDATE_ARTIFACT_JSON")
+              fi
+              dispatch_child plugin-prerelease.yml "$dispatch_run_name" "${args[@]}"
+              ;;
+            release-checks)
+              case "$PHASE" in
+                independent|candidate) ;;
+                *)
+                  echo "::error::Unsupported release checks phase ${PHASE}." >&2
+                  exit 2
+                  ;;
+              esac
+              {
+                echo "### Release/live/Docker/QA validation"
+                echo
+                echo "- Target ref: \`${TARGET_REF}\`"
+                echo "- Target SHA: \`${TARGET_SHA}\`"
+                echo "- Provider: \`${PROVIDER}\`"
+                echo "- Cross-OS mode: \`${MODE}\`"
+                echo "- Release profile: \`${RELEASE_PROFILE}\`"
+                echo "- Release soak lanes: \`${RUN_RELEASE_SOAK}\`"
+                echo "- Rerun group: \`${RERUN_GROUP}\`"
+                echo "- Phase: \`${PHASE}\`"
+                if [[ -n "${LIVE_SUITE_FILTER// }" ]]; then
+                  echo "- Live suite filter: \`${LIVE_SUITE_FILTER}\`"
+                fi
+                if [[ -n "${CROSS_OS_SUITE_FILTER// }" ]]; then
+                  echo "- Cross-OS suite filter: \`${CROSS_OS_SUITE_FILTER}\`"
+                fi
+                if [[ -n "${RELEASE_PACKAGE_SPEC// }" ]]; then
+                  echo "- Release package spec: \`${RELEASE_PACKAGE_SPEC}\`"
+                fi
+                if [[ -n "${PACKAGE_ACCEPTANCE_PACKAGE_SPEC// }" ]]; then
+                  echo "- Package Acceptance package spec: \`${PACKAGE_ACCEPTANCE_PACKAGE_SPEC}\`"
+                fi
+                if [[ -n "${CODEX_PLUGIN_SPEC// }" ]]; then
+                  echo "- Codex plugin spec: \`${CODEX_PLUGIN_SPEC}\`"
+                fi
+                echo "- Package Telegram E2E deferred: \`${SKIP_PACKAGE_TELEGRAM_E2E}\`"
+              } >> "$GITHUB_STEP_SUMMARY"
+              args=(
+                -f ref="$TARGET_SHA"
+                -f expected_sha="$TARGET_SHA"
+                -f provider="$PROVIDER"
+                -f mode="$MODE"
+                -f release_profile="$RELEASE_PROFILE"
+                -f run_release_soak="$RUN_RELEASE_SOAK"
+                -f fail_fast="$FAIL_FAST"
+                -f phase="$PHASE"
+                -f allow_unreleased_changelog="$ALLOW_UNRELEASED_CHANGELOG"
+                -f skip_package_telegram_e2e="$SKIP_PACKAGE_TELEGRAM_E2E"
+                -f telegram_waiver="$TELEGRAM_WAIVER"
+                -f rerun_group="$RERUN_GROUP"
+              )
+              if [[ -n "${TARGET_CONTEXT_REF// }" ]]; then
+                args+=(-f target_context_ref="$TARGET_CONTEXT_REF")
+                args+=(-f allow_frozen_target_scenario_omissions=true)
+              fi
+              if [[ -n "${LIVE_SUITE_FILTER// }" ]]; then
+                args+=(-f live_suite_filter="$LIVE_SUITE_FILTER")
+              fi
+              if [[ -n "${CROSS_OS_SUITE_FILTER// }" ]]; then
+                args+=(-f cross_os_suite_filter="$CROSS_OS_SUITE_FILTER")
+              fi
+              if [[ -n "${RELEASE_PACKAGE_SPEC// }" ]]; then
+                args+=(-f release_package_spec="$RELEASE_PACKAGE_SPEC")
+              fi
+              if [[ -n "${PACKAGE_ACCEPTANCE_PACKAGE_SPEC// }" ]]; then
+                args+=(-f package_acceptance_package_spec="$PACKAGE_ACCEPTANCE_PACKAGE_SPEC")
+              fi
+              if [[ -n "${CODEX_PLUGIN_SPEC// }" ]]; then
+                args+=(-f codex_plugin_spec="$CODEX_PLUGIN_SPEC")
+              fi
+              if [[ -n "${CANDIDATE_ARTIFACT_JSON// }" ]]; then
+                args+=(-f candidate_artifact_json="$CANDIDATE_ARTIFACT_JSON")
+              fi
+              dispatch_id="full-release-validation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-release-checks-${PHASE}"
+              dispatch_run_name="OpenClaw Release Checks ${dispatch_id}"
+              args+=(-f dispatch_id="$dispatch_id")
+              dispatch_child openclaw-release-checks.yml "$dispatch_run_name" "${args[@]}"
+              ;;
+            npm-telegram)
+              args=(-f package_spec="$PACKAGE_SPEC" -f harness_ref="$TARGET_SHA" -f provider_mode="$PROVIDER_MODE")
+              if [[ -n "${SCENARIO// }" ]]; then
+                args+=(-f scenario="$SCENARIO")
+              fi
+              dispatch_id="full-release-validation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-npm-telegram"
+              dispatch_run_name="NPM Telegram Beta E2E ${dispatch_id}"
+              args+=(-f dispatch_id="$dispatch_id")
+              dispatch_child npm-telegram-beta-e2e.yml "$dispatch_run_name" "${args[@]}"
+              ;;
+            performance)
+              fail_on_regression=true
+              if [[ "$RELEASE_PROFILE" == "beta" ]]; then
+                fail_on_regression=false
+              fi
+              {
+                echo "### Product performance"
+                echo
+                echo "- Target SHA: \`${TARGET_SHA}\`"
+                echo "- Profile: \`release\`"
+                echo "- Repeat: \`3\`"
+                echo "- Deep profile: \`false\`"
+                echo "- Live OpenAI candidate: \`false\`"
+                echo "- Regression gate: \`${fail_on_regression}\`"
+                echo "- Report publication: disabled (artifacts only)"
+                if [[ "$RELEASE_PROFILE" == "beta" ]]; then
+                  echo "- Release impact: advisory"
+                else
+                  echo "- Release impact: blocking"
+                fi
+              } >> "$GITHUB_STEP_SUMMARY"
+              dispatch_id="full-release-validation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+              dispatch_run_name="OpenClaw Performance ${dispatch_id}"
+              args=(
+                -f target_ref="$TARGET_SHA"
+                -f profile=release
+                -f repeat=3
+                -f deep_profile=false
+                -f live_openai_candidate=false
+                -f fail_on_regression="$fail_on_regression"
+                -f publish_reports=false
+                -f dispatch_id="$dispatch_id"
+              )
+              dispatch_child openclaw-performance.yml "$dispatch_run_name" "${args[@]}"
+              ;;
+            *)
+              echo "::error::Unsupported full-release child workflow kind ${CHILD_WORKFLOW_KIND}." >&2
+              exit 2
+              ;;
+          esac
+
+  blocked_candidate_consumer:
+    name: Reject unexpected failure-path readiness
+    needs: rejected_acquisition
+    if: ${{ always() && needs.rejected_acquisition.result == 'success' && needs.rejected_acquisition.outputs.state == 'ready' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: A rejected request must never reach a candidate consumer
+        run: exit 1
+
+  observe:
+    name: Verify hosted propagation and blocking
+    needs: [preflight, acquisition, rejected_acquisition, candidate_dispatch, blocked_candidate_consumer]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Record real GitHub job results
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const needs=JSON.parse(process.env.NEEDS_JSON);
+          const receipt={reviewedOwnerSha:'df957d0b9407c73653fe40d8ee7970fb451b05cb',callerSha:process.env.GITHUB_SHA,callerRunId:process.env.GITHUB_RUN_ID,callerRunAttempt:process.env.GITHUB_RUN_ATTEMPT,childWorkflowRef:'release-ci/23bd8fb98adc-1788134629337',childWorkflowSha:'23bd8fb98adce84f6f87c6c4f7c082bbe991e536',candidateTargetSha:'5f2602a71e520e40fd8433d6f8aed5aef530a8cf',candidateToolingSha:'23bd8fb98adce84f6f87c6c4f7c082bbe991e536',needs};
+          fs.writeFileSync(process.env.RUNNER_TEMP+'/candidate-output-proof.json',JSON.stringify(receipt,null,2)+'\n');
+          assert.equal(needs.preflight.result,'success');
+          assert.equal(needs.acquisition.result,'success');
+          assert.equal(needs.acquisition.outputs.state,'ready');
+          assert.equal(needs.acquisition.outputs.source,'reused');
+          assert.equal(needs.candidate_dispatch.result,'success');
+          assert.match(needs.candidate_dispatch.outputs.run_id,/^[1-9][0-9]*$/u);
+          assert.equal(needs.rejected_acquisition.result,'failure');
+          assert.ok(['','unavailable'].includes(needs.rejected_acquisition.outputs.state??''));
+          assert.equal(needs.rejected_acquisition.outputs.binding_json??'','');
+          assert.equal(needs.rejected_acquisition.outputs.candidate_artifact_json??'','');
+          assert.equal(needs.blocked_candidate_consumer.result,'skipped');
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,'Exact reviewed reusable outputs reached a real candidate-dependent plugin dispatch. The wrong-digest call failed and its candidate consumer was skipped. The overall diagnostic is intentionally failed by that negative control.\n');
+          NODE
+      - name: Upload diagnostic receipt only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: candidate-output-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate-output-proof.json
+          if-no-files-found: error
+          retention-days: 7
