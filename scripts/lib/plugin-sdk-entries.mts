@@ -173,6 +173,14 @@ export function listPluginSdkDistArtifacts() {
   ];
 }
 
+/** Compatibility view used by the extended-stable release contents check. */
+export function listPrivateLocalOnlyPluginSdkDistArtifacts() {
+  return privateLocalOnlyPluginSdkEntrypoints.flatMap((entry) => [
+    `dist/plugin-sdk/${entry}.js`,
+    `dist/plugin-sdk/${entry}.d.ts`,
+  ]);
+}
+
 /**
  * List private local-only plugin SDK dist artifacts expected after local builds.
  * @internal Shared repository-script contract.
