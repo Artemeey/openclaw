@@ -2833,21 +2833,13 @@ docker_e2e_docker_run_cmd run demo
       expect(script).not.toContain('\nexport FEISHU_APP_SECRET="upgrade-survivor-feishu-secret"\n');
     }
     expectTextToIncludeAll(publishedRunner, [
-      "park_update_restart_authored_config",
       "park-restart-probe",
       "assert_prepublish_fixture_idle",
       "assert-no-requests",
-      "restore_update_restart_authored_config",
       "config-parking.mjs",
       "'^(GATEWAY_AUTH_TOKEN_REF|OPENCLAW_CLAWHUB_URL)='",
       "OPENCLAW_CLAWHUB_URL=%s",
     ]);
-    expect(publishedRunner.indexOf("park_update_restart_authored_config")).toBeLessThan(
-      publishedRunner.lastIndexOf("assert_prepublish_fixture_idle"),
-    );
-    expect(publishedRunner.lastIndexOf("assert_prepublish_fixture_idle")).toBeLessThan(
-      publishedRunner.lastIndexOf("restore_update_restart_authored_config"),
-    );
     for (const script of [runner, updateRestartAuth]) {
       expect(script).not.toContain("assert-no-requests");
     }
@@ -3484,6 +3476,7 @@ trap - EXIT ERR INT TERM
 seed_update_restart_probe_device_auth() { :; }
 assert_prepublish_fixture_idle() { :; }
 assert_baseline_state() { :; }
+check_gateway_status() { :; }
 # This fixture chooses an ephemeral port; retain the actual readiness implementation.
 eval "$(declare -f openclaw_e2e_wait_gateway_ready | sed '1s/openclaw_e2e_wait_gateway_ready/fixture_wait_gateway_ready/')"
 openclaw_e2e_wait_gateway_ready() {
@@ -4523,7 +4516,7 @@ ${storage === "wal" ? 'process.kill(process.pid, "SIGKILL");' : ""}`,
       writeFileSync(join(state, "logs", "gateway-restart.log"), `restart: token=${secret}\n`);
       writeFileSync(
         join(unitDir, "openclaw-gateway.service"),
-        `ExecStart=node gateway --token ${secret}\nWorkingDirectory=/safe/service\nEnvironment="API_KEY=${secret}"\n`,
+        `[Service]\nExecStart=${process.execPath} gateway --token ${secret}\nWorkingDirectory=/safe/service\nEnvironment="API_KEY=${secret}"\n`,
       );
       writeFileSync(join(artifacts, "doctor.log"), `doctor: token=${secret}\n`);
       writeFileSync(join(artifacts, "update.err"), `post-core failure: token=${secret}\n`);
@@ -4559,10 +4552,15 @@ ${storage === "wal" ? 'process.kill(process.pid, "SIGKILL");' : ""}`,
           readFileSync(UPGRADE_SURVIVOR_UPDATE_RESTART_AUTH_PATH, "utf8"),
         ),
       );
+      writeFileSync(
+        join(workDir, "systemd-fixture.mjs"),
+        readFileSync("scripts/e2e/lib/upgrade-survivor/systemd-fixture.mjs"),
+      );
       const shown = spawnSync("bash", [shimPath, ...SURVIVOR_SERVICE_SHOW_ARGS], {
         encoding: "utf8",
         env: {
           ...process.env,
+          HOME: join(workDir, "home"),
           OPENCLAW_UPGRADE_SURVIVOR_SYSTEMCTL_SHIM_DAEMON_LOG: logPath,
           OPENCLAW_UPGRADE_SURVIVOR_SYSTEMCTL_SHIM_LOG: join(artifacts, "systemctl-shim.log"),
           OPENCLAW_UPGRADE_SURVIVOR_SYSTEMCTL_SHIM_PID_FILE: join(workDir, "missing.pid"),

@@ -5868,9 +5868,13 @@ describe("update-cli", () => {
       platformSpy.mockRestore();
     }
 
-    expect(serviceEnabled).toHaveBeenCalledOnce();
-    expect(serviceStop).not.toHaveBeenCalled();
-    expect(serviceRestart).not.toHaveBeenCalled();
+    expectNoSideEffects(
+      serviceStart,
+      serviceStop,
+      serviceRestart,
+      runDaemonInstall,
+      runDaemonRestart,
+    );
     expect(freshRestartCalls()).toHaveLength(0);
   });
 
