@@ -137,6 +137,36 @@ function expectNpmInstallObserved(argsPath: string, expectedArgs: string, prefix
 }
 
 describe("scripts/lib/openclaw-e2e-instance.sh", () => {
+  it.each([
+    ["supports capability consent", "  --accept-capabilities  Accept fixture capabilities", true],
+    ["preserves older candidates", "  --force  Replace an existing install", false],
+  ])("%s for fixture plugin commands", (_label, help, expectsConsent) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-e2e-plugin-consent-"));
+    try {
+      const commandPath = path.join(tempDir, "candidate");
+      const argsPath = path.join(tempDir, "args.txt");
+      writeBashExecutable(commandPath, [
+        'if [ "${3:-}" = "--help" ]; then',
+        `  printf '%s\\n' ${shellQuote(help)}`,
+        "  exit 0",
+        "fi",
+        'printf "%s\\n" "$*" >"$OPENCLAW_TEST_PLUGIN_ARGS"',
+      ]);
+      const result = runSourcedHelper(
+        `openclaw_e2e_fixture_plugin_command ${shellQuote(commandPath)} -- plugins install fixture --force`,
+        { OPENCLAW_TEST_PLUGIN_ARGS: argsPath },
+      );
+
+      expectShellSuccess(result);
+      const args = fs.readFileSync(argsPath, "utf8").trim();
+      expect(args).toBe(
+        `plugins install fixture --force${expectsConsent ? " --accept-capabilities" : ""}`,
+      );
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
   it("sources decoded test-state scripts", () => {
     const result = runHelper(base64('export OPENCLAW_E2E_INSTANCE_TEST="ok"\n'));
 

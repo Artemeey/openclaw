@@ -251,6 +251,9 @@ cleanup() {
   if [ -s "$SYSTEMCTL_SHIM_PID_FILE" ]; then
     openclaw_e2e_terminate_gateways "$(cat "$SYSTEMCTL_SHIM_PID_FILE" 2>/dev/null || true)"
   fi
+  if [ -n "${OPENCLAW_UPGRADE_SURVIVOR_RESTART_AUTHORED_CONFIG:-}" ] && [ -f "$OPENCLAW_UPGRADE_SURVIVOR_RESTART_AUTHORED_CONFIG" ]; then
+    node scripts/e2e/lib/upgrade-survivor/config-parking.mjs restore "$OPENCLAW_CONFIG_PATH" "$OPENCLAW_UPGRADE_SURVIVOR_RESTART_AUTHORED_CONFIG" || true
+  fi
 }
 trap cleanup EXIT
 
@@ -370,6 +373,12 @@ set +e
 openclaw_e2e_maybe_timeout "$command_timeout" env -u OPENCLAW_GATEWAY_TOKEN -u OPENCLAW_GATEWAY_PASSWORD OPENCLAW_ALLOW_ROOT=1 openclaw "${update_args[@]}" >/tmp/openclaw-upgrade-survivor-update.json 2>/tmp/openclaw-upgrade-survivor-update.err
 update_status=$?
 set -e
+if [ "$UPDATE_RESTART_MODE" = "auto-auth" ] && [ -f "${OPENCLAW_UPGRADE_SURVIVOR_RESTART_AUTHORED_CONFIG:-}" ]; then
+  if ! node scripts/e2e/lib/upgrade-survivor/config-parking.mjs restore "$OPENCLAW_CONFIG_PATH" "$OPENCLAW_UPGRADE_SURVIVOR_RESTART_AUTHORED_CONFIG"; then
+    echo "failed to restore authored config after restart probe" >&2
+    exit 1
+  fi
+fi
 if [ "$update_status" -ne 0 ]; then
   echo "openclaw update failed" >&2
   openclaw_e2e_print_log /tmp/openclaw-upgrade-survivor-update.err >&2

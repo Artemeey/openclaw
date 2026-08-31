@@ -246,6 +246,14 @@ prepare_update_restart_probe_current_install() {
   local ready_epoch
 
   echo "Preparing candidate-auth gateway for automatic update restart."
+  OPENCLAW_UPGRADE_SURVIVOR_RESTART_AUTHORED_CONFIG="${log_file}.authored-config"
+  export OPENCLAW_UPGRADE_SURVIVOR_RESTART_AUTHORED_CONFIG
+  if ! node scripts/e2e/lib/upgrade-survivor/config-parking.mjs \
+    park-restart-probe "$OPENCLAW_CONFIG_PATH" \
+    "$OPENCLAW_UPGRADE_SURVIVOR_RESTART_AUTHORED_CONFIG" "$port"; then
+    echo "failed to park authored config for restart probe" >&2
+    return 1
+  fi
   install_update_restart_systemctl_shim
   seed_update_restart_probe_device_auth
   start_epoch="$(node -e "process.stdout.write(String(Date.now()))")"
