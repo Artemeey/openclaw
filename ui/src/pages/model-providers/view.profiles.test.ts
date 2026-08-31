@@ -310,6 +310,7 @@ describe("renderModelProviders profiles", () => {
               "openai:excluded": "openai",
             },
             profileOrders: { openai: ["openai:one", "openai:two"] },
+            profileOrderStoredProviders: ["openai"],
           }),
         ],
         onProfileOrderChange,
@@ -355,7 +356,7 @@ describe("renderModelProviders profiles", () => {
     const grips = container.querySelectorAll<HTMLButtonElement>(".model-providers__profile-grip");
 
     expect([...grips].every((grip) => grip.disabled)).toBe(true);
-    expect(grips[0]?.title).toContain("Reset");
+    expect(grips[0]?.title).toContain("incomplete");
     grips[1]?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
 
     expect(onProfileOrderChange).not.toHaveBeenCalled();
