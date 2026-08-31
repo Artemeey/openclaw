@@ -7,7 +7,7 @@ import {
   type PluginSdkDocCategory,
   type PluginSdkDocEntrypoint,
 } from "../../scripts/lib/plugin-sdk-doc-metadata.ts";
-import { publicPluginSdkEntrypoints } from "../../scripts/lib/plugin-sdk-entries.mts";
+import { publicPluginSdkEntrypoints } from "../../scripts/lib/plugin-sdk-entries.mjs";
 import {
   createDeclarationClosureRenderer,
   formatPluginSdkDiagnostics,
