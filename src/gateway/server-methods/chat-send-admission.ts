@@ -47,7 +47,7 @@ import {
   isRetryableUnadoptedChatClaim,
   resolveRestartSafeChatAdmission,
 } from "./chat-restart-recovery.js";
-import { assertExpectedLeafActive } from "./chat-send-active-leaf.js";
+import { assertExpectedLeafActive, assertRequestedSessionActive } from "./chat-send-active-leaf.js";
 import {
   ACTIVE_LEAF_CHANGED_ERROR_REASON,
   inspectGoalChatSendRetry,
@@ -268,16 +268,7 @@ export async function admitChatSend(params: {
     if (entry && !latestEntry) {
       throw new Error(`Session "${sessionKey}" was deleted while starting work. Retry.`);
     }
-    // A supplied session id fences the exact transcript generation for every
-    // queue mode. Without this check, stale steer input can target a successor.
-    if (
-      commitOutcome &&
-      requestedSessionId !== undefined &&
-      latestEntry?.sessionId !== undefined &&
-      requestedSessionId !== latestEntry?.sessionId
-    ) {
-      throw new Error(ACTIVE_LEAF_CHANGED_ERROR_REASON);
-    }
+    assertRequestedSessionActive(commitOutcome, latestSession, requestedSessionId);
     // Capture the exact direct owner under the writer barrier. If it clears
     // later, the opaque target rejects instead of resolving a successor.
     const resolvedInjectionTarget =
@@ -308,11 +299,10 @@ export async function admitChatSend(params: {
     ) {
       throw new Error(`Session "${sessionKey}" changed while starting work. Retry.`);
     }
-    const retryableClaim = isRetryableUnadoptedChatClaim(latestEntry, clientRunId);
     if (
       (latestEntry?.restartRecoveryDeliveryRunId &&
         latestEntry.restartRecoveryDeliverySourceRunId === clientRunId &&
-        !retryableClaim) ||
+        !isRetryableUnadoptedChatClaim(latestEntry, clientRunId)) ||
       hasRestartRecoveryTerminalRun(latestEntry, clientRunId)
     ) {
       // Recovery can settle while this retry waits on lifecycle admission.
