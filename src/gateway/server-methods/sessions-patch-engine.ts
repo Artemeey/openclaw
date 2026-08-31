@@ -46,9 +46,8 @@ import {
   unexpectedPatchError,
 } from "./sessions-patch-errors.js";
 import * as sessionPatchExpectations from "./sessions-patch-expectations.js";
-import { persistSessionPatchModelSelection } from "./sessions-patch-model-selection.js";
 import type { ActiveSessionPermissionChange } from "./sessions-patch-permissions.runtime.js";
-import { resolveSessionWorkerPlacementPatchError, sessionLog } from "./sessions-shared.js";
+import { resolveSessionWorkerPlacementPatchError } from "./sessions-shared.js";
 import type {
   GatewayClient,
   GatewayRequestContext,
