@@ -220,16 +220,16 @@ export function readExactSessionEntryRowValidated(
 
 export function readSessionEntryStore(
   database: OpenClawAgentDatabase,
-  options: { allowCanonicalRepair?: boolean } = {},
+  options: { allowCanonicalRepair?: boolean; includeArchived?: boolean } = {},
 ): Record<string, SessionEntry> {
   if (options.allowCanonicalRepair !== true) {
     assertCanonicalSqliteSessionKeysCurrent(database);
   }
   const db = getSessionKysely(database.db);
-  const rows = executeSqliteQuerySync(
-    database.db,
-    db.selectFrom("session_nodes").selectAll().orderBy("session_key"),
-  ).rows;
+  const baseQuery = db.selectFrom("session_nodes").selectAll();
+  const query =
+    options.includeArchived === false ? baseQuery.where("archived_at", "is", null) : baseQuery;
+  const rows = executeSqliteQuerySync(database.db, query.orderBy("session_key")).rows;
   const store: Record<string, SessionEntry> = {};
   for (const row of rows) {
     // Doctor lifecycle projection supplies its separately hydrated expected entry for rejected
