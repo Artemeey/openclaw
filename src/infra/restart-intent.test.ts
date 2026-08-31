@@ -201,6 +201,17 @@ describe("gateway restart intent", () => {
     expect(readIntentRow(env)).toBeUndefined();
   });
 
+  it("preserves a forced stop intent when restart lookup runs before stop", async () => {
+    const env = createIntentEnv();
+
+    await runWithGatewayStopIntent({ env, force: true, targetPid: process.pid }, async () => {});
+
+    expect(consumeGatewayRestartIntentPayloadSync(env)).toBeNull();
+    expect(readIntentRow(env)).toMatchObject({ kind: "gateway-stop", pid: process.pid });
+    expect(consumeGatewayLifecycleIntentSync(env)).toEqual({ kind: "stop", force: true });
+    expect(readIntentRow(env)).toBeUndefined();
+  });
+
   it("persists a forced stop intent before the service mutation", async () => {
     const env = createIntentEnv();
 

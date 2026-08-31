@@ -246,7 +246,13 @@ export function consumeGatewayRestartIntentPayloadSync(
   env: NodeJS.ProcessEnv = process.env,
   now = Date.now(),
 ): GatewayRestartIntent | null {
-  const lifecycleIntent = consumeGatewayLifecycleIntentSync(env, now);
+  const payload = readGatewayLifecycleIntentPayloadSync(env);
+  // SIGUSR1 only owns restart intents. A pending stop belongs to the later
+  // SIGTERM handler and must remain in the shared slot until that signal arrives.
+  if (payload?.kind === "gateway-stop") {
+    return null;
+  }
+  const lifecycleIntent = consumeGatewayLifecycleIntentPayloadSync(payload, env, now);
   return lifecycleIntent?.kind === "restart" ? lifecycleIntent.intent : null;
 }
 
@@ -254,7 +260,18 @@ export function consumeGatewayLifecycleIntentSync(
   env: NodeJS.ProcessEnv = process.env,
   now = Date.now(),
 ): GatewayLifecycleIntent | null {
-  const payload = readGatewayLifecycleIntentPayloadSync(env);
+  return consumeGatewayLifecycleIntentPayloadSync(
+    readGatewayLifecycleIntentPayloadSync(env),
+    env,
+    now,
+  );
+}
+
+function consumeGatewayLifecycleIntentPayloadSync(
+  payload: GatewayRestartIntentPayload | GatewayStopIntentPayload | null,
+  env: NodeJS.ProcessEnv,
+  now: number,
+): GatewayLifecycleIntent | null {
   clearGatewayRestartIntentSync(env);
   if (!payload || payload.pid !== process.pid) {
     return null;
