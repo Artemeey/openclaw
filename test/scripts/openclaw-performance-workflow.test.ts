@@ -143,11 +143,12 @@ describe("OpenClaw performance workflow", () => {
     expect(install.run).toContain(
       "https://codeload.github.com/${KOVA_REPOSITORY}/tar.gz/${KOVA_REF}",
     );
+    expect(install.run).toContain('if [[ "$KOVA_REF" == "$KOVA_TRUSTED_LIVE_REF" ]]');
     expect(install.run).toContain(
       "--retry 8 --retry-max-time 180 --retry-all-errors --retry-connrefused",
     );
     expect(readWorkflow().env?.KOVA_ARCHIVE_SHA256).toBe(
-      "8cb2f4dd90e1bd5a5615d5d14f7766136057c4c5e66d399b5efb4d59a50dee7e",
+      "3b0d49b28c3e73a9022ab704d9c884bab092b7fae1f27167e36bf787b774701d",
     );
     expect(install.run).toContain(
       'echo "${KOVA_ARCHIVE_SHA256}  ${kova_archive}" | sha256sum -c -',
@@ -156,7 +157,9 @@ describe("OpenClaw performance workflow", () => {
     expect(
       install.run.indexOf('echo "${KOVA_ARCHIVE_SHA256}  ${kova_archive}" | sha256sum -c -'),
     ).toBeLessThan(install.run.indexOf('tar -xzf "$kova_archive" --strip-components=1'));
-    expect(install.run).not.toContain('git -C "$KOVA_SRC" fetch');
+    expect(install.run).toContain(
+      'git -C "$KOVA_SRC" fetch --filter=blob:none --depth 1 origin "$KOVA_REF"',
+    );
     expect(install.run).toContain(
       'npm --prefix "$KOVA_SRC" ci --ignore-scripts --no-audit --no-fund',
     );

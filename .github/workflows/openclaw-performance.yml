@@ -65,7 +65,8 @@ env:
   OCM_VERSION: v0.2.15
   OCM_LINUX_X64_SHA256: b849b8de5d77e97e0df9319703254ae95e29d7f26a7552ea79bf173ff110ea0a
   KOVA_REPOSITORY: openclaw/Kova
-  KOVA_ARCHIVE_SHA256: 8cb2f4dd90e1bd5a5615d5d14f7766136057c4c5e66d399b5efb4d59a50dee7e
+  KOVA_TRUSTED_LIVE_REF: 24c26969e57d4d49f9d1a5071af85dd3d79daa2d
+  KOVA_ARCHIVE_SHA256: 3b0d49b28c3e73a9022ab704d9c884bab092b7fae1f27167e36bf787b774701d
   PERFORMANCE_MODEL_ID: gpt-5.5
   KOVA_SCENARIO_TIMEOUT_MS: "300000"
 
@@ -235,15 +236,22 @@ jobs:
           tar -xzf "$ocm_archive" -C "${RUNNER_TEMP}/ocm-install"
           install -m 0755 "${RUNNER_TEMP}/ocm-install/ocm" "$HOME/.local/bin/ocm"
 
-          kova_archive="${RUNNER_TEMP}/kova-${KOVA_REF}.tar.gz"
-          mkdir -p "$KOVA_SRC"
-          curl -fsSL --proto '=https' --tlsv1.2 \
-            --max-time 180 \
-            --retry 8 --retry-max-time 180 --retry-all-errors --retry-connrefused \
-            -o "$kova_archive" \
-            "https://codeload.github.com/${KOVA_REPOSITORY}/tar.gz/${KOVA_REF}"
-          echo "${KOVA_ARCHIVE_SHA256}  ${kova_archive}" | sha256sum -c -
-          tar -xzf "$kova_archive" --strip-components=1 -C "$KOVA_SRC"
+          if [[ "$KOVA_REF" == "$KOVA_TRUSTED_LIVE_REF" ]]; then
+            kova_archive="${RUNNER_TEMP}/kova-${KOVA_REF}.tar.gz"
+            mkdir -p "$KOVA_SRC"
+            curl -fsSL --proto '=https' --tlsv1.2 \
+              --max-time 180 \
+              --retry 8 --retry-max-time 180 --retry-all-errors --retry-connrefused \
+              -o "$kova_archive" \
+              "https://codeload.github.com/${KOVA_REPOSITORY}/tar.gz/${KOVA_REF}"
+            echo "${KOVA_ARCHIVE_SHA256}  ${kova_archive}" | sha256sum -c -
+            tar -xzf "$kova_archive" --strip-components=1 -C "$KOVA_SRC"
+          else
+            git init -b main "$KOVA_SRC"
+            git -C "$KOVA_SRC" remote add origin "https://github.com/${KOVA_REPOSITORY}.git"
+            git -C "$KOVA_SRC" fetch --filter=blob:none --depth 1 origin "$KOVA_REF"
+            git -C "$KOVA_SRC" checkout --detach FETCH_HEAD
+          fi
           npm --prefix "$KOVA_SRC" ci --ignore-scripts --no-audit --no-fund
           node - "$KOVA_SRC" <<'NODE'
           const fs = require("node:fs");
