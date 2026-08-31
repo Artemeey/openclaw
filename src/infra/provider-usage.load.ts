@@ -160,7 +160,7 @@ export async function loadProviderUsageSummary(
   let authStore = opts.authStore;
   const getAuthStore = () =>
     (authStore ??= ensureAuthProfileStore(opts.agentDir, { allowKeychainPrompt: false }));
-  const tasks = descriptors.map(({ provider }) => {
+  const tasks = descriptors.map(async ({ provider }) => {
     const work = async () => {
       if (opts.authProfile && opts.isAuthProfileCurrent?.() === false) {
         return undefined;
@@ -214,7 +214,20 @@ export async function loadProviderUsageSummary(
     };
     // The timeout controls the caller's wait, not the real in-flight cap. A
     // timed-out provider keeps its permit until its underlying work settles.
-    const workPromise = opts.authProfile ? profileUsageRefreshLimit(work) : work();
+    let workPromise: Promise<ProviderUsageSnapshot | undefined>;
+    if (opts.authProfile) {
+      let markStarted: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      workPromise = profileUsageRefreshLimit(async () => {
+        markStarted?.();
+        return await work();
+      });
+      await started;
+    } else {
+      workPromise = work();
+    }
     return raceUsageTimeout(workPromise, timeoutMs, failureSnapshot(provider, "Timeout")).catch(
       (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);

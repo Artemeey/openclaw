@@ -347,18 +347,24 @@ describe("provider-usage.load", () => {
         isAuthProfileCurrent: () => true,
       }),
     );
+    let queuedSettled = false;
+    void pending[3]?.then(() => {
+      queuedSettled = true;
+    });
     try {
       await vi.advanceTimersByTimeAsync(1);
       expect(resolveProviderUsageSnapshotWithPluginMock).toHaveBeenCalledTimes(3);
 
       await vi.advanceTimersByTimeAsync(49);
-      await Promise.all(pending);
+      await Promise.all(pending.slice(0, 3));
       expect(resolveProviderUsageSnapshotWithPluginMock).toHaveBeenCalledTimes(3);
+      expect(queuedSettled).toBe(false);
 
       releaseWork?.();
       await vi.waitFor(() =>
         expect(resolveProviderUsageSnapshotWithPluginMock).toHaveBeenCalledTimes(4),
       );
+      await Promise.all(pending);
     } finally {
       releaseWork?.();
       await Promise.allSettled(pending);
