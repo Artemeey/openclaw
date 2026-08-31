@@ -676,28 +676,34 @@ export default definePluginEntry({
       catalog: {
         order: "simple",
         run: async (ctx) => {
-          const providerId = PROVIDER_ID.trim().toLowerCase();
-          const apiKey = ctx.resolveProviderApiKey(providerId).apiKey;
-          if (!apiKey) return null;
-          const configuredBaseUrl = Object.entries(ctx.config.models?.providers ?? {}).find(
-            ([id]) => id.trim().toLowerCase() === providerId,
-          )?.[1]?.baseUrl?.trim();
+          const apiKey = ctx.resolveProviderApiKey(PROVIDER_ID).apiKey;
+          if (!apiKey) {
+            return null;
+          }
+          const configuredProvider = Object.entries(ctx.config.models?.providers ?? {}).find(
+            ([providerId]) => providerId.trim().toLowerCase() === PROVIDER_ID.toLowerCase(),
+          )?.[1];
           return {
             provider: {
               api: "openai-completions",
-              baseUrl: configuredBaseUrl || "https://api.example.com/v1",
-              apiKey,
               models: [
                 {
                   id: DEFAULT_MODEL_ID,
                   name: "Example Chat",
                   reasoning: false,
                   input: ["text"],
-                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  cost: {
+                    input: 0,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                  },
                   contextWindow: 128000,
                   maxTokens: 8192,
                 },
               ],
+              apiKey,
+              baseUrl: configuredProvider?.baseUrl?.trim() || "https://api.example.com/v1",
             },
           };
         },
@@ -711,7 +717,7 @@ import type { OpenClawPluginApi, ProviderPlugin } from "openclaw/plugin-sdk/plug
 import entry from "./index.js";
 
 describe(${idLiteral}, () => {
-  it("registers the provider", () => {
+  it("registers the provider and resolves its authenticated catalog", async () => {
     const providers: ProviderPlugin[] = [];
     const api = {
       registerProvider(provider: ProviderPlugin) {
@@ -724,6 +730,47 @@ describe(${idLiteral}, () => {
     expect(providers.map((provider) => provider.id)).toEqual([${idLiteral}]);
     expect(providers[0]?.label).toBe(${nameLiteral});
     expect(providers[0]?.envVars).toEqual([${envVarLiteral}]);
+
+    const provider = providers[0];
+    if (!provider?.catalog) {
+      throw new Error("Generated provider did not register its catalog");
+    }
+    expect(provider.auth).toMatchObject([
+      { id: "api-key", kind: "api_key", starterModel: ${defaultModelRefLiteral} },
+    ]);
+    for (const [apiKey, configuredId, baseUrl, expectedBaseUrl] of [
+      [undefined, ${idLiteral}, "https://configured.example/v1", null],
+      ["fixture-api-key", ${jsStringLiteral(`${params.id}-unrelated`)}, "https://unrelated.example/v1", "https://api.example.com/v1"],
+      ["fixture-api-key", ${jsStringLiteral(` ${params.id.toUpperCase()} `)}, " https://configured.example/v1 ", "https://configured.example/v1"],
+      ["fixture-api-key", ${idLiteral}, " ", "https://api.example.com/v1"],
+    ] as const) {
+      const result = await provider.catalog.run({
+        config: { models: { providers: { [configuredId]: { baseUrl, models: [] } } } },
+        env: {},
+        resolveProviderApiKey: () => ({ apiKey }),
+        resolveProviderAuth: () => ({ apiKey, mode: "api_key", source: "env" }),
+      });
+      expect(result).toEqual(
+        expectedBaseUrl === null
+          ? null
+          : {
+              provider: {
+                api: "openai-completions",
+                apiKey,
+                baseUrl: expectedBaseUrl,
+                models: [{
+                  id: ${defaultModelIdLiteral},
+                  name: "Example Chat",
+                  reasoning: false,
+                  input: ["text"],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 128000,
+                  maxTokens: 8192,
+                }],
+              },
+            },
+      );
+    }
   });
 });
 `;

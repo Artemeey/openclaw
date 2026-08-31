@@ -5,6 +5,7 @@ import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core";
 import { Type } from "typebox";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { publicPluginSdkSubpaths } from "../../scripts/lib/plugin-sdk-entries.mjs";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { defineToolPlugin, getToolPluginMetadata } from "../plugin-sdk/tool-plugin.js";
 import { defaultRuntime } from "../runtime.js";
@@ -830,6 +831,7 @@ describe("plugin authoring commands", () => {
       fs.readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
     ) as { exports: Record<string, { types?: string }> };
     for (const [, subpath] of indexSource.matchAll(/from "openclaw\/plugin-sdk\/([^"]+)"/gu)) {
+      expect(publicPluginSdkSubpaths).toContain(subpath);
       expect(hostPackage.exports[`./plugin-sdk/${subpath}`], subpath).toHaveProperty("types");
     }
 
