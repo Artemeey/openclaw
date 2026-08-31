@@ -236,6 +236,17 @@ extension OnboardingAISetupModel {
         self.startProviderWizard(option, kind: .auth)
     }
 
+    func continueProviderAuth() {
+        guard let step = authStep else { return }
+        let value: AnyCodable? = switch wizardStepType(step) {
+        case "text": AnyCodable(self.authText)
+        case "select": self.selectedAuthWizardOption?.value
+        case "confirm": AnyCodable(self.authConfirmation)
+        default: nil
+        }
+        self.advanceProviderAuth(stepID: step.id, value: value)
+    }
+
     func startProviderPrepare(_ option: PrepareOption) {
         self.startProviderWizard(
             AuthOption(
@@ -393,6 +404,14 @@ extension OnboardingAISetupModel {
             summary: self.friendlyTransportError(detail),
             detail: detail.isEmpty ? nil : detail)
     }
+
+    static let providerReconnectRetryFailure = Failure(
+        summary: "The Gateway reconnected before confirming the response. Submit again.",
+        detail: nil)
+
+    static let unresolvedProviderAuthCancellationFailure = Failure(
+        summary: "OpenClaw couldn’t confirm cancellation. Setup may still be running. Try Cancel again.",
+        detail: nil)
 
     /// One friendly sentence per failure bucket.
     static func friendlyFailure(label: String, status: String?, error: String?) -> String {

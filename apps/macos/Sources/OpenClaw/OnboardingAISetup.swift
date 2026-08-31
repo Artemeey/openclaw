@@ -1241,17 +1241,6 @@ extension OnboardingAISetupModel {
         }
     }
 
-    func continueProviderAuth() {
-        guard let step = authStep else { return }
-        let value: AnyCodable? = switch wizardStepType(step) {
-        case "text": AnyCodable(self.authText)
-        case "select": self.selectedAuthWizardOption?.value
-        case "confirm": AnyCodable(self.authConfirmation)
-        default: nil
-        }
-        self.advanceProviderAuth(stepID: step.id, value: value)
-    }
-
     func cancelProviderAuth() {
         let sessionID = self.authSessionID
         let authServerLease = self.serverLease
@@ -1289,24 +1278,18 @@ extension OnboardingAISetupModel {
         }
     }
 
-    private func advanceProviderAuth(stepID: String?, value: AnyCodable?) {
+    func advanceProviderAuth(stepID: String?, value: AnyCodable?) {
         guard let sessionID = authSessionID, let serverLease else { return }
         self.authBusy = true
         self.authError = nil
-        var answer: [String: AnyCodable]?
-        if let stepID {
-            answer = ["stepId": AnyCodable(stepID)]
-            if let value {
-                answer?["value"] = value
-            }
-        }
         let token = self.attemptToken
         let authAttemptID = self.authAttemptID
         Task {
             do {
                 let continuation = try await self.gateway.continueWizardSession(
                     sessionID,
-                    answer: answer,
+                    stepID: stepID,
+                    value: value,
                     timeoutMs: Self.providerAuthRequestTimeoutMs,
                     on: serverLease)
                 guard token == self.attemptToken, authAttemptID == self.authAttemptID else { return }
@@ -1323,9 +1306,7 @@ extension OnboardingAISetupModel {
                     preparedModelRef: result.preparedmodelref,
                     preserveEnteredValue: needsExplicitRetry)
                 if needsExplicitRetry {
-                    self.authError = Failure(
-                        summary: "The Gateway reconnected before confirming the response. Submit again.",
-                        detail: nil)
+                    self.authError = Self.providerReconnectRetryFailure
                 }
             } catch {
                 let cancellation = await self.gateway.cancelWizardSession(sessionID, on: serverLease)
@@ -1480,9 +1461,7 @@ extension OnboardingAISetupModel {
 
     private func retainUnresolvedProviderAuthCancellation() {
         self.authBusy = true
-        self.authError = Failure(
-            summary: "OpenClaw couldn’t confirm cancellation. Setup may still be running. Try Cancel again.",
-            detail: nil)
+        self.authError = Self.unresolvedProviderAuthCancellationFailure
     }
 
     #if DEBUG

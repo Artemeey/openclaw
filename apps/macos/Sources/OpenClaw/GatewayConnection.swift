@@ -509,7 +509,8 @@ extension GatewayConnection {
     /// Proven pre-dispatch failures may replay; ambiguous sends only observe state.
     func continueWizardSession(
         _ sessionID: String,
-        answer: [String: AnyCodable]?,
+        stepID: String?,
+        value: AnyCodable?,
         timeoutMs: Double,
         on lease: ServerLease) async throws -> (
         data: Data,
@@ -517,7 +518,11 @@ extension GatewayConnection {
         observedAfterAmbiguousFailure: Bool)
     {
         var params: [String: AnyCodable] = ["sessionId": AnyCodable(sessionID)]
-        if let answer {
+        if let stepID {
+            var answer: [String: AnyCodable] = ["stepId": AnyCodable(stepID)]
+            if let value {
+                answer["value"] = value
+            }
             params["answer"] = AnyCodable(answer)
         }
         do {
