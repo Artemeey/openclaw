@@ -17,6 +17,7 @@ import {
   parsePluginReleaseSelectionMode,
   resolveChangedPublishablePluginPackages,
   resolveSelectedPublishablePluginPackages,
+  shouldEnforcePluginReleaseDependencyFreshness,
   type PublishablePluginPackage,
 } from "../scripts/lib/plugin-npm-release.ts";
 import { cleanupTempDirs, makeTempRepoRoot, writeJsonFile } from "./helpers/temp-repo.js";
@@ -448,6 +449,13 @@ describe("collectPluginReleaseDependencyFreshnessErrors", () => {
     ).toEqual([
       "@openclaw/codex@2026.6.11: could not resolve npm latest for @openai/codex: registry unavailable",
     ]);
+  });
+});
+
+describe("shouldEnforcePluginReleaseDependencyFreshness", () => {
+  it("preserves frozen dependency pins only for extended-stable publication", () => {
+    expect(shouldEnforcePluginReleaseDependencyFreshness()).toBe(true);
+    expect(shouldEnforcePluginReleaseDependencyFreshness("extended-stable")).toBe(false);
   });
 });
 
