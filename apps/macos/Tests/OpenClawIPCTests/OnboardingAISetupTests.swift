@@ -1086,6 +1086,205 @@ struct OnboardingAISetupTests {
         ])
     }
 
+    @Test func `activation terminal result wins cancel not found race`() async throws {
+        let recorder = AISetupRequestRecorder()
+        let frames = AISetupSocketGeneration()
+        let terminal = AISetupRequestGate()
+        let session = makeAISetupRequestSession(
+            recorder: recorder,
+            handler: { task, request in
+                switch request.method {
+                case "openclaw.setup.detect":
+                    task.emitReceiveSuccess(.data(selectableCandidatesDetectedSetupResponse(id: request.id)))
+                case "openclaw.setup.activate.start":
+                    let sessionID = try #require(request.params["sessionId"] as? String)
+                    task.emitReceiveSuccess(.data(wizardStartResponse(id: request.id, sessionID: sessionID)))
+                case "wizard.next" where frames.claim() == 0:
+                    let sessionID = try #require(request.params["sessionId"] as? String)
+                    task.emitReceiveSuccess(.data(wizardProgressResponse(
+                        id: request.id,
+                        sessionID: sessionID,
+                        message: "Installing runtime")))
+                case "wizard.next":
+                    await terminal.wait()
+                    let payload: [String: Any] = [
+                        "done": true,
+                        "status": "done",
+                        "setupActivation": [
+                            "ok": true,
+                            "modelRef": "openai/gpt-5.5",
+                            "latencyMs": 50,
+                            "lines": ["ready"],
+                        ],
+                    ]
+                    try task.emitReceiveSuccess(.data(JSONSerialization.data(withJSONObject: [
+                        "type": "res", "id": request.id, "ok": true, "payload": payload,
+                    ])))
+                case "wizard.cancel":
+                    try task.emitReceiveSuccess(.data(JSONSerialization.data(withJSONObject: [
+                        "type": "res",
+                        "id": request.id,
+                        "ok": false,
+                        "error": ["code": "INVALID_REQUEST", "message": "wizard not found"],
+                    ])))
+                default:
+                    break
+                }
+            },
+            receiveHook: { task, receiveIndex in
+                if receiveIndex == 0 { return .data(GatewayWebSocketTestSupport.connectChallengeData()) }
+                return .data(GatewayWebSocketTestSupport.connectOkData(
+                    id: task.snapshotConnectRequestID() ?? "connect",
+                    methods: ["openclaw.setup.activate", "openclaw.setup.activate.start"],
+                    capabilities: ["openclaw-setup-model-ref"]))
+            })
+        let gateway = try makeAISetupGateway(url: #require(URL(string: "ws://example.invalid")), session: session)
+        let defaults = try #require(isolatedAISetupDefaults(prefix: "ActivationCancelTerminalRace"))
+        let model = makeAISetupModel(gateway: gateway, defaults: defaults)
+        let activation = Task { await model.detectAndAutoConnect() }
+        defer {
+            model.resetForGatewayChange()
+            activation.cancel()
+        }
+
+        await terminal.waitUntilStarted()
+        model.cancelProviderAuth()
+        _ = await waitForAISetupRequests(recorder, count: 5)
+        await terminal.release()
+        await activation.value
+
+        #expect(model.connected)
+        #expect(!model.pendingActivationVerification)
+        #expect(pendingState(defaults) == .completed)
+        #expect(await recorder.snapshot().methods == [
+            "openclaw.setup.detect",
+            "openclaw.setup.activate.start",
+            "wizard.next",
+            "wizard.next",
+            "wizard.cancel",
+        ])
+    }
+
+    @Test func `activation cancel survives delayed session admission`() async throws {
+        let recorder = AISetupRequestRecorder()
+        let startGate = AISetupRequestGate()
+        let session = makeAISetupRequestSession(
+            recorder: recorder,
+            handler: { task, request in
+                switch request.method {
+                case "openclaw.setup.detect":
+                    task.emitReceiveSuccess(.data(selectableCandidatesDetectedSetupResponse(id: request.id)))
+                case "openclaw.setup.activate.start":
+                    await startGate.wait()
+                    let sessionID = try #require(request.params["sessionId"] as? String)
+                    let payload: [String: Any] = [
+                        "sessionId": sessionID,
+                        "done": true,
+                        "status": "done",
+                        "setupActivation": [
+                            "ok": true,
+                            "modelRef": "openai/gpt-5.5",
+                            "latencyMs": 50,
+                            "lines": ["ready"],
+                        ],
+                    ]
+                    try task.emitReceiveSuccess(.data(JSONSerialization.data(withJSONObject: [
+                        "type": "res", "id": request.id, "ok": true, "payload": payload,
+                    ])))
+                case "wizard.cancel":
+                    try task.emitReceiveSuccess(.data(JSONSerialization.data(withJSONObject: [
+                        "type": "res",
+                        "id": request.id,
+                        "ok": false,
+                        "error": ["code": "INVALID_REQUEST", "message": "wizard not found"],
+                    ])))
+                default:
+                    break
+                }
+            },
+            receiveHook: { task, receiveIndex in
+                if receiveIndex == 0 { return .data(GatewayWebSocketTestSupport.connectChallengeData()) }
+                return .data(GatewayWebSocketTestSupport.connectOkData(
+                    id: task.snapshotConnectRequestID() ?? "connect",
+                    methods: ["openclaw.setup.activate", "openclaw.setup.activate.start"],
+                    capabilities: ["openclaw-setup-model-ref"]))
+            })
+        let gateway = try makeAISetupGateway(url: #require(URL(string: "ws://example.invalid")), session: session)
+        let model = makeAISetupModel(gateway: gateway)
+        let activation = Task { await model.detectAndAutoConnect() }
+        defer {
+            model.resetForGatewayChange()
+            activation.cancel()
+        }
+
+        await startGate.waitUntilStarted()
+        model.cancelProviderAuth()
+        _ = await waitForAISetupRequests(recorder, count: 3)
+        await startGate.release()
+        await activation.value
+        _ = await waitForAISetupRequests(recorder, count: 4)
+
+        let requests = await recorder.snapshot()
+        #expect(!model.connected)
+        #expect(model.activeAuthOption == nil)
+        #expect(requests.methods.filter { $0 == "wizard.cancel" }.count == 2)
+    }
+
+    @Test func `active activation wizard retains candidate ownership`() async throws {
+        let startGate = AISetupRequestGate()
+        let url = try #require(URL(string: "ws://example.invalid"))
+        let harness = AISetupHarness(
+            url: url,
+            handler: { _, request, _ in
+                switch request.method {
+                case "openclaw.setup.detect":
+                    return selectableCandidatesDetectedSetupResponse(id: request.id)
+                case "openclaw.setup.activate.start":
+                    await startGate.wait()
+                    let sessionID = try #require(request.params["sessionId"] as? String)
+                    return try JSONSerialization.data(withJSONObject: [
+                        "type": "res",
+                        "id": request.id,
+                        "ok": true,
+                        "payload": [
+                            "sessionId": sessionID,
+                            "done": true,
+                            "status": "done",
+                            "setupActivation": [
+                                "ok": true,
+                                "modelRef": "openai/gpt-5.5",
+                                "latencyMs": 50,
+                                "lines": ["ready"],
+                            ],
+                        ],
+                    ])
+                default:
+                    return nil
+                }
+            },
+            receiveHook: { task, receiveIndex in
+                if receiveIndex == 0 { return .data(GatewayWebSocketTestSupport.connectChallengeData()) }
+                return .data(GatewayWebSocketTestSupport.connectOkData(
+                    id: task.snapshotConnectRequestID() ?? "connect",
+                    methods: ["openclaw.setup.activate", "openclaw.setup.activate.start"],
+                    capabilities: ["openclaw-setup-model-ref"]))
+            })
+        let model = harness.model()
+        let activation = Task { await model.detectAndAutoConnect() }
+        defer { activation.cancel() }
+
+        await startGate.waitUntilStarted()
+        model.userSelect(kind: "claude-cli")
+
+        #expect(model.selectedKind == "codex-cli")
+        #expect(model.activeAuthOption != nil)
+        await startGate.release()
+        await activation.value
+        #expect(await harness.recorder.snapshot().methods.filter {
+            $0 == "openclaw.setup.activate.start"
+        }.count == 1)
+    }
+
     @Test func `prepare starts the shared wizard and polls gateway progress`() async throws {
         let recorder = AISetupRequestRecorder()
         let frames = AISetupSocketGeneration()

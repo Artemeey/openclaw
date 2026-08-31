@@ -244,6 +244,73 @@ extension OnboardingAISetupModel {
         }
     }
 
+    static let activationWizardOption = AuthOption(
+        id: "activation",
+        brandId: nil,
+        label: "Connect your AI",
+        hint: nil,
+        groupLabel: nil,
+        icon: nil,
+        website: nil,
+        kind: "activation",
+        featured: false)
+
+    func requestActivation(
+        params: [String: AnyCodable],
+        timeoutMs: Double,
+        serverLease: GatewayConnection.ServerLease,
+        supportsActivationWizard: Bool,
+        context: AttemptContext) async throws -> ActivateResult
+    {
+        var retryDelayMs: UInt64 = 250
+        while true {
+            guard self.isCurrentAttempt(context), !Task.isCancelled else {
+                throw CancellationError()
+            }
+            do {
+                if supportsActivationWizard {
+                    return try await self.requestActivationWizard(params: params, serverLease: serverLease)
+                }
+                let data = try await gateway.request(
+                    method: "openclaw.setup.activate",
+                    params: params,
+                    timeoutMs: timeoutMs,
+                    ifCurrentServerLease: serverLease)
+                return try JSONDecoder().decode(ActivateResult.self, from: data)
+            } catch {
+                guard let supersededAttemptDeadline = context.supersededAttemptDeadline,
+                      Date() < supersededAttemptDeadline,
+                      Self.setupAdmissionIsBusy(error)
+                else { throw error }
+                try await Task.sleep(nanoseconds: retryDelayMs * 1_000_000)
+                retryDelayMs = min(retryDelayMs * 2, 5000)
+            }
+        }
+    }
+
+    private func requestActivationWizard(
+        params: [String: AnyCodable],
+        serverLease: GatewayConnection.ServerLease) async throws -> ActivateResult
+    {
+        guard self.activationWizardCompletion == nil else {
+            throw OnboardingAISetupError.activationOutcomeUnavailable
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            self.activationWizardCompletion = continuation
+            self.startSetupWizard(
+                Self.activationWizardOption,
+                kind: .activation,
+                params: params,
+                serverLease: serverLease)
+        }
+    }
+
+    func finishActivationWizard(_ result: Result<ActivateResult, Error>) {
+        let continuation = self.activationWizardCompletion
+        self.activationWizardCompletion = nil
+        continuation?.resume(with: result)
+    }
+
     var selectedManualProvider: ManualProvider? {
         self.manualProviders.first { $0.id == self.manualProviderID }
     }
@@ -448,6 +515,40 @@ extension OnboardingAISetupModel {
         return Failure(
             summary: self.friendlyTransportError(detail),
             detail: detail.isEmpty ? nil : detail)
+    }
+
+    static func activationWizardResult(
+        status: String?,
+        error: String?,
+        modelActivation: [String: AnyCodable]?,
+        setupActivation: [String: AnyCodable]?) -> Result<ActivateResult, Error>
+    {
+        if status == "done", let setupActivation,
+           let ok = setupActivation["ok"]?.value as? Bool
+        {
+            return .success(ActivateResult(
+                ok: ok,
+                modelRef: setupActivation["modelRef"]?.value as? String,
+                status: setupActivation["status"]?.value as? String,
+                error: setupActivation["error"]?.value as? String,
+                gatewayRestartRequired: setupActivation["gatewayRestartRequired"]?.value as? Bool))
+        }
+        if status == "done",
+           let modelRef = modelActivation?["modelRef"]?.value as? String,
+           !modelRef.isEmpty
+        {
+            return .success(ActivateResult(
+                ok: true,
+                modelRef: modelRef,
+                status: nil,
+                error: nil,
+                gatewayRestartRequired: modelActivation?["gatewayRestartRequired"]?.value as? Bool))
+        }
+        if status == "cancelled" {
+            return .failure(OnboardingAISetupError.activationCancelled)
+        }
+        return .failure(OnboardingAISetupError
+            .activationFailed(error ?? "The Gateway did not return a verified model."))
     }
 
     /// One friendly sentence per failure bucket.

@@ -3971,6 +3971,44 @@ describe("activateSetupInference", () => {
     }
   });
 
+  it("locks hosted cancellation before persisting a verified credential", async () => {
+    const { stateDir, agentDir, initialConfig } = await createMainAgentFixture();
+    resolveAgentDir(initialConfig, "main");
+    const authWriteDirs: string[] = [];
+    const beforePersistentEffect = vi.fn(() => {
+      expect(authWriteDirs).not.toContain(agentDir);
+      throw new WizardCancelledError("cancel before credential commit");
+    });
+
+    try {
+      await expect(
+        activateSetupInference({
+          kind: "api-key",
+          authChoice: "groq-api-key",
+          apiKey: "candidate-key",
+          surface: "gateway",
+          beforePersistentEffect,
+          deps: {
+            readConfigFileSnapshot: mockConfigSnapshot(initialConfig),
+            resolvePluginProviders: () => [createGroqSetupProvider()],
+            resolveManifestProviderAuthChoice: groqSetupChoice,
+            runEmbeddedAgent: vi.fn(successfulRunner("groq", "llama-3.3-70b-versatile")) as never,
+            updateAuthProfileStoreWithLock: vi.fn(async (params) => {
+              authWriteDirs.push(params.agentDir ?? "");
+              return await updateInMemoryAuthProfileStoreWithLock(params);
+            }),
+          },
+        }),
+      ).rejects.toBeInstanceOf(WizardCancelledError);
+
+      expect(beforePersistentEffect).toHaveBeenCalledOnce();
+      expect(authWriteDirs).not.toContain(agentDir);
+      expect(readInMemoryAuthProfileStore(agentDir).profiles).toEqual({});
+    } finally {
+      await removeOAuthTestTempRoot(stateDir);
+    }
+  });
+
   it.each([
     {
       name: "requests a dynamic provider model instead of using a static starter",

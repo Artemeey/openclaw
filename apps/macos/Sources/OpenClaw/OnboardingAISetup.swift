@@ -67,7 +67,7 @@ final class OnboardingAISetupModel {
     /// activation lease. The view owns the route-bound, coalesced timer.
     var onPendingActivationDeadline: ((Date, String) -> Void)?
 
-    private let gateway: GatewayConnection
+    let gateway: GatewayConnection
     private let defaults: UserDefaults
     private let routeIdentityProvider: @MainActor () -> String?
     private let connectionModeProvider: @MainActor () -> AppState.ConnectionMode
@@ -79,9 +79,10 @@ final class OnboardingAISetupModel {
     @ObservationIgnored private var pendingActivationRequiresFreshActivation = false
     @ObservationIgnored private var serverLease: GatewayConnection.ServerLease?
     @ObservationIgnored private var lastDetectedActivationState: PersistedActivationState?
-    @ObservationIgnored private var activationWizardCompletion: CheckedContinuation<ActivateResult, Error>?
+    @ObservationIgnored var activationWizardCompletion: CheckedContinuation<ActivateResult, Error>?
     @ObservationIgnored private var authSessionID: String?
     @ObservationIgnored private var authAttemptID = UUID()
+    @ObservationIgnored private var authStartPending = false
     /// Only a just-completed provider flow may trust setupComplete without re-probing.
     @ObservationIgnored private var providerAuthReconciliationPending = false
 
@@ -548,6 +549,7 @@ final class OnboardingAISetupModel {
         self.authText = ""
         self.authSessionID = nil
         self.authAttemptID = UUID()
+        self.authStartPending = false
         self.providerAuthReconciliationPending = false
         self.providerCatalogLoaded = false
         self.providerCatalogError = nil
@@ -730,7 +732,7 @@ extension OnboardingAISetupModel {
         return self.captureAttemptContext(supersededAttemptDeadline: supersededAttemptDeadline)
     }
 
-    private func isCurrentAttempt(_ context: AttemptContext) -> Bool {
+    func isCurrentAttempt(_ context: AttemptContext) -> Bool {
         context.token == self.attemptToken &&
             self.routeIdentityProvider()?.trimmingCharacters(in: .whitespacesAndNewlines) == context.routeIdentity
     }
@@ -839,7 +841,13 @@ extension OnboardingAISetupModel {
         }
         guard self.isCurrentAttempt(context), !Task.isCancelled else { return }
         let persistedStateBeforeActivation = self.lastDetectedActivationState
-        let requestTimeoutMs = await activationRequestTimeoutMs(for: kind, serverLease: lease)
+        let supportsActivationWizard = await gateway.supportsServerMethod(
+            "openclaw.setup.activate.start",
+            ifCurrentServerLease: lease) == true
+        guard self.isCurrentAttempt(context), !Task.isCancelled else { return }
+        let requestTimeoutMs = supportsActivationWizard
+            ? OnboardingSystemAgentResumeStore.maximumActivationTimeoutMs
+            : Self.activationRequestTimeoutMs(for: kind)
         var supportsExactModel = false
         if !request.isManual {
             self.selectedKind = kind
@@ -898,6 +906,7 @@ extension OnboardingAISetupModel {
                 params: params,
                 timeoutMs: requestTimeoutMs,
                 serverLease: lease,
+                supportsActivationWizard: supportsActivationWizard,
                 context: context)
             guard self.isCurrentAttempt(context), !Task.isCancelled else { return }
             if result.ok {
@@ -975,77 +984,6 @@ extension OnboardingAISetupModel {
                     activationDeadline: activationDeadline)
             }
         }
-    }
-
-    private func requestActivation(
-        params: [String: AnyCodable],
-        timeoutMs: Double,
-        serverLease: GatewayConnection.ServerLease,
-        context: AttemptContext) async throws -> ActivateResult
-    {
-        var retryDelayMs: UInt64 = 250
-        while true {
-            guard self.isCurrentAttempt(context), !Task.isCancelled else {
-                throw CancellationError()
-            }
-            do {
-                if await self.gateway.supportsServerMethod(
-                    "openclaw.setup.activate.start",
-                    ifCurrentServerLease: serverLease) == true
-                {
-                    return try await self.requestActivationWizard(params: params, serverLease: serverLease)
-                }
-                let data = try await gateway.request(
-                    method: "openclaw.setup.activate",
-                    params: params,
-                    timeoutMs: timeoutMs,
-                    ifCurrentServerLease: serverLease)
-                return try JSONDecoder().decode(ActivateResult.self, from: data)
-            } catch {
-                guard let supersededAttemptDeadline = context.supersededAttemptDeadline,
-                      Date() < supersededAttemptDeadline,
-                      Self.setupAdmissionIsBusy(error)
-                else { throw error }
-                try await Task.sleep(nanoseconds: retryDelayMs * 1_000_000)
-                retryDelayMs = min(retryDelayMs * 2, 5000)
-            }
-        }
-    }
-
-    private func activationRequestTimeoutMs(
-        for kind: String,
-        serverLease: GatewayConnection.ServerLease) async -> Double
-    {
-        await self.gateway
-            .supportsServerMethod("openclaw.setup.activate.start", ifCurrentServerLease: serverLease) == true
-            ? OnboardingSystemAgentResumeStore.maximumActivationTimeoutMs
-            : Self.activationRequestTimeoutMs(for: kind)
-    }
-
-    private func requestActivationWizard(
-        params: [String: AnyCodable],
-        serverLease: GatewayConnection.ServerLease) async throws -> ActivateResult
-    {
-        let option = AuthOption(
-            id: "activation",
-            brandId: nil,
-            label: "Connect your AI",
-            hint: nil,
-            groupLabel: nil,
-            icon: nil,
-            website: nil,
-            kind: "activation",
-            featured: false)
-        return try await withCheckedThrowingContinuation { continuation in
-            self.activationWizardCompletion = continuation
-            self.startSetupWizard(option, kind: .activation, params: params, serverLease: serverLease)
-        }
-    }
-
-    private func finishActivationWizard(_ result: Result<ActivateResult, Error>) {
-        let continuation = self.activationWizardCompletion
-        self.activationWizardCompletion = nil
-        continuation?.resume(with: result)
     }
 
     private func exposeActivationFailure(_ failure: Failure, for request: ActivationRequest) {
@@ -1204,7 +1142,7 @@ extension OnboardingAISetupModel {
             serverLease: serverLease)
     }
 
-    private func startSetupWizard(
+    func startSetupWizard(
         _ option: AuthOption,
         kind: ProviderWizardKind,
         params: [String: AnyCodable],
@@ -1216,6 +1154,7 @@ extension OnboardingAISetupModel {
         self.authError = nil
         self.authText = ""
         self.authBusy = true
+        self.authStartPending = true
         self.providerAuthReconciliationPending = false
         let token = self.attemptToken
         let authAttemptID = UUID()
@@ -1236,6 +1175,7 @@ extension OnboardingAISetupModel {
                     await self.gateway.cancelWizardSession(result.sessionid, on: serverLease)
                     return
                 }
+                self.authStartPending = false
                 if let cancellationSessionID = Self.providerAuthCancellationSessionID(
                     requested: authSessionID,
                     returned: result.sessionid)
@@ -1259,6 +1199,9 @@ extension OnboardingAISetupModel {
                     modelActivation: result.modelactivation,
                     setupActivation: result.setupactivation?.value as? [String: AnyCodable])
             } catch {
+                if token == self.attemptToken, authAttemptID == self.authAttemptID {
+                    self.authStartPending = false
+                }
                 if self.activationWizardCompletion != nil, Self.setupAdmissionIsBusy(error),
                    token == self.attemptToken, authAttemptID == self.authAttemptID
                 {
@@ -1326,9 +1269,24 @@ extension OnboardingAISetupModel {
             self.clearProviderAuth()
             return
         }
+        if self.authStartPending {
+            // The client-generated id permits an immediate best-effort cancel.
+            // Rotating the attempt also makes a late start reply cancel its admitted session.
+            self.authAttemptID = UUID()
+            self.providerAuthReconciliationPending = false
+            if self.activationWizardCompletion != nil {
+                self.finishActivationWizard(.failure(OnboardingAISetupError.activationCancelled))
+            }
+            self.clearProviderAuth()
+            Task {
+                _ = await self.gateway.cancelWizardSession(sessionID, on: authServerLease)
+            }
+            return
+        }
         let authAttemptID = self.authAttemptID
         let token = self.attemptToken
         let activationState = self.lastDetectedActivationState
+        let wizardNextInFlight = self.authBusy
         self.authBusy = true
         Task {
             let cancellation = await self.gateway.cancelWizardSession(
@@ -1336,12 +1294,22 @@ extension OnboardingAISetupModel {
                 on: authServerLease)
             // The wizard may finish while cancellation is in flight; keep its terminal outcome.
             guard authAttemptID == self.authAttemptID, self.authSessionID == sessionID else { return }
-            if self.activationWizardCompletion != nil, cancellation != .unresolved {
-                self.finishActivationWizard(.failure(cancellation == .cancelled
-                        ? OnboardingAISetupError.activationCancelled
-                        : OnboardingAISetupError.activationOutcomeUnavailable))
-                self.clearProviderAuth()
-                return
+            if self.activationWizardCompletion != nil {
+                if cancellation == .cancelled {
+                    self.finishActivationWizard(.failure(OnboardingAISetupError.activationCancelled))
+                    self.clearProviderAuth()
+                    return
+                }
+                if cancellation == .absent, wizardNextInFlight {
+                    // The terminal wizard.next reply can still be in flight after
+                    // the Gateway purges its session. Let that reply own the result.
+                    return
+                }
+                if cancellation == .absent {
+                    self.finishActivationWizard(.failure(OnboardingAISetupError.activationOutcomeUnavailable))
+                    self.clearProviderAuth()
+                    return
+                }
             }
             if cancellation == .absent,
                await self.reconcileProviderAuthAfterUnknownOutcome(
@@ -1433,32 +1401,11 @@ extension OnboardingAISetupModel {
         if self.activationWizardCompletion != nil,
            done || status == "done" || status == "cancelled" || status == "error"
         {
-            let result: Result<ActivateResult, Error>
-            if status == "done", let setupActivation,
-               let ok = setupActivation["ok"]?.value as? Bool
-            {
-                result = .success(ActivateResult(
-                    ok: ok,
-                    modelRef: setupActivation["modelRef"]?.value as? String,
-                    status: setupActivation["status"]?.value as? String,
-                    error: setupActivation["error"]?.value as? String,
-                    gatewayRestartRequired: setupActivation["gatewayRestartRequired"]?.value as? Bool))
-            } else if status == "done",
-                      let modelRef = modelActivation?["modelRef"]?.value as? String,
-                      !modelRef.isEmpty
-            {
-                result = .success(ActivateResult(
-                    ok: true,
-                    modelRef: modelRef,
-                    status: nil,
-                    error: nil,
-                    gatewayRestartRequired: modelActivation?["gatewayRestartRequired"]?.value as? Bool))
-            } else if status == "cancelled" {
-                result = .failure(OnboardingAISetupError.activationCancelled)
-            } else {
-                result = .failure(OnboardingAISetupError
-                    .activationFailed(error ?? "The Gateway did not return a verified model."))
-            }
+            let result = Self.activationWizardResult(
+                status: status,
+                error: error,
+                modelActivation: modelActivation,
+                setupActivation: setupActivation)
             self.finishActivationWizard(result)
             self.clearProviderAuth()
             return
@@ -1577,6 +1524,7 @@ extension OnboardingAISetupModel {
         self.activeAuthOption = nil
         self.providerWizardKind = nil
         self.authSessionID = nil
+        self.authStartPending = false
         self.authStep = nil
         self.authError = nil
         self.authBusy = false

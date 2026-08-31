@@ -199,6 +199,9 @@ export async function persistActivatedSetupInference(input: {
         "The default-agent inference route changed during its live test, so the verified credential was not saved. Review the current model/auth/runtime settings and retry.",
       );
     }
+    // Manual credentials are the first durable effect for API-key activation.
+    // Lock hosted cancellation immediately before the authoritative store write.
+    await params.beforePersistentEffect?.();
     const persistedManualAuth = await persistManualAuthProfiles({
       profiles: plan.manualAuth.profiles,
       agentDir: resolvedRoute.agentDir,
