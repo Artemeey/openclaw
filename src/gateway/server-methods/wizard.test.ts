@@ -11,6 +11,7 @@ import {
 } from "../../process/gateway-work-admission.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import type { WizardPrompter } from "../../wizard/prompts.js";
+import { WizardSession } from "../../wizard/session.js";
 import { createWizardSessionTracker } from "../server-wizard-sessions.js";
 
 const setupTargetLock = vi.hoisted(() => ({
@@ -120,6 +121,25 @@ describe("wizard session lookup", () => {
       message: "wizard not found",
       details: { code: "WIZARD_NOT_FOUND" },
     });
+  });
+
+  it("collects a retained terminal result when the client submits a stale answer", async () => {
+    const context = createWizardContext(async () => {});
+    const session = new WizardSession(async () => {});
+    context.wizardSessions.set("completed", session);
+    await session.whenSettled();
+
+    await expect(
+      invokeWizard(
+        "wizard.next",
+        {
+          sessionId: "completed",
+          answer: { stepId: "retired-prompt", value: "stale callback" },
+        },
+        context,
+      ),
+    ).resolves.toMatchObject({ done: true, status: "done" });
+    expect(context.wizardSessions.has("completed")).toBe(false);
   });
 });
 

@@ -161,11 +161,7 @@ export const wizardHandlers: GatewayRequestHandlers = {
       return;
     }
     const answer = params.answer as { stepId?: string; value?: unknown } | undefined;
-    if (answer) {
-      if (session.getStatus() !== "running") {
-        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "wizard not running"));
-        return;
-      }
+    if (answer && session.getStatus() === "running") {
       try {
         const validationError = await session.answer(answer.stepId ?? "", answer.value);
         if (validationError) {
@@ -184,6 +180,8 @@ export const wizardHandlers: GatewayRequestHandlers = {
         return;
       }
     }
+    // Provider callbacks can finish while a client still renders manual input.
+    // A late answer collects the retained terminal result without replaying work.
     const result = await session.next();
     if (result.done) {
       // Keep terminal response ordering identical to wizard.start.

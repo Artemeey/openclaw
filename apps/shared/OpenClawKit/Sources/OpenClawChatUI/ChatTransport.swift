@@ -517,8 +517,12 @@ public struct OpenClawChatNewSessionRouteLease: Sendable {
 
 /// The transport rejected a send before it reached its request channel. This
 /// is the only failure class safe for automatic outbox retry.
-public enum OpenClawChatTransportSendError: Error, Sendable {
+public enum OpenClawChatTransportSendError: LocalizedError, Sendable {
     case notDispatched
+
+    public var errorDescription: String? {
+        "The Gateway connection changed before the request was sent."
+    }
 }
 
 public enum OpenClawChatTransportUpgradeMessage {

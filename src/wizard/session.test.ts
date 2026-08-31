@@ -174,6 +174,35 @@ describe("WizardSession", () => {
     expect((await session.next()).status).toBe("done");
   });
 
+  test("retires an aborted text prompt without cancelling its wizard", async () => {
+    const promptAbort = new AbortController();
+    let releaseRunner!: () => void;
+    const runnerGate = new Promise<void>((resolve) => {
+      releaseRunner = resolve;
+    });
+    let promptWasAborted = false;
+    const session = new WizardSession(async (prompter) => {
+      await prompter
+        .text({ message: "Paste the redirect URL", signal: promptAbort.signal })
+        .catch(() => {
+          promptWasAborted = true;
+        });
+      await runnerGate;
+    });
+
+    const step = (await session.next()).step;
+    if (!step) {
+      throw new Error("expected provider sign-in step");
+    }
+    promptAbort.abort(new Error("browser callback won"));
+
+    await expect(session.answer(step.id, "stale callback")).resolves.toBeUndefined();
+    releaseRunner();
+    await expect(session.next()).resolves.toMatchObject({ done: true, status: "done" });
+    expect(promptWasAborted).toBe(true);
+    expect(session.signal.aborted).toBe(false);
+  });
+
   test("carries device-code presentation without parsing provider prose", async () => {
     const session = new WizardSession(async (prompter) => {
       await prompter.openUrl?.("https://provider.example/device");

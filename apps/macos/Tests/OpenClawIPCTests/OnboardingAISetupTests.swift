@@ -801,6 +801,8 @@ struct OnboardingAISetupTests {
 
         #expect(failure.summary == "The Gateway setup request failed. Show details to inspect or copy the error.")
         #expect(failure.detail == "Gateway request failed: connection reset")
+        #expect(OpenClawChatTransportSendError.notDispatched.localizedDescription ==
+            "The Gateway connection changed before the request was sent.")
     }
 
     @Test func `unavailable failure keeps long detail out of the visible summary`() {
@@ -1106,6 +1108,95 @@ struct OnboardingAISetupTests {
         #expect(OnboardingProviderAuthLink.safeURL("file:///tmp/token") == nil)
         #expect(OnboardingProviderAuthLink.safeURL("https://user:secret@example.com") == nil)
         #expect(OnboardingProviderAuthLink.safeURL("Read https://docs.openclaw.ai/start/faq") == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func `provider auth resumes on the same route without replaying ambiguous answers`(
+        dropAfterDispatch: Bool) async throws
+    {
+        let socketGeneration = AISetupSocketGeneration()
+        let recorder = AISetupRequestRecorder()
+        let answerPresence = LockIsolated<[Bool]>([])
+        let sessionIDs = LockIsolated<[String]>([])
+        let session = GatewayTestWebSocketSession(taskFactory: {
+            let generation = socketGeneration.claim()
+            return GatewayTestWebSocketTask(sendHook: { task, message, sendIndex in
+                guard sendIndex > 0, let request = aiSetupRequest(from: message) else { return }
+                if respondToAISetupHealth(task: task, request: request) {
+                    return
+                }
+                await recorder.record(message)
+                switch request.method {
+                case "openclaw.setup.detect":
+                    let response = generation == 0
+                        ? detectedSetupResponse(id: request.id)
+                        : persistedDetectedSetupResponse(id: request.id)
+                    task.emitReceiveSuccess(.data(response))
+                case "openclaw.setup.auth.start":
+                    let sessionID = try #require(request.params["sessionId"] as? String)
+                    task.emitReceiveSuccess(.data(Data(
+                        """
+                        {"type":"res","id":"\(request.id)","ok":true,"payload":{
+                          "sessionId":"\(sessionID)","done":false,"status":"running",
+                          "step":{"id":"callback","type":"text","executor":"client",
+                            "message":"Paste the redirect URL"}}}
+                        """.utf8)))
+                case "wizard.next":
+                    sessionIDs.withValue {
+                        $0.append(request.params["sessionId"] as? String ?? "")
+                    }
+                    answerPresence.withValue { $0.append(request.params["answer"] != nil) }
+                    if generation == 0, dropAfterDispatch {
+                        task.emitReceiveFailure()
+                    } else {
+                        let sessionID = request.params["sessionId"] as? String ?? "provider-session"
+                        task.emitReceiveSuccess(.data(wizardDoneResponse(
+                            id: request.id,
+                            sessionID: sessionID)))
+                    }
+                case "wizard.cancel":
+                    task.emitReceiveSuccess(.data(Data(
+                        #"{"type":"res","id":"\#(request.id)","ok":true,"payload":{"status":"cancelled"}}"#
+                            .utf8)))
+                default:
+                    Issue.record("Unexpected setup request: \(request.method)")
+                }
+            })
+        })
+        let url = try #require(URL(string: "ws://example.invalid"))
+        let gateway = makeAISetupGateway(url: url, session: session)
+        let model = makeAISetupModel(gateway: gateway)
+        let option = OnboardingAISetupModel.AuthOption(
+            id: "test-provider-login", brandId: nil, label: "Test provider", hint: nil,
+            groupLabel: nil, icon: nil, website: nil, kind: "oauth", featured: false)
+
+        await model.detectAndAutoConnect()
+        model.startProviderAuth(option)
+        for _ in 0..<200 where model.authStep == nil {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let firstTask = try #require(session.latestTask())
+        let sessionID = try #require(model._test_authSessionID)
+        model.authText = "http://localhost:1455/auth/callback?code=redacted"
+        if !dropAfterDispatch {
+            firstTask.emitReceiveFailure()
+            for _ in 0..<200 where session.latestTask() === firstTask {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            _ = try await gateway.acquireServerLease()
+        }
+
+        model.continueProviderAuth()
+        for _ in 0..<400 where !model.connected && model.authError == nil {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        #expect(model.connected)
+        #expect(model.authError == nil)
+        #expect(answerPresence.value == (dropAfterDispatch ? [true, false] : [true]))
+        #expect(sessionIDs.value.allSatisfy { $0 == sessionID })
+        #expect(await recorder.snapshot().methods.contains("wizard.cancel") == false)
+        await gateway.shutdown()
     }
 
     @Test func `terminal provider failure remains copyable and can dismiss`() {

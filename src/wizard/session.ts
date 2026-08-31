@@ -175,13 +175,7 @@ class WizardSessionPrompter implements WizardPrompter {
     return (Array.isArray(res) ? res : []) as T[];
   }
 
-  async text(params: {
-    message: string;
-    initialValue?: string;
-    placeholder?: string;
-    validate?: (value: string) => string | undefined;
-    sensitive?: boolean;
-  }): Promise<string> {
+  async text(params: Parameters<WizardPrompter["text"]>[0]): Promise<string> {
     const res = await this.session.awaitAnswer(
       this.createStep({
         type: "text",
@@ -192,6 +186,7 @@ class WizardSessionPrompter implements WizardPrompter {
         executor: "client",
       }),
       params.validate,
+      params.signal,
     );
     const value =
       res === null || res === undefined
@@ -264,6 +259,7 @@ export class WizardSession {
   private currentStep: WizardStep | null = null;
   private progressSteps: WizardStep[] = [];
   private deliveredProgressStepIds = new Set<string>();
+  private retiredAnswerStepId: string | undefined;
   private stepDeferred: Deferred<WizardStep | null> | null = null;
   private pendingTerminalResolution = false;
   private cancellationLocked = false;
@@ -363,6 +359,10 @@ export class WizardSession {
   async answer(stepId: string, value: unknown): Promise<string | undefined> {
     const pending = this.answerDeferred.get(stepId);
     if (!pending) {
+      if (this.retiredAnswerStepId === stepId) {
+        this.retiredAnswerStepId = undefined;
+        return undefined;
+      }
       // Gateway-owned progress steps never block the provider run. Older
       // clients still acknowledge every rendered step, so accept that stale
       // acknowledgement while newer clients poll without an answer.
@@ -401,6 +401,7 @@ export class WizardSession {
     this.answerDeferred.clear();
     this.progressSteps = [];
     this.deliveredProgressStepIds.clear();
+    this.retiredAnswerStepId = undefined;
     this.resolveStep(null);
     return true;
   }
@@ -493,14 +494,40 @@ export class WizardSession {
   async awaitAnswer(
     step: WizardStep,
     validate?: (value: string) => string | undefined,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     if (this.status !== "running") {
       throw new Error("wizard: session not running");
     }
+    signal?.throwIfAborted();
     this.pushStep(step);
     const deferred = createDeferredCore<unknown>();
     this.answerDeferred.set(step.id, { deferred, text: step.type === "text", validate });
-    return await deferred.promise;
+    if (!signal) {
+      return await deferred.promise;
+    }
+    const abort = () => {
+      if (this.answerDeferred.get(step.id)?.deferred !== deferred) {
+        return;
+      }
+      // A provider callback may finish while its manual-entry prompt is visible.
+      // Retire only that prompt so a late client answer cannot cancel the wizard.
+      this.answerDeferred.delete(step.id);
+      if (this.currentStep?.id === step.id) {
+        this.currentStep = null;
+      }
+      this.retiredAnswerStepId = step.id;
+      deferred.reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) {
+      abort();
+    }
+    try {
+      return await deferred.promise;
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
   }
 
   private resolveStep(step: WizardStep | null) {

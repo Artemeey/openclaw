@@ -1280,9 +1280,7 @@ extension OnboardingAISetupModel {
                 return
             }
             if cancellation == .unresolved {
-                self.authError = Failure(
-                    summary: "OpenClaw couldn’t confirm cancellation. Setup may still be running. Try Cancel again.",
-                    detail: nil)
+                self.retainUnresolvedProviderAuthCancellation()
             } else {
                 self.authAttemptID = UUID()
                 self.providerAuthReconciliationPending = false
@@ -1295,31 +1293,40 @@ extension OnboardingAISetupModel {
         guard let sessionID = authSessionID, let serverLease else { return }
         self.authBusy = true
         self.authError = nil
-        var params: [String: AnyCodable] = ["sessionId": AnyCodable(sessionID)]
+        var answer: [String: AnyCodable]?
         if let stepID {
-            var answer: [String: AnyCodable] = ["stepId": AnyCodable(stepID)]
+            answer = ["stepId": AnyCodable(stepID)]
             if let value {
-                answer["value"] = value
+                answer?["value"] = value
             }
-            params["answer"] = AnyCodable(answer)
         }
         let token = self.attemptToken
         let authAttemptID = self.authAttemptID
         Task {
             do {
-                let data = try await self.gateway.request(
-                    method: "wizard.next",
-                    params: params,
+                let continuation = try await self.gateway.continueWizardSession(
+                    sessionID,
+                    answer: answer,
                     timeoutMs: Self.providerAuthRequestTimeoutMs,
-                    ifCurrentServerLease: serverLease)
+                    on: serverLease)
                 guard token == self.attemptToken, authAttemptID == self.authAttemptID else { return }
-                let result = try JSONDecoder().decode(WizardNextResult.self, from: data)
+                self.serverLease = continuation.lease
+                let result = try JSONDecoder().decode(WizardNextResult.self, from: continuation.data)
+                let status = wizardStatusString(result.status)
+                let needsExplicitRetry = continuation.observedAfterAmbiguousFailure &&
+                    !result.done && status == "running" && stepID != nil && result.step?.id == stepID
                 self.applyAuthWizardResult(
                     done: result.done,
                     step: result.step,
-                    status: wizardStatusString(result.status),
+                    status: status,
                     error: result.error,
-                    preparedModelRef: result.preparedmodelref)
+                    preparedModelRef: result.preparedmodelref,
+                    preserveEnteredValue: needsExplicitRetry)
+                if needsExplicitRetry {
+                    self.authError = Failure(
+                        summary: "The Gateway reconnected before confirming the response. Submit again.",
+                        detail: nil)
+                }
             } catch {
                 let cancellation = await self.gateway.cancelWizardSession(sessionID, on: serverLease)
                 guard token == self.attemptToken, authAttemptID == self.authAttemptID else { return }
@@ -1331,11 +1338,12 @@ extension OnboardingAISetupModel {
                 {
                     return
                 }
-                if cancellation != .unresolved {
+                if cancellation == .unresolved {
+                    self.retainUnresolvedProviderAuthCancellation()
+                } else {
                     self.authSessionID = nil
+                    self.requireFreshDetection(after: Self.transportFailure(error.localizedDescription))
                 }
-                self.authBusy = false
-                self.authError = Self.transportFailure(error.localizedDescription)
             }
         }
     }
@@ -1345,11 +1353,12 @@ extension OnboardingAISetupModel {
         step: WizardStep?,
         status: String?,
         error: String?,
-        preparedModelRef: String?)
+        preparedModelRef: String?,
+        preserveEnteredValue: Bool = false)
     {
         self.authBusy = false
         let validationError = !done && status == "running" && error?.isEmpty == false
-        let preserveEnteredValue = validationError && self.authStep?.id == step?.id
+        let preserveText = preserveEnteredValue || validationError && self.authStep?.id == step?.id
         if status == "error" || (done && error != nil) {
             // Terminal sessions are removed by the Gateway. Drop the local id
             // so Cancel dismisses the preserved, copyable error immediately.
@@ -1405,14 +1414,16 @@ extension OnboardingAISetupModel {
                 status: "format",
                 error: error)
         }
-        if !preserveEnteredValue {
+        if !preserveText {
             self.authText = anyCodableString(step?.initialvalue)
         }
-        self.authConfirmation = anyCodableBool(step?.initialvalue)
-        let options = parseWizardOptions(step?.options)
-        self.authSelection = max(0, options.firstIndex {
-            anyCodableEqual($0.value, step?.initialvalue)
-        } ?? 0)
+        if !preserveEnteredValue {
+            self.authConfirmation = anyCodableBool(step?.initialvalue)
+            let options = parseWizardOptions(step?.options)
+            self.authSelection = max(0, options.firstIndex {
+                anyCodableEqual($0.value, step?.initialvalue)
+            } ?? 0)
+        }
         // Gateway-executed steps render progress and expose no input control, so
         // no user action would ever ask for the next frame. Keep polling; the
         // session long-polls until the next update or the terminal result, so a
@@ -1465,6 +1476,13 @@ extension OnboardingAISetupModel {
         self.authError = nil
         self.authBusy = false
         self.authText = ""
+    }
+
+    private func retainUnresolvedProviderAuthCancellation() {
+        self.authBusy = true
+        self.authError = Failure(
+            summary: "OpenClaw couldn’t confirm cancellation. Setup may still be running. Try Cancel again.",
+            detail: nil)
     }
 
     #if DEBUG

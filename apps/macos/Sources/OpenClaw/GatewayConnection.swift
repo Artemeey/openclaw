@@ -505,6 +505,49 @@ extension GatewayConnection {
         return await self.sendWizardCancellation(sessionID, on: replacement)
     }
 
+    /// Continue one process-owned wizard across a same-route socket replacement.
+    /// Proven pre-dispatch failures may replay; ambiguous sends only observe state.
+    func continueWizardSession(
+        _ sessionID: String,
+        answer: [String: AnyCodable]?,
+        timeoutMs: Double,
+        on lease: ServerLease) async throws -> (
+        data: Data,
+        lease: ServerLease,
+        observedAfterAmbiguousFailure: Bool)
+    {
+        var params: [String: AnyCodable] = ["sessionId": AnyCodable(sessionID)]
+        if let answer {
+            params["answer"] = AnyCodable(answer)
+        }
+        do {
+            let data = try await self.request(
+                method: "wizard.next",
+                params: params,
+                timeoutMs: timeoutMs,
+                ifCurrentServerLease: lease)
+            return (data, lease, false)
+        } catch OpenClawChatTransportSendError.notDispatched {
+            let replacement = try await acquireServerLease(ifSameRouteAs: lease, timeoutMs: 5000)
+            let data = try await self.request(
+                method: "wizard.next",
+                params: params,
+                timeoutMs: timeoutMs,
+                ifCurrentServerLease: replacement)
+            return (data, replacement, false)
+        } catch {
+            try Task.checkCancellation()
+            guard !(error is GatewayResponseError) else { throw error }
+            let replacement = try await acquireServerLease(ifSameRouteAs: lease, timeoutMs: 5000)
+            let data = try await self.request(
+                method: "wizard.next",
+                params: ["sessionId": AnyCodable(sessionID)],
+                timeoutMs: timeoutMs,
+                ifCurrentServerLease: replacement)
+            return (data, replacement, true)
+        }
+    }
+
     private func sendWizardCancellation(
         _ sessionID: String,
         on lease: ServerLease) async -> WizardCancellationOutcome
