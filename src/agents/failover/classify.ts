@@ -53,8 +53,6 @@ import {
 import type { FailoverClassification, FailoverReason, FailoverSignal } from "./signal.js";
 export {
   isBilling429MessageForProvider,
-  isGenericUnknownStreamErrorMessage,
-  isTransientHttpError,
   isUnclassifiedNoBodyHttpSignal,
 } from "./classification-rules.js";
 export {

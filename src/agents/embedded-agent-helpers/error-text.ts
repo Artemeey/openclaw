@@ -11,6 +11,7 @@ import {
 } from "../../shared/assistant-error-format.js";
 import { renderAssistantRequestFailureCopy } from "../failover/assistant-request-failure-copy.js";
 import {
+  classifyFailoverSignal,
   classifyFailoverReason,
   isBilling429MessageForProvider,
   isBillingErrorMessage,
@@ -263,7 +264,7 @@ export function formatAssistantErrorText(
     return formatRawAssistantErrorForUi(raw);
   }
 
-  if (isTimeoutErrorMessage(raw)) {
+  if (isTimeoutErrorMessage(raw) && !(facts?.status !== undefined && facts.status >= 500)) {
     return SYNTHESIZED_TIMEOUT_ERROR_TEXT;
   }
 
@@ -320,15 +321,18 @@ export function formatUserFacingAssistantErrorText(
   const rawError = msg.errorMessage?.trim();
   const providerOwner = opts?.providerOwner?.id ?? opts?.provider ?? msg.provider;
   const provider = opts?.provider ?? msg.provider ?? providerOwner;
+  const signal = buildAssistantFailoverSignal(msg, { provider: providerOwner });
+  const classification = classifyFailoverSignal(signal, {
+    providerPlugin: opts?.providerOwner ?? null,
+  });
   const facts: ClassifiedAssistantErrorFacts = {
-    reason: rawError
-      ? classifyFailoverReason(rawError, {
-          provider: providerOwner,
-          // Rendering can reuse a prepared owner, but must not discover runtime plugins.
-          providerPlugin: opts?.providerOwner ?? null,
-        })
-      : null,
-    status: extractErrorHttpStatus(rawError ?? "")?.code,
+    reason:
+      classification?.kind === "reason"
+        ? classification.reason
+        : classification
+          ? "context_overflow"
+          : null,
+    status: signal.status,
   };
   const friendlyError = formatAssistantErrorText(msg, opts, facts);
   const rawPassthrough = isRawAssistantErrorPassthrough({ friendlyError, rawError });
