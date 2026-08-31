@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { wrapRunWithTestAdmission } from "./admitted-run-context.test-support.js";
+import {
+  withTestPreparedRunAdmission,
+  wrapRunWithTestPreparedAdmission,
+} from "./admitted-run-context.test-support.js";
 import type { AuthProfileFailureReason } from "./auth-profiles.js";
 import { ensureAuthProfileStore, saveAuthProfileStore } from "./auth-profiles/store.js";
 import { classifyEmbeddedAgentRunResultForModelFallback } from "./embedded-agent-runner/result-fallback-classifier.js";
@@ -94,7 +97,7 @@ beforeAll(async () => {
   installRunEmbeddedMocks();
   runEmbeddedAgentWithPreparedAdmission = (await import("./embedded-agent-runner/run.js"))
     .runEmbeddedAgent;
-  runEmbeddedAgent = wrapRunWithTestAdmission(runEmbeddedAgentWithPreparedAdmission);
+  runEmbeddedAgent = wrapRunWithTestPreparedAdmission(runEmbeddedAgentWithPreparedAdmission);
   ({ runWithModelFallback } = await import("./model-fallback-runner.js"));
   ({ runEmbeddedAgentEntry } = await import("./embedded-agent-runner/run-entry.js"));
 });
@@ -272,35 +275,38 @@ async function runEmbeddedFallback(params: {
   // keeping provider/model attempts deterministic through mocks.
   const cfg = params.config ?? makeConfig();
   const sessionId = params.sessionId ?? `session:${params.runId}`;
-  return await runWithModelFallback({
-    cfg,
-    provider: params.provider ?? "openai",
-    model: "mock-1",
-    runId: params.runId,
-    sessionId: params.sessionId,
-    lane: params.lane,
-    agentDir: params.agentDir,
-    abortSignal: params.abortSignal,
-    run: (provider, model, options) =>
-      runEmbeddedAgent({
-        sessionId,
-        sessionKey: params.sessionKey,
-        workspaceDir: params.workspaceDir,
-        agentDir: params.agentDir,
-        config: cfg,
-        prompt: "hello",
-        provider,
-        model,
-        lane: params.lane,
-        authProfileIdSource: "auto",
-        allowTransientCooldownProbe: options?.allowTransientCooldownProbe,
-        isFinalFallbackAttempt: options?.isFinalFallbackAttempt,
-        timeoutMs: 5_000,
-        runId: params.runId,
-        abortSignal: params.abortSignal,
-        enqueue: async (task) => await task(),
-      }),
-  });
+  return await withTestPreparedRunAdmission(params.runId, (preparedRunAdmission) =>
+    runWithModelFallback({
+      cfg,
+      provider: params.provider ?? "openai",
+      model: "mock-1",
+      runId: params.runId,
+      sessionId: params.sessionId,
+      lane: params.lane,
+      agentDir: params.agentDir,
+      abortSignal: params.abortSignal,
+      run: (provider, model, options) =>
+        runEmbeddedAgentWithPreparedAdmission({
+          preparedRunAdmission,
+          sessionId,
+          sessionKey: params.sessionKey,
+          workspaceDir: params.workspaceDir,
+          agentDir: params.agentDir,
+          config: cfg,
+          prompt: "hello",
+          provider,
+          model,
+          lane: params.lane,
+          authProfileIdSource: "auto",
+          allowTransientCooldownProbe: options?.allowTransientCooldownProbe,
+          isFinalFallbackAttempt: options?.isFinalFallbackAttempt,
+          timeoutMs: 5_000,
+          runId: params.runId,
+          abortSignal: params.abortSignal,
+          enqueue: async (task) => await task(),
+        }),
+    }),
+  );
 }
 
 async function runEmbeddedEntryFallback(params: {
@@ -809,9 +815,7 @@ describe("runWithModelFallback + runEmbeddedAgent failover behavior", () => {
           sessionKey: "agent:test:direct-embedded-suspension",
           workspaceDir,
           agentDir,
-          config: {
-            ...makeConfig(),
-          },
+          config: makeConfig(),
           prompt: "hello",
           provider: "openai",
           model: "mock-1",
@@ -841,9 +845,7 @@ describe("runWithModelFallback + runEmbeddedAgent failover behavior", () => {
         sessionKey: "agent:test:outer-fallback-suspension",
         lane: "outer-fallback-lane",
         runId: "run:outer-fallback-suspension",
-        config: {
-          ...makeConfig(),
-        },
+        config: makeConfig(),
       });
 
       expect(result.provider).toBe("groq");
@@ -1050,9 +1052,7 @@ describe("runWithModelFallback + runEmbeddedAgent failover behavior", () => {
         workspaceDir,
         sessionKey: "agent:test:rate-limit-retry-limit-fallback",
         runId: "run:rate-limit-retry-limit-fallback",
-        config: {
-          ...makeConfig(),
-        },
+        config: makeConfig(),
       });
 
       expect(result.provider).toBe("openai");

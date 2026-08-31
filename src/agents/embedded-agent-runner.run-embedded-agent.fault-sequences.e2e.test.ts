@@ -1,10 +1,9 @@
 // Exercises ordered provider faults through the embedded runner failover boundary.
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { wrapRunWithTestAdmission } from "./admitted-run-context.test-support.js";
+import { withTestPreparedRunAdmission } from "./admitted-run-context.test-support.js";
 import { ensureAuthProfileStore, saveAuthProfileStore } from "./auth-profiles/store.js";
 import {
   classifyEmbeddedAgentRunResultForModelFallback,
@@ -23,10 +22,6 @@ import {
   installEmbeddedRunnerBaseE2eMocks,
   installEmbeddedRunnerFastRunE2eMocks,
 } from "./test-helpers/embedded-agent-runner-e2e-mocks.js";
-import {
-  captureRoutingDecisionWork,
-  createModelRoutingTestAdmission,
-} from "./test-helpers/model-routing-decision-e2e-fixtures.js";
 
 type ProviderFault =
   | { status: 200; text: string }
@@ -71,11 +66,9 @@ vi.mock("./models-config.js", async () => {
 });
 
 type ProductionRunEmbeddedAgent = typeof import("./embedded-agent-runner/run.js").runEmbeddedAgent;
-type TestRunEmbeddedAgent = (
-  params: Omit<Parameters<ProductionRunEmbeddedAgent>[0], "admittedRunContext">,
-) => ReturnType<ProductionRunEmbeddedAgent>;
-let runEmbeddedAgent: TestRunEmbeddedAgent;
 let runEmbeddedAgentWithPreparedAdmission: ProductionRunEmbeddedAgent;
+let captureRoutingDecisionWork: typeof import("./test-helpers/model-routing-decision-e2e-fixtures.js").captureRoutingDecisionWork;
+let createModelRoutingTestAdmission: typeof import("./test-helpers/model-routing-decision-e2e-fixtures.js").createModelRoutingTestAdmission;
 let runWithModelFallback: typeof import("./model-fallback-runner.js").runWithModelFallback;
 
 beforeAll(async () => {
@@ -95,7 +88,8 @@ beforeAll(async () => {
 
   runEmbeddedAgentWithPreparedAdmission = (await import("./embedded-agent-runner/run.js"))
     .runEmbeddedAgent;
-  runEmbeddedAgent = wrapRunWithTestAdmission(runEmbeddedAgentWithPreparedAdmission);
+  ({ captureRoutingDecisionWork, createModelRoutingTestAdmission } =
+    await import("./test-helpers/model-routing-decision-e2e-fixtures.js"));
   ({ runWithModelFallback } = await import("./model-fallback-runner.js"));
 });
 
@@ -137,19 +131,12 @@ function makeProviderConfig(fallbacks: string[]): OpenClawConfig {
 async function withScenarioWorkspace<T>(
   run: (paths: { agentDir: string; workspaceDir: string }) => Promise<T>,
 ): Promise<T> {
-  const rawRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-fault-sequences-"));
-  const root = await fs.realpath(rawRoot);
-  const agentDir = path.join(root, "agent");
-  const workspaceDir = path.join(root, "workspace");
-  await Promise.all([
-    fs.mkdir(agentDir, { recursive: true }),
-    fs.mkdir(workspaceDir, { recursive: true }),
-  ]);
-  try {
-    return await run({ agentDir, workspaceDir });
-  } finally {
-    await fs.rm(root, { recursive: true, force: true });
-  }
+  const { withOpenClawTestState } = await import("../test-utils/openclaw-test-state.js");
+  return await withOpenClawTestState({ label: "fault-sequences" }, async (state) => {
+    const agentDir = state.agentDir("test");
+    await fs.mkdir(agentDir, { recursive: true });
+    return await run({ agentDir, workspaceDir: state.workspaceDir });
+  });
 }
 
 function writeProfiles(agentDir: string, profiles: { openai: 1 | 2; groq?: boolean }): void {
@@ -233,7 +220,12 @@ function makeAttemptForFault(
 function installFaultScript(faults: ProviderFault[], observations: AttemptObservation[]): void {
   let index = 0;
   runEmbeddedAttemptMock.mockImplementation(async (rawParams: unknown) => {
-    const params = rawParams as { provider: string; modelId?: string; authProfileId?: string };
+    const params = rawParams as {
+      provider: string;
+      modelId?: string;
+      authProfileId?: string;
+      sessionId: string;
+    };
     const fault = faults[index];
     if (!fault) {
       throw new Error(`unexpected provider attempt ${index + 1}`);
@@ -241,7 +233,7 @@ function installFaultScript(faults: ProviderFault[], observations: AttemptObserv
     index += 1;
     const ref = { provider: params.provider, model: params.modelId ?? "unknown" };
     observations.push({ ...ref, profileId: params.authProfileId, fault });
-    return makeAttemptForFault(fault, ref);
+    return { ...makeAttemptForFault(fault, ref), sessionIdUsed: params.sessionId };
   });
 }
 
@@ -251,40 +243,59 @@ async function runScenario(params: {
   config: OpenClawConfig;
   runId: string;
 }): Promise<ScenarioOutcome> {
+  const { loadSessionEntry, replaceSessionEntrySync } =
+    await import("../config/sessions/session-accessor.js");
+  const { forgetActiveSessionForShutdown } =
+    await import("../gateway/active-sessions-shutdown-tracker.js");
+  const sessionId = `session:${params.runId}`;
+  const sessionKey = `agent:test:${params.runId}`;
+  const sessionTarget = {
+    agentId: "test",
+    sessionId,
+    sessionKey,
+    storePath: path.join(params.agentDir, "openclaw-agent.sqlite"),
+  };
   try {
-    const outcome = await runWithModelFallback<EmbeddedAgentRunResult>({
-      cfg: params.config,
-      provider: "openai",
-      model: "mock-1",
-      runId: params.runId,
-      sessionId: `session:${params.runId}`,
-      sessionKey: `agent:test:${params.runId}`,
-      agentDir: params.agentDir,
-      classifyResult: ({ provider, model, result }) =>
-        classifyEmbeddedAgentRunResultForModelFallback({ provider, model, result }),
-      mergeExhaustedResult: ({ latestResult, preferredResult }) =>
-        mergeEmbeddedAgentRunResultForModelFallbackExhaustion({
-          latestResult,
-          preferredResult,
-        }),
-      run: async (provider, model, options) =>
-        await runEmbeddedAgent({
-          sessionId: `session:${params.runId}`,
-          sessionKey: `agent:test:${params.runId}`,
-          workspaceDir: params.workspaceDir,
-          agentDir: params.agentDir,
-          config: params.config,
-          prompt: "hello",
-          provider,
-          model,
-          authProfileIdSource: "auto",
-          allowTransientCooldownProbe: options?.allowTransientCooldownProbe,
-          isFinalFallbackAttempt: options?.isFinalFallbackAttempt,
-          timeoutMs: 250,
-          runId: params.runId,
-          enqueue: async (task) => await task(),
-        }),
-    });
+    // The attempt mock skips first-turn persistence; seed an empty row so
+    // the public lane can establish the real writer claim before recovery.
+    replaceSessionEntrySync(sessionTarget, { sessionId, updatedAt: 1 });
+    const outcome = await withTestPreparedRunAdmission(params.runId, (preparedRunAdmission) =>
+      runWithModelFallback<EmbeddedAgentRunResult>({
+        cfg: params.config,
+        provider: "openai",
+        model: "mock-1",
+        runId: params.runId,
+        sessionId,
+        sessionKey,
+        agentDir: params.agentDir,
+        classifyResult: ({ provider, model, result }) =>
+          classifyEmbeddedAgentRunResultForModelFallback({ provider, model, result }),
+        mergeExhaustedResult: ({ latestResult, preferredResult }) =>
+          mergeEmbeddedAgentRunResultForModelFallbackExhaustion({
+            latestResult,
+            preferredResult,
+          }),
+        run: async (provider, model, options) =>
+          await runEmbeddedAgentWithPreparedAdmission({
+            preparedRunAdmission,
+            sessionId,
+            sessionKey,
+            sessionTarget,
+            workspaceDir: params.workspaceDir,
+            agentDir: params.agentDir,
+            config: params.config,
+            prompt: "hello",
+            provider,
+            model,
+            authProfileIdSource: "auto",
+            allowTransientCooldownProbe: options?.allowTransientCooldownProbe,
+            isFinalFallbackAttempt: options?.isFinalFallbackAttempt,
+            timeoutMs: 250,
+            runId: params.runId,
+            enqueue: async (task) => await task(),
+          }),
+      }),
+    );
     return {
       kind: "result",
       provider: outcome.provider,
@@ -297,6 +308,12 @@ async function runScenario(params: {
       throw error;
     }
     return { kind: "error", error };
+  } finally {
+    forgetActiveSessionForShutdown(sessionId);
+    const current = loadSessionEntry({ ...sessionTarget, readConsistency: "latest" });
+    if (current) {
+      forgetActiveSessionForShutdown(current.sessionId);
+    }
   }
 }
 
@@ -305,10 +322,10 @@ async function readUsageStats(agentDir: string) {
 }
 
 function expectResult(outcome: ScenarioOutcome): Extract<ScenarioOutcome, { kind: "result" }> {
-  expect(outcome.kind).toBe("result");
   if (outcome.kind !== "result") {
     throw outcome.error;
   }
+  expect(outcome.kind).toBe("result");
   return outcome;
 }
 
@@ -329,7 +346,7 @@ function deferredVoid() {
 }
 
 async function expectPreparationInvalidationToDropRoutingWork(
-  mode: "close" | "replace",
+  mode: "close" | "replace" | "closed-before-preparation",
 ): Promise<void> {
   await withScenarioWorkspace(async ({ agentDir, workspaceDir }) => {
     const runId = `route-preparation-${mode}`;
@@ -352,7 +369,11 @@ async function expectPreparationInvalidationToDropRoutingWork(
       runId,
       boundary: "route-preparation-e2e",
     });
+    if (mode === "closed-before-preparation") {
+      preparedAdmission.close();
+    }
     let replacementAdmission: ReturnType<typeof createModelRoutingTestAdmission> | undefined;
+    let run: ReturnType<ProductionRunEmbeddedAgent> | undefined;
     const reachedPreparation = deferredVoid();
     const releasePreparation = deferredVoid();
     const realMkdir = fs.mkdir.bind(fs);
@@ -365,7 +386,7 @@ async function expectPreparationInvalidationToDropRoutingWork(
     });
     try {
       const { decisionWork } = await captureRoutingDecisionWork(async () => {
-        const run = runEmbeddedAgentWithPreparedAdmission({
+        run = runEmbeddedAgentWithPreparedAdmission({
           preparedRunAdmission: preparedAdmission,
           sessionId: `session:${runId}`,
           sessionKey: `agent:test:${runId}`,
@@ -379,7 +400,13 @@ async function expectPreparationInvalidationToDropRoutingWork(
           runId,
           enqueue: async (task) => await task(),
         });
-        await reachedPreparation.promise;
+        // Observe early rejection immediately so a failed run cannot strand this
+        // preparation wait and leave the process-wide mkdir spy installed.
+        const preparation = await Promise.race([
+          reachedPreparation.promise.then(() => "prepared"),
+          run.then(() => "completed"),
+        ]);
+        expect(preparation).toBe("prepared");
         if (mode === "close") {
           preparedAdmission.close();
         } else {
@@ -401,6 +428,9 @@ async function expectPreparationInvalidationToDropRoutingWork(
       replacementAdmission?.close();
       preparedAdmission.close();
       mkdirSpy.mockRestore();
+      if (run) {
+        await Promise.allSettled([run]);
+      }
     }
   });
 }
@@ -412,6 +442,14 @@ describe("runEmbeddedAgent provider fault sequences", () => {
 
   it("drops routing work when the admitted run is replaced during attempt preparation", async () => {
     await expectPreparationInvalidationToDropRoutingWork("replace");
+  });
+
+  it("restores the preparation spy when admission fails before preparation", async () => {
+    const mkdirBefore = fs.mkdir;
+    await expect(
+      expectPreparationInvalidationToDropRoutingWork("closed-before-preparation"),
+    ).rejects.toThrow("prepared execution context is already closed");
+    expect(fs.mkdir).toBe(mkdirBefore);
   });
 
   it("429 -> 429 -> 200 consumes two same-model retries without rotating", async () => {

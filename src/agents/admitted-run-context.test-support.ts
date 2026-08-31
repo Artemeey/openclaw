@@ -25,24 +25,28 @@ export function withTestAdmittedRunContext<T extends { runId: string }>(
   };
 }
 
-/** Adapts a production runner only at a test boundary; production stays fail-closed. */
-export function wrapRunWithTestAdmission<P extends { runId: string }, R>(
-  run: (params: P) => R,
-): (params: Omit<P, "admittedRunContext" | "preparedRunAdmission">) => R {
-  return (params) =>
-    run({
-      ...params,
-      admittedRunContext: createTestAdmittedRunContext(params.runId),
-    } as unknown as P);
+/** Owns one canonical admission across a fixture's complete retry/fallback lifetime. */
+export async function withTestPreparedRunAdmission<R>(
+  runId: string,
+  run: (preparedRunAdmission: PreparedAgentRunAdmission) => Promise<R>,
+): Promise<R> {
+  // Tests reset modules before loading runners; resolve their current lease owner, not
+  // the module instance captured when this helper was first imported.
+  const { prepareSystemAgentRunAdmission } = await import("./admitted-run-context.js");
+  const prepared = prepareSystemAgentRunAdmission({}, runId, "test", "test-runner");
+  try {
+    return await run(prepared);
+  } finally {
+    prepared.close();
+  }
 }
 
-/** Exercises the real post-selection admission boundary without enabling audit collection. */
+/** Exercises post-selection admission and closes it only after the runner settles. */
 export function wrapRunWithTestPreparedAdmission<P extends { runId: string }, R>(
-  run: (params: P) => R,
-): (params: Omit<P, "admittedRunContext" | "preparedRunAdmission">) => R {
+  run: (params: P) => Promise<R>,
+): (params: Omit<P, "admittedRunContext" | "preparedRunAdmission">) => Promise<R> {
   return (params) =>
-    run({
-      ...params,
-      preparedRunAdmission: createTestPreparedRunAdmission(params.runId),
-    } as unknown as P);
+    withTestPreparedRunAdmission(params.runId, (preparedRunAdmission) =>
+      run({ ...params, preparedRunAdmission } as unknown as P),
+    );
 }
