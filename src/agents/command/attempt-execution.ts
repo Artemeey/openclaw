@@ -1019,6 +1019,7 @@ export function runAgentAttempt(params: {
             lane: params.opts.lane,
             extraSystemPrompt: params.opts.extraSystemPrompt,
             inputProvenance: params.opts.inputProvenance,
+            skillLibraryAuthoring: params.opts.skillLibraryAuthoring,
             cronCreatorCallerOrigin: params.opts.cronCreatorAuthorityCapability?.callerOrigin,
             sourceReplyDeliveryMode: params.opts.sourceReplyDeliveryMode,
             requireExplicitMessageTarget:
@@ -1303,6 +1304,7 @@ export function runAgentAttempt(params: {
       : undefined,
     scheduledToolPolicy: params.opts.scheduledToolPolicy,
     cronCreatorAuthorityCapability: params.opts.cronCreatorAuthorityCapability,
+    skillLibraryAuthoring: params.opts.skillLibraryAuthoring,
     internalEvents: params.opts.internalEvents,
     inputProvenance: params.opts.inputProvenance,
     sourceReplyDeliveryMode: params.opts.sourceReplyDeliveryMode,

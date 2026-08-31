@@ -354,6 +354,10 @@ export async function buildDynamicTools(input: DynamicToolBuildParams) {
               resolvedWorkspace: input.resolvedWorkspace,
             }),
       config: params.config,
+      skillsSnapshot: params.skillsSnapshot,
+      ...(params.skillLibraryAuthoring
+        ? { skillWorkshop: { libraryAuthoring: params.skillLibraryAuthoring } }
+        : {}),
       githubPublicationAvailable: params.githubPublicationAvailable,
       authProfileStore: params.toolAuthProfileStore ?? params.authProfileStore,
       abortSignal: input.runAbortController.signal,

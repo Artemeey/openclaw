@@ -27,6 +27,7 @@ import {
   interruptSessionWorkAdmissions,
   isCompetingSessionWorkAdmissionActive,
 } from "../../sessions/session-lifecycle-admission.js";
+import { assertPreparedSkillLibrarySelection } from "../../skills/library/selection.js";
 import { setGatewayDedupeEntry } from "../agent-turn/agent-job.js";
 import {
   isChatAbortControllerEntryAbortable,
@@ -36,6 +37,7 @@ import {
 import { authorizeGatewaySessionCreation, resolveCreatorSandbox } from "../operator-role-policy.js";
 import { PENDING_CHAT_SEND_DEDUPE_PREFIX, type DedupeEntry } from "../server-shared.js";
 import { loadSessionEntry } from "../session-utils.js";
+import { prepareSkillLibrarySessionCreation } from "../skill-library-session.js";
 import { formatForLog } from "../ws-log.js";
 import {
   buildAbortedChatSendPayload,
@@ -180,6 +182,7 @@ export async function admitChatSend(params: {
   let admittedRunAbort: ReturnType<typeof registerChatAbortController> | undefined;
   let restartSafeAdmission: ReturnType<typeof resolveRestartSafeChatAdmission>;
   let initialSessionEntry: SessionEntry | undefined;
+  let assertInitialSkillSelection: (() => void) | undefined;
   let messageInjectionTarget: ReturnType<
     typeof replyRunRegistry.resolveCurrentMessageInjectionTarget
   >;
@@ -348,7 +351,13 @@ export async function admitChatSend(params: {
       if (creationError) {
         throw new Error(creationError.message);
       }
-      const creation = resolveOperatorSessionCreation(client);
+      const creation = prepareSkillLibrarySessionCreation(
+        client,
+        context.getRuntimeConfig,
+        resolveOperatorSessionCreation(client),
+      );
+      assertInitialSkillSelection = () =>
+        assertPreparedSkillLibrarySelection(creation.skillLibrarySelections);
       const createdAt = Date.now();
       // A caller's retry ID must never revive a retained transcript window.
       admittedSessionId = randomUUID();
@@ -700,6 +709,7 @@ export async function admitChatSend(params: {
       onSessionPrepared,
       initialSessionEntry,
       chatSendTraceAttributes,
+      assertInitialSkillSelection,
       cleanupAdmittedRun,
       finishAbortedChatSend,
       gatewayWorkAdmission,

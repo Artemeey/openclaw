@@ -26,6 +26,10 @@ import type { ChatRunTiming } from "../server-chat-state.js";
 import { SessionMutationAuthorizationChangedError } from "../session-sharing.js";
 import { loadSessionEntry } from "../session-utils.js";
 import {
+  prepareGatewaySkillAuthoring,
+  invalidateSkillAuthoringForOtherRequester,
+} from "../skill-library-authoring.js";
+import {
   terminalizeRestartSafeChatAdmission,
   type RestartSafeChatTerminalState,
 } from "./chat-restart-recovery.js";
@@ -59,18 +63,19 @@ type ChatSendInternalOptions = {
 };
 
 async function handleChatSendWithOptions(
-  {
+  handlerOptions: GatewayRequestHandlerOptions,
+  onAdmissionOwned?: () => Promise<boolean>,
+  externalAuthorityAdmission?: ChatSendExternalAuthorityAdmission,
+  options?: ChatSendInternalOptions,
+): Promise<void> {
+  const {
     params,
     respond,
     context,
     client,
     sessionMutationAuthorization,
     sessionMutationCommitGuard,
-  }: GatewayRequestHandlerOptions,
-  onAdmissionOwned?: () => Promise<boolean>,
-  externalAuthorityAdmission?: ChatSendExternalAuthorityAdmission,
-  options?: ChatSendInternalOptions,
-): Promise<void> {
+  } = handlerOptions;
   const setup = await prepareAndAdmitChatSend(
     { params, respond, context, client, sessionMutationAuthorization },
     onAdmissionOwned,
@@ -180,6 +185,7 @@ async function handleChatSendWithOptions(
         const currentConfig = context.getRuntimeConfig();
         const initialEntry = admitted.value.initialSessionEntry;
         if (initialEntry) {
+          admitted.value.assertInitialSkillSelection?.();
           // Missing targets have no sharing owner yet; revalidate their creator before SQL commit.
           const currentTarget = loadSessionEntry(
             preparedSession.value.sessionLoadKey,
@@ -235,6 +241,7 @@ async function handleChatSendWithOptions(
       attachments: preparedAttachments.value,
       client,
       logGateway: context.logGateway,
+      getConfig: context.getRuntimeConfig,
       userTurn,
     });
     const { ctx, isInternalTextSlashCommandTurn } = preparedUserTurn;
@@ -365,6 +372,12 @@ async function handleChatSendWithOptions(
       }
     }
 
+    if (messageInjectionTarget) {
+      invalidateSkillAuthoringForOtherRequester(
+        sessionKey,
+        client?.internal?.syntheticClient ? undefined : client?.authenticatedUserProfile?.profileId,
+      );
+    }
     const beginCapturedMessageInjection = createChatSendMessageInjectionStarter({
       target: messageInjectionTarget,
       request: normalizedRequest.value,
@@ -458,6 +471,14 @@ async function handleChatSendWithOptions(
       context,
       toolsAllow: options?.toolsAllow,
       skillWorkshopProposalRevision: options?.skillWorkshopProposalRevision,
+      skillLibraryAuthoring: prepareGatewaySkillAuthoring(
+        handlerOptions,
+        sessionKey,
+        !options &&
+          !systemInputProvenance &&
+          !reconnectResumeRequested &&
+          normalizedRequest.value.turnKind === "main",
+      ),
       cronCreatorAuthority,
       externalAuthorityAdmission,
       injection: {

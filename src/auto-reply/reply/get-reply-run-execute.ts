@@ -514,6 +514,7 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
             skillWorkshopProposalRevision: { ...opts.skillWorkshopProposalRevision },
           }
         : {}),
+      ...(opts?.skillLibraryAuthoring ? { skillLibraryAuthoring: opts.skillLibraryAuthoring } : {}),
       ...(!useFastReplyRuntime &&
       isReasoningTagProvider(provider, { config: cfg, workspaceDir, modelId: model })
         ? { enforceFinalTag: true }

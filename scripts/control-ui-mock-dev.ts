@@ -48,6 +48,7 @@ import {
   buildPluginInspectMock,
   buildPluginSetEnabledMock,
 } from "./control-ui-mock-plugins.ts";
+import { skillLibraryMockInitScript } from "./control-ui-mock-skill-library.ts";
 import { buildSkillWorkshopMocks } from "./control-ui-mock-skill-workshop.js";
 
 type CliOptions = {
@@ -3264,7 +3265,9 @@ function createMockGatewayPlugin(
   fixture?: CliOptions["fixture"],
 ): Plugin {
   const initScript = escapeScriptContent(createControlUiMockGatewayInitScript(scenario));
-  const statefulInitScript = escapeScriptContent(createStatefulMockInitScript());
+  const statefulInitScript = escapeScriptContent(
+    createStatefulMockInitScript() + skillLibraryMockInitScript(scenario.models),
+  );
   const bootstrapBody = JSON.stringify(createControlUiMockBootstrapConfig(scenario));
   const attachmentThemeToggle =
     fixture === "attachments"

@@ -206,6 +206,7 @@ export type AgentCommandOpts = {
   /** Gateway-owned exact operational instance shared with its abort controller. */
   operationalRunInstance?: import("../admitted-run-context.js").OperationalRunInstanceRef;
   /** Gateway-minted exact-run capability for late Codex creator-authority capture. */
+  skillLibraryAuthoring?: import("../../skills/library/authoring.js").SkillLibraryAuthoringCapability;
   cronCreatorAuthorityCapability?: CronCreatorAuthorityCapability;
   /** Private exact-instance binding hook invoked after delegated authority admission. */
   onAdmittedRunContext?: (
@@ -245,6 +246,7 @@ export type AgentCommandIngressOpts = Omit<
   | "mainRestartRecoveryAttempt"
   | "executionIdentityAdmission"
   | "operationalRunInstance"
+  | "skillLibraryAuthoring"
   | "cronCreatorAuthorityCapability"
   | "onAdmittedRunContext"
   | "onPostAdmittedRunContext"
@@ -264,6 +266,7 @@ export type AgentCommandGatewayIngressOpts = AgentCommandIngressOpts &
     | "mainRestartRecoveryAttempt"
     | "executionIdentityAdmission"
     | "operationalRunInstance"
+    | "skillLibraryAuthoring"
     | "cronCreatorAuthorityCapability"
     | "onAdmittedRunContext"
     | "onPostAdmittedRunContext"

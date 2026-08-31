@@ -3,6 +3,7 @@ import type { EmbeddedAgentRunResult } from "../../agents/embedded-agent-runner/
 import { resolveSandboxToolPolicyForAgent } from "../../agents/sandbox/tool-policy.js";
 import type { SessionPlacementTurnParams } from "../../agents/session-placement-admission.js";
 import { withSessionPlacementComputer } from "../../agents/session-placement-computer.js";
+import { withSessionSkillResources } from "../../agents/session-placement-skill-resources.js";
 import { SessionManager } from "../../agents/sessions/session-manager.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { redactSensitiveText } from "../../logging/redact.js";
@@ -17,6 +18,7 @@ import type {
   WorkerSessionTurnClaim,
 } from "./placement-store.js";
 import type { WorkerEnvironmentService } from "./service.js";
+import { transferSkillResources } from "./skill-resource-transfer.js";
 import { WorkerTunnelOwnerDisconnectedError, type WorkerTunnelHandle } from "./tunnel-contract.js";
 import { latestDurableWorkspaceConflict, waitForTurnOperation } from "./worker-turn-admission.js";
 import { prepareWorkerTurnAttachments } from "./worker-turn-attachments.js";
@@ -319,6 +321,23 @@ export async function executeRemoteExecTurn(params: {
     ...(params.turn.abortSignal ? { signal: params.turn.abortSignal } : {}),
     timeoutMs: params.turn.timeoutMs,
   });
+  const skillResources = await transferSkillResources({
+    snapshot: params.turn.skillsSnapshot,
+    explicitSelections: params.turn.explicitSkillSelections,
+    tunnel,
+    signal: params.turn.abortSignal,
+    assertCurrent: () => {
+      const current = params.environments.get(environment.environmentId);
+      if (
+        !params.placements.validateTurnClaim(params.turnClaim) ||
+        current?.state !== "attached" ||
+        current.ownerEpoch !== environment.ownerEpoch ||
+        current.leaseId !== environment.leaseId
+      ) {
+        throw new Error("Skill transfer lost its exact placement authority.");
+      }
+    },
+  });
   const transcriptTarget = resolveWorkerTurnTranscriptTarget(params.turn);
   const attachmentNote = await prepareWorkerTurnAttachments({
     turn: params.turn,
@@ -398,12 +417,16 @@ export async function executeRemoteExecTurn(params: {
             sandboxToolPolicy: computer ? sandboxToolPolicy : undefined,
             bind: (run) => (computer ? computer.bind(run) : null),
           },
-          params.runLocal,
+          () =>
+            skillResources
+              ? withSessionSkillResources(skillResources, params.runLocal)
+              : params.runLocal(),
         ),
     );
   } catch (error) {
     executionError = error;
   } finally {
+    await skillResources?.cleanup().catch(() => undefined);
     executionActive = false;
     params.turn.prompt = originalPrompt;
     params.turn.transcriptPrompt = originalTranscriptPrompt;

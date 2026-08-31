@@ -12,12 +12,18 @@ import type { AgentRuntimePlan } from "../../runtime-plan/types.js";
 import { resolveSandboxContext } from "../../sandbox/context.js";
 import { resolveSessionPermissionExecMode } from "../../session-permission-exec-mode.js";
 import { resolveSessionPlacementSandbox } from "../../session-placement-admission.js";
+import { resolveSessionSkillResourceSnapshot } from "../../session-placement-skill-resources.js";
 import { createToolTerminalObserver } from "../../tool-terminal-outcome.js";
 import {
   createAdmittedGatewayToolCallerIdentity,
   withGatewayToolCallerIdentity,
 } from "../../tools/gateway-caller-context.js";
 import type { SystemAgentToolOptions } from "../../tools/system-agent-tool.js";
+import {
+  resolveSandboxSkillRuntimeInputs,
+  mapSandboxSkillUsagePaths,
+  remapSkillReferencePaths,
+} from "../sandbox-skills.js";
 import { prepareExecApprovalContinuationForAttempt } from "./attempt-exec-approval-continuation.js";
 import { applyResolvedToolPromptFinalizer } from "./attempt-prompt-support.js";
 import { resolveAttemptWorkspaceSandbox } from "./attempt-setup.js";
@@ -254,6 +260,7 @@ export async function dispatchEmbeddedRunAttempt(input: {
         agentId: sandboxSessionKey === sessionKey ? runtime.agentId : undefined,
         sessionKey: sandboxSessionKey,
         workspaceDir: runtime.workspaceDir,
+        skillsSnapshot: params.skillsSnapshot,
       })))
     : undefined;
   if (!params.admittedRunContext) {
@@ -280,6 +287,25 @@ export async function dispatchEmbeddedRunAttempt(input: {
     sessionKey: params.sessionKey,
     toolsAllow: params.toolsAllow,
   });
+  let skillsSnapshot = resolveSessionSkillResourceSnapshot(params.skillsSnapshot);
+  let skillReferencePaths: import("../../../skills/types.js").SkillUsagePath[] | undefined;
+  if (
+    pluginSandbox?.enabled &&
+    !pluginSandbox.readOnlyResourceMounts?.length &&
+    skillsSnapshot?.librarySelections?.length
+  ) {
+    const prepared = resolveSandboxSkillRuntimeInputs({
+      sandbox: pluginSandbox,
+      skillsAnchorWorkspace: runtime.bootstrapWorkspaceDir ?? runtime.workspaceDir,
+      skillsSnapshot,
+    });
+    skillsSnapshot = prepared.skillsSnapshot;
+    skillReferencePaths = mapSandboxSkillUsagePaths({
+      paths: pluginSandbox.skillUsagePaths,
+      skillsWorkspaceDir: prepared.skillsWorkspaceDir,
+      skillsPromptWorkspaceDir: prepared.skillsPromptWorkspaceDir,
+    });
+  }
   const attemptParams: EmbeddedRunAttemptInternalParams = {
     permissionChange: input.permissionChange,
     admittedRunContext: params.admittedRunContext,
@@ -355,8 +381,11 @@ export async function dispatchEmbeddedRunAttempt(input: {
     ...(runtime.authoredContextTokenCap === undefined
       ? {}
       : { authoredContextTokenCap: runtime.authoredContextTokenCap }),
-    skillsSnapshot: params.skillsSnapshot,
-    prompt: pluginHarnessPrompt ?? preparedExecApprovalContinuation.prompt,
+    skillsSnapshot,
+    prompt: remapSkillReferencePaths(
+      pluginHarnessPrompt ?? preparedExecApprovalContinuation.prompt,
+      skillReferencePaths,
+    ),
     transcriptPrompt:
       pluginHarnessPrompt !== undefined && params.transcriptPrompt === undefined
         ? preparedExecApprovalContinuation.prompt

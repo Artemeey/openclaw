@@ -66,6 +66,7 @@ type StartChatDispatchParams = {
   context: GatewayRequestHandlerOptions["context"];
   toolsAllow?: string[];
   skillWorkshopProposalRevision?: SkillWorkshopProposalRevisionConstraint;
+  skillLibraryAuthoring?: import("../../skills/library/authoring.js").SkillLibraryAuthoringCapability;
   cronCreatorAuthority: ReturnType<ChatSendExternalAuthorityAdmission["resolve"]>;
   externalAuthorityAdmission: ChatSendExternalAuthorityAdmission | undefined;
   injection: {
@@ -96,6 +97,7 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
     context,
     toolsAllow,
     skillWorkshopProposalRevision,
+    skillLibraryAuthoring,
     cronCreatorAuthority,
     externalAuthorityAdmission,
     injection,
@@ -291,6 +293,7 @@ export function startChatDispatch(params: StartChatDispatchParams): void {
                 prepareAssistantTranscriptMessage: replyDispatch.prepareAssistantTranscriptMessage,
                 runId: clientRunId,
                 skillWorkshopProposalRevision,
+                skillLibraryAuthoring,
                 ...(cronCreatorAuthority
                   ? { cronCreatorAuthorityCapability: cronCreatorAuthority }
                   : {}),

@@ -24,6 +24,7 @@ import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import type { PluginRuntime } from "../../plugins/runtime/types.js";
 import { setActiveDegradedSecretOwners } from "../../secrets/runtime-degraded-state.js";
 import { buildSkillSnapshot } from "../../skills/loading/workspace-skill-prompt.js";
+import type { SkillSnapshot } from "../../skills/types.js";
 import {
   createChannelTestPluginBase,
   createTestRegistry,
@@ -4720,40 +4721,41 @@ describe("prepareCliRunContext", () => {
       const config: OpenClawConfig = {
         agents: { ownership: "explicit", entries: { main: {}, worker: {} } },
       };
+      const skillsSnapshot: SkillSnapshot = {
+        prompt: [
+          "<available_skills>",
+          "  <skill>",
+          "    <name>gog</name>",
+          "    <description>Read Gmail safely.</description>",
+          `    <location>${hostSkillPath}</location>`,
+          "  </skill>",
+          "</available_skills>",
+        ].join("\n"),
+        skills: [{ name: "gog" }],
+        resolvedSkills: [
+          {
+            name: "gog",
+            description: "Read Gmail safely.",
+            filePath: hostSkillPath,
+            baseDir: hostSkillDir,
+            source: "openclaw-bundled",
+            sourceInfo: {
+              path: hostSkillPath,
+              source: "openclaw-bundled",
+              scope: "project",
+              origin: "top-level",
+              baseDir: hostSkillDir,
+            },
+            disableModelInvocation: false,
+          },
+        ],
+      };
       const context = await fixture.prepare({
         config,
         sessionKey,
         agentId: "main",
         prompt: "are there any unread emails",
-        skillsSnapshot: {
-          prompt: [
-            "<available_skills>",
-            "  <skill>",
-            "    <name>gog</name>",
-            "    <description>Read Gmail safely.</description>",
-            `    <location>${hostSkillPath}</location>`,
-            "  </skill>",
-            "</available_skills>",
-          ].join("\n"),
-          skills: [{ name: "gog" }],
-          resolvedSkills: [
-            {
-              name: "gog",
-              description: "Read Gmail safely.",
-              filePath: hostSkillPath,
-              baseDir: hostSkillDir,
-              source: "openclaw-bundled",
-              sourceInfo: {
-                path: hostSkillPath,
-                source: "openclaw-bundled",
-                scope: "project",
-                origin: "top-level",
-                baseDir: hostSkillDir,
-              },
-              disableModelInvocation: false,
-            },
-          ],
-        },
+        skillsSnapshot,
       });
 
       expect(ensureSandboxWorkspaceForSessionMock).toHaveBeenCalledWith({
@@ -4761,6 +4763,7 @@ describe("prepareCliRunContext", () => {
         agentId: "main",
         sessionKey,
         workspaceDir: dir,
+        skillsSnapshot,
       });
       expect(context.systemPrompt).toContain(
         "/workspace/.openclaw/sandbox-skills/skills/gog/SKILL.md",
