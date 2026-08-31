@@ -566,7 +566,13 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
       const storedProviderWideCandidates = [
         ...new Set(
           authHealth.profiles
-            .filter((profile) => profile.type === "api_key")
+            .filter((profile) => {
+              if (profile.type !== "api_key") {
+                return false;
+              }
+              const credential = store.profiles[profile.profileId];
+              return credential?.type !== "api_key" || !credential.metadata?.authFlow;
+            })
             .map((profile) =>
               resolveUsageProviderId(profile.provider, { credentialType: profile.type }),
             )

@@ -118,6 +118,28 @@ describe("renderProviderProfiles", () => {
     expect(onProfileOrderChange).not.toHaveBeenCalled();
   });
 
+  it("keeps an environment API-key source visible beside account profiles", () => {
+    const result = mount(
+      renderProviderProfiles(
+        card({
+          apiKey: { source: "env", envVar: "OPENAI_API_KEY" },
+          profiles: [
+            {
+              profileId: "openai:oauth",
+              type: "oauth",
+              status: "ok",
+              source: "saved",
+            },
+          ],
+          profileOrders: { openai: ["openai:oauth"] },
+        }),
+        props(),
+      ),
+    );
+
+    expect(result.textContent).toContain("API key from environment (OPENAI_API_KEY)");
+  });
+
   it("disables reordering when a same-length stored order contains a stale profile", () => {
     const onProfileOrderChange = vi.fn();
     const providerCard = card({

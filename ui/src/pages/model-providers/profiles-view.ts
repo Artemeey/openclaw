@@ -47,6 +47,18 @@ function profileSource(profile: ProviderProfile): string | undefined {
   }
 }
 
+function apiKeySource(card: ModelProviderCard): string | undefined {
+  if (card.apiKey?.source === "config") {
+    return t("modelProviders.credentials.configKey");
+  }
+  if (card.apiKey?.source !== "env") {
+    return undefined;
+  }
+  return card.apiKey.envVar
+    ? t("modelProviders.credentials.envKeyNamed", { name: card.apiKey.envVar })
+    : t("modelProviders.credentials.envKey");
+}
+
 function profileMeta(profile: ProviderProfile): string {
   const parts: string[] = [];
   const source = profileSource(profile);
@@ -302,6 +314,7 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
     );
   });
   const priorityManaged = providers.some((provider) => lockedProviders.has(provider));
+  const additionalCredentialSource = apiKeySource(card);
   return html`
     <section class="model-providers__profiles" aria-label=${t("modelProviders.profiles.title")}>
       <div class="model-providers__profiles-heading">
@@ -317,7 +330,7 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
               ? ` · ${t("modelProviders.profiles.reorderHint")}`
               : ""}${priorityManaged
               ? ` · ${t("modelProviders.profiles.priorityManaged")}`
-              : ""}</span
+              : ""}${additionalCredentialSource ? ` · ${additionalCredentialSource}` : ""}</span
           >
         </span>
         <span class="model-providers__profiles-heading-actions">

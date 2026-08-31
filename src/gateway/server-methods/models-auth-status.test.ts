@@ -1705,6 +1705,7 @@ describe("models.authStatus", () => {
         { label: "Monthly key budget", usedPercent: 25 },
       ]);
     });
+    expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(1);
   });
 
   it("routes claude-cli OAuth profiles to Anthropic usage with plan and billing", async () => {

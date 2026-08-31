@@ -19,6 +19,7 @@ export type ModelAuthExpiry = {
 
 export type ModelAuthUsage = {
   providerId: UsageProviderId;
+  refreshedAt?: number;
   windows: UsageWindow[];
   summary?: string;
   plan?: string;

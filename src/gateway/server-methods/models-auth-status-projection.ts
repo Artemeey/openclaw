@@ -102,6 +102,7 @@ export function aggregateRefreshableAuthStatus(
 function mapUsageStatus(usage: ProviderUsageStatus, includeAccountEmail = true): ModelAuthUsage {
   return {
     providerId: usage.providerId,
+    refreshedAt: usage.refreshedAt,
     windows: usage.windows,
     ...(usage.summary ? { summary: usage.summary } : {}),
     ...(usage.plan ? { plan: usage.plan } : {}),
