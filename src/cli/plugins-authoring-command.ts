@@ -662,6 +662,7 @@ describe(${idLiteral}, () => {
       registerProvider(provider: ProviderPlugin) {
         providers.push(provider);
       },
+      registerModelCatalogProvider() {},
     } as Partial<OpenClawPluginApi>;
 
     entry.register(api as OpenClawPluginApi);
