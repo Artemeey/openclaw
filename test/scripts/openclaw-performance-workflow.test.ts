@@ -172,15 +172,21 @@ describe("OpenClaw performance workflow", () => {
   });
 
   it("fails selected live Kova lanes when live auth is missing", () => {
+    const decideLane = findStep("Decide lane");
     const configureAuth = findStep("Configure live OpenAI auth");
     const runKova = findStep("Run Kova");
 
+    expect(decideLane.run).toContain('"$KOVA_REF" != "$KOVA_TRUSTED_LIVE_REF"');
+    expect(decideLane.run).toContain("only executes the checksum-verified Kova default");
     expect(configureAuth.if).toContain("matrix.live == 'true'");
     expect(configureAuth.env?.OPENAI_API_KEY).toBe("${{ secrets.OPENAI_API_KEY }}");
     expect(configureAuth.run).toContain('if [[ -z "${OPENAI_API_KEY:-}" ]]; then');
     expect(configureAuth.run).toContain("cannot run without live evidence");
     expect(configureAuth.run).toContain("exit 1");
     expect(configureAuth.run).not.toContain("will be skipped");
+    expect(runKova.env?.OPENAI_API_KEY).toBe(
+      "${{ matrix.live == 'true' && secrets.OPENAI_API_KEY || '' }}",
+    );
     expect(runKova.run).not.toContain('echo "skipped=true" >> "$GITHUB_OUTPUT"');
   });
 

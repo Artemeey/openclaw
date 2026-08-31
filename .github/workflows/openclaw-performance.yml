@@ -134,6 +134,10 @@ jobs:
             run_lane=false
             reason="live_openai_candidate input is false"
           fi
+          if [[ "$LANE_ID" == "live-openai-candidate" && "$run_lane" == "true" && "$KOVA_REF" != "$KOVA_TRUSTED_LIVE_REF" ]]; then
+            echo "::error::The live OpenAI lane only executes the checksum-verified Kova default. Omit kova_ref or update the pinned workflow defaults after review."
+            exit 1
+          fi
           echo "run=$run_lane" >> "$GITHUB_OUTPUT"
           if [[ "$run_lane" != "true" ]]; then
             echo "Skipping ${LANE_ID}: ${reason}" >> "$GITHUB_STEP_SUMMARY"
@@ -354,8 +358,8 @@ jobs:
         id: kova
         if: steps.lane.outputs.run == 'true'
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_API_KEY: ${{ matrix.live == 'true' && secrets.OPENAI_API_KEY || '' }}
+          OPENAI_BASE_URL: ${{ matrix.live == 'true' && secrets.OPENAI_BASE_URL || '' }}
           CLAWGRIT_REPORTS_TOKEN_PRESENT: ${{ steps.clawgrit.outputs.present || 'false' }}
         shell: bash
         run: |
