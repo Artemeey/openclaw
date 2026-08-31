@@ -296,8 +296,8 @@ describe("buildModelProviderCards", () => {
     expect(firstCard(cards).auth).toMatchObject({ kind: "missing", profileCount: 0 });
   });
 
-  it("keeps account usage.status snapshots scoped to the account", () => {
-    const cards = buildModelProviderCards({
+  it("keeps the newest account usage snapshot scoped to the account", () => {
+    const input = {
       ...EMPTY_INPUT,
       authStatus: authStatus([
         {
@@ -343,13 +343,23 @@ describe("buildModelProviderCards", () => {
           },
         ],
       },
-    });
+    } satisfies Parameters<typeof buildModelProviderCards>[0];
+    const refreshedInput = structuredClone(input);
+    refreshedInput.authStatus.ts = 3;
+    const cards = buildModelProviderCards(input);
     expect(cards).toHaveLength(1);
     expect(firstCard(cards).profiles[0]?.usage?.windows).toEqual([
       { label: "5h", usedPercent: 55 },
     ]);
     expect(firstCard(cards).profiles[0]?.usage?.costHistory?.periodDays).toBe(30);
     expect(firstCard(cards).usage).toBeUndefined();
+
+    const refreshed = buildModelProviderCards(refreshedInput);
+    expect(firstCard(refreshed).profiles[0]?.usage?.windows).toEqual([
+      { label: "5h", usedPercent: 10 },
+    ]);
+    expect(firstCard(refreshed).profiles[0]?.usage?.costHistory).toBeUndefined();
+    expect(firstCard(refreshed).usage).toBeUndefined();
   });
 
   it("preserves provider-scoped auth usage beside account usage", () => {
