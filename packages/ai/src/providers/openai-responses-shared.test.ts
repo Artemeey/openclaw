@@ -785,6 +785,48 @@ describe("convertResponsesMessages", () => {
 });
 
 describe("processResponsesStream", () => {
+  it("keeps text deltas when content_part.added is omitted", async () => {
+    const output = createAssistantOutput();
+    const stream = new AssistantMessageEventStream();
+
+    await processResponsesStream(
+      responseEvents([
+        {
+          type: "response.output_item.added",
+          output_index: 0,
+          item: {
+            type: "message",
+            role: "assistant",
+            id: "msg_without_part",
+            content: [],
+            status: "in_progress",
+          },
+        },
+        { type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "KOVA_" },
+        {
+          type: "response.output_text.delta",
+          output_index: 0,
+          content_index: 0,
+          delta: "AGENT_OK",
+        },
+        {
+          type: "response.completed",
+          response: {
+            id: "resp_without_part",
+            status: "completed",
+            output: [],
+          },
+        },
+      ]),
+      output,
+      stream,
+      nativeOpenAIModel,
+    );
+
+    expect(output.content).toEqual([{ type: "text", text: "KOVA_AGENT_OK" }]);
+    expect(output.stopReason).toBe("stop");
+  });
+
   it("aborts the Responses request signal when the first SSE event never arrives", async () => {
     vi.useFakeTimers();
     try {

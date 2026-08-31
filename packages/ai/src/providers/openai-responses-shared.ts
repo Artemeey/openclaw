@@ -801,8 +801,11 @@ export async function processResponsesStream<TApi extends Api>(
       }
     } else if (event.type === "response.output_text.delta") {
       if (currentItem?.type === "message") {
-        if (!currentItem.content || currentItem.content.length === 0) {
-          continue;
+        currentItem.content = currentItem.content || [];
+        if (currentItem.content.length === 0) {
+          // Some compatible Responses servers begin text deltas immediately
+          // after output_item.added without a content_part.added event.
+          currentItem.content.push({ type: "output_text", text: "", annotations: [] });
         }
         const lastPart = currentItem.content[currentItem.content.length - 1];
         if (isResponsesTextContentPartType(lastPart?.type)) {
