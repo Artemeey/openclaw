@@ -307,6 +307,13 @@ function isManifestToolReplaySafe(params: {
   return params.manifestPlugin?.toolMetadata?.[params.toolName]?.replaySafe === true;
 }
 
+function isManifestToolRestartSafe(params: {
+  manifestPlugin: PluginManifestRecord | undefined;
+  toolName: string;
+}): boolean {
+  return params.manifestPlugin?.toolMetadata?.[params.toolName]?.restartSafe === true;
+}
+
 function isManifestToolSideEffecting(params: {
   manifestPlugin: PluginManifestRecord | undefined;
   toolName: string;
@@ -842,6 +849,10 @@ function createCachedDescriptorPluginTool(params: {
     ...(params.plugin.kind ? { kind: params.plugin.kind } : {}),
     optional: params.descriptor.optional,
     replaySafe: isManifestToolReplaySafe({
+      manifestPlugin: params.plugin,
+      toolName,
+    }),
+    restartSafe: isManifestToolRestartSafe({
       manifestPlugin: params.plugin,
       toolName,
     }),
@@ -1494,6 +1505,10 @@ export function resolvePluginTools(params: {
         ...(manifestPlugin?.kind ? { kind: manifestPlugin.kind } : {}),
         optional,
         replaySafe: isManifestToolReplaySafe({
+          manifestPlugin,
+          toolName: tool.name,
+        }),
+        restartSafe: isManifestToolRestartSafe({
           manifestPlugin,
           toolName: tool.name,
         }),

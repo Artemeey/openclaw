@@ -465,6 +465,9 @@ Each `providerBaseUrl` guard supports:
 - `profiles`: built-in tool profiles that expose the plugin tool by default. Valid values are `minimal`, `coding`, `messaging`, and `full`. These contributions merge into the corresponding profile allowlist; explicit operator allowlists and deny rules remain authoritative.
 - `optional`: marks the tool as non-required for plugin activation.
 - `replaySafe`: marks tool execution as safe to repeat after an incomplete model turn.
+- `restartSafe`: keeps the tool available for a new model decision while an interrupted turn is
+  reconciled. It does not mark a prior call safe to replay; use `replaySafe` only when repeating the
+  same execution is safe.
 - `sideEffecting`: marks execution as potentially changing durable or external state.
 
 These fields supplement the shared `configSignals` and `authSignals` fields above.

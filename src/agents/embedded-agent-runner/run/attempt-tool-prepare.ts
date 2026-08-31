@@ -238,9 +238,11 @@ export function prepareEmbeddedAttemptToolBase(params: {
     forceMessageTool: attempt.forceMessageTool,
     sourceReplyDeliveryMode: attempt.sourceReplyDeliveryMode,
   });
+  const getAttemptPluginToolMeta = (candidate: { name?: string }) =>
+    getPluginToolMeta(candidate as Parameters<typeof getPluginToolMeta>[0]);
   const replaySafetyOptions = {
     declaredReplaySafe: (candidate: { name?: string }) => {
-      const pluginMeta = getPluginToolMeta(candidate as Parameters<typeof getPluginToolMeta>[0]);
+      const pluginMeta = getAttemptPluginToolMeta(candidate);
       if (pluginMeta) {
         return pluginMeta.replaySafe === true;
       }
@@ -248,12 +250,16 @@ export function prepareEmbeddedAttemptToolBase(params: {
     },
   };
   const restartSafetyOptions = {
-    declaredReplaySafe: (candidate: { name?: string }) => {
-      const pluginMeta = getPluginToolMeta(candidate as Parameters<typeof getPluginToolMeta>[0]);
+    ...replaySafetyOptions,
+    declaredRestartSafe: (candidate: { name?: string }) => {
+      const pluginMeta = getAttemptPluginToolMeta(candidate);
       if (pluginMeta?.mcp) {
         return false;
       }
-      return replaySafetyOptions.declaredReplaySafe(candidate);
+      if (pluginMeta?.restartSafe === true) {
+        return true;
+      }
+      return getChannelAgentToolMeta(candidate as never) ? false : undefined;
     },
   };
   const constructTools = (

@@ -26,6 +26,12 @@ const UNCONDITIONALLY_REPLAY_SAFE_TOOL_NAMES = new Set([
 ]);
 
 type NamedTool = { name?: string };
+type ReplaySafetyOptions = {
+  declaredReplaySafe?: (tool: NamedTool) => boolean | undefined;
+};
+type RestartSafetyOptions = ReplaySafetyOptions & {
+  declaredRestartSafe?: (tool: NamedTool) => boolean | undefined;
+};
 
 function groupUniqueToolsByName(tools: NamedTool[]): Map<string, NamedTool | undefined> {
   const toolsByName = new Map<string, NamedTool | undefined>();
@@ -45,7 +51,7 @@ function groupUniqueToolsByName(tools: NamedTool[]): Map<string, NamedTool | und
  */
 export function isAgentToolReplaySafe(
   tool: { name?: string },
-  options?: { declaredReplaySafe?: (tool: { name?: string }) => boolean | undefined },
+  options?: ReplaySafetyOptions,
 ): boolean {
   if (options?.declaredReplaySafe?.(tool) === false) {
     return false;
@@ -60,8 +66,12 @@ export function isAgentToolReplaySafe(
  */
 export function isAgentToolRestartSafe(
   tool: { name?: string },
-  options?: { declaredReplaySafe?: (tool: { name?: string }) => boolean | undefined },
+  options?: RestartSafetyOptions,
 ): boolean {
+  const declaredRestartSafe = options?.declaredRestartSafe?.(tool);
+  if (declaredRestartSafe !== undefined) {
+    return declaredRestartSafe;
+  }
   const declaredReplaySafe = options?.declaredReplaySafe?.(tool);
   if (declaredReplaySafe !== undefined) {
     return declaredReplaySafe;
@@ -75,7 +85,7 @@ export function isAgentToolRestartSafe(
  */
 export function collectReplaySafeToolNames(
   tools: NamedTool[],
-  options?: { declaredReplaySafe?: (tool: { name?: string }) => boolean | undefined },
+  options?: ReplaySafetyOptions,
 ): Set<string> {
   const replaySafeNames = new Set<string>();
   for (const [name, tool] of groupUniqueToolsByName(tools)) {

@@ -177,9 +177,10 @@ work. Code Mode marks these runs as restart-safe and rejects side-effecting
 catalog or namespace tool calls before they execute. If a restart lands on
 the `wait` control, the new gateway reconstructs the turn from its transcript
 and forces the reconstructed execution to remain restart-safe even if the
-model omits or clears that flag. The host filters the entire reconstructed
-turn to audited read-only core tools and explicitly replay-safe plugin tools,
-including when Code Mode is disabled after the restart. A non-replay-safe or
+model omits or clears that flag. The host filters the entire reconstructed turn
+to audited read-only core tools, replay-safe plugin tools, and plugin tools
+explicitly declared `restartSafe` for a new recovery decision. `restartSafe`
+does not replay an interrupted call or mark it replay-safe. A non-replay-safe or
 unmatched Code Mode checkpoint still resumes for model reconciliation, but
 without Code Mode controls and with the restart-safe tool restriction.
 

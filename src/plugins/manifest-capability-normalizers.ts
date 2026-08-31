@@ -328,6 +328,7 @@ export function normalizePluginToolMetadata(
       ...(rawMetadata.optional === true ? { optional: true } : {}),
       ...(profiles.length > 0 ? { profiles } : {}),
       ...(rawMetadata.replaySafe === true ? { replaySafe: true } : {}),
+      ...(rawMetadata.restartSafe === true ? { restartSafe: true } : {}),
       ...(rawMetadata.sideEffecting === true ? { sideEffecting: true } : {}),
     } satisfies PluginManifestToolMetadata;
     return Object.keys(metadata).length > 0 ? metadata : undefined;

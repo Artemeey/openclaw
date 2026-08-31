@@ -537,6 +537,8 @@ export type PluginManifestToolMetadata = PluginManifestCapabilityProviderMetadat
   profiles?: PluginManifestToolProfile[];
   /** Tool execution is safe to repeat after an incomplete model turn. */
   replaySafe?: boolean;
+  /** Tool may remain model-selectable while an interrupted turn is reconciled. */
+  restartSafe?: boolean;
   /** Tool execution can change durable state and failed attempts must remain visible. */
   sideEffecting?: boolean;
 };

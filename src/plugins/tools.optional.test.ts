@@ -473,6 +473,7 @@ function createXaiToolManifest() {
     toolMetadata: {
       x_search: {
         replaySafe: true,
+        restartSafe: true,
         authSignals: [{ provider: "xai" }],
         configSignals: [
           {
@@ -1319,9 +1320,10 @@ describe("resolvePluginTools optional tools", () => {
     });
 
     expectResolvedToolNames(tools, ["x_search"]);
-    expect(getPluginToolMeta(expectDefined(tools[0], "tools[0] test invariant"))?.replaySafe).toBe(
-      true,
-    );
+    expect(getPluginToolMeta(expectDefined(tools[0], "tools[0] test invariant"))).toMatchObject({
+      replaySafe: true,
+      restartSafe: true,
+    });
     expect(factory).toHaveBeenCalledTimes(1);
     expect(loadOpenClawPluginsMock).not.toHaveBeenCalled();
   });

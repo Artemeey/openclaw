@@ -38,14 +38,29 @@ describe("agent tool replay safety", () => {
 
     expect(
       isAgentToolRestartSafe(pluginTool, {
-        declaredReplaySafe: (tool) => (tool === pluginTool ? true : undefined),
+        declaredRestartSafe: (tool) => (tool === pluginTool ? true : undefined),
       }),
     ).toBe(true);
     expect(
       isAgentToolRestartSafe(pluginTool, {
+        declaredRestartSafe: () => false,
+      }),
+    ).toBe(false);
+    expect(
+      isAgentToolReplaySafe(pluginTool, {
         declaredReplaySafe: () => false,
       }),
     ).toBe(false);
+  });
+
+  it("keeps replay-safe tools available during restart recovery", () => {
+    const pluginTool = { name: "vendor_widget" };
+
+    expect(
+      isAgentToolRestartSafe(pluginTool, {
+        declaredReplaySafe: (tool) => (tool === pluginTool ? true : undefined),
+      }),
+    ).toBe(true);
   });
 
   it("rejects memory_search because it records durable recall signals", () => {

@@ -29,6 +29,7 @@ type PluginToolMeta = {
   kind?: PluginManifestRecord["kind"];
   optional: boolean;
   replaySafe?: boolean;
+  restartSafe?: boolean;
   sideEffecting?: boolean;
   trustedLocalMedia?: boolean;
   mcp?: PluginToolMcpMeta;
