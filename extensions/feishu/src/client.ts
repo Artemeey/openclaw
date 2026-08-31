@@ -23,8 +23,7 @@ const FEISHU_USER_AGENT = `openclaw-feishu-builtin/${pluginVersion}/${process.pl
 export { FEISHU_USER_AGENT };
 
 const FEISHU_WS_CONFIG = {
-  PingInterval: 30,
-  PingTimeout: 3,
+  pingTimeout: 3,
 } as const;
 
 /** User-Agent header value for all Feishu API requests. */
@@ -93,11 +92,6 @@ function setRequestUserAgent(req: unknown) {
 
 export { FEISHU_HTTP_TIMEOUT_ENV_VAR, FEISHU_HTTP_TIMEOUT_MAX_MS, FEISHU_HTTP_TIMEOUT_MS };
 
-type FeishuHttpInstanceLike = Pick<
-  typeof feishuClientSdk.defaultHttpInstance,
-  "request" | "get" | "post" | "put" | "patch" | "delete" | "head" | "options"
->;
-
 async function getWsProxyAgent() {
   return resolveAmbientNodeProxyAgent<Agent>();
 }
@@ -127,7 +121,9 @@ function resolveDomain(domain: FeishuDomain | undefined): Lark.Domain | string {
  * indefinite hangs and set a standardized User-Agent per OAPI best practices.
  */
 function createTimeoutHttpInstance(defaultTimeoutMs: number): Lark.HttpInstance {
-  const base: FeishuHttpInstanceLike = feishuClientSdk.defaultHttpInstance;
+  // The SDK's response interceptor unwraps Axios responses to payloads, which is
+  // the HttpInstance contract even though Axios 1.20's declarations cannot express it.
+  const base = feishuClientSdk.defaultHttpInstance as Lark.HttpInstance;
 
   function injectTimeout<D>(opts?: Lark.HttpRequestOptions<D>): Lark.HttpRequestOptions<D> {
     return { timeout: defaultTimeoutMs, ...opts } as Lark.HttpRequestOptions<D>;
@@ -228,8 +224,6 @@ export async function createFeishuWSClient(
     loggerLevel: feishuClientSdk.LoggerLevel.info,
     wsConfig: FEISHU_WS_CONFIG,
     ...(agent ? { agent } : {}),
-  } as ConstructorParameters<typeof feishuClientSdk.WSClient>[0] & {
-    wsConfig: typeof FEISHU_WS_CONFIG;
   });
 }
 

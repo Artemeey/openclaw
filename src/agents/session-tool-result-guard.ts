@@ -5,6 +5,7 @@
  */
 import { resolveIntegerOption } from "@openclaw/normalization-core/number-coercion";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { sliceUtf16Safe, truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import {
   boundedJsonUtf8Bytes,
   firstEnumerableOwnKeys,
@@ -160,7 +161,8 @@ function redactPersistedDetailString(
     return redactToolPayloadTextWithConfig(value, redactionConfig);
   }
 
-  const scan = `${value.slice(0, maxChars)}${PERSISTED_DETAIL_REDACTION_BOUNDARY}${value.slice(
+  const scan = `${sliceUtf16Safe(value, 0, maxChars)}${PERSISTED_DETAIL_REDACTION_BOUNDARY}${sliceUtf16Safe(
+    value,
     maxChars,
     maxChars + MAX_PERSISTED_DETAIL_REDACTION_LOOKAHEAD_CHARS,
   )}`;
@@ -174,7 +176,7 @@ function redactPersistedDetailString(
     0,
     maxChars - Math.min(maxChars, MAX_PERSISTED_DETAIL_BOUNDARY_OVERLAP_CHARS),
   );
-  const initialPersistedPrefix = redactedPrefix.slice(0, safePrefixChars);
+  const initialPersistedPrefix = truncateUtf16Safe(redactedPrefix, safePrefixChars);
   const persistedPrefix =
     PARTIAL_STRUCTURED_SECRET_VALUE_RE.test(initialPersistedPrefix) ||
     PARTIAL_PRIVATE_KEY_BLOCK_RE.test(initialPersistedPrefix)
@@ -775,9 +777,6 @@ export function installSessionToolResultGuard(
     if (nextRole === "toolResult") {
       const id = extractToolResultId(nextMessage as Extract<AgentMessage, { role: "toolResult" }>);
       const toolName = id ? pendingState.getToolName(id) : undefined;
-      if (id) {
-        pendingState.delete(id);
-      }
       const normalizedToolResult = normalizePersistedToolResultName(nextMessage, toolName);
       // Apply hard size cap before persistence to prevent oversized tool results
       // from consuming the entire context window on subsequent LLM calls.
@@ -795,6 +794,10 @@ export function installSessionToolResultGuard(
       const persisted = applyBeforeWriteHook(transformed);
       if (!persisted) {
         return undefined;
+      }
+      // A blocked result must remain pending so the next message can repair its tool-call pair.
+      if (id) {
+        pendingState.delete(id);
       }
       return appendMessageAndCacheTranscriptSeq(
         capToolResultForPersistence(persisted.message, maxToolResultChars, redactionConfig),

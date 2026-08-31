@@ -20,6 +20,7 @@ import { createChannelHistoryWindow, type HistoryEntry } from "openclaw/plugin-s
 import { resolveAgentRoute, resolveInboundLastRouteSessionKey } from "openclaw/plugin-sdk/routing";
 import { logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
 import { normalizeAllowFrom } from "./bot-access.js";
 import { resolveLineGroupConfigEntry } from "./group-keys.js";
 import type { ResolvedLineAccount } from "./types.js";
@@ -387,7 +388,7 @@ async function finalizeLineInboundContext(params: {
     sessionKey: params.route.sessionKey,
   });
   if (shouldLogVerbose()) {
-    const preview = body.slice(0, 200).replace(/\n/g, "\\n");
+    const preview = truncateUtf16Safe(body, 200).replace(/\n/g, "\\n");
     const mediaInfo =
       params.verboseLog.kind === "inbound" && (params.verboseLog.mediaCount ?? 0) > 1
         ? ` mediaCount=${params.verboseLog.mediaCount}`
@@ -557,16 +558,26 @@ export async function buildLinePostbackContext(params: {
   });
 
   const timestamp = event.timestamp;
-  const rawData = event.postback?.data?.trim() ?? "";
-  if (!rawData) {
+  const rawBody = event.postback?.data?.trim() ?? "";
+  if (!rawBody) {
     return null;
   }
-  let rawBody = rawData;
-  if (rawData.includes("line.action=")) {
-    const searchParams = new URLSearchParams(rawData);
+  let agentBody = rawBody;
+  if (rawBody.includes("line.action=")) {
+    const searchParams = new URLSearchParams(rawBody);
     const action = searchParams.get("line.action") ?? "";
     const device = searchParams.get("line.device");
-    rawBody = device ? `line action ${action} device ${device}` : `line action ${action}`;
+    agentBody = device ? `line action ${action} device ${device}` : `line action ${action}`;
+  }
+  // LINE returns picker and rich-menu choices separately from callback data.
+  // Sort them for stable prompt bytes, but keep rawBody unchanged for command auth.
+  for (const [key, value] of Object.entries(event.postback.params ?? {}).toSorted(
+    ([left], [right]) => (left < right ? -1 : left > right ? 1 : 0),
+  )) {
+    const picked = normalizeOptionalString(value);
+    if (picked) {
+      agentBody += ` ${key}=${picked}`;
+    }
   }
 
   const messageSid = event.replyToken ? `postback:${event.replyToken}` : `postback:${timestamp}`;
@@ -577,6 +588,7 @@ export async function buildLinePostbackContext(params: {
     route,
     source: { userId, groupId, roomId, isGroup, peerId },
     rawBody,
+    agentBody,
     timestamp,
     messageSid,
     commandAuthorized,

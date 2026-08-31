@@ -18,6 +18,7 @@ import type { EmbeddedRunTrigger } from "./params.js";
  * Default idle timeout for LLM streaming responses in milliseconds.
  */
 const DEFAULT_LLM_IDLE_TIMEOUT_MS = 120_000;
+const SELF_HOSTED_LLM_IDLE_TIMEOUT_MS = 300_000;
 const CLOUD_LLM_FIRST_EVENT_TIMEOUT_MS = DEFAULT_LLM_IDLE_TIMEOUT_MS;
 const LOCAL_LLM_FIRST_EVENT_TIMEOUT_MS = 300_000;
 // Cron has its own outer watchdog; stream stalls must fail early enough for
@@ -262,6 +263,8 @@ export function resolveLlmIdleTimeoutMs(params?: {
     isExplicitLocalHostnameRuntimeModel,
     isSelfHostedHostnameRuntimeModel,
   } = resolveRuntimeModelLocality(params);
+  const isSelfHostedRuntimeModel =
+    isSelfHostedProviderId(params?.model?.provider) && !isOllamaCloudModel(params?.model);
   const timeoutBounds = [
     runTimeoutIsNoTimeout ? undefined : runTimeoutMs,
     hasExplicitRunTimeout ? undefined : agentTimeoutMs,
@@ -297,15 +300,15 @@ export function resolveLlmIdleTimeoutMs(params?: {
     return clampTimeoutMs(boundedTimeoutMs);
   }
 
-  if (typeof runTimeoutMs === "number" && Number.isFinite(runTimeoutMs) && runTimeoutMs > 0) {
-    if (runTimeoutMs >= MAX_TIMER_TIMEOUT_MS) {
-      return 0;
-    }
+  // Unlimited run budget bounds total cost, not stream liveness. Only finite
+  // explicit run budgets cap the idle watchdog.
+  if (hasExplicitRunTimeout && runTimeoutMs < MAX_TIMER_TIMEOUT_MS) {
     if (params?.trigger === "cron") {
       if (
         isLocalRuntimeModel ||
         isExplicitLocalHostnameRuntimeModel ||
-        isSelfHostedHostnameRuntimeModel
+        isSelfHostedHostnameRuntimeModel ||
+        isSelfHostedRuntimeModel
       ) {
         return clampTimeoutMs(runTimeoutMs);
       }
@@ -315,7 +318,19 @@ export function resolveLlmIdleTimeoutMs(params?: {
   }
 
   if (agentTimeoutMs !== undefined) {
-    return clampImplicitTimeoutMs(agentTimeoutMs);
+    // The agent budget bounds idle from below the provider-class ceiling; it
+    // must not shrink class tolerance (local has no ceiling, self-hosted 300s).
+    // Clamping every class to the cloud default here reopened #85826-style kills.
+    if (isLocalRuntimeModel) {
+      return clampTimeoutMs(agentTimeoutMs);
+    }
+    const classIdleTimeoutMs =
+      isSelfHostedRuntimeModel ||
+      isExplicitLocalHostnameRuntimeModel ||
+      isSelfHostedHostnameRuntimeModel
+        ? SELF_HOSTED_LLM_IDLE_TIMEOUT_MS
+        : DEFAULT_LLM_IDLE_TIMEOUT_MS;
+    return clampTimeoutMs(Math.min(agentTimeoutMs, classIdleTimeoutMs));
   }
 
   // The default watchdog is a network-silence-as-hang guard for cloud providers.
@@ -327,6 +342,14 @@ export function resolveLlmIdleTimeoutMs(params?: {
   // keep the cloud watchdog for `*:cloud` model ids.
   if (isLocalRuntimeModel) {
     return 0;
+  }
+
+  if (
+    isSelfHostedRuntimeModel ||
+    isExplicitLocalHostnameRuntimeModel ||
+    isSelfHostedHostnameRuntimeModel
+  ) {
+    return SELF_HOSTED_LLM_IDLE_TIMEOUT_MS;
   }
 
   return DEFAULT_LLM_IDLE_TIMEOUT_MS;
@@ -351,7 +374,11 @@ export function resolveLlmFirstEventTimeoutMs(params?: {
     isExplicitLocalHostnameRuntimeModel,
     isSelfHostedHostnameRuntimeModel,
   } = resolveRuntimeModelLocality(params);
+  const isSelfHostedRuntimeModel =
+    isSelfHostedProviderId(params?.model?.provider) && !isOllamaCloudModel(params?.model);
   const timeoutBounds = [
+    // Unlimited run budget bounds total cost, not first-token liveness. Omit
+    // the sentinel from bounds so provider-class defaults still apply.
     runTimeoutIsBounded ? runTimeoutMs : undefined,
     hasExplicitRunTimeout ? undefined : agentTimeoutMs,
   ].filter(
@@ -372,7 +399,10 @@ export function resolveLlmFirstEventTimeoutMs(params?: {
   }
 
   const defaultTimeoutMs =
-    isLocalRuntimeModel || isExplicitLocalHostnameRuntimeModel || isSelfHostedHostnameRuntimeModel
+    isLocalRuntimeModel ||
+    isExplicitLocalHostnameRuntimeModel ||
+    isSelfHostedHostnameRuntimeModel ||
+    isSelfHostedRuntimeModel
       ? LOCAL_LLM_FIRST_EVENT_TIMEOUT_MS
       : CLOUD_LLM_FIRST_EVENT_TIMEOUT_MS;
   return clampTimeoutMs(Math.min(defaultTimeoutMs, ...timeoutBounds));

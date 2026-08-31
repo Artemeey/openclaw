@@ -2,6 +2,7 @@
  * Tests for usage-report gateway methods and aggregation responses.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ErrorCodes, errorShape } from "../../../packages/gateway-protocol/src/index.js";
 import type { OpenClawConfig } from "../../config/config.js";
 
 vi.mock("../../infra/session-cost-usage.js", async () => {
@@ -29,10 +30,22 @@ vi.mock("../../infra/session-cost-usage.js", async () => {
         missingCostEntries: 0,
       },
     })),
+    discoverAllSessions: vi.fn(async () => []),
   };
 });
 
-import { loadCostUsageSummaryFromCache } from "../../infra/session-cost-usage.js";
+vi.mock("../session-utils.js", async () => {
+  const actual = await vi.importActual<typeof import("../session-utils.js")>("../session-utils.js");
+  return {
+    ...actual,
+    loadCombinedSessionStoreForGateway: vi.fn(() => ({ storePath: "(multiple)", store: {} })),
+  };
+});
+
+import {
+  discoverAllSessions,
+  loadCostUsageSummaryFromCache,
+} from "../../infra/session-cost-usage.js";
 import { testApi, usageHandlers } from "./usage.js";
 
 describe("gateway usage helpers", () => {
@@ -134,6 +147,8 @@ describe("gateway usage helpers", () => {
     [{ endDate: "2026-2-5" }, "invalid endDate"],
     [{ startDate: 0 }, "invalid startDate"],
     [{ endDate: [] }, "invalid endDate"],
+    [{ startDate: "2026-02-01" }, "startDate and endDate must be provided together"],
+    [{ endDate: "2026-02-01" }, "startDate and endDate must be provided together"],
     [{ startDate: "2026-02-01", endDate: "2026-13-01" }, "invalid endDate"],
     [{ startDate: "2026-02-03", endDate: "2026-02-02" }, "startDate must not be after endDate"],
   ])("resolveDateRange rejects invalid explicit ranges", (params, error) => {
@@ -177,6 +192,33 @@ describe("gateway usage helpers", () => {
       expect(vi.mocked(loadCostUsageSummaryFromCache)).not.toHaveBeenCalled();
     },
   );
+
+  it.each([
+    ["usage.cost", { startDate: "2026-02-01" }],
+    ["usage.cost", { endDate: "2026-02-01" }],
+    ["sessions.usage", { startDate: "2026-02-01" }],
+    ["sessions.usage", { endDate: "2026-02-01" }],
+  ] as const)("%s rejects an incomplete explicit date range", async (method, params) => {
+    const respond = vi.fn();
+    const handler = usageHandlers[method];
+    expect(handler).toBeDefined();
+    if (!handler) {
+      throw new Error("usageHandlers[method] test invariant");
+    }
+    await handler({
+      respond,
+      params,
+      context: { getRuntimeConfig: vi.fn(() => ({})) },
+    } as unknown as Parameters<(typeof usageHandlers)[typeof method]>[0]);
+
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      errorShape(ErrorCodes.INVALID_REQUEST, "startDate and endDate must be provided together"),
+    );
+    expect(vi.mocked(loadCostUsageSummaryFromCache)).not.toHaveBeenCalled();
+    expect(vi.mocked(discoverAllSessions)).not.toHaveBeenCalled();
+  });
 
   it("parseUtcOffsetToMinutes supports whole-hour and half-hour offsets", () => {
     expect(testApi.parseUtcOffsetToMinutes("UTC-4")).toBe(-240);
@@ -575,5 +617,78 @@ describe("gateway usage helpers", () => {
       }),
       undefined,
     );
+  });
+
+  it("rejects an all-agent usage load when one agent task fails", async () => {
+    const failure = new Error("agent usage load failed");
+    vi.mocked(loadCostUsageSummaryFromCache)
+      .mockResolvedValueOnce(costSummary({ totalTokens: 1, totalCost: 0 }))
+      .mockRejectedValueOnce(failure);
+
+    const respond = vi.fn();
+    const request = usageHandlers["usage.cost"]({
+      respond,
+      params: { startDate: "2026-02-01", endDate: "2026-02-02", agentScope: "all" },
+      context: {
+        getRuntimeConfig: () => ({
+          agents: { list: [{ id: "main" }, { id: "broken" }] },
+        }),
+      },
+    } as unknown as Parameters<(typeof usageHandlers)["usage.cost"]>[0]);
+
+    await expect(request).rejects.toBe(failure);
+    expect(respond).not.toHaveBeenCalled();
+  });
+
+  it("bounds sessions.usage all-agent session discovery", async () => {
+    const agentCount = 13;
+    const concurrencyLimit = 12;
+    let releaseLoads!: () => void;
+    const loadsReleased = new Promise<void>((resolve) => {
+      releaseLoads = resolve;
+    });
+    let resolveFirstBatchStarted!: () => void;
+    const firstBatchStarted = new Promise<void>((resolve) => {
+      resolveFirstBatchStarted = resolve;
+    });
+    let started = 0;
+    let inFlight = 0;
+    let peakInFlight = 0;
+
+    vi.mocked(discoverAllSessions).mockImplementation(async () => {
+      started += 1;
+      inFlight += 1;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      if (started === concurrencyLimit) {
+        resolveFirstBatchStarted();
+      }
+      await loadsReleased;
+      inFlight -= 1;
+      return [];
+    });
+
+    const respond = vi.fn();
+    const request = usageHandlers["sessions.usage"]({
+      respond,
+      params: { startDate: "2026-02-01", endDate: "2026-02-02", agentScope: "all" },
+      context: {
+        getRuntimeConfig: () => ({
+          agents: {
+            list: Array.from({ length: agentCount }, (_, i) => ({ id: `agent-${i}` })),
+          },
+        }),
+      },
+    } as unknown as Parameters<(typeof usageHandlers)["sessions.usage"]>[0]);
+
+    await firstBatchStarted;
+    const startedBeforeRelease = started;
+    const peakBeforeRelease = peakInFlight;
+    releaseLoads();
+    await request;
+
+    expect(startedBeforeRelease).toBe(concurrencyLimit);
+    expect(peakBeforeRelease).toBe(concurrencyLimit);
+    expect(vi.mocked(discoverAllSessions)).toHaveBeenCalledTimes(agentCount);
+    expect(respond).toHaveBeenCalledWith(true, expect.any(Object), undefined);
   });
 });
