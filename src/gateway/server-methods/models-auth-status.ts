@@ -426,6 +426,10 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
         );
         return;
       }
+      // Revoke captured usage authority before the durable mutation starts.
+      // Otherwise usage work can finish while the auth store is being updated
+      // and publish a result for credentials that logout is removing.
+      invalidateModelAuthStatusCache();
       const removed = selection.profileIds
         ? await removeAuthProfilesAcrossOwnerStores({ agentDir, profileIds: removedProfiles })
         : await removeProviderAuthProfilesAcrossOwnerStores({
@@ -434,6 +438,7 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
             profileIds: removedProfiles,
           });
       if (!removed) {
+        await refreshActiveProviderAuthRuntimeSnapshot();
         respond(
           false,
           undefined,
@@ -444,9 +449,6 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
         );
         return;
       }
-      // Fence auxiliary usage work that captured the removed profiles before
-      // logout. Its later completion must not repopulate the cache.
-      invalidateModelAuthStatusCache();
       await refreshActiveProviderAuthRuntimeSnapshot();
       void warmCurrentProviderAuthStateOffMainThread(context.getRuntimeConfig()).catch(
         (err: unknown) => {

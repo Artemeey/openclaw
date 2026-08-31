@@ -1538,11 +1538,16 @@ describe("models.authStatus", () => {
 
   it("does not publish usage captured before a concurrent logout", async () => {
     let releaseUsage: (() => void) | undefined;
+    let releaseRemoval: ((store: AuthProfileStore) => void) | undefined;
     let usageFinished = false;
     let providerFetches = 0;
     const usageBlocked = new Promise<void>((resolve) => {
       releaseUsage = resolve;
     });
+    const removalBlocked = new Promise<AuthProfileStore | null>((resolve) => {
+      releaseRemoval = resolve;
+    });
+    mocks.removeProviderAuthProfilesWithLock.mockReturnValueOnce(removalBlocked);
     const oauthProfile = {
       profileId: "openrouter:default",
       provider: "openrouter",
@@ -1583,10 +1588,15 @@ describe("models.authStatus", () => {
     expect(first.providers[0]?.usage).toBeUndefined();
     expect(first.providers[0]?.profiles[0]?.usageRefreshPending).toBe(true);
     await waitForFast(() => expect(mocks.loadProviderUsageSummary).toHaveBeenCalledOnce());
-    await logoutHandler(createLogoutOptions({ provider: "openrouter" }));
+    const logout = logoutHandler(createLogoutOptions({ provider: "openrouter" }));
+    await waitForFast(() =>
+      expect(mocks.removeProviderAuthProfilesWithLock).toHaveBeenCalledOnce(),
+    );
     releaseUsage?.();
     await waitForFast(() => expect(usageFinished).toBe(true));
     expect(providerFetches).toBe(0);
+    releaseRemoval?.({ version: 1, profiles: {} });
+    await logout;
 
     const afterLogout = await readAuthStatus();
     expect(afterLogout.providers[0]?.usage).toBeUndefined();
@@ -3356,6 +3366,7 @@ describe("models.authLogout", () => {
       },
       message: "failed to remove saved auth profiles",
     });
+    expect(mocks.refreshActiveProviderAuthRuntimeSnapshot).toHaveBeenCalledTimes(1);
   });
 
   it("does not abort runs when runtime auth snapshot refresh fails", async () => {
