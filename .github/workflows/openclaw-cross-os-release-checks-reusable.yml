@@ -459,7 +459,7 @@ jobs:
             exit 0
           fi
           CANDIDATE_VERSION="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).candidateVersion' "$CANDIDATE_JSON")"
-          BASELINE_SPEC="$(node scripts/lib/release-upgrade-baseline.mjs --candidate-version "$CANDIDATE_VERSION")"
+          BASELINE_SPEC="$(node workflow/scripts/lib/release-upgrade-baseline.mjs --candidate-version "$CANDIDATE_VERSION")"
           echo "value=${BASELINE_SPEC}" >> "$GITHUB_OUTPUT"
 
       - name: Pack baseline artifact

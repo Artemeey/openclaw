@@ -22,6 +22,14 @@ describe("cross-OS release checks workflow", () => {
     expect(workflow).toContain("timeout --preserve-status 300s npm pack --ignore-scripts");
   });
 
+  it("resolves the upgrade baseline from the checked-out workflow tree", () => {
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+
+    expect(workflow).toContain(
+      "node workflow/scripts/lib/release-upgrade-baseline.mjs --candidate-version",
+    );
+  });
+
   it("keeps release artifact tarball filenames local before upload paths use them", () => {
     const workflow = readFileSync(WORKFLOW_PATH, "utf8");
 
