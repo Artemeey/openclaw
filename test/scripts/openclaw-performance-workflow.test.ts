@@ -141,6 +141,14 @@ describe("OpenClaw performance workflow", () => {
     const install = findStep("Install OCM and Kova");
 
     expect(install.run).toContain(
+      "https://codeload.github.com/${KOVA_REPOSITORY}/tar.gz/${KOVA_REF}",
+    );
+    expect(install.run).toContain(
+      "--retry 8 --retry-max-time 180 --retry-all-errors --retry-connrefused",
+    );
+    expect(install.run).toContain('tar -xzf "$kova_archive" --strip-components=1');
+    expect(install.run).not.toContain('git -C "$KOVA_SRC" fetch');
+    expect(install.run).toContain(
       'npm --prefix "$KOVA_SRC" ci --ignore-scripts --no-audit --no-fund',
     );
     expect(install.run).toContain('require.resolve("mock-ai-provider/package.json", {');
