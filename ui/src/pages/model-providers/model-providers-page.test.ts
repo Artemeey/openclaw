@@ -710,11 +710,16 @@ describe("ModelProvidersPage agent scope", () => {
 
     firstSave.resolve({});
     await vi.waitFor(() => expect(requestCount(request, "models.authOrderSet")).toBe(2));
-    expect(request).toHaveBeenLastCalledWith("models.authOrderSet", {
-      provider: "openai",
-      profileIds: ["openai:one", "openai:two"],
-      agentId: "writer",
-    });
+    expect(
+      request.mock.calls.filter(([method]) => method === "models.authOrderSet").at(-1),
+    ).toEqual([
+      "models.authOrderSet",
+      {
+        provider: "openai",
+        profileIds: ["openai:one", "openai:two"],
+        agentId: "writer",
+      },
+    ]);
   });
 
   it("keeps ordering available when a same-version gateway rejects the core method", async () => {
