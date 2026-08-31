@@ -33,6 +33,35 @@ function run(command: string, args: string[], cwd: string): void {
   }
 }
 
+function packCandidate(cwd: string, archiveBase: string): string {
+  console.log(`$ pnpm --config.ignore-scripts=true pack --pack-destination ${artifactRoot}`);
+  const result = spawnSync(
+    "pnpm",
+    ["--config.ignore-scripts=true", "pack", "--pack-destination", artifactRoot],
+    {
+      cwd,
+      encoding: "utf8",
+      env: process.env,
+      stdio: ["ignore", "pipe", "inherit"],
+    },
+  );
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`pnpm pack exited with status ${result.status}`);
+  }
+  const packageVersion = String(
+    (JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")) as { version?: unknown })
+      .version ?? "",
+  ).trim();
+  const candidateTarball = path.join(artifactRoot, `${archiveBase}-${packageVersion}.tgz`);
+  if (!packageVersion || !fs.existsSync(candidateTarball)) {
+    throw new Error(`pnpm pack did not create the expected candidate tarball: ${candidateTarball}`);
+  }
+  return candidateTarball;
+}
+
 function readInspectorReport(): InspectorReport {
   if (!fs.existsSync(reportPath)) {
     throw new Error(`ClawHub validation report not found: ${reportPath}`);
@@ -56,6 +85,8 @@ function assertCleanInspectorReport(report: InspectorReport): void {
 fs.rmSync(projectDir, { force: true, recursive: true });
 fs.mkdirSync(artifactRoot, { recursive: true });
 run("pnpm", ["build:plugin-sdk:dts"], process.cwd());
+const candidateTarball = packCandidate(process.cwd(), "openclaw");
+const aiCandidateTarball = packCandidate(path.resolve("packages/ai"), "openclaw-ai");
 
 await runPluginsInitCommand("plugin-init-test", {
   directory: projectDir,
@@ -63,23 +94,15 @@ await runPluginsInitCommand("plugin-init-test", {
   type: "provider",
 });
 
-run("npm", ["install", "--no-audit", "--fund=false"], projectDir);
-const installedPackageDir = path.join(projectDir, "node_modules/openclaw");
-const installedPackagePath = path.join(installedPackageDir, "package.json");
-const installedPackage = JSON.parse(fs.readFileSync(installedPackagePath, "utf8")) as {
-  exports: Record<string, Record<string, string>>;
+const projectPackagePath = path.join(projectDir, "package.json");
+const projectPackage = JSON.parse(fs.readFileSync(projectPackagePath, "utf8")) as {
+  devDependencies: Record<string, string>;
 };
-const providerEntryExport = installedPackage.exports["./plugin-sdk/provider-entry"];
-if (!providerEntryExport?.default) {
-  throw new Error("Installed OpenClaw package does not export provider-entry runtime");
-}
-providerEntryExport.types = "./dist/plugin-sdk/provider-entry.d.ts";
-fs.copyFileSync(
-  path.resolve("dist/plugin-sdk/provider-entry.d.ts"),
-  path.join(installedPackageDir, "dist/plugin-sdk/provider-entry.d.ts"),
-);
-fs.writeFileSync(installedPackagePath, `${JSON.stringify(installedPackage, null, 2)}\n`);
-console.log("Staged candidate provider-entry declaration into installed OpenClaw runtime");
+projectPackage.devDependencies.openclaw = `file:${candidateTarball}`;
+projectPackage.devDependencies["@openclaw/ai"] = `file:${aiCandidateTarball}`;
+fs.writeFileSync(projectPackagePath, `${JSON.stringify(projectPackage, null, 2)}\n`);
+run("npm", ["install", "--no-audit", "--fund=false"], projectDir);
+console.log(`Installed exact candidate package: ${candidateTarball}`);
 
 run("npm", ["run", "build"], projectDir);
 run("npm", ["test"], projectDir);
