@@ -39,18 +39,18 @@ function step(job: Job | undefined, name: string): Step {
 }
 
 describe("minimal npm extended-stable workflow", () => {
-  it("pins compatible mainline tooling for the Plugin SDK API diff", () => {
+  it("keeps the Plugin SDK API diff tooling on the trusted workflow revision", () => {
     const parsed = workflow();
-    const expectedToolingSha = "3d12ee7cdc5b4ead9f2a00da4e64e5c955f56e53";
     const checkout = step(
       parsed.jobs?.preflight_openclaw_npm,
       "Checkout trusted Plugin SDK API tooling",
     );
     const verify = step(parsed.jobs?.preflight_openclaw_npm, "Verify Plugin SDK API changes");
 
-    expect(checkout.with?.ref).toBe(expectedToolingSha);
-    expect(verify.env?.PLUGIN_SDK_TOOLING_SHA).toBe(expectedToolingSha);
+    expect(checkout.with?.ref).toBe("${{ github.workflow_sha }}");
+    expect(verify.env?.WORKFLOW_SHA).toBe("${{ github.workflow_sha }}");
     expect(verify.run).toContain('pnpm --dir "$tooling_dir" run plugin-sdk:api:diff');
+    expect(readFileSync("package.json", "utf8")).toContain('"plugin-sdk:api:diff"');
   });
 
   it("adds extended-stable without adding policy or verifier contracts", () => {
