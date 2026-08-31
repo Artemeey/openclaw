@@ -610,6 +610,16 @@ describe("ModelProvidersPage agent scope", () => {
         },
       ],
     };
+    const refreshedStatus = {
+      ...authStatus,
+      ts: 2,
+      providers: [
+        {
+          ...authStatus.providers[0],
+          profileOrder: ["openai:two", "openai:one"],
+        },
+      ],
+    };
     page.data = {
       ...EMPTY_MODEL_PROVIDERS_DATA,
       config: {},
@@ -617,9 +627,11 @@ describe("ModelProvidersPage agent scope", () => {
       updatedAt: 1,
     };
     request.mockClear();
+    let authStatusCalls = 0;
     request.mockImplementation(async (method: string, params?: unknown) => {
       if (method === "models.authStatus") {
-        return staleStatus.promise;
+        authStatusCalls += 1;
+        return authStatusCalls === 1 ? staleStatus.promise : refreshedStatus;
       }
       if (method === "models.authOrderSet") {
         return {};
@@ -632,6 +644,7 @@ describe("ModelProvidersPage agent scope", () => {
     await vi.waitFor(() => expect(requestCount(request, "models.authStatus")).toBe(1));
     page.setProfileOrder("openai", "openai", ["openai:two", "openai:one"]);
     await vi.waitFor(() => expect(requestCount(request, "models.authOrderSet")).toBe(1));
+    await vi.waitFor(() => expect(authStatusCalls).toBe(2));
     await vi.waitFor(() => expect(page.profileOrders.openai).toBeUndefined());
     expect(page.data.authStatus?.providers[0]?.profileOrder).toEqual(["openai:two", "openai:one"]);
 
@@ -710,11 +723,15 @@ describe("ModelProvidersPage agent scope", () => {
 
     firstSave.resolve({});
     await vi.waitFor(() => expect(requestCount(request, "models.authOrderSet")).toBe(2));
-    expect(request).toHaveBeenLastCalledWith("models.authOrderSet", {
-      provider: "openai",
-      profileIds: ["openai:one", "openai:two"],
-      agentId: "writer",
-    });
+    const orderCalls = request.mock.calls.filter(([method]) => method === "models.authOrderSet");
+    expect(orderCalls.at(-1)).toEqual([
+      "models.authOrderSet",
+      {
+        provider: "openai",
+        profileIds: ["openai:one", "openai:two"],
+        agentId: "writer",
+      },
+    ]);
   });
 
   it("keeps ordering available when a same-version gateway rejects the core method", async () => {

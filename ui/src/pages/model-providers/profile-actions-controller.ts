@@ -144,6 +144,7 @@ export class ModelProviderProfileActionsController {
           if (pending.profileIds) {
             this.options.cancelRefresh();
             this.applyOrder(provider, pending.profileIds);
+            void this.options.refresh();
           } else {
             await this.options.refresh();
             if (!this.isCurrentScope(client, clientEpoch, agentEpoch, agentId)) {
