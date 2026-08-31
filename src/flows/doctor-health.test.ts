@@ -9,7 +9,9 @@ import { noteSessionTranscriptHealth } from "../commands/doctor-session-transcri
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { acquireGatewayLock } from "../infra/gateway-lock.js";
+import { tryAcquireExclusiveSqliteCoordinator } from "../infra/node-sqlite.js";
 import {
+  acquireGatewayLifecycleCoordinator,
   resolveStateDatabaseCoordinatorPath,
   resolveStateLifecycleRuntimeDirectory,
 } from "../infra/state-database-coordinator.js";
@@ -385,11 +387,28 @@ describe("runDoctorHealthFlow", () => {
     "workspace-cleanup-failed",
     "restart-unhealthy",
     "ancestor-blocked",
+    "update-swap",
+    "update-pre-plugin",
+    "update-post-plugin",
+    "update-running",
   ] as const)(
     "coordinates the matching managed writer through multi-agent repair: %s",
     async (outcome) => {
       await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
         const clean = outcome.startsWith("clean-");
+        const updating = outcome.startsWith("update-");
+        if (updating) {
+          vi.stubEnv("OPENCLAW_UPDATE_IN_PROGRESS", "1");
+          vi.stubEnv("OPENCLAW_UPDATE_DEFER_CONFIGURED_PLUGIN_INSTALL_REPAIR", "1");
+          vi.stubEnv("OPENCLAW_UPDATE_PARENT_SUPPORTS_DOCTOR_CONFIG_WRITE", "1");
+          if (outcome === "update-swap" || outcome === "update-running") {
+            vi.stubEnv("OPENCLAW_UPDATE_PARENT_SUPPORTS_GATEWAY_RESTART", "1");
+            vi.stubEnv("OPENCLAW_UPDATE_PARENT_ALLOWS_GATEWAY_ACTIVATION", "0");
+          }
+          if (outcome === "update-post-plugin") {
+            vi.stubEnv("OPENCLAW_UPDATE_POST_CORE_CONVERGENCE", "1");
+          }
+        }
         const cfg: OpenClawConfig = {
           agents: {
             ownership: "explicit",
@@ -438,7 +457,21 @@ describe("runDoctorHealthFlow", () => {
         });
         const agentBefore = fs.readFileSync(initial.path);
         const events: string[] = [];
-        let running = true;
+        let running = !updating || outcome === "update-running";
+        if (!running) {
+          releaseOpenClawAgentDatabaseLease(leaseId, { env: state.env });
+        }
+        const gatewayCoordinator = acquireGatewayLifecycleCoordinator({
+          databasePath: resolveOpenClawStateSqlitePath(state.env),
+        });
+        gatewayCoordinator.release();
+        let activeGateway =
+          outcome === "update-running"
+            ? tryAcquireExclusiveSqliteCoordinator(gatewayCoordinator.path, { busyTimeoutMs: 0 })
+            : undefined;
+        if (outcome === "update-running") {
+          expect(activeGateway).not.toBeNull();
+        }
         const packageRoot = process.cwd();
         mocks.packageRoot.mockReturnValue(packageRoot);
         const command = {
@@ -451,6 +484,8 @@ describe("runDoctorHealthFlow", () => {
         const stop = vi.fn(async () => {
           events.push("stop");
           running = false;
+          activeGateway?.release();
+          activeGateway = undefined;
           releaseOpenClawAgentDatabaseLease(leaseId, { env: state.env });
         });
         const restart = vi.fn(async () => {
@@ -501,7 +536,7 @@ describe("runDoctorHealthFlow", () => {
           }
           const result = await migrateLegacyMediaPersistence();
           expect(result.warnings).toEqual([]);
-          if (outcome === "ready" || outcome === "store-close-failed") {
+          if (outcome === "ready" || outcome === "store-close-failed" || updating) {
             // Later diagnostics reopen runtime handles after the migration closes its own.
             const reopened = openOpenClawAgentDatabase({ agentId: "main", env: state.env });
             openOpenClawAgentDatabase({ agentId: "research", env: state.env });
@@ -555,6 +590,16 @@ describe("runDoctorHealthFlow", () => {
             ...(outcome === "clean-inspect" ? {} : { repair: true }),
             nonInteractive: true,
           });
+          if (outcome === "update-running") {
+            await expect(run).rejects.toThrow("another OpenClaw process owns gateway-lifecycle");
+            expect(events).toEqual([]);
+            expect(stop).not.toHaveBeenCalled();
+            expect(restart).not.toHaveBeenCalled();
+            expect(fs.readFileSync(initial.path)).toEqual(agentBefore);
+            expect(fs.readFileSync(state.configPath)).toEqual(configBefore);
+            expect(running).toBe(true);
+            return;
+          }
           if (outcome === "ancestor-blocked") {
             await expect(run).rejects.toThrow("openclaw doctor --fix");
             await expect(run).rejects.toThrow("from a shell outside the gateway service");
@@ -580,24 +625,39 @@ describe("runDoctorHealthFlow", () => {
           const shouldRestart =
             outcome === "ready" || outcome === "restart-unhealthy" || outcome === "clean-repair";
           expect(events).toEqual(
-            outcome === "clean-inspect"
+            outcome === "clean-inspect" || updating
               ? ["repair"]
               : shouldRestart
                 ? ["stop", "repair", "restart"]
                 : ["stop", "repair"],
           );
-          expect(stop).toHaveBeenCalledTimes(outcome === "clean-inspect" ? 0 : 1);
+          expect(stop).toHaveBeenCalledTimes(outcome === "clean-inspect" || updating ? 0 : 1);
+          if (updating) {
+            expect(running).toBe(false);
+            expectCoordinatorReleased();
+            for (const agentId of ["main", "research"]) {
+              expect(() =>
+                assertNoOpenClawAgentDatabaseLeases(agentId, { env: state.env }),
+              ).not.toThrow();
+              const database = openOpenClawAgentDatabase({ agentId, env: state.env });
+              expect(database.db.prepare("PRAGMA user_version").get()?.user_version).toBe(
+                OPENCLAW_AGENT_SCHEMA_VERSION,
+              );
+            }
+          }
           expect(restart).toHaveBeenCalledTimes(shouldRestart ? 1 : 0);
           if (clean) {
             expect(fs.readFileSync(state.configPath)).toEqual(configBefore);
             expect(fs.readFileSync(initial.path)).toEqual(agentBefore);
           }
-          if (outcome === "ready" || clean) {
+          if (outcome === "ready" || clean || updating) {
             expect(mocks.outro).toHaveBeenCalledWith("Doctor complete.");
           } else {
             expect(mocks.outro).not.toHaveBeenCalledWith("Doctor complete.");
           }
         } finally {
+          activeGateway?.release();
+          vi.unstubAllEnvs();
           releaseOpenClawAgentDatabaseLease(leaseId, { env: state.env });
         }
       });

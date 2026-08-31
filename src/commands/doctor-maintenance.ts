@@ -21,6 +21,7 @@ import {
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { readGatewayServiceState, resolveGatewayService } from "../daemon/service.js";
 import { resolvePathViaExistingAncestorSync } from "../infra/boundary-path.js";
+import { isTruthyEnvValue } from "../infra/env.js";
 import {
   acquireGatewayLifecycleCoordinator,
   acquireStateDatabaseCoordinator,
@@ -38,6 +39,7 @@ import {
   isServiceRepairExternallyManaged,
   shouldManageGatewayService,
 } from "./doctor-service-repair-policy.js";
+import { UPDATE_IN_PROGRESS_ENV } from "./doctor/shared/update-phase.js";
 
 async function assertDoctorMaintenanceSchemasCompatible(env: NodeJS.ProcessEnv): Promise<void> {
   // Core-only materialization avoids plugin runtime/state loading before the
@@ -147,7 +149,10 @@ export async function beginDoctorMaintenance(params: {
     }
   };
   try {
+    // The updater owns stop, plugin convergence, and restart across all Doctor
+    // passes. Its --no-restart path must still prove offline ownership below.
     if (
+      !isTruthyEnvValue(env[UPDATE_IN_PROGRESS_ENV]) &&
       params.root &&
       isDefaultInstallIdentity(env) &&
       !isServiceRepairExternallyManaged() &&
