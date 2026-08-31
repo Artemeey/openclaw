@@ -126,6 +126,11 @@ async function fetchEndpoint(params: {
       maxRedirects: 0,
       policy: params.ssrfPolicy,
       auditContext: "openrouter-usage",
+      beforeRequest: () => {
+        if (params.isAuthProfileCurrent?.() === false) {
+          throw new Error("Usage profile is no longer current");
+        }
+      },
     });
   } catch {
     return { ok: false, reason: "transport" };
