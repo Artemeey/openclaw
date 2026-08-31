@@ -12,6 +12,7 @@ import { approveDevicePairing } from "../infra/device-pairing-approval.js";
 import { revokeDeviceToken, rotateDeviceToken } from "../infra/device-pairing-tokens.js";
 import { requestDevicePairing } from "../infra/device-pairing.js";
 import { withEnvAsync } from "../test-utils/env.js";
+import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { withTempDir } from "../test-utils/temp-dir.js";
 
 const callGatewayMock = vi.hoisted(() => vi.fn());
@@ -170,47 +171,71 @@ describe("noteDevicePairingHealth", () => {
     });
   });
 
-  it("warns when a legacy pairing store file has not been imported into SQLite", async () => {
-    await withTempDir("openclaw-doctor-device-pairing-", async (stateDir) => {
-      await withEnvAsync(
-        {
-          OPENCLAW_STATE_DIR: stateDir,
-          OPENCLAW_TEST_FAST: "1",
-        },
-        async () => {
-          const pairedPath = path.join(stateDir, "devices", "paired.json");
-          await fs.mkdir(path.dirname(pairedPath), { recursive: true });
-          await fs.writeFile(pairedPath, "{not-json}", "utf8");
+  it.each([
+    {
+      file: "devices/paired.json",
+      mode: "local",
+      findingPath: "devices.legacy-store",
+      requirement: "pairing-store-legacy-file",
+      fixHint: "Restart the gateway",
+    },
+    ...(["local", "remote"] as const).map((mode) => ({
+      file: "identity/device-auth.json",
+      mode,
+      findingPath: "identity.device-auth",
+      requirement: "device-auth-store-legacy-file",
+      fixHint: "openclaw doctor --fix",
+    })),
+  ] as const)(
+    "warns about unimported $file in $mode mode without changing it",
+    async (testCase) => {
+      await withOpenClawTestState(
+        { prefix: "openclaw-doctor-device-pairing-", env: { OPENCLAW_TEST_FAST: "1" } },
+        async (state) => {
+          const content =
+            testCase.file === "devices/paired.json"
+              ? "{not-json}"
+              : JSON.stringify({
+                  version: 1,
+                  deviceId: "synthetic-device",
+                  tokens: {
+                    operator: {
+                      token: "synthetic-legacy-token",
+                      role: "operator",
+                      scopes: ["operator.read"],
+                      updatedAtMs: 10,
+                    },
+                  },
+                });
+          const sourcePath = await state.writeText(testCase.file, content);
+          const params = { cfg: { gateway: { mode: testCase.mode } }, healthOk: false };
 
-          await noteDevicePairingHealth({
-            cfg: { gateway: { mode: "local" } },
-            healthOk: false,
-          });
-
-          expect(noteMock).toHaveBeenCalledTimes(1);
-          const message = requireNoteMessage();
-          expect(requireNoteTitle()).toBe("Device pairing");
-          expect(message).toContain("paired.json");
-          expect(message).toContain("has not been imported");
-          expect(await fs.readFile(pairedPath, "utf8")).toBe("{not-json}");
-
-          const findings = await collectDevicePairingHealthFindings({
-            cfg: { gateway: { mode: "local" } },
-          });
-          expect(findings).toEqual([
+          const findings = await collectDevicePairingHealthFindings(params);
+          expect.soft(findings).toEqual([
             expect.objectContaining({
               checkId: "core/doctor/device-pairing",
               severity: "warning",
-              path: "devices.legacy-store",
-              requirement: "pairing-store-legacy-file",
+              path: testCase.findingPath,
+              requirement: testCase.requirement,
               message: expect.stringContaining("has not been imported"),
+              fixHint: expect.stringContaining(testCase.fixHint),
             }),
           ]);
-          expect(await fs.readFile(pairedPath, "utf8")).toBe("{not-json}");
+          await noteDevicePairingHealth(params);
+          expect.soft(noteMock).toHaveBeenCalledTimes(1);
+          expect(noteMock).toHaveBeenCalledWith(
+            expect.stringContaining(path.basename(sourcePath)),
+            "Device pairing",
+          );
+          expect(requireNoteMessage()).not.toContain("synthetic-legacy-token");
+          expect(await fs.readFile(sourcePath, "utf8")).toBe(content);
+          await expect(fs.stat(state.statePath("state", "openclaw.sqlite"))).rejects.toMatchObject({
+            code: "ENOENT",
+          });
         },
       );
-    });
-  });
+    },
+  );
 
   it("warns when the local cached device token predates the gateway rotation", async () => {
     await withApprovedOperatorPairing(async ({ identity }) => {

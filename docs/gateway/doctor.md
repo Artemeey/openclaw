@@ -522,6 +522,7 @@ That stages grounded durable candidates into the short-term dreaming store while
     - paired records missing an active token for an approved role
     - paired tokens whose scopes drift outside the approved pairing baseline
     - local cached device-token entries for the current machine that predate a gateway-side token rotation or carry stale scope metadata
+    - a retired `identity/device-auth.json` file that prevents inspection of locally cached tokens, including in remote Gateway mode; stop the Gateway and run `openclaw doctor --fix` to import it into SQLite
 
     Doctor does not auto-approve pair requests or auto-rotate device tokens. It prints the exact next steps:
 
