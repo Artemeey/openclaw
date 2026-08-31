@@ -1839,9 +1839,15 @@ describe("setAuthProfileOrder", () => {
             profiles: {
               [profileId]: { type: "api_key", provider: "openai", key: "inherited" },
             },
+            order: { openai: [profileId] },
           },
           inheritedAuthDir,
         );
+        const inheritedView = loadAuthProfileStoreWithoutExternalProfiles(customAgentDir, {
+          inheritedAuthDir,
+        }) as RuntimeAuthProfileStore;
+        expect(inheritedView.order?.openai).toEqual([profileId]);
+        expect(inheritedView.runtimeLocalOrderProviders).toEqual([]);
 
         await expect(
           setAuthProfileOrder({
