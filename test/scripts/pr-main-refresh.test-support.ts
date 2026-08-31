@@ -12,6 +12,7 @@ import {
 import { delimiter, join } from "node:path";
 import { afterAll } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
+import { copyPrWrapperFixture } from "./pr-wrapper-fixture.js";
 
 const templateDirs = useAutoCleanupTempDirTracker(afterAll);
 let fixtureTemplate: ReturnType<typeof createMainRefreshTemplate> | undefined;
@@ -72,6 +73,7 @@ function createMainRefreshTemplate(directory: string) {
       recursive: true,
     });
   }
+  copyPrWrapperFixture(canonical);
   cpSync(join(process.cwd(), ".github", "workflows"), join(canonical, ".github", "workflows"), {
     recursive: true,
   });
@@ -530,8 +532,11 @@ if (process.argv[1]?.endsWith('/watch-pr-ci.mts')) {
     metadata,
     configure(update: Partial<typeof control>) {
       Object.assign(control, update);
-      if (control.hostedCi === "scheduled") delete env.NODE_OPTIONS;
-      else env.NODE_OPTIONS = `--import=${clock}`;
+      if (control.hostedCi === "scheduled") {
+        delete env.NODE_OPTIONS;
+      } else {
+        env.NODE_OPTIONS = `--import=${clock}`;
+      }
       writeFileSync(controlFile, JSON.stringify(control));
     },
     events() {

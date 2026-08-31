@@ -44,50 +44,157 @@ requested_subcommand="${1-}"
 script_self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 script_parent_dir="$(dirname "$script_self")"
 canonical_repo_root="$script_parent_dir/.."
-pr_wrapper_components=(
-  scripts/pr
-  scripts/pr-lib
-  scripts/lib/plain-gh.sh
-  scripts/lib/plain-gh.mjs
-  scripts/lib/direct-run.mjs
-  scripts/lib/tsx-cli-shim.mjs
-  scripts/lib/local-check-runtime.mts
-  scripts/tsx.mjs
-  scripts/crabbox-untrusted-bootstrap.sh
-  scripts/pr-crabbox-gate-publisher.mjs
-  scripts/verify-pr-hosted-gates.mjs
-  scripts/verify-pr-hosted-gates.mts
-  scripts/watch-pr-ci.mjs
-  scripts/watch-pr-ci.mts
+pr_anchor_manifest_path="scripts/pr-lib/anchor-runtime-paths.txt"
+pr_remote_only_trust_paths=(
   .github/workflows/pr-crabbox-gate-publisher.yml
+  scripts/pr-crabbox-gate-publisher.mjs
+  scripts/crabbox-untrusted-bootstrap.sh
 )
-# Anchor-exec handoff: this process was exec'd from wrapper bytes materialized
-# out of refs/remotes/origin/main by the selection logic below in a previous
-# wrapper. The env var conveys repository addressing only — code trust came
-# from the parent's per-blob verification of the materialized copy, the same
-# verify-then-exec contract as the canonical-checkout substitution. Skip
-# re-selection: the running bytes ARE the anchor, and the temp copy has no git
-# context of its own to select against.
-if [ -n "${OPENCLAW_PR_ANCHOR_REPO_ROOT:-}" ]; then
-  if ! git -C "$OPENCLAW_PR_ANCHOR_REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "OPENCLAW_PR_ANCHOR_REPO_ROOT is not a git work tree: $OPENCLAW_PR_ANCHOR_REPO_ROOT" >&2
+
+pr_anchor_manifest_error() {
+  echo "Invalid scripts/pr anchor runtime manifest at $1: $2" >&2
+  return 1
+}
+
+load_pr_wrapper_paths() {
+  local git_root="$1"
+  local revision="$2"
+  local manifest_with_sentinel manifest path entry meta listed_path mode type
+  local runtime_paths=()
+  local seen_paths=$'\n'
+
+  manifest_with_sentinel=$(
+    git -C "$git_root" show "$revision:$pr_anchor_manifest_path" 2>/dev/null &&
+      printf '\034'
+  ) || {
+    pr_anchor_manifest_error "$revision" "cannot read $pr_anchor_manifest_path"
+    return 1
+  }
+  manifest="${manifest_with_sentinel%$'\034'}"
+  while IFS= read -r path || [ -n "$path" ]; do
+    if [ -z "$path" ] ||
+      [[ ! "$path" =~ ^[A-Za-z0-9@._+/][-A-Za-z0-9@._+/]*$ ]] ||
+      [ "${path#/}" != "$path" ] ||
+      [ "${path#./}" != "$path" ] ||
+      [ "${path#-}" != "$path" ] ||
+      [[ "/$path/" = *//* || "/$path/" = */./* || "/$path/" = */../* ]]; then
+      pr_anchor_manifest_error "$revision" "unsafe path '$path'"
+      return 1
+    fi
+    if [[ "$seen_paths" = *$'\n'"$path"$'\n'* ]]; then
+      pr_anchor_manifest_error "$revision" "duplicate path '$path'"
+      return 1
+    fi
+    entry=$(git -C "$git_root" ls-tree "$revision" -- "$path" 2>/dev/null)
+    IFS=$'\t' read -r meta listed_path <<<"$entry"
+    read -r mode type _ <<<"$meta"
+    if [ "$listed_path" != "$path" ] || [ "$type" != "blob" ] ||
+      { [ "$mode" != "100644" ] && [ "$mode" != "100755" ]; }; then
+      pr_anchor_manifest_error "$revision" "'$path' is not a regular tracked file"
+      return 1
+    fi
+    runtime_paths+=("$path")
+    seen_paths+="$path"$'\n'
+  done < <(printf '%s' "$manifest")
+
+  if [[ "$seen_paths" != *$'\n'scripts/pr$'\n'* ]] ||
+    [[ "$seen_paths" != *$'\n'"$pr_anchor_manifest_path"$'\n'* ]]; then
+    pr_anchor_manifest_error "$revision" "must include scripts/pr and $pr_anchor_manifest_path"
+    return 1
+  fi
+  for path in "${pr_remote_only_trust_paths[@]}"; do
+    if [[ "$seen_paths" = *$'\n'"$path"$'\n'* ]]; then
+      pr_anchor_manifest_error "$revision" "remote-only path '$path' is archived"
+      return 1
+    fi
+  done
+  pr_anchor_runtime_paths=("${runtime_paths[@]}")
+  pr_wrapper_components=("${runtime_paths[@]}" "${pr_remote_only_trust_paths[@]}")
+}
+
+pr_path_revisions() {
+  local git_root="$1" prefix="$2:"
+  local revisions
+  shift 2
+  revisions=$(git -C "$git_root" rev-parse "${@/#/$prefix}" 2>/dev/null) || return 1
+  printf '%s\n' "$revisions"
+}
+
+resolve_pr_git_root() {
+  local root
+  root=$(git -C "$1" rev-parse --show-toplevel 2>/dev/null) || return 1
+  (cd "$root" && pwd -P)
+}
+
+verify_materialized_anchor_runtime() {
+  local git_root="$1"
+  local revision="$2"
+  local archive_root="$3"
+  local path expected actual
+  for path in "${pr_anchor_runtime_paths[@]}"; do
+    expected=$(git -C "$git_root" rev-parse "$revision:$path" 2>/dev/null) || return 1
+    actual=$(git -C "$git_root" hash-object -- "$archive_root/$path" 2>/dev/null) || return 1
+    [ "$actual" = "$expected" ] || return 1
+  done
+}
+
+if [ -n "${OPENCLAW_PR_ANCHOR_HANDOFF_VERSION:-}${OPENCLAW_PR_ANCHOR_SHA:-}${OPENCLAW_PR_ANCHOR_REPO_ROOT:-}${OPENCLAW_PR_ANCHOR_WORKTREE_ROOT:-}" ]; then
+  if [ "${OPENCLAW_PR_ANCHOR_HANDOFF_VERSION:-}" != "1" ] ||
+    [[ ! "${OPENCLAW_PR_ANCHOR_SHA:-}" =~ ^[0-9a-f]{40}$ ]] ||
+    [ -z "${OPENCLAW_PR_ANCHOR_REPO_ROOT:-}" ] ||
+    [ -z "${OPENCLAW_PR_ANCHOR_WORKTREE_ROOT:-}" ]; then
+    echo "Refusing legacy scripts/pr anchor handoff; rerun from the invoking checkout to rematerialize the complete runtime bundle." >&2
     exit 1
   fi
-  canonical_repo_root="$OPENCLAW_PR_ANCHOR_REPO_ROOT"
+  if ! canonical_repo_root=$(resolve_pr_git_root "$OPENCLAW_PR_ANCHOR_REPO_ROOT") ||
+    ! anchor_worktree_root=$(resolve_pr_git_root "$OPENCLAW_PR_ANCHOR_WORKTREE_ROOT"); then
+    echo "Invalid scripts/pr anchor handoff repository roots." >&2
+    exit 1
+  fi
+  if [ "$(git -C "$canonical_repo_root" rev-parse --path-format=absolute --git-common-dir)" !=
+    "$(git -C "$anchor_worktree_root" rev-parse --path-format=absolute --git-common-dir)" ]; then
+    echo "Invalid scripts/pr anchor handoff: canonical and invoking roots do not share one repository." >&2
+    exit 1
+  fi
+  anchor_sha="$OPENCLAW_PR_ANCHOR_SHA"
+  if [ "$(git -C "$anchor_worktree_root" cat-file -t "$anchor_sha" 2>/dev/null || true)" != "commit" ]; then
+    echo "Invalid scripts/pr anchor handoff SHA: $OPENCLAW_PR_ANCHOR_SHA" >&2
+    exit 1
+  fi
+  if ! load_pr_wrapper_paths "$anchor_worktree_root" "$anchor_sha" ||
+    ! verify_materialized_anchor_runtime "$anchor_worktree_root" "$anchor_sha" "$script_parent_dir/.."
+  then
+    echo "Invalid scripts/pr anchor handoff: materialized runtime does not match $anchor_sha." >&2
+    exit 1
+  fi
+  export PNPM_CONFIG_MODULES_DIR="$canonical_repo_root/node_modules"
+  export TSX_TSCONFIG_PATH="$script_parent_dir/pr-lib/anchor-runtime-tsconfig.json"
 elif common_git_dir=$(git -C "$script_parent_dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
   canonical_repo_root="$(dirname "$common_git_dir")"
   canonical_self="$canonical_repo_root/scripts/$(basename "${BASH_SOURCE[0]}")"
   if [ "$script_self" != "$canonical_self" ] && [ -x "$canonical_self" ]; then
+    anchor_git_root=$(resolve_pr_git_root "$script_parent_dir") || {
+      echo "Unable to resolve the invoking scripts/pr worktree." >&2
+      exit 1
+    }
+    # Freeze the remote-tracking ref once; all trust, archive, and diagnostics
+    # below address this immutable commit even if a concurrent fetch moves it.
+    anchor_sha=$(
+      git -C "$anchor_git_root" rev-parse --verify "refs/remotes/origin/main^{commit}" 2>/dev/null ||
+        true
+    )
+    manifest_revision="${anchor_sha:-$(git -C "$anchor_git_root" rev-parse HEAD)}"
+    load_pr_wrapper_paths "$anchor_git_root" "$manifest_revision" || exit 1
     if ! git -C "$script_parent_dir" diff --quiet HEAD -- "${pr_wrapper_components[@]/#/:(top)}"; then
       echo "scripts/pr wrapper files have uncommitted changes in this worktree." >&2
       echo "Refusing to run unreviewed wrapper code from: $script_parent_dir" >&2
       exit 1
     fi
     linked_wrapper_revision=$(
-      git -C "$script_parent_dir" rev-parse "${pr_wrapper_components[@]/#/HEAD:}" 2>/dev/null || true
+      pr_path_revisions "$script_parent_dir" HEAD "${pr_wrapper_components[@]}" || true
     )
     canonical_wrapper_revision=$(
-      git -C "$canonical_repo_root" rev-parse "${pr_wrapper_components[@]/#/HEAD:}" 2>/dev/null || true
+      pr_path_revisions "$canonical_repo_root" HEAD "${pr_wrapper_components[@]}" || true
     )
     canonical_wrapper_clean=1
     if ! git -C "$canonical_repo_root" diff --quiet HEAD -- "${pr_wrapper_components[@]/#/:(top)}"; then
@@ -104,9 +211,12 @@ elif common_git_dir=$(git -C "$script_parent_dir" rev-parse --path-format=absolu
     # substitution, when it exactly matches origin/main.
     # refs/remotes/... explicitly: bare "origin/main" is a DWIM name that a
     # local branch or tag named origin/main could shadow, spoofing the anchor.
-    anchor_wrapper_revision=$(
-      git -C "$script_parent_dir" rev-parse "${pr_wrapper_components[@]/#/refs/remotes/origin/main:}" 2>/dev/null || true
-    )
+    anchor_wrapper_revision=""
+    if [ -n "$anchor_sha" ]; then
+      anchor_wrapper_revision=$(
+        pr_path_revisions "$anchor_git_root" "$anchor_sha" "${pr_wrapper_components[@]}" || true
+      )
+    fi
     if [ -z "$linked_wrapper_revision" ] ||
       [ -z "$anchor_wrapper_revision" ] ||
       [ "$linked_wrapper_revision" != "$anchor_wrapper_revision" ]; then
@@ -142,41 +252,29 @@ elif common_git_dir=$(git -C "$script_parent_dir" rev-parse --path-format=absolu
         # Archive emits paths relative to its cwd, so run it (and the
         # verification listing) from the worktree toplevel to keep component
         # paths intact in the materialized tree.
-        anchor_git_root=$(git -C "$script_parent_dir" rev-parse --show-toplevel 2>/dev/null || true)
         if [ -n "$anchor_wrapper_revision" ] && [ -n "$anchor_git_root" ] &&
           anchor_exec_dir=$(mktemp -d "${TMPDIR:-/tmp}/openclaw-pr-anchor.XXXXXX" 2>/dev/null); then
           anchor_extraction_valid=0
-          if git -C "$anchor_git_root" archive refs/remotes/origin/main -- \
-            "${pr_wrapper_components[@]}" 2>/dev/null |
+          if git -C "$anchor_git_root" archive "$anchor_sha" -- \
+            "${pr_anchor_runtime_paths[@]}" 2>/dev/null |
             tar -x -C "$anchor_exec_dir" 2>/dev/null; then
             anchor_extraction_valid=1
-            anchor_verified_entries=0
-            # Verify every extracted file byte-matches its anchor blob so an
-            # archive/extract fault can never smuggle different code past the
-            # trust boundary. The temp dir is 0700 and exec'd immediately —
-            # the same TOCTOU class as the canonical-substitution exec above.
-            while IFS=$'\t' read -r anchor_meta anchor_path; do
-              anchor_blob="${anchor_meta##* }"
-              extracted_blob=$(git -C "$anchor_git_root" hash-object -- \
-                "$anchor_exec_dir/$anchor_path" 2>/dev/null || true)
-              if [ -z "$extracted_blob" ] || [ "$extracted_blob" != "$anchor_blob" ]; then
-                anchor_extraction_valid=0
-                break
-              fi
-              anchor_verified_entries=$((anchor_verified_entries + 1))
-            done < <(git -C "$anchor_git_root" ls-tree -r --full-tree refs/remotes/origin/main -- "${pr_wrapper_components[@]}")
-            # An empty listing means the anchor read failed; never exec unverified bytes.
-            if [ "$anchor_verified_entries" = "0" ]; then
+            if ! verify_materialized_anchor_runtime \
+              "$anchor_git_root" "$anchor_sha" "$anchor_exec_dir"; then
               anchor_extraction_valid=0
             fi
           fi
           if [ "$anchor_extraction_valid" = "1" ] &&
-            grep -q "OPENCLAW_PR_ANCHOR_REPO_ROOT" "$anchor_exec_dir/scripts/pr" 2>/dev/null; then
+            grep -q "OPENCLAW_PR_ANCHOR_HANDOFF_VERSION" "$anchor_exec_dir/scripts/pr" 2>/dev/null; then
             # Not cleaned by trap: exec replaces this shell, and bash re-reads
             # the script file during execution, so the copy must outlive the
             # whole supervised run. OS tmp reaping owns the ~200 KiB dir.
-            echo "scripts/pr wrapper in this worktree differs from origin/main; running wrapper code materialized from the refs/remotes/origin/main trust anchor at revision $(git -C "$script_parent_dir" rev-parse --short refs/remotes/origin/main)." >&2
-            OPENCLAW_PR_ANCHOR_REPO_ROOT="$canonical_repo_root" exec "$anchor_exec_dir/scripts/pr" "$@"
+            echo "scripts/pr wrapper in this worktree differs from origin/main; running wrapper code materialized from the refs/remotes/origin/main trust anchor at revision ${anchor_sha:0:12}." >&2
+            OPENCLAW_PR_ANCHOR_HANDOFF_VERSION=1 \
+              OPENCLAW_PR_ANCHOR_SHA="$anchor_sha" \
+              OPENCLAW_PR_ANCHOR_REPO_ROOT="$canonical_repo_root" \
+              OPENCLAW_PR_ANCHOR_WORKTREE_ROOT="$anchor_git_root" \
+              exec "$anchor_exec_dir/scripts/pr" "$@"
           fi
           rm -rf "$anchor_exec_dir"
         fi
@@ -186,7 +284,10 @@ elif common_git_dir=$(git -C "$script_parent_dir" rev-parse --path-format=absolu
         differing_wrapper_components=()
         for wrapper_component in "${pr_wrapper_components[@]}"; do
           linked_component_revision=$(git -C "$script_parent_dir" rev-parse "HEAD:$wrapper_component" 2>/dev/null || true)
-          anchor_component_revision=$(git -C "$script_parent_dir" rev-parse "refs/remotes/origin/main:$wrapper_component" 2>/dev/null || true)
+          anchor_component_revision=""
+          if [ -n "$anchor_sha" ]; then
+            anchor_component_revision=$(git -C "$anchor_git_root" rev-parse "$anchor_sha:$wrapper_component" 2>/dev/null || true)
+          fi
           if [ -z "$linked_component_revision" ] ||
             [ -z "$anchor_component_revision" ] ||
             [ "$linked_component_revision" != "$anchor_component_revision" ]; then

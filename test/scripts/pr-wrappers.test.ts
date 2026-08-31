@@ -4,6 +4,7 @@ import {
   chmodSync,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,8 +14,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, posix } from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  copyPrWrapperFixture,
+  readPrAnchorRuntimePaths,
+  readPrRemoteOnlyTrustPaths,
+} from "./pr-wrapper-fixture.js";
 
 function readScript(path: string): string {
   return readFileSync(path, "utf8");
@@ -24,7 +30,7 @@ const anchorSubstitutionNotice = (repo: string) =>
   `scripts/pr wrapper in this worktree differs from origin/main; running the canonical checkout's wrapper (matches the origin/main trust anchor): ${repo}`;
 const itPosix = process.platform === "win32" ? it.skip : it;
 
-function makeMismatchedWrapperRepo() {
+function makeMismatchedWrapperRepo(dispatchBody = 'echo "canonical wrapper executed";') {
   const root = realpathSync(mkdtempSync(join(realpathSync(tmpdir()), "openclaw-pr-dev-wrapper-")));
   const bin = join(root, "bin");
   const home = join(root, "home");
@@ -71,40 +77,7 @@ function makeMismatchedWrapperRepo() {
   git(root, ["init", "-b", "main", canonicalPath]);
   const canonical = realpathSync(canonicalPath);
   const origin = realpathSync(originPath);
-  mkdirSync(join(canonical, ".github", "workflows"), { recursive: true });
-  mkdirSync(join(canonical, "scripts", "lib"), { recursive: true });
-  cpSync("scripts/pr-lib", join(canonical, "scripts", "pr-lib"), { recursive: true });
-  writeFileSync(join(canonical, "scripts", "pr"), readScript("scripts/pr"));
-  cpSync(
-    ".github/workflows/pr-crabbox-gate-publisher.yml",
-    join(canonical, ".github", "workflows", "pr-crabbox-gate-publisher.yml"),
-  );
-  cpSync(
-    "scripts/crabbox-untrusted-bootstrap.sh",
-    join(canonical, "scripts", "crabbox-untrusted-bootstrap.sh"),
-  );
-  cpSync(
-    "scripts/pr-crabbox-gate-publisher.mjs",
-    join(canonical, "scripts", "pr-crabbox-gate-publisher.mjs"),
-  );
-  cpSync("scripts/watch-pr-ci.mjs", join(canonical, "scripts", "watch-pr-ci.mjs"));
-  cpSync("scripts/watch-pr-ci.mts", join(canonical, "scripts", "watch-pr-ci.mts"));
-  cpSync(
-    "scripts/verify-pr-hosted-gates.mjs",
-    join(canonical, "scripts", "verify-pr-hosted-gates.mjs"),
-  );
-  cpSync(
-    "scripts/verify-pr-hosted-gates.mts",
-    join(canonical, "scripts", "verify-pr-hosted-gates.mts"),
-  );
-  cpSync("scripts/lib/plain-gh.mjs", join(canonical, "scripts", "lib", "plain-gh.mjs"));
-  cpSync("scripts/lib/direct-run.mjs", join(canonical, "scripts", "lib", "direct-run.mjs"));
-  cpSync("scripts/lib/tsx-cli-shim.mjs", join(canonical, "scripts", "lib", "tsx-cli-shim.mjs"));
-  cpSync(
-    "scripts/lib/local-check-runtime.mts",
-    join(canonical, "scripts", "lib", "local-check-runtime.mts"),
-  );
-  cpSync("scripts/tsx.mjs", join(canonical, "scripts", "tsx.mjs"));
+  copyPrWrapperFixture(canonical);
   writeFileSync(
     join(canonical, "scripts", "lib", "plain-gh.sh"),
     "resolve_plain_gh_bin() { printf '/usr/bin/true\\n'; }\ngh_plain() { :; }\n",
@@ -113,7 +86,7 @@ function makeMismatchedWrapperRepo() {
   // an anchor-substituted canonical run apart from a local wrapper run.
   writeFileSync(
     join(canonical, "scripts", "pr-lib", "gates.sh"),
-    'ci_dispatch() { echo "canonical wrapper executed"; }\n',
+    `ci_dispatch() { ${dispatchBody} }\n`,
   );
   chmodSync(join(canonical, "scripts", "pr"), 0o755);
 
@@ -122,9 +95,10 @@ function makeMismatchedWrapperRepo() {
   git(canonical, ["config", "commit.gpgSign", "false"]);
   git(canonical, ["config", "core.hooksPath", "/dev/null"]);
   git(canonical, ["remote", "add", "origin", origin]);
-  git(canonical, ["add", "scripts", ".github"]);
+  git(canonical, ["add", "scripts", ".github", "packages"]);
   git(canonical, ["commit", "-m", "test: canonical wrapper"]);
   git(canonical, ["push", "-u", "origin", "main"]);
+  const anchorRevision = git(canonical, ["rev-parse", "HEAD"]).stdout.trim();
   git(canonical, ["worktree", "add", "-b", "feature", linkedPath, "main"]);
 
   const linked = realpathSync(linkedPath);
@@ -144,6 +118,7 @@ function makeMismatchedWrapperRepo() {
   const localRevision = git(linked, ["rev-parse", "HEAD"]).stdout.trim();
 
   return {
+    anchorRevision,
     bin,
     canonical,
     cleanup: () => rmSync(root, { recursive: true, force: true }),
@@ -203,23 +178,79 @@ function parseDispatchedSubcommands(script: string): string[] {
   return commands.filter((command) => command !== "*");
 }
 
+function runtimeRelativeDependencies(file: string): string[] {
+  const source = readScript(file);
+  const dependencies = new Set<string>();
+  if (/\.[cm]?[jt]sx?$/u.test(file)) {
+    const modulePattern = /(?:from\s+|import\s*\(|new URL\s*\()\s*["'](\.{1,2}\/[^"']+)["']/gu;
+    for (const match of source.matchAll(modulePattern)) {
+      const specifier = match[1];
+      if (specifier) {
+        dependencies.add(posix.normalize(posix.join(posix.dirname(file), specifier)));
+      }
+    }
+  }
+  for (const line of source.split("\n")) {
+    const fromScriptsDir = /source "\$script_parent_dir\/([^"]+)"/u.exec(line)?.[1];
+    if (fromScriptsDir) {
+      dependencies.add(posix.join("scripts", fromScriptsDir));
+      continue;
+    }
+    const siblingSource = /source .*\/([^/"$]+\.sh)"/u.exec(line)?.[1];
+    if (siblingSource) {
+      dependencies.add(posix.join(posix.dirname(file), siblingSource));
+    }
+  }
+  return [...dependencies];
+}
+
 describe("scripts/pr wrappers", () => {
+  it("keeps the materialized anchor manifest valid and closed over relative imports", () => {
+    const runtimePaths = readPrAnchorRuntimePaths();
+    const remoteOnlyPaths = readPrRemoteOnlyTrustPaths();
+    const runtimePathSet = new Set(runtimePaths);
+
+    expect(runtimePaths.length).toBeGreaterThan(0);
+    expect(runtimePathSet.size).toBe(runtimePaths.length);
+    expect(runtimePathSet).toContain("scripts/pr");
+    expect(runtimePathSet).toContain("scripts/pr-lib/anchor-runtime-paths.txt");
+    for (const file of runtimePaths) {
+      expect(file).toMatch(/^[A-Za-z0-9@._+/-]+$/u);
+      expect(file.startsWith("/")).toBe(false);
+      expect(file.startsWith("./")).toBe(false);
+      expect(file.startsWith("-")).toBe(false);
+      expect(file.split("/")).not.toContain("");
+      expect(file.split("/")).not.toContain(".");
+      expect(file.split("/")).not.toContain("..");
+      expect(posix.normalize(file)).toBe(file);
+      expect(lstatSync(file).isFile()).toBe(true);
+      expect(lstatSync(file).isSymbolicLink()).toBe(false);
+      for (const dependency of runtimeRelativeDependencies(file)) {
+        expect(runtimePathSet.has(dependency), `${file} imports ${dependency}`).toBe(true);
+      }
+    }
+    for (const file of remoteOnlyPaths) {
+      expect(runtimePathSet.has(file), file).toBe(false);
+    }
+  });
+
   it("keeps the main PR helper usage and command table aligned", () => {
     const script = readScript("scripts/pr");
+    const runtimePaths = readPrAnchorRuntimePaths();
 
     expect(script).toContain("export NO_COLOR=1");
     expect(script).toContain("unset COLORTERM");
     expect(script).toContain('source "$script_parent_dir/lib/plain-gh.sh"');
     expect(script).toContain("for cmd in git gh jq rg pnpm node");
     expect(script).not.toContain("gh() {");
-    expect(script).toContain("scripts/watch-pr-ci.mjs");
-    expect(script).toContain("scripts/watch-pr-ci.mts");
-    expect(script).toContain("scripts/verify-pr-hosted-gates.mjs");
-    expect(script).toContain("scripts/verify-pr-hosted-gates.mts");
-    expect(script).toContain("scripts/lib/tsx-cli-shim.mjs");
-    expect(script).toContain("scripts/tsx.mjs");
-    expect(script).toContain("scripts/lib/plain-gh.mjs");
-    expect(script).toContain("scripts/lib/direct-run.mjs");
+    expect(runtimePaths).toContain("scripts/watch-pr-ci.mjs");
+    expect(runtimePaths).toContain("scripts/watch-pr-ci.mts");
+    expect(runtimePaths).toContain("scripts/verify-pr-hosted-gates.mjs");
+    expect(runtimePaths).toContain("scripts/verify-pr-hosted-gates.mts");
+    expect(runtimePaths).toContain("scripts/lib/tsx-cli-shim.mjs");
+    expect(runtimePaths).toContain("scripts/tsx.mjs");
+    expect(runtimePaths).toContain("scripts/lib/plain-gh.mjs");
+    expect(runtimePaths).toContain("scripts/lib/direct-run.mjs");
     expect(script).toContain("scripts/pr review-init <PR>");
     expect(script).toContain("scripts/pr prepare-run <PR>");
     expect(script).toContain("scripts/pr ci-dispatch <PR>");
@@ -493,6 +524,270 @@ describe("scripts/pr wrappers", () => {
     }
   });
 
+  it("initializes stamped review artifacts through the materialized anchor", () => {
+    const fixture = makeMismatchedWrapperRepo();
+    try {
+      const reviewRoot = join(fixture.canonical, ".worktrees", "pr-123");
+      fixture.git(fixture.canonical, [
+        "worktree",
+        "add",
+        "--detach",
+        reviewRoot,
+        fixture.localRevision,
+      ]);
+      mkdirSync(join(reviewRoot, ".local"));
+      writeFileSync(join(reviewRoot, ".local", "pr-meta.env"), "PR_NUMBER=123\n");
+      writeFileSync(
+        join(reviewRoot, ".local", "pr-meta.json"),
+        JSON.stringify({ number: 123, headRefOid: fixture.localRevision, files: [] }),
+      );
+      parkCanonicalOffAnchor(fixture);
+      const result = spawnSync(
+        join(fixture.linked, "scripts", "pr"),
+        ["review-artifacts-init", "123"],
+        {
+          cwd: fixture.linked,
+          encoding: "utf8",
+          env: { ...fixture.env, TMPDIR: fixture.root },
+        },
+      );
+      expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+      expect(result.stderr).toContain("running wrapper code materialized from");
+      expect(JSON.parse(readScript(join(reviewRoot, ".local", "review.json"))).pr).toEqual({
+        number: 123,
+        headSha: fixture.localRevision,
+      });
+      expect(readScript(join(reviewRoot, ".local", "review.md")).split("\n")[0]).toBe(
+        `Review artifact for PR #123 at ${fixture.localRevision}`,
+      );
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("starts the hosted verifier from a dependency-less PR worktree", () => {
+    const fixture = makeMismatchedWrapperRepo(
+      'node "$script_parent_dir/verify-pr-hosted-gates.mjs" --anchor-proof;',
+    );
+    try {
+      symlinkSync(
+        realpathSync("node_modules"),
+        join(fixture.canonical, "node_modules"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      parkCanonicalOffAnchor(fixture);
+      const result = spawnSync(join(fixture.linked, "scripts", "pr"), ["ci-dispatch", "123"], {
+        cwd: fixture.linked,
+        encoding: "utf8",
+        env: {
+          ...fixture.env,
+          TMPDIR: fixture.root,
+        },
+      });
+      expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain("Unknown option: --anchor-proof");
+      expect(`${result.stdout}${result.stderr}`).not.toContain("ERR_MODULE_NOT_FOUND");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("uses canonical dependencies without caller TSX path aliases", () => {
+    const fixture = makeMismatchedWrapperRepo(
+      'node "$script_parent_dir/verify-pr-hosted-gates.mjs" --anchor-proof;',
+    );
+    try {
+      symlinkSync(
+        realpathSync("node_modules"),
+        join(fixture.canonical, "node_modules"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      writeFileSync(
+        join(fixture.linked, "caller-dependency.mts"),
+        'throw new Error("caller workspace dependency executed");\n',
+      );
+      writeFileSync(
+        join(fixture.linked, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: {
+            paths: {
+              minimatch: ["./caller-dependency.mts"],
+              "@openclaw/normalization-core/record-coerce": ["./caller-dependency.mts"],
+            },
+          },
+        }),
+      );
+      fixture.git(fixture.linked, ["add", "caller-dependency.mts", "tsconfig.json"]);
+      fixture.git(fixture.linked, ["commit", "-m", "test: caller-owned dependency aliases"]);
+      parkCanonicalOffAnchor(fixture);
+      const result = spawnSync(join(fixture.linked, "scripts", "pr"), ["ci-dispatch", "123"], {
+        cwd: fixture.linked,
+        encoding: "utf8",
+        env: { ...fixture.env, TMPDIR: fixture.root },
+      });
+      expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain("Unknown option: --anchor-proof");
+      expect(`${result.stdout}${result.stderr}`).not.toContain(
+        "caller workspace dependency executed",
+      );
+      expect(`${result.stdout}${result.stderr}`).not.toContain("ERR_MODULE_NOT_FOUND");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("rejects legacy root-only anchor handoffs instead of executing a partial archive", () => {
+    const fixture = makeMismatchedWrapperRepo();
+    try {
+      const result = spawnSync(join(fixture.canonical, "scripts", "pr"), ["ls"], {
+        cwd: fixture.canonical,
+        encoding: "utf8",
+        env: {
+          ...fixture.env,
+          OPENCLAW_PR_ANCHOR_REPO_ROOT: fixture.canonical,
+        },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("legacy scripts/pr anchor handoff");
+      expect(result.stdout).not.toContain("canonical wrapper executed");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it.each([
+    ["empty entry", "scripts/pr\n\nscripts/pr-lib/anchor-runtime-paths.txt\n"],
+    ["absolute path", "/scripts/pr\n"],
+    ["dot path", "./scripts/pr\n"],
+    ["parent traversal", "scripts/pr-lib/../pr\n"],
+    ["duplicate path", "scripts/pr\nscripts/pr\n"],
+    ["unsafe syntax", "scripts/pr path\n"],
+  ])("rejects an anchor runtime manifest with %s", (_label, manifest) => {
+    const fixture = makeMismatchedWrapperRepo();
+    try {
+      fixture.git(fixture.canonical, ["checkout", "main"]);
+      writeFileSync(join(fixture.canonical, "scripts/pr-lib/anchor-runtime-paths.txt"), manifest);
+      fixture.git(fixture.canonical, ["add", "scripts/pr-lib/anchor-runtime-paths.txt"]);
+      fixture.git(fixture.canonical, ["commit", "-m", "test: invalid anchor manifest"]);
+      fixture.git(fixture.canonical, ["push", "origin", "main"]);
+      fixture.git(fixture.linked, ["fetch", "origin", "main"]);
+      parkCanonicalOffAnchor(fixture);
+
+      const result = spawnSync(join(fixture.linked, "scripts", "pr"), ["ci-dispatch", "123"], {
+        cwd: fixture.linked,
+        encoding: "utf8",
+        env: { ...fixture.env, TMPDIR: fixture.root },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Invalid scripts/pr anchor runtime manifest");
+      expect(result.stdout).not.toContain("canonical wrapper executed");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("uses one frozen anchor SHA when the remote-tracking ref moves during selection", () => {
+    const fixture = makeMismatchedWrapperRepo();
+    try {
+      fixture.git(fixture.canonical, ["checkout", "main"]);
+      writeFileSync(
+        join(fixture.canonical, "scripts/pr-lib/gates.sh"),
+        'ci_dispatch() { echo "moved anchor executed"; }\n',
+      );
+      fixture.git(fixture.canonical, ["add", "scripts/pr-lib/gates.sh"]);
+      fixture.git(fixture.canonical, ["commit", "-m", "test: moved anchor"]);
+      const movedAnchor = fixture.git(fixture.canonical, ["rev-parse", "HEAD"]).stdout.trim();
+      fixture.git(fixture.linked, [
+        "update-ref",
+        "refs/remotes/origin/main",
+        fixture.anchorRevision,
+      ]);
+      parkCanonicalOffAnchor(fixture);
+
+      const realGit = resolveCommand("git");
+      const movedMarker = join(fixture.root, "anchor-moved");
+      writeFileSync(
+        join(fixture.bin, "git"),
+        `#!/bin/sh
+if [ ! -e "${movedMarker}" ]; then
+  case " $* " in
+    *" refs/remotes/origin/main"*)
+      output=$("${realGit}" "$@") || exit $?
+      "${realGit}" -C "${fixture.linked}" update-ref refs/remotes/origin/main "${movedAnchor}"
+      : > "${movedMarker}"
+      printf '%s\n' "$output"
+      exit 0
+      ;;
+  esac
+fi
+exec "${realGit}" "$@"
+`,
+      );
+      chmodSync(join(fixture.bin, "git"), 0o755);
+
+      const result = spawnSync(join(fixture.linked, "scripts", "pr"), ["ci-dispatch", "123"], {
+        cwd: fixture.linked,
+        encoding: "utf8",
+        env: { ...fixture.env, TMPDIR: fixture.root },
+      });
+      expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+      expect(result.stdout).toContain("canonical wrapper executed");
+      expect(result.stdout).not.toContain("moved anchor executed");
+      expect(result.stderr).toContain(fixture.anchorRevision.slice(0, 12));
+      expect(result.stderr).not.toContain(movedAnchor.slice(0, 12));
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("trusts remote-only publisher inputs without archiving them locally", () => {
+    const fixture = makeMismatchedWrapperRepo();
+    try {
+      const publisher = join(fixture.linked, "scripts/pr-crabbox-gate-publisher.mjs");
+      writeFileSync(publisher, `${readScript(publisher)}\n// uncommitted publisher drift\n`);
+      const dirty = spawnSync(join(fixture.linked, "scripts", "pr"), ["ci-dispatch", "123"], {
+        cwd: fixture.linked,
+        encoding: "utf8",
+        env: fixture.env,
+      });
+      expect(dirty.status).toBe(1);
+      expect(dirty.stderr).toContain("wrapper files have uncommitted changes");
+      fixture.git(fixture.linked, ["restore", "scripts/pr-crabbox-gate-publisher.mjs"]);
+
+      parkCanonicalOffAnchor(fixture);
+      const realGit = resolveCommand("git");
+      const archiveArgs = join(fixture.root, "archive-args");
+      writeFileSync(
+        join(fixture.bin, "git"),
+        `#!/bin/sh
+case " $* " in
+  *" archive "*)
+    printf '%s\n' "$@" > "${archiveArgs}"
+    ;;
+esac
+exec "${realGit}" "$@"
+`,
+      );
+      chmodSync(join(fixture.bin, "git"), 0o755);
+
+      const result = spawnSync(join(fixture.linked, "scripts", "pr"), ["ci-dispatch", "123"], {
+        cwd: fixture.linked,
+        encoding: "utf8",
+        env: { ...fixture.env, TMPDIR: fixture.root },
+      });
+      expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
+      const archived = readScript(archiveArgs).split("\n");
+      for (const file of readPrAnchorRuntimePaths()) {
+        expect(archived, file).toContain(file);
+      }
+      for (const file of readPrRemoteOnlyTrustPaths()) {
+        expect(archived, file).not.toContain(file);
+      }
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   it("routes a mismatched landing subcommand through the materialized anchor", () => {
     const fixture = makeMismatchedWrapperRepo();
     try {
@@ -521,10 +816,10 @@ describe("scripts/pr wrappers", () => {
     const fixture = makeMismatchedWrapperRepo();
     try {
       // Rewrite origin/main's scripts/pr to an entrypoint without the
-      // OPENCLAW_PR_ANCHOR_REPO_ROOT handoff, as pre-fix anchors are.
+      // versioned handoff marker, as pre-fix anchors are.
       fixture.git(fixture.canonical, ["checkout", "main"]);
       const legacy = readScript(join(fixture.canonical, "scripts", "pr")).replaceAll(
-        "OPENCLAW_PR_ANCHOR_REPO_ROOT",
+        "OPENCLAW_PR_ANCHOR_HANDOFF_VERSION",
         "OPENCLAW_PR_LEGACY_UNSUPPORTED",
       );
       writeFileSync(join(fixture.canonical, "scripts", "pr"), legacy);
@@ -593,26 +888,7 @@ describe("scripts/pr wrappers", () => {
     const dir = mkdtempSync(join(tmpdir(), "openclaw-pr-wrapper-revision-"));
     const repo = join(dir, "repo");
     const linked = join(dir, "linked");
-    mkdirSync(join(repo, ".github", "workflows"), { recursive: true });
-    mkdirSync(join(repo, "scripts", "lib"), { recursive: true });
-    mkdirSync(join(repo, "scripts", "pr-lib"), { recursive: true });
-    writeFileSync(join(repo, "scripts", "pr"), readScript("scripts/pr"));
-    writeFileSync(
-      join(repo, ".github", "workflows", "pr-crabbox-gate-publisher.yml"),
-      "name: canonical\n",
-    );
-    writeFileSync(join(repo, "scripts", "crabbox-untrusted-bootstrap.sh"), "# canonical\n");
-    writeFileSync(join(repo, "scripts", "pr-crabbox-gate-publisher.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "lib", "plain-gh.sh"), "# canonical\n");
-    writeFileSync(join(repo, "scripts", "lib", "plain-gh.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "lib", "direct-run.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "lib", "tsx-cli-shim.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "lib", "local-check-runtime.mts"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "tsx.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "watch-pr-ci.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "watch-pr-ci.mts"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "verify-pr-hosted-gates.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "verify-pr-hosted-gates.mts"), "// canonical\n");
+    copyPrWrapperFixture(repo);
     writeFileSync(join(repo, "scripts", "pr-lib", "merge.sh"), "# canonical\n");
     chmodSync(join(repo, "scripts", "pr"), 0o755);
 
@@ -621,7 +897,7 @@ describe("scripts/pr wrappers", () => {
     expect(git(repo, ["init", "-b", "main"]).status).toBe(0);
     expect(git(repo, ["config", "user.name", "OpenClaw Test"]).status).toBe(0);
     expect(git(repo, ["config", "user.email", "test@example.invalid"]).status).toBe(0);
-    expect(git(repo, ["add", "scripts", ".github"]).status).toBe(0);
+    expect(git(repo, ["add", "scripts", ".github", "packages"]).status).toBe(0);
     expect(git(repo, ["commit", "-m", "test: canonical wrapper"]).status).toBe(0);
     expect(git(repo, ["worktree", "add", "-b", "feature", linked]).status).toBe(0);
 
@@ -689,26 +965,7 @@ describe("scripts/pr wrappers", () => {
     const dir = mkdtempSync(join(tmpdir(), "openclaw-pr-wrapper-anchor-"));
     const repo = join(dir, "repo");
     const linked = join(dir, "linked");
-    mkdirSync(join(repo, ".github", "workflows"), { recursive: true });
-    mkdirSync(join(repo, "scripts", "lib"), { recursive: true });
-    mkdirSync(join(repo, "scripts", "pr-lib"), { recursive: true });
-    writeFileSync(join(repo, "scripts", "pr"), readScript("scripts/pr"));
-    writeFileSync(
-      join(repo, ".github", "workflows", "pr-crabbox-gate-publisher.yml"),
-      "name: canonical\n",
-    );
-    writeFileSync(join(repo, "scripts", "crabbox-untrusted-bootstrap.sh"), "# canonical\n");
-    writeFileSync(join(repo, "scripts", "pr-crabbox-gate-publisher.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "lib", "plain-gh.sh"), "# canonical\n");
-    writeFileSync(join(repo, "scripts", "lib", "plain-gh.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "lib", "direct-run.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "lib", "tsx-cli-shim.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "lib", "local-check-runtime.mts"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "tsx.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "watch-pr-ci.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "watch-pr-ci.mts"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "verify-pr-hosted-gates.mjs"), "// canonical\n");
-    writeFileSync(join(repo, "scripts", "verify-pr-hosted-gates.mts"), "// canonical\n");
+    copyPrWrapperFixture(repo);
     writeFileSync(join(repo, "scripts", "pr-lib", "merge.sh"), "# canonical\n");
     chmodSync(join(repo, "scripts", "pr"), 0o755);
 
@@ -717,7 +974,7 @@ describe("scripts/pr wrappers", () => {
     expect(git(repo, ["init", "-b", "main"]).status).toBe(0);
     expect(git(repo, ["config", "user.name", "OpenClaw Test"]).status).toBe(0);
     expect(git(repo, ["config", "user.email", "test@example.invalid"]).status).toBe(0);
-    expect(git(repo, ["add", "scripts", ".github"]).status).toBe(0);
+    expect(git(repo, ["add", "scripts", ".github", "packages"]).status).toBe(0);
     expect(git(repo, ["commit", "-m", "test: canonical wrapper"]).status).toBe(0);
     // The linked worktree keeps main's wrapper; origin/main anchors trust.
     expect(git(repo, ["update-ref", "refs/remotes/origin/main", "main"]).status).toBe(0);
