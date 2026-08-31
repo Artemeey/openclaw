@@ -354,6 +354,7 @@ export default defineSingleProviderPluginEntry({
           request: ctx.config.models?.providers?.openrouter?.request,
           timeoutMs: ctx.timeoutMs,
           fetchFn: ctx.fetchFn,
+          isAuthProfileCurrent: ctx.isAuthProfileCurrent,
         }),
     };
   },

@@ -259,7 +259,7 @@ export function mapAuthStatusProvider(params: {
       : {}),
     ...(providerOrderLocked ? { profileOrderLocked: "provider-config" as const } : {}),
     ...(apiKey ? { apiKey } : {}),
-    usage: usage && usageKey ? mapUsageStatus(usage) : undefined,
+    usage: usage && usageKey ? mapUsageStatus(usage, params.includeProfileDetails) : undefined,
     ...(usageScope ? { usageScope } : {}),
   };
 }

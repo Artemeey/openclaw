@@ -23,6 +23,8 @@ import type { GatewayRequestHandlerOptions } from "./types.js";
 type BuildAuthHealthSummary = typeof import("../../agents/auth-health.js").buildAuthHealthSummary;
 type ResolveProviderAuths =
   typeof import("../../infra/provider-usage.auth.js").resolveProviderAuths;
+type LoadProviderUsageSummary =
+  typeof import("../../infra/provider-usage.load.js").loadProviderUsageSummary;
 
 function waitForFast<T>(
   callback: () => T | Promise<T>,
@@ -67,7 +69,7 @@ const mocks = vi.hoisted(() => ({
   buildAuthHealthSummary: vi.fn<BuildAuthHealthSummary>(
     (): AuthHealthSummary => ({ now: 0, warnAfterMs: 0, profiles: [], providers: [] }),
   ),
-  loadProviderUsageSummary: vi.fn(async (): Promise<UsageSummary> => emptyUsageSummary()),
+  loadProviderUsageSummary: vi.fn<LoadProviderUsageSummary>(async () => emptyUsageSummary()),
   resolveProviderAuths: vi.fn<ResolveProviderAuths>(async (params) =>
     params.providers
       .filter((provider) => provider === "clawrouter" || provider === "deepseek")
@@ -1561,7 +1563,7 @@ describe("models.authStatus", () => {
     mocks.loadProviderUsageSummary.mockImplementationOnce(async (options) => {
       await usageBlocked;
       usageFinished = true;
-      if (options.isAuthProfileCurrent?.() === false) {
+      if (options?.isAuthProfileCurrent?.() === false) {
         return emptyUsageSummary();
       }
       providerFetches += 1;
@@ -1842,6 +1844,7 @@ describe("models.authStatus", () => {
           {
             provider,
             displayName: provider,
+            accountEmail: `admin-${provider}@example.com`,
             windows: [{ label: "week", usedPercent: 25 }],
           },
         ],
@@ -1856,6 +1859,12 @@ describe("models.authStatus", () => {
           expect(refreshed.providers[0]?.usageScope).toBe("provider");
           expect(refreshed.providers[0]?.profiles[0]?.usage).toBeDefined();
         });
+
+        const readOnlyOpts = createOptions({}, ["operator.read"]);
+        await handler(readOnlyOpts);
+        const readOnly = firstRespondCall(readOnlyOpts)?.[1] as ModelAuthStatusResult;
+        expect(readOnly.providers[0]?.usage?.windows).toEqual([{ label: "week", usedPercent: 25 }]);
+        expect(readOnly.providers[0]?.usage?.accountEmail).toBeUndefined();
       });
 
       expect(mocks.loadProviderUsageSummary).toHaveBeenCalledWith({
