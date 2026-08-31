@@ -29,6 +29,7 @@ describe("Plugin SDK API diff CLI", () => {
     const runnerTemp = tempDirs.make("plugin-sdk-api-diff-temp-");
     const binDir = tempDirs.make("plugin-sdk-api-diff-bin-");
     const pnpmMarker = join(binDir, "pnpm-started");
+    writeFileSync(join(runnerTemp, ".git-invocation-counts.json"), "{}\n");
 
     git(repo, ["init", "--quiet", "--initial-branch=main"]);
     writeFileSync(join(repo, "README.md"), "fixture\n");
@@ -107,7 +108,11 @@ describe("Plugin SDK API diff CLI", () => {
       expect(exitCode).toBe(143);
       expect(Date.now() - interruptedAt).toBeLessThan(5_000);
       expect(git(repo, ["worktree", "list"])).not.toContain(runnerTemp);
-      expect(readdirSync(runnerTemp)).toEqual([]);
+      expect(
+        readdirSync(runnerTemp).filter((entry) =>
+          entry.startsWith("openclaw-plugin-sdk-api-diff-"),
+        ),
+      ).toEqual([]);
     } finally {
       if (!closed) {
         child.kill("SIGKILL");
