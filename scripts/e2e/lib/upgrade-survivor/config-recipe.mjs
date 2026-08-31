@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { parseReleaseVersion } from "../../../lib/npm-publish-plan.mjs";
+import { compareReleaseVersions, parseReleaseVersion } from "../../../lib/npm-publish-plan.mjs";
 import { buildCmdExeCommandLine, resolveWindowsCmdExePath } from "../../../windows-cmd-helpers.mjs";
 
 const args = process.argv.slice(2);
@@ -184,7 +184,7 @@ function selectedScenario() {
   return process.env.OPENCLAW_UPGRADE_SURVIVOR_SCENARIO || "base";
 }
 
-function adaptStepForBaseline(step, baselineVersion, summary) {
+export function adaptStepForBaseline(step, baselineVersion, summary) {
   if (
     step.intent === "acpx-openclaw-tools-bridge" &&
     isReleaseBefore(baselineVersion, "2026.4.22")
@@ -194,7 +194,31 @@ function adaptStepForBaseline(step, baselineVersion, summary) {
     }
     return null;
   }
-  if (!isReleaseBefore(baselineVersion, "2026.4.0")) {
+  const legacyBaseline = isReleaseBefore(baselineVersion, "2026.4.0");
+  const ownershipComparison = compareReleaseVersions(baselineVersion ?? "", "2026.8.1-beta.2");
+  const explicitOwnershipBaseline = ownershipComparison !== null && ownershipComparison >= 0;
+  if (step.id === "agents" && (legacyBaseline || explicitOwnershipBaseline)) {
+    const agents = JSON.parse(step.argv[3]);
+    for (const agent of agents.list ?? []) {
+      if (explicitOwnershipBaseline) {
+        delete agent.default;
+      }
+      if (legacyBaseline) {
+        delete agent.thinkingDefault;
+        delete agent.fastModeDefault;
+        delete agent.skills;
+      }
+    }
+    if (legacyBaseline) {
+      delete agents.defaults?.skills;
+      summary.skippedIntents.push("agent-modern-preferences");
+    }
+    return {
+      ...step,
+      argv: [...step.argv.slice(0, 3), JSON.stringify(agents), ...step.argv.slice(4)],
+    };
+  }
+  if (!legacyBaseline) {
     return step;
   }
   if (step.id === "plugins-feishu" || step.id === "channels-feishu") {
@@ -202,20 +226,6 @@ function adaptStepForBaseline(step, baselineVersion, summary) {
       summary.skippedIntents.push("feishu-channel");
     }
     return null;
-  }
-  if (step.id === "agents") {
-    const agents = JSON.parse(step.argv[3]);
-    delete agents.defaults?.skills;
-    for (const agent of agents.list ?? []) {
-      delete agent.thinkingDefault;
-      delete agent.fastModeDefault;
-      delete agent.skills;
-    }
-    summary.skippedIntents.push("agent-modern-preferences");
-    return {
-      ...step,
-      argv: [...step.argv.slice(0, 3), JSON.stringify(agents), ...step.argv.slice(4)],
-    };
   }
   if (step.intent === "plugins") {
     const plugins = JSON.parse(step.argv[3]);

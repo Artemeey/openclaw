@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   CONFIG_COMMAND_MAX_BUFFER_BYTES,
   CONFIG_COMMAND_TIMEOUT_MS,
+  adaptStepForBaseline,
   isReleaseBefore,
   resolveUpgradeSurvivorOpenClawCommand,
   runUpgradeSurvivorOpenClawStep,
@@ -22,6 +23,33 @@ describe("upgrade survivor config recipe command resolution", () => {
     expect(isReleaseBefore(null, "2026.4.0")).toBe(false);
     expect(isReleaseBefore("2026.3.31junk", "2026.4.0")).toBe(false);
     expect(isReleaseBefore("2026.3.9007199254740993", "2026.4.0")).toBe(false);
+  });
+
+  it.each([
+    ["2026.8.1-beta.1", true],
+    ["2026.8.1-beta.2", false],
+    ["2026.8.1", false],
+  ])("adapts the legacy default marker for baseline %s", (version, keepsDefault) => {
+    const summary = { skippedIntents: [] };
+    const step = adaptStepForBaseline(
+      {
+        id: "agents",
+        intent: "agents",
+        argv: [
+          "config",
+          "set",
+          "agents",
+          JSON.stringify({ list: [{ id: "main", default: true }, { id: "ops" }] }),
+          "--strict-json",
+        ],
+      },
+      version,
+      summary,
+    );
+    const agents = JSON.parse(step?.argv[3] ?? "{}");
+
+    expect(agents.list[0].default).toBe(keepsDefault ? true : undefined);
+    expect(summary.skippedIntents).toEqual([]);
   });
 
   it("wraps Windows openclaw npm shims through cmd.exe", () => {
@@ -154,7 +182,11 @@ process.exit(0);
         .map((line) => JSON.parse(line));
       expect(summary.skippedIntents).toContain("acpx-openclaw-tools-bridge");
       expect(loggedArgs).not.toContainEqual(
-        expect.arrayContaining(["set", "plugins", expect.stringContaining("openClawToolsMcpBridge")]),
+        expect.arrayContaining([
+          "set",
+          "plugins",
+          expect.stringContaining("openClawToolsMcpBridge"),
+        ]),
       );
     } finally {
       rmSync(root, { force: true, recursive: true });
