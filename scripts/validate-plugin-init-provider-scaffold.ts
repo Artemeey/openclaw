@@ -84,7 +84,7 @@ function assertCleanInspectorReport(report: InspectorReport): void {
 
 fs.rmSync(projectDir, { force: true, recursive: true });
 fs.mkdirSync(artifactRoot, { recursive: true });
-run("pnpm", ["build:plugin-sdk:dts"], process.cwd());
+run("pnpm", ["build:plugin-sdk:strict-smoke"], process.cwd());
 const candidateTarball = packCandidate(process.cwd(), "openclaw");
 const aiCandidateTarball = packCandidate(path.resolve("packages/ai"), "openclaw-ai");
 
