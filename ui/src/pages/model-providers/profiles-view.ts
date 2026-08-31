@@ -125,6 +125,16 @@ function movableOrder(
   return drafts[provider] ?? card.profileOrders[provider] ?? [];
 }
 
+function hasExactProfileOrder(profiles: readonly ProviderProfile[], order: readonly string[]) {
+  if (profiles.length !== order.length) {
+    return false;
+  }
+  const remaining = new Set(profiles.map((profile) => profile.profileId));
+  return (
+    remaining.size === profiles.length && order.every((profileId) => remaining.delete(profileId))
+  );
+}
+
 function orderedProfiles(card: ModelProviderCard, drafts: Record<string, string[]>) {
   const providers = [
     ...new Set(
@@ -308,7 +318,7 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
             const logoutProvider = logoutProviderForProfile(card, profile.profileId);
             const order = movableOrder(card, provider, props.profileOrders);
             const index = order.indexOf(profile.profileId);
-            const complete = order.length === profilesForProvider(card, provider).length;
+            const complete = hasExactProfileOrder(profilesForProvider(card, provider), order);
             const locked = lockedProviders.has(provider);
             const canMove =
               props.canMutate && !locked && complete && order.length > 1 && index >= 0;
