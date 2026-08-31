@@ -1537,6 +1537,7 @@ describe("models.authStatus", () => {
   it("does not publish usage captured before a concurrent logout", async () => {
     let releaseUsage: (() => void) | undefined;
     let usageFinished = false;
+    let providerFetches = 0;
     const usageBlocked = new Promise<void>((resolve) => {
       releaseUsage = resolve;
     });
@@ -1557,9 +1558,13 @@ describe("models.authStatus", () => {
     mocks.listProviderUsagePluginDescriptors.mockReturnValueOnce([
       { provider: "openrouter", displayName: "OpenRouter" },
     ]);
-    mocks.loadProviderUsageSummary.mockImplementationOnce(async () => {
+    mocks.loadProviderUsageSummary.mockImplementationOnce(async (options) => {
       await usageBlocked;
       usageFinished = true;
+      if (options.isAuthProfileCurrent?.() === false) {
+        return emptyUsageSummary();
+      }
+      providerFetches += 1;
       return {
         updatedAt: 0,
         providers: [
@@ -1579,6 +1584,7 @@ describe("models.authStatus", () => {
     await logoutHandler(createLogoutOptions({ provider: "openrouter" }));
     releaseUsage?.();
     await waitForFast(() => expect(usageFinished).toBe(true));
+    expect(providerFetches).toBe(0);
 
     const afterLogout = await readAuthStatus();
     expect(afterLogout.providers[0]?.usage).toBeUndefined();
@@ -1686,6 +1692,7 @@ describe("models.authStatus", () => {
       workspaceDir: "/tmp/workspace",
       authStore: preparedAuthStore,
       config: expect.any(Object),
+      isAuthProfileCurrent: expect.any(Function),
       timeoutMs: 5_000,
     });
 
@@ -1751,6 +1758,7 @@ describe("models.authStatus", () => {
       workspaceDir: "/tmp/workspace",
       authStore: preparedAuthStore,
       config: runtimeConfig,
+      isAuthProfileCurrent: expect.any(Function),
       timeoutMs: 5_000,
     });
     let result: ModelAuthStatusResult | undefined;
@@ -1864,6 +1872,7 @@ describe("models.authStatus", () => {
         workspaceDir: "/tmp/workspace",
         authStore: preparedAuthStore,
         config: expect.any(Object),
+        isAuthProfileCurrent: expect.any(Function),
         timeoutMs: 5_000,
       });
     },
@@ -1934,6 +1943,7 @@ describe("models.authStatus", () => {
       workspaceDir: "/tmp/workspace",
       authStore: preparedAuthStore,
       config: expect.any(Object),
+      isAuthProfileCurrent: expect.any(Function),
       timeoutMs: 5_000,
     });
   });
@@ -2248,6 +2258,7 @@ describe("models.authStatus", () => {
       workspaceDir: "/tmp/workspace",
       authStore: preparedAuthStore,
       config: expect.any(Object),
+      isAuthProfileCurrent: expect.any(Function),
       timeoutMs: 5_000,
     });
   });

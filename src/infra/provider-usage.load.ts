@@ -48,6 +48,8 @@ type UsageSummaryOptions = {
   providers?: UsageProviderId[];
   auth?: ProviderAuth[];
   authProfile?: { provider: UsageProviderId; profileId: string };
+  /** Closure-bound cache ownership check, evaluated immediately before provider I/O. */
+  isAuthProfileCurrent?: () => boolean;
   authStore?: AuthProfileStore;
   agentDir?: string;
   workspaceDir?: string;
@@ -178,6 +180,11 @@ export async function loadProviderUsageSummary(
           return failureSnapshot(provider, message.trim() || "Auth failed");
         }
         if (!auth) {
+          return undefined;
+        }
+        // Auth resolution may await secret refresh. Recheck the owning cache generation
+        // before entering the provider hook so a concurrently removed profile cannot make I/O.
+        if (opts.authProfile && opts.isAuthProfileCurrent?.() === false) {
           return undefined;
         }
         return await fetchProviderUsageSnapshot({

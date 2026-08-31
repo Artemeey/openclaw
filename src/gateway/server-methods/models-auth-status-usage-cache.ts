@@ -42,6 +42,7 @@ type ProviderUsageCacheEntry = {
 };
 
 type ProviderUsageRefresh = {
+  ownerToken: object;
   agentDir: string;
   configRef: OpenClawConfig;
   credentialKey: string;
@@ -159,16 +160,26 @@ function scheduleProviderUsageRefresh(params: {
     return active.promise;
   }
   const publishGeneration = cacheGeneration;
-  let refresh: ProviderUsageRefresh;
+  const ownerToken = {};
   const load = () => {
     // Profile work may wait behind the shared concurrency limit. Recheck its
     // owner at dequeue time so a removed or replaced profile never reaches I/O.
-    if (params.authProfile && usageRefreshByAgentId.get(params.cacheOwnerKey) !== refresh) {
+    if (
+      params.authProfile &&
+      usageRefreshByAgentId.get(params.cacheOwnerKey)?.ownerToken !== ownerToken
+    ) {
       return Promise.resolve({ updatedAt: Date.now(), providers: [] });
     }
     return loadProviderUsageSummary({
       providers: params.providerIds,
       ...(params.authProfile ? { authProfile: params.authProfile } : {}),
+      ...(params.authProfile
+        ? {
+            isAuthProfileCurrent: () =>
+              publishGeneration === cacheGeneration &&
+              usageRefreshByAgentId.get(params.cacheOwnerKey)?.ownerToken === ownerToken,
+          }
+        : {}),
       agentDir: params.agentDir,
       workspaceDir: params.workspaceDir,
       authStore: params.authStore,
@@ -181,7 +192,7 @@ function scheduleProviderUsageRefresh(params: {
       const usage = retainLastGoodOnTimeout(freshUsage, params.lastGood);
       if (
         publishGeneration === cacheGeneration &&
-        usageRefreshByAgentId.get(params.cacheOwnerKey) === refresh
+        usageRefreshByAgentId.get(params.cacheOwnerKey)?.ownerToken === ownerToken
       ) {
         usageCacheByAgentId.set(params.cacheOwnerKey, {
           agentDir: params.agentDir,
@@ -205,11 +216,12 @@ function scheduleProviderUsageRefresh(params: {
       throw err;
     })
     .finally(() => {
-      if (usageRefreshByAgentId.get(params.cacheOwnerKey) === refresh) {
+      if (usageRefreshByAgentId.get(params.cacheOwnerKey)?.ownerToken === ownerToken) {
         usageRefreshByAgentId.delete(params.cacheOwnerKey);
       }
     });
-  refresh = {
+  const refresh: ProviderUsageRefresh = {
+    ownerToken,
     agentDir: params.agentDir,
     configRef: params.configRef,
     credentialKey: params.credentialKey,
