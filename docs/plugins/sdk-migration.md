@@ -83,6 +83,13 @@ External-plugin compatibility work follows this order:
 6. Remove only after the announced migration window, usually in a major
    release.
 
+### Retained helper contracts
+
+Retained compatibility entrypoints keep their shipped caller names:
+`inbound-envelope` uses `resolveStorePath`, `provider-catalog-runtime` exports
+`resolvePluginProviders`, and `agent-runtime`'s
+`resolveThinkingDefaultWithRuntimeCatalog` accepts `loadModelCatalog`.
+
 ### Model-provider result compatibility
 
 `openclaw/plugin-sdk/models-provider-runtime` preserves the `ModelsProviderData`
