@@ -374,7 +374,7 @@ export async function admitChatSend(params: {
         "Goal start or resume requires an idle local session with recoverable history. Finish current work or start a fresh session, then retry.",
       );
     }
-    if (retryableClaim && !restartSafeAdmission) {
+    if (isRetryableUnadoptedChatClaim(latestEntry, clientRunId) && !restartSafeAdmission) {
       throw new Error("chat retry does not match its durable admission");
     }
     // A terminal Control UI claim can survive a crash after status commit.
