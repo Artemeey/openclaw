@@ -113,6 +113,31 @@ describe("provider-usage.load", () => {
     expect(summary).toEqual({ updatedAt: usageNow, providers: [] });
   });
 
+  it("does not enter the provider hook after profile refresh authority is revoked", async () => {
+    let resolveAuth: ((value: { token: string; authProfileId: string }) => void) | undefined;
+    const authPending = new Promise<{ token: string; authProfileId: string }>((resolve) => {
+      resolveAuth = resolve;
+    });
+    resolveProviderUsageAuthWithPluginMock.mockImplementationOnce(async () => await authPending);
+    let current = true;
+
+    const summaryPending = loadProviderUsageSummary({
+      now: usageNow,
+      authProfile: { provider: "openai", profileId: "openai:work" },
+      authStore: { version: 1, profiles: {} },
+      config: {},
+      env: {},
+      isAuthProfileCurrent: () => current,
+    });
+    await vi.waitFor(() => expect(resolveProviderUsageAuthWithPluginMock).toHaveBeenCalledOnce());
+
+    current = false;
+    resolveAuth?.({ token: "profile-token", authProfileId: "openai:work" });
+
+    await expect(summaryPending).resolves.toEqual({ updatedAt: usageNow, providers: [] });
+    expect(resolveProviderUsageSnapshotWithPluginMock).not.toHaveBeenCalled();
+  });
+
   it("returns unsupported provider snapshots for unknown provider ids", async () => {
     const mockFetch = createProviderUsageFetch(async () => makeResponse(404, "not found"));
     const summary = await loadUsageWithAuth(
