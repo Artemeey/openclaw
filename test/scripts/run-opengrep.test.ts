@@ -2,6 +2,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { createScriptTestHarness } from "./test-helpers.js";
@@ -212,8 +213,8 @@ describe("run-opengrep.sh", () => {
     },
   );
 
-  it("scans PR files instead of main-only files when the payload base is stale", () => {
-    const repo = createTempDir("openclaw-run-opengrep-merge-");
+  it("prepares and scans a shallow PR merge without fetching a stale payload base", () => {
+    let repo = createTempDir("openclaw-run-opengrep-merge-");
     git(repo, "init", "-q", "--initial-branch=main");
     git(repo, "config", "user.email", "test@example.com");
     git(repo, "config", "user.name", "Test User");
@@ -234,8 +235,72 @@ describe("run-opengrep.sh", () => {
     writeFile(path.join(repo, "src/main-only.ts"), "export const mainOnly = true;\n");
     git(repo, "add", ".");
     git(repo, "commit", "-qm", "main only");
+    const mergeBase = git(repo, "rev-parse", "HEAD");
     git(repo, "merge", "--no-ff", "feature", "-m", "synthetic merge");
 
+    const checkout = createTempDir("openclaw-run-opengrep-shallow-");
+    git(checkout, "clone", "--quiet", "--depth=2", pathToFileURL(repo).href, ".");
+    repo = checkout;
+    git(repo, "remote", "remove", "origin");
+    expect(spawnSync("git", ["cat-file", "-e", staleBase], { cwd: repo }).status).not.toBe(0);
+
+    const workflow = parse(fs.readFileSync(".github/workflows/opengrep-precise.yml", "utf8"));
+    const outputPath = path.join(repo, "github-output");
+    const expressions: Record<string, string> = {
+      "github.event.pull_request.base.sha": staleBase,
+      "github.event.pull_request.base.ref": "main",
+    };
+    const expand = (value: string) =>
+      value.replace(/\$\{\{ ([\w.-]+) \}\}/gu, (_match, key: string) => {
+        const expanded = expressions[key];
+        if (expanded === undefined) {
+          throw new Error(`Unexpected workflow expression: ${key}`);
+        }
+        return expanded;
+      });
+    for (const step of workflow.jobs.scan.steps) {
+      if (step.name === "Checkout") {
+        continue;
+      }
+      if (step.name === "Install opengrep") {
+        break;
+      }
+      let runnable = step;
+      if (step.uses) {
+        const actionPath = path.resolve(step.uses);
+        expressions["github.action_path"] = actionPath;
+        for (const [key, value] of Object.entries(step.with)) {
+          expressions[`inputs.${key}`] = expand(String(value));
+        }
+        runnable = parse(fs.readFileSync(path.join(actionPath, "action.yml"), "utf8")).runs
+          .steps[0];
+      }
+      const prepared = spawnSync("bash", ["-euo", "pipefail", "-c", runnable.run], {
+        cwd: repo,
+        env: {
+          ...process.env,
+          RUNNER_OS: process.platform === "win32" ? "Windows" : process.platform,
+          GITHUB_OUTPUT: outputPath,
+          ...Object.fromEntries(
+            Object.entries(runnable.env ?? {}).map(([key, value]) => [key, expand(String(value))]),
+          ),
+        },
+        encoding: "utf8",
+      });
+      expect(prepared.status, `${prepared.stdout}${prepared.stderr}`).toBe(0);
+      if (step.id) {
+        for (const line of fs.readFileSync(outputPath, "utf8").trim().split("\n")) {
+          const separator = line.indexOf("=");
+          expressions[`steps.${step.id}.outputs.${line.slice(0, separator)}`] = line.slice(
+            separator + 1,
+          );
+        }
+      }
+    }
+    const scan = workflow.jobs.scan.steps.find(
+      (step: { name: string }) => step.name === "Run opengrep on PR diff",
+    );
+    expect(expand(scan.env.OPENCLAW_OPENGREP_BASE_REF)).toBe(`${mergeBase}...HEAD`);
     const { argsPath, binDir } = installOpengrepStub(repo);
 
     execFileSync("bash", ["scripts/run-opengrep.sh", "--changed"], {
@@ -243,8 +308,9 @@ describe("run-opengrep.sh", () => {
       env: {
         ...process.env,
         PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
-        OPENCLAW_OPENGREP_BASE_REF: `${staleBase}...HEAD`,
-        OPENCLAW_OPENGREP_MERGE_HEAD_FIRST_PARENT: "1",
+        ...Object.fromEntries(
+          Object.entries(scan.env).map(([key, value]) => [key, expand(String(value))]),
+        ),
       },
       encoding: "utf8",
     });
