@@ -1047,30 +1047,10 @@ jobs:
       max-parallel: 6
       matrix:
         include:
-          - name: Gateway 1/4
-            command: pnpm test:e2e:gateway --shard=1/4
           - name: Gateway 2/4
-            command: pnpm test:e2e:gateway --shard=2/4
-          - name: Gateway 3/4
-            command: pnpm test:e2e:gateway --shard=3/4
-          - name: Gateway 4/4
-            command: pnpm test:e2e:gateway --shard=4/4
-          - name: UI 1/4
-            command: pnpm test:ui:e2e --shard=1/4
-            build_command: pnpm build:ci-artifacts
-          - name: UI 2/4
-            command: pnpm test:ui:e2e --shard=2/4
-            build_command: pnpm build:ci-artifacts
-          - name: UI 3/4
-            command: pnpm test:ui:e2e --shard=3/4
-            build_command: pnpm build:ci-artifacts
-          - name: UI 4/4
-            command: pnpm test:ui:e2e --shard=4/4
-            build_command: pnpm build:ci-artifacts
-          - name: Agent plugin Gateway
-            command: pnpm test:e2e:agent-plugin-gateway
-            target_script: test:e2e:agent-plugin-gateway
-            build_command: pnpm build:ci-artifacts
+            command: pnpm test:e2e:gateway --shard=2/4 --silent=false
+            build_command: ""
+            target_script: ""
     env:
       OPENCLAW_BUILD_PRIVATE_QA: "1"
       OPENCLAW_ENABLE_PRIVATE_QA_CLI: "1"

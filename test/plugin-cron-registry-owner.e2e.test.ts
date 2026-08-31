@@ -75,6 +75,9 @@ const cleanupDirs: string[] = [];
 const modelServers: MockModelServer[] = [];
 
 afterEach(async () => {
+  for (const instance of instances) {
+    console.error(`[cron-owner-proof] ${instance.name}\n${instance.logs()}`);
+  }
   await Promise.all(instances.splice(0).map((instance) => instance.cleanup()));
   await Promise.all(modelServers.splice(0).map((server) => server.stop()));
   await Promise.all(cleanupDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -246,7 +249,7 @@ async function waitForRequestCount(
   count: number,
 ): Promise<void> {
   await vi.waitFor(() => {
-    expect(requestsContaining(server, marker).length).toBeGreaterThanOrEqual(count);
+    expect(requestsContaining(server, marker).length, `model request marker: ${marker}`).toBeGreaterThanOrEqual(count);
   }, WAIT_OPTIONS);
 }
 
