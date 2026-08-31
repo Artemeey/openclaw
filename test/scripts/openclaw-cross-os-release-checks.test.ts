@@ -1612,7 +1612,32 @@ describe("scripts/openclaw-cross-os-release-checks", () => {
       expect(response.headers.get("content-length")).toBe(String(payload.length));
       expect(response.headers.get("content-type")).toBe("application/octet-stream");
       expect(body.equals(payload)).toBe(true);
-      expect(readFileSync(logPath, "utf8")).toContain(`GET /${filePath.split(/[/\\]/u).at(-1)}`);
+      await expect.poll(() => readFileSync(logPath, "utf8")).toContain('"event":"response-close"');
+      await server.close();
+      server = undefined;
+      const events = readFileSync(logPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line): unknown => JSON.parse(line.slice(line.indexOf(" transfer ") + 10)));
+      expect(events).toEqual([
+        expect.objectContaining({ requestId: 1, event: "request-start", statusCode: 200 }),
+        expect.objectContaining({
+          requestId: 1,
+          event: "response-finish",
+          statusCode: 200,
+          expectedBytes: payload.length,
+          bytesRead: payload.length,
+          finished: true,
+        }),
+        expect.objectContaining({
+          requestId: 1,
+          event: "response-close",
+          statusCode: 200,
+          expectedBytes: payload.length,
+          bytesRead: payload.length,
+          finished: true,
+        }),
+      ]);
     } finally {
       await server?.close();
       rmSync(dir, { recursive: true, force: true });
@@ -1671,12 +1696,32 @@ describe("scripts/openclaw-cross-os-release-checks", () => {
 
       for (let index = 0; index < 8; index += 1) {
         const response = await fetch(`${server.url}?${marker}-${index}`);
-        await response.text();
+        expect(response.status).toBe(404);
+        expect(await response.text()).toBe("not found");
       }
       await server.close();
       server = undefined;
 
-      expect(readFileSync(logPath, "utf8")).toContain(`${marker}-7`);
+      const log = readFileSync(logPath, "utf8");
+      const events = log
+        .trim()
+        .split("\n")
+        .map((line): unknown => JSON.parse(line.slice(line.indexOf(" transfer ") + 10)));
+      expect(events).toEqual(
+        Array.from({ length: 8 }, (_, index) =>
+          ["request-start", "response-finish", "response-close"].map((event) =>
+            expect.objectContaining({
+              requestId: index + 1,
+              event,
+              statusCode: 404,
+              expectedBytes: 0,
+              bytesRead: 0,
+              finished: event !== "request-start",
+            }),
+          ),
+        ).flat(),
+      );
+      expect(log).not.toContain(marker);
     } finally {
       await server?.close().catch(() => {});
       rmSync(dir, { recursive: true, force: true });

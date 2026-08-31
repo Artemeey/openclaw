@@ -1014,8 +1014,9 @@ jobs:
               '
             )"
             if [[ ! "$EXPECTED_BASELINE_SHA256" =~ ^[a-f0-9]{64}$ ||
-                  "$actual_baseline_sha256" != "$EXPECTED_BASELINE_SHA256" ]]; then
-              echo "::error::baseline artifact SHA-256 does not match the prepared package identity"
+                  "$actual_baseline_sha256" != "$EXPECTED_BASELINE_SHA256" ||
+                  "$actual_baseline_sha256" != "43c4b1f81afcd50244c85bcb5686fa6e39f0da6a5941735811b58064b7e0ca10" ]]; then
+              echo "::error::baseline artifact SHA-256 does not match the prepared and retained diagnostic identity"
               exit 1
             fi
           fi

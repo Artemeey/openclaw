@@ -1,9 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
+  appendFileSync,
   createReadStream,
   createWriteStream,
   mkdirSync,
   statSync,
+  type ReadStream,
   type WriteStream,
 } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -29,6 +32,7 @@ import type {
 import {
   CROSS_OS_COMMAND_CAPTURE_TAIL_BYTES,
   CROSS_OS_COMMAND_HEARTBEAT_SECONDS,
+  CROSS_OS_DASHBOARD_SMOKE_TIMEOUT_MS,
   CROSS_OS_PROCESS_TREE_KILL_AFTER_MS,
 } from "./config.ts";
 import { readLogTextSince } from "./logs.ts";
@@ -510,20 +514,47 @@ export async function startStaticFileServer(params: {
   const fileName = params.filePath.split(/[/\\]/u).at(-1) ?? "artifact";
   const fileStat = statSync(params.filePath);
   const sockets = new Set<Socket>();
+  let nextRequestId = 0;
   const server = createServer((request, response) => {
-    logStream.write(`${new Date().toISOString()} ${request.method} ${request.url}\n`);
+    const requestId = ++nextRequestId;
+    const startedAt = Date.now();
+    let fileStream: ReadStream | undefined;
+    // Diagnostic-only: retain closed counters, never caller-controlled request data.
+    const recordTransfer = (
+      event: "request-start" | "response-finish" | "response-close" | "read-error",
+    ) => {
+      if (requestId > 32 || logStream.writableEnded) {
+        return;
+      }
+      const record = {
+        requestId,
+        event,
+        elapsedMs: Date.now() - startedAt,
+        statusCode: response.statusCode,
+        expectedBytes: fileStream ? fileStat.size : 0,
+        bytesRead: fileStream?.bytesRead ?? 0,
+        finished: response.writableFinished,
+      };
+      const line = `${new Date().toISOString()} transfer ${JSON.stringify(record)}\n`;
+      logStream.write(line);
+      process.stdout.write(`[release-checks] ${line}`);
+    };
+    response.once("finish", () => recordTransfer("response-finish"));
+    response.once("close", () => recordTransfer("response-close"));
     response.setHeader("connection", "close");
     if (request.url !== `/${fileName}`) {
       response.statusCode = 404;
+      recordTransfer("request-start");
       response.end("not found");
       return;
     }
     response.statusCode = 200;
     response.setHeader("content-type", resolveStaticFileContentType(params.filePath));
     response.setHeader("content-length", String(fileStat.size));
-    const fileStream = createReadStream(params.filePath);
+    fileStream = createReadStream(params.filePath);
+    recordTransfer("request-start");
     fileStream.once("error", (error) => {
-      logStream.write(`${new Date().toISOString()} static-file-read-error ${formatError(error)}\n`);
+      recordTransfer("read-error");
       if (response.headersSent) {
         response.destroy(error);
         return;
@@ -580,6 +611,83 @@ export async function startStaticFileServer(params: {
       return closePromise;
     },
   };
+}
+
+export async function verifyStaticFileTransfer(params: {
+  filePath: string;
+  url: string;
+  logPath: string;
+}): Promise<{ bytes: number; sha256: string }> {
+  const startedAt = Date.now();
+  const signal = AbortSignal.timeout(CROSS_OS_DASHBOARD_SMOKE_TIMEOUT_MS);
+  let expectedBytes = 0;
+  let bytes = 0;
+  let reason = "transfer-error";
+  const record = (status: "pass" | "fail") => {
+    const entry = {
+      status,
+      reason: status === "pass" ? "verified" : reason,
+      expectedBytes,
+      bytes,
+      elapsedMs: Date.now() - startedAt,
+    };
+    const line = `${JSON.stringify(entry)}\n`;
+    try {
+      appendFileSync(params.logPath, line);
+    } catch {
+      process.stdout.write(
+        `[release-checks] candidate-transfer-probe ${JSON.stringify({
+          ...entry,
+          status: "fail",
+          reason: "log-write-error",
+          transferReason: entry.reason,
+        })}\n`,
+      );
+      throw new Error("candidate transfer diagnostic log write failed");
+    }
+    process.stdout.write(`[release-checks] candidate-transfer-probe ${line}`);
+  };
+  let sha256 = "";
+  try {
+    const expectedHash = createHash("sha256");
+    for await (const chunk of createReadStream(params.filePath, { signal })) {
+      expectedBytes += chunk.length;
+      expectedHash.update(chunk);
+    }
+    const expectedSha256 = expectedHash.digest("hex");
+    const response = await fetch(params.url, { signal });
+    if (!response.ok || !response.body) {
+      await response.body?.cancel();
+      reason = "http-status";
+      throw new Error("candidate transfer HTTP status mismatch");
+    }
+    const hash = createHash("sha256");
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      bytes += value.byteLength;
+      if (bytes > expectedBytes) {
+        reason = "size-mismatch";
+        await reader.cancel();
+        throw new Error("candidate transfer size mismatch");
+      }
+      hash.update(value);
+    }
+    sha256 = hash.digest("hex");
+    if (bytes !== expectedBytes || sha256 !== expectedSha256) {
+      reason = bytes !== expectedBytes ? "size-mismatch" : "digest-mismatch";
+      throw new Error("candidate transfer digest mismatch");
+    }
+  } catch {
+    reason = signal.aborted ? "timeout" : reason;
+    record("fail");
+    throw new Error(`candidate transfer ${reason.replaceAll("-", " ")}`);
+  }
+  record("pass");
+  return { bytes, sha256 };
 }
 
 function closeStaticFileServerConnections(server: Server, sockets: Set<Socket>) {

@@ -25,7 +25,11 @@ import {
   runInstallerFreshSuite,
   runUpgradeLane,
 } from "./lib/cross-os-release-checks/lanes.ts";
-import { runCommand, startStaticFileServer } from "./lib/cross-os-release-checks/process.ts";
+import {
+  runCommand,
+  startStaticFileServer,
+  verifyStaticFileTransfer,
+} from "./lib/cross-os-release-checks/process.ts";
 import {
   requireArg,
   writeCandidateManifest,
@@ -216,6 +220,11 @@ async function main(argv: string[]) {
         logPath: join(logsDir, "candidate-http-server.log"),
       });
       try {
+        await verifyStaticFileTransfer({
+          filePath: build.candidateTgz,
+          url: tgzServer.url,
+          logPath: join(logsDir, "candidate-transfer-probe.log"),
+        });
         summary.result = await runUpgradeLane({
           baselineSpec,
           baselineTgz: providedBaselineTgz,
