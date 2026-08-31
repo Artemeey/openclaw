@@ -185,6 +185,7 @@ function addLogoutTarget(
 export function buildModelProviderCards(input: ModelProviderCardsInput): ModelProviderCard[] {
   const drafts: CardDraft[] = [];
   const apiKeyCapabilities = new Map<string, boolean>();
+  const profileOrdersByAuthProvider = new Map<string, string[]>();
   for (const capability of input.authStatus?.providerCapabilities ?? []) {
     const id = canonicalProviderId(capability.provider);
     if (!id) {
@@ -270,6 +271,9 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
         draft.card.profileProviderIds[profile.profileId] = authProvider;
       }
       const order = provider.profileOrder ?? provider.profiles.map((profile) => profile.profileId);
+      profileOrdersByAuthProvider.set(authProvider, [
+        ...new Set([...(profileOrdersByAuthProvider.get(authProvider) ?? []), ...order]),
+      ]);
       draft.card.profileOrders[authProvider] = [
         ...new Set([...(draft.card.profileOrders[authProvider] ?? []), ...order]),
       ];
@@ -308,6 +312,15 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
         ...(usage.plan ? { plan: usage.plan } : {}),
         ...(usage.billing?.length ? { billing: usage.billing } : {}),
       };
+    }
+  }
+
+  for (const draft of drafts) {
+    for (const authProvider of Object.keys(draft.card.profileOrders)) {
+      const completeOrder = profileOrdersByAuthProvider.get(authProvider);
+      if (completeOrder) {
+        draft.card.profileOrders[authProvider] = completeOrder;
+      }
     }
   }
 

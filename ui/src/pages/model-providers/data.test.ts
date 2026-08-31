@@ -118,6 +118,32 @@ describe("buildModelProviderCards", () => {
     });
   });
 
+  it("keeps automatic shared-owner orders incomplete on each separate card", () => {
+    const cards = buildModelProviderCards({
+      ...EMPTY_INPUT,
+      authStatus: authStatus([
+        {
+          provider: "provider-a",
+          authProvider: "shared-auth",
+          displayName: "Provider A",
+          status: "ok",
+          profiles: [{ profileId: "shared:first", type: "oauth", status: "ok" }],
+        },
+        {
+          provider: "provider-b",
+          authProvider: "shared-auth",
+          displayName: "Provider B",
+          status: "ok",
+          profiles: [{ profileId: "shared:second", type: "oauth", status: "ok" }],
+        },
+      ]),
+    });
+
+    expect(cards).toHaveLength(2);
+    expect(cards[0]?.profileOrders["shared-auth"]).toEqual(["shared:first", "shared:second"]);
+    expect(cards[1]?.profileOrders["shared-auth"]).toEqual(["shared:first", "shared:second"]);
+  });
+
   it("merges CLI alias auth rows even when usage enrichment is unavailable", () => {
     const cards = buildModelProviderCards({
       ...EMPTY_INPUT,
