@@ -315,6 +315,14 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
     );
   });
   const priorityManaged = providers.some((provider) => lockedProviders.has(provider));
+  const priorityAutomatic = providers.some((provider) => {
+    const order = movableOrder(card, provider, props.profileOrders);
+    return (
+      !lockedProviders.has(provider) &&
+      !storedOrderProviders.has(provider) &&
+      !hasExactProfileOrder(profilesForProvider(card, provider), order)
+    );
+  });
   const additionalCredentialSource = apiKeySource(card);
   return html`
     <section class="model-providers__profiles" aria-label=${t("modelProviders.profiles.title")}>
@@ -331,7 +339,9 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
               ? ` · ${t("modelProviders.profiles.reorderHint")}`
               : ""}${priorityManaged
               ? ` · ${t("modelProviders.profiles.priorityManaged")}`
-              : ""}${additionalCredentialSource ? ` · ${additionalCredentialSource}` : ""}</span
+              : priorityAutomatic
+                ? ` · ${t("modelProviders.profiles.partialOrder")}`
+                : ""}${additionalCredentialSource ? ` · ${additionalCredentialSource}` : ""}</span
           >
         </span>
         <span class="model-providers__profiles-heading-actions">
@@ -362,6 +372,7 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
             const index = order.indexOf(profile.profileId);
             const complete = hasExactProfileOrder(profilesForProvider(card, provider), order);
             const locked = lockedProviders.has(provider);
+            const automatic = !locked && !storedOrderProviders.has(provider) && !complete;
             const canMove =
               props.canMutate && !locked && complete && order.length > 1 && index >= 0;
             const identity = profileIdentity(profile);
@@ -374,11 +385,7 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
               : locked
                 ? t("modelProviders.profiles.priorityManaged")
                 : !complete
-                  ? t(
-                      storedOrderProviders.has(provider)
-                        ? "modelProviders.profiles.partialStoredOrder"
-                        : "modelProviders.profiles.partialOrder",
-                    )
+                  ? t("modelProviders.profiles.partialStoredOrder")
                   : "";
             const move = (targetId: string, position: ArrayDropPosition) => {
               const next = moveArrayEntry(order, profile.profileId, targetId, position);
@@ -393,7 +400,7 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
                 data-profile-id=${profile.profileId}
                 data-profile-provider=${provider}
               >
-                ${locked
+                ${locked || automatic
                   ? html`<span
                       class="model-providers__profile-grip-spacer"
                       aria-hidden="true"
