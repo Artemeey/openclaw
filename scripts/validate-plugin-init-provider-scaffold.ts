@@ -75,7 +75,7 @@ if (!providerEntryExport?.default) {
 }
 providerEntryExport.types = "./dist/plugin-sdk/provider-entry.d.ts";
 fs.copyFileSync(
-  path.resolve("dist/plugin-sdk/provider-entry.d.ts"),
+  path.resolve("dist/plugin-sdk/src/plugin-sdk/provider-entry.d.ts"),
   path.join(installedPackageDir, "dist/plugin-sdk/provider-entry.d.ts"),
 );
 fs.writeFileSync(installedPackagePath, `${JSON.stringify(installedPackage, null, 2)}\n`);
