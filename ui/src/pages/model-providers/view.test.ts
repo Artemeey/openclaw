@@ -936,6 +936,7 @@ describe("renderModelProviders", () => {
               "openai:excluded": "openai",
             },
             profileOrders: { openai: ["openai:one", "openai:two"] },
+            profileOrderStoredProviders: ["openai"],
           }),
         ],
         onProfileOrderChange,
@@ -950,7 +951,7 @@ describe("renderModelProviders", () => {
     expect(onProfileOrderChange).not.toHaveBeenCalled();
   });
 
-  it("disables reordering when another card owns part of the auth order", () => {
+  it("removes reorder controls when priority rotates across provider routes", () => {
     const onProfileOrderChange = vi.fn();
     const sharedOrder = ["shared:one", "shared:two", "shared:three"];
     const container = mount(
@@ -978,11 +979,11 @@ describe("renderModelProviders", () => {
         onProfileOrderChange,
       }),
     );
-    const grips = container.querySelectorAll<HTMLButtonElement>(".model-providers__profile-grip");
-
-    expect([...grips].every((grip) => grip.disabled)).toBe(true);
-    expect(grips[0]?.title).toContain("Reset");
-    grips[1]?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+    expect(container.querySelectorAll(".model-providers__profile-grip")).toHaveLength(0);
+    expect(container.querySelectorAll(".model-providers__profile-grip-spacer")).toHaveLength(3);
+    expect(container.textContent).toContain(
+      "Priority rotates automatically across provider routes",
+    );
 
     expect(onProfileOrderChange).not.toHaveBeenCalled();
   });

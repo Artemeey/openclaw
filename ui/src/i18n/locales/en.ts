@@ -4917,7 +4917,7 @@ export const en: TranslationMap = {
       accounts: "{count} accounts",
       reorderHint: "drag to set priority",
       priorityManaged: "Priority is managed by provider configuration.",
-      partialOrder: "The configured priority list is incomplete.",
+      partialOrder: "Priority rotates automatically across provider routes.",
       partialStoredOrder: "Reset the saved order before changing priority.",
       resetOrder: "Reset",
       addAccount: "Add account",
