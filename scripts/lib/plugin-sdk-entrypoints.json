@@ -88,6 +88,7 @@
   "media-mime",
   "embedding-providers",
   "media-generation-runtime",
+  "conversation-binding-inspection-runtime",
   "conversation-binding-runtime",
   "conversation-runtime",
   "thread-bindings-runtime",

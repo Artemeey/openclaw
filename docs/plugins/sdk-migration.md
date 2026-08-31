@@ -48,6 +48,11 @@ compatibility adapter, diagnostics, docs, and a deprecation window first. That
 applies to SDK imports, manifest fields, setup APIs, hooks, and runtime
 registration behavior.
 
+`ChatCommandDefinition.category` retains the `"docks"` value accepted by the
+2026.8.1 SDK. Command lists display these legacy definitions under **Tools**;
+the category does not enable channel docking or restore retired docking commands.
+New definitions should use `"tools"`.
+
 ### Why
 
 - **Slow startup** - importing one helper loaded dozens of unrelated modules.
