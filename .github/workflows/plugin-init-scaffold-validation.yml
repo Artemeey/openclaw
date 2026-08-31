@@ -36,8 +36,10 @@ jobs:
   validate-provider-scaffold:
     name: Validate provider scaffold
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    runs-on: ${{ github.repository == 'openclaw/openclaw' && 'blacksmith-4vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
+    runs-on: ${{ github.repository == 'openclaw/openclaw' && 'blacksmith-8vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
     timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --max-old-space-size=12288
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
