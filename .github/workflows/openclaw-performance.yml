@@ -419,10 +419,14 @@ jobs:
           tar -xzf "$ocm_archive" -C "${RUNNER_TEMP}/ocm-install"
           install -m 0755 "${RUNNER_TEMP}/ocm-install/ocm" "$HOME/.local/bin/ocm"
 
-          python3 -I -S "$CI_GIT_OWNER" --git 0 init -b main "$KOVA_SRC"
-          python3 -I -S "$CI_GIT_OWNER" --git 0 -C "$KOVA_SRC" remote add origin "https://github.com/${KOVA_REPOSITORY}.git"
-          python3 -I -S "$CI_GIT_OWNER" --git 0 -C "$KOVA_SRC" fetch --filter=blob:none --depth 1 origin "$KOVA_REF"
-          python3 -I -S "$CI_GIT_OWNER" --git 0 -C "$KOVA_SRC" checkout --detach FETCH_HEAD
+          kova_archive="${RUNNER_TEMP}/kova-${KOVA_REF}.tar.gz"
+          mkdir -p "$KOVA_SRC"
+          curl -fsSL --proto '=https' --tlsv1.2 \
+            --max-time 180 \
+            --retry 8 --retry-max-time 180 --retry-all-errors --retry-connrefused \
+            -o "$kova_archive" \
+            "https://codeload.github.com/${KOVA_REPOSITORY}/tar.gz/${KOVA_REF}"
+          tar -xzf "$kova_archive" --strip-components=1 -C "$KOVA_SRC"
           npm --prefix "$KOVA_SRC" ci --ignore-scripts --no-audit --no-fund
           node - "$KOVA_SRC" <<'NODE'
           const fs = require("node:fs");
