@@ -3,7 +3,12 @@ import type { AgentsListResult } from "../api/types.ts";
 import { pathForRoute } from "../app-route-paths.ts";
 import { routeIdFromPath } from "../app-routes.ts";
 import { pathForSession } from "../app-session-path-builder.ts";
+import { sessionRefFromPath } from "../app-session-route-paths.ts";
 import type { BoardFace } from "../lib/board/settings.ts";
+import {
+  SESSION_RESTORE_KEY_PARAM,
+  sessionNavigationTarget,
+} from "../lib/sessions/route-navigation.ts";
 import {
   normalizeAgentId,
   parseAgentSessionKey,
@@ -117,8 +122,19 @@ export function normalizeInitialApplicationLocation(
   if (!agentId) {
     return location;
   }
-  const pathname = pathForSession("chat", agentId, sessionKey, basePath, { mainKey });
-  return pathname ? { ...location, pathname } : location;
+  const { options } = sessionNavigationTarget({
+    face: "chat",
+    sessionKey,
+    fallbackAgentId: agentId,
+    basePath,
+    mainKey,
+  });
+  if (options.pathname === pathForRoute("chat", basePath)) {
+    return location;
+  }
+  const search = new URLSearchParams(location.search);
+  new URLSearchParams(options.search).forEach((value, key) => search.set(key, value));
+  return { ...location, pathname: options.pathname, search: search.size ? `?${search}` : "" };
 }
 
 export async function resolveInitialApplicationLocation(params: {
@@ -146,12 +162,30 @@ export async function resolveInitialApplicationLocation(params: {
     agentsList: params.agentsList(),
     hello: params.gateway.snapshot.hello,
   };
-  return normalizeInitialApplicationLocation(
+  const sessionKey = params.sessionKey.trim() || params.gateway.snapshot.sessionKey;
+  const defaultAgentId = resolveUiDefaultAgentId(defaults);
+  const location = normalizeInitialApplicationLocation(
     params.location,
     params.basePath,
-    params.sessionKey.trim() || params.gateway.snapshot.sessionKey,
-    resolvePersistedAgentId(params.selectedAgentId, defaults.agentsList) ||
-      resolveUiDefaultAgentId(defaults),
+    sessionKey,
+    resolvePersistedAgentId(params.selectedAgentId, defaults.agentsList) || defaultAgentId,
     resolveUiConfiguredMainKey(defaults),
   );
+  const target = sessionRefFromPath(
+    location.pathname,
+    params.basePath,
+    resolveUiConfiguredMainKey(defaults),
+  );
+  const knownDefaultMain =
+    params.gateway.snapshot.phase === "connected" &&
+    target?.kind === "main" &&
+    target.agentId === defaultAgentId;
+  if (!target || knownDefaultMain) {
+    return location;
+  }
+  // A remembered selection is not an explicit link. Keep its full identity until
+  // the route loader verifies it, so stale state and short-id collisions cannot win.
+  const search = new URLSearchParams(location.search);
+  search.set(SESSION_RESTORE_KEY_PARAM, sessionKey);
+  return { ...location, search: `?${search}` };
 }

@@ -19,6 +19,7 @@ export type ChatRouteData =
       face: BoardFace;
       shortId?: string;
       canonicalLocation?: RouteLocation;
+      prepareCanonicalLocation?: () => void;
       canonicalLocationReady?: Promise<RouteLocation | null>;
       canonicalLocationSource?: RouteLocation;
     }

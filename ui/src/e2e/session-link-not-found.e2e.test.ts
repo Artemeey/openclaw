@@ -1,5 +1,10 @@
+import type { Page } from "playwright";
 import { expect, it } from "vitest";
-import { installMockGateway } from "../test-helpers/control-ui-e2e.ts";
+import {
+  controlUiBundledGatewayUrl,
+  controlUiBundledSettingsStorageKey,
+  installMockGateway,
+} from "../test-helpers/control-ui-e2e.ts";
 import { createControlUiE2eSuite } from "./control-ui-e2e-suite.test-support.ts";
 import {
   captureUiProof,
@@ -12,7 +17,99 @@ const suite = createControlUiE2eSuite({
   startServerBeforeBrowser: true,
 });
 
+async function rememberSession(page: Page, rememberedKey: string) {
+  await page.addInitScript(
+    ({ settingsKey, gatewayUrl, sessionKey }) => {
+      if (!localStorage.getItem(settingsKey)) {
+        localStorage.setItem(
+          settingsKey,
+          JSON.stringify({
+            gatewayUrl,
+            sessionsByGateway: { [gatewayUrl]: { sessionKey, lastActiveSessionKey: sessionKey } },
+          }),
+        );
+      }
+    },
+    {
+      settingsKey: controlUiBundledSettingsStorageKey(suite.server.baseUrl),
+      gatewayUrl: controlUiBundledGatewayUrl(suite.server.baseUrl),
+      sessionKey: rememberedKey,
+    },
+  );
+}
+
 suite.define(() => {
+  it.each([
+    { name: "missing session", savedKey: "agent:main:15cf8259-0000-4000-8000-000000000001" },
+    { name: "removed agent", savedKey: "agent:retired:main" },
+    { name: "first visit", savedKey: null },
+  ])("opens a usable main chat on a fresh gateway with $name", async ({ name, savedKey }) => {
+    const mainKey = "agent:main:main";
+    await suite.withPage(
+      { locale: "en-US", serviceWorkers: "block", viewport: { height: 900, width: 1280 } },
+      async ({ page }) => {
+        const gateway = await installMockGateway(page, { sessions: [], mainSessionKey: mainKey });
+        if (savedKey) {
+          await rememberSession(page, savedKey);
+        }
+
+        await page.goto(suite.server.baseUrl);
+        try {
+          await expect.poll(() => new URL(page.url()).pathname).toBe("/chat/main");
+          await page.locator(".agent-chat__input textarea").waitFor({ state: "visible" });
+          expect(await page.locator(".session-route-not-found").count()).toBe(0);
+          expect((await gateway.waitForRequest("chat.startup")).params).toMatchObject({
+            sessionKey: mainKey,
+          });
+        } finally {
+          await captureUiProof(page, `first-session-${name.replaceAll(" ", "-")}.png`);
+        }
+
+        await page.goto(suite.server.baseUrl);
+        await expect.poll(() => new URL(page.url()).pathname).toBe("/chat/main");
+        await page.locator(".agent-chat__input textarea").waitFor({ state: "visible" });
+        expect(await gateway.getRequests("sessions.resolve")).toHaveLength(0);
+      },
+    );
+  });
+
+  it("restores the exact saved session even when its short prefix collides outside the list window", async () => {
+    const key = "agent:main:thread:12345678-0000-4000-8000-000000000001";
+    const otherKey = "agent:main:thread:12345678-0000-4000-8000-000000000002";
+    await suite.withPage({ locale: "en-US", serviceWorkers: "block" }, async ({ page }) => {
+      const gateway = await installMockGateway(page, {
+        sessions: [],
+        methodResponses: {
+          "sessions.resolve": {
+            cases: [
+              { match: { key }, response: { ok: true, key, agentId: "main" } },
+              {
+                match: { shortId: "12345678" },
+                response: {
+                  ok: false,
+                  candidates: [
+                    { key, agentId: "main" },
+                    { key: otherKey, agentId: "main" },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      });
+      await rememberSession(page, key);
+      await page.goto(suite.server.baseUrl);
+      await page.locator(".agent-chat__input textarea").waitFor({ state: "visible" });
+      expect((await gateway.waitForRequest("chat.startup")).params).toMatchObject({
+        sessionKey: key,
+      });
+      await expect.poll(() => new URL(page.url()).search).toBe("");
+      const requests = await gateway.getRequests("sessions.resolve");
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.params).toMatchObject({ key, allowMissing: true });
+    });
+  });
+
   it("keeps an explicitly requested missing session as a visible dead end", async () => {
     const mainKey = "agent:main:main";
     const savedActiveKey = "agent:main:saved-active-session";

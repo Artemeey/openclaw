@@ -1,5 +1,6 @@
 import type { RouteLocation } from "@openclaw/uirouter";
 import { notFound } from "@openclaw/uirouter";
+import type { SessionsResolveResult } from "../../../../packages/gateway-protocol/src/index.js";
 import type { GatewaySessionRow } from "../../api/types.ts";
 import { INTERNAL_SESSION_PATH_PARAM } from "../../app-route-paths.ts";
 import { pathForSession } from "../../app-session-path-builder.ts";
@@ -11,16 +12,25 @@ import {
   catalogSessionKeyFromSearch,
 } from "../../lib/sessions/catalog-key.ts";
 import {
+  consumeSessionNavigationHandoff,
+  prepareSessionNavigationHandoff,
+} from "../../lib/sessions/navigation-handoff.ts";
+import {
   findUiSessionRow,
+  resolveSessionNavigationAgentId,
   SESSION_FACE_PREFERENCE_PARAM,
   SESSION_NAVIGATION_KEY_PARAM,
+  SESSION_RESTORE_KEY_PARAM,
 } from "../../lib/sessions/route-navigation.ts";
 import {
+  areUiSessionKeysEquivalent,
   buildAgentMainSessionKey,
   isUiGlobalSessionKey,
+  normalizeAgentId,
   parseAgentSessionKey,
   resolveAgentIdFromSessionKey,
   resolveUiConfiguredMainKey,
+  resolveUiDefaultAgentId,
 } from "../../lib/sessions/session-key.ts";
 import { draftRouteDataFromLocation, draftSearchFromLocation } from "./route-draft.ts";
 import { loadCatalogShareRouteFromLocation } from "./route-loader-catalog-share.ts";
@@ -44,17 +54,21 @@ function isPreferenceDerivedFace(location: RouteLocation): boolean {
   return new URLSearchParams(location.search).get(SESSION_FACE_PREFERENCE_PARAM) === "1";
 }
 
-function locationWithoutSearchParam(location: RouteLocation, key: string): RouteLocation {
+function locationWithoutSearchParams(location: RouteLocation, ...keys: string[]): RouteLocation {
   const params = new URLSearchParams(location.search);
-  params.delete(key);
+  for (const key of keys) {
+    params.delete(key);
+  }
   const search = params.toString();
   return { ...location, search: search ? `?${search}` : "" };
 }
 
 function locationWithoutNavigationHints(location: RouteLocation): RouteLocation {
-  return locationWithoutSearchParam(
-    locationWithoutSearchParam(location, SESSION_FACE_PREFERENCE_PARAM),
+  return locationWithoutSearchParams(
+    location,
+    SESSION_FACE_PREFERENCE_PARAM,
     SESSION_NAVIGATION_KEY_PARAM,
+    SESSION_RESTORE_KEY_PARAM,
   );
 }
 
@@ -135,7 +149,7 @@ function targetFromLocation(context: ApplicationContext, location: RouteLocation
     ? {
         target,
         location: {
-          ...locationWithoutSearchParam(location, INTERNAL_SESSION_PATH_PARAM),
+          ...locationWithoutSearchParams(location, INTERNAL_SESSION_PATH_PARAM),
           pathname: internalPath,
         },
       }
@@ -277,6 +291,71 @@ export async function loadChatRoute(
   const routeLocation = resolvedTarget.location;
   const preferenceDerived = isPreferenceDerivedFace(routeLocation);
   const catalogKey = catalogSessionKeyFromSearch(routeLocation.search);
+  const restoreKey = new URLSearchParams(routeLocation.search).get(SESSION_RESTORE_KEY_PARAM);
+  if (restoreKey) {
+    const client = await waitForGatewayClient(context.gateway, signal);
+    const hello = context.gateway.snapshot.hello;
+    let agentId = parseAgentSessionKey(restoreKey)?.agentId ?? target.agentId;
+    const defaultAgentId = resolveUiDefaultAgentId({ hello: context.gateway.snapshot.hello });
+    const roster = agentId === defaultAgentId ? null : await context.agents.ensureList();
+    signal.throwIfAborted();
+    const removedAgent =
+      roster !== null && !roster.agents.some((agent) => normalizeAgentId(agent.id) === agentId);
+    if (removedAgent) {
+      agentId = resolveSessionNavigationAgentId(context);
+    }
+    if (catalogKey && !removedAgent) {
+      const catalogLocation = locationWithoutSearchParams(routeLocation, SESSION_RESTORE_KEY_PARAM);
+      const catalog = await loadChatRoute(context, catalogLocation, face, signal);
+      return "kind" in catalog && catalog.kind === "session"
+        ? {
+            ...catalog,
+            canonicalLocation: catalog.canonicalLocation ?? catalogLocation,
+            canonicalLocationSource: routeLocation,
+          }
+        : catalog;
+    }
+    const mainKey = configuredMainKey(context);
+    const main = buildAgentMainSessionKey({ agentId, mainKey });
+    const isMain =
+      isUiGlobalSessionKey(restoreKey) ||
+      (parseAgentSessionKey(restoreKey)?.rest ?? restoreKey) === mainKey;
+    const resolved =
+      removedAgent || isMain
+        ? null
+        : await client.request<SessionsResolveResult>("sessions.resolve", {
+            key: restoreKey,
+            agentId,
+            allowMissing: true,
+          });
+    signal.throwIfAborted();
+    // Only a confirmed miss retires remembered state. RPC errors keep the loader's
+    // visible error boundary; the replacement is persisted when its route commits.
+    const restored = resolvedMainSessionRouteData({
+      context,
+      location: catalogKey
+        ? locationWithoutSearchParams(routeLocation, "catalog", "host", "thread")
+        : routeLocation,
+      face,
+      row: resolved?.ok ? resolved : { key: main },
+      target: { kind: "main", namespace: face, agentId },
+      preferenceDerived,
+    });
+    if (resolved?.ok && restored?.canonicalLocation) {
+      const pathname = restored.canonicalLocation.pathname;
+      // Start the handoff at navigation, not before cold components finish loading.
+      // Its proof belongs to this handshake and cannot cross a reconnect.
+      restored.prepareCanonicalLocation = () => {
+        const current = context.gateway.snapshot;
+        if (current.client === client && current.hello === hello) {
+          prepareSessionNavigationHandoff(context.gateway, pathname, resolved.key);
+        }
+      };
+    }
+    return restored
+      ? { ...restored, canonicalLocationSource: routeLocation }
+      : notFound({ routeId: face });
+  }
   if (target.kind === "main" && catalogKey) {
     const sessionKey = buildCatalogSessionKey(catalogKey);
     let canonicalLocation = preferenceDerived
@@ -363,8 +442,15 @@ export async function loadChatRoute(
       // would otherwise pay a sessions.list round-trip on every open. A cached row is
       // already proof the segment is a real key, which settles the exact lookup for
       // free; only genuinely unknown references reach the gateway.
+      const handoffKey = consumeSessionNavigationHandoff(context.gateway, routeLocation.pathname);
+      // Canonical URL replacement must retain an exact lookup's proof even when
+      // that literal session is outside the currently loaded discovery window.
+      const handedOffRow =
+        handoffKey && areUiSessionKeysEquivalent(handoffKey, target.sessionKey)
+          ? { key: handoffKey }
+          : undefined;
       const cachedRow = defaultsKnown
-        ? findUiSessionRow(context, target.sessionKey, target.agentId)
+        ? (findUiSessionRow(context, target.sessionKey, target.agentId) ?? handedOffRow)
         : undefined;
       const exactResolution = cachedRow
         ? ({ kind: "unique", session: cachedRow } as const)

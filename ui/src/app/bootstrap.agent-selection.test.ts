@@ -1,6 +1,7 @@
 import { gatewayOriginScope } from "@openclaw/gateway-client/browser";
 import { expect, it, vi } from "vitest";
 import type { RouteId } from "../app-routes.ts";
+import { SESSION_RESTORE_KEY_PARAM } from "../lib/sessions/route-navigation.ts";
 import { resolveInitialApplicationLocation } from "./bootstrap-location.ts";
 import { bootstrapApplication } from "./bootstrap.ts";
 import type { ApplicationContext } from "./context.ts";
@@ -44,7 +45,11 @@ it("routes a canonical global session through its persisted agent owner", async 
       }),
       signal: new AbortController().signal,
     }),
-  ).resolves.toEqual({ pathname: "/chat/openclaw", search: "", hash: "" });
+  ).resolves.toEqual({
+    pathname: "/chat/openclaw",
+    search: `?${SESSION_RESTORE_KEY_PARAM}=global`,
+    hash: "",
+  });
   expect(subscribe).not.toHaveBeenCalled();
 });
 

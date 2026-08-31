@@ -4,6 +4,7 @@ import { CONTROL_UI_BASE_PATH_ATTRIBUTE } from "../../../src/gateway/control-ui-
 import type { GatewayBrowserClient } from "../api/gateway.ts";
 import { routeIdFromPath, type RouteId } from "../app-routes.ts";
 import { sessionRefFromPath } from "../app-session-route-paths.ts";
+import { SESSION_RESTORE_KEY_PARAM } from "../lib/sessions/route-navigation.ts";
 import {
   isDefaultChatLanding,
   startModelSetupFirstRunRedirectAfterLocation,
@@ -185,7 +186,11 @@ describe("normalizeInitialApplicationLocation", () => {
         agentsList: () => null,
         signal: new AbortController().signal,
       }),
-    ).resolves.toEqual({ pathname: "/chat/research", search: "", hash: "" });
+    ).resolves.toEqual({
+      pathname: "/chat/research",
+      search: `?${SESSION_RESTORE_KEY_PARAM}=agent%3Aresearch%3Aworkspace`,
+      hash: "",
+    });
     expect(subscribe).not.toHaveBeenCalled();
   });
 

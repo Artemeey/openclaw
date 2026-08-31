@@ -165,6 +165,7 @@ export class ChatPage extends OpenClawLightDomElement {
         stillOwnsCanonicalLocation(data.canonicalLocationSource, this.consumedDraftData === data)
       ) {
         // Move a route matched under the wrong namespace to its resolved board face.
+        data.prepareCanonicalLocation?.();
         this.context.replace(data.face ?? "chat", data.canonicalLocation);
         return;
       }

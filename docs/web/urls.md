@@ -106,6 +106,12 @@ display names, agents, and longer id prefixes. Use a longer prefix to make the
 URL unique. Current Gateways return at most ten recent candidates; when that
 bound is reached, the view treats the result as incomplete instead of guessing.
 
+Opening the Control UI at `/` or `/chat` restores the browser's last selected
+session. If that remembered session or its agent no longer exists, the UI opens
+a main session and remembers that selection. An explicitly opened link to a
+missing session stays on the "Session not found" page, with actions to open the
+agent's main session or view sessions.
+
 To continue one of these links in the terminal or attach a coding harness, see
 [Session synchronization and attachment](/concepts/session-attachment).
 
