@@ -16,17 +16,15 @@ const suite = createControlUiE2eSuite({
 });
 
 const captureUiProof = process.env.OPENCLAW_CAPTURE_UI_PROOF === "1";
-const proofDir = path.join(process.cwd(), ".artifacts", "control-ui-e2e", "agent-file-lifecycle");
 
 async function capture(page: Page, name: string) {
   if (!captureUiProof) {
     return;
   }
-  await mkdir(proofDir, { recursive: true });
   await page.screenshot({
     animations: "disabled",
     fullPage: true,
-    path: path.join(proofDir, name),
+    path: path.join(suite.artifactDir, name),
   });
 }
 
@@ -113,7 +111,7 @@ suite.define(() => {
         serviceWorkers: "block",
         viewport: { height: 900, width: 1440 },
         ...(captureUiProof
-          ? { recordVideo: { dir: proofDir, size: { height: 900, width: 1440 } } }
+          ? { recordVideo: { dir: suite.artifactDir, size: { height: 900, width: 1440 } } }
           : {}),
       },
       async ({ page }) => {
@@ -219,7 +217,7 @@ suite.define(() => {
         serviceWorkers: "block",
         viewport: { height: 900, width: 1440 },
         ...(captureUiProof
-          ? { recordVideo: { dir: proofDir, size: { height: 900, width: 1440 } } }
+          ? { recordVideo: { dir: suite.artifactDir, size: { height: 900, width: 1440 } } }
           : {}),
       },
       async ({ page }) => {

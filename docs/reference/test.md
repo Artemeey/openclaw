@@ -330,10 +330,11 @@ not sweep old directories or infer ownership from names, ages, or PIDs.
 - Base Vitest config defaults to `pool: "threads"` and `isolate: false`, with the shared non-isolated runner enabled across repo configs.
 - `pnpm test:channels` runs `vitest.channels.config.ts`.
 
-### Retained mocked Control UI proof
+### Retained Control UI proof
 
-Ordinary mocked browser screenshots, recordings, and reports use fresh directories
-for each test attempt or standalone capture invocation. The Node-only
+Migrated mocked and real-Gateway browser proof uses fresh retained directories.
+Scenario captures allocate per test attempt or standalone invocation; MCP
+conformance and auth transports each allocate a suite-owned directory. The Node-only
 `createControlUiE2eArtifactDir(scope, parentDir?)` helper in
 `ui/src/test-helpers/control-ui-e2e-artifacts.ts` prints the actual allocated path.
 An explicit parent wins; otherwise it uses the trimmed existing
@@ -344,9 +345,10 @@ controls preserve the basename and print the relocated path.
 
 Keep capture gates independent from allocation: `OPENCLAW_CAPTURE_UI_PROOF`,
 `OPENCLAW_UI_E2E_RECORD`, and output-presence gates retain their existing meanings.
-Allocate during scenario execution or `beforeEach`, and pass the same owner to
-shared capture helpers so screenshots, reports, and video stay together. Distinguish
-stage names within an attempt. Close the browser context before finalizing video.
+Allocate during scenario execution or `beforeEach`; suite-shared reports allocate
+after the browser-availability check, even when media capture is disabled. Pass the
+same owner to shared capture helpers, distinguish stage names within an attempt,
+and close the browser context before finalizing video.
 
 Successful and failed evidence is retained. Cleanup is manual: remove only exact
 directories that you own and have finished reviewing. Never recursively delete
@@ -360,9 +362,8 @@ JSON report together. Mantis allocates an invocation directory for setup logs,
 capture attempts, and its report; the builder preserves each attempt's relative
 paths and refuses to overwrite an existing report.
 
-Separate output owners remain: real-Gateway suites, `chat-outbox-*`, and
-`chat-attachment-read-lifecycle`. Do not assume those owners have the ordinary
-mocked proof retention guarantee.
+Separate output owners remain: `chat-outbox-*` and `chat-attachment-read-lifecycle`.
+Do not assume those owners share this retention guarantee.
 
 ## Gateway and E2E
 
