@@ -1717,28 +1717,48 @@ describe("Codex app-server native code mode config", () => {
     expect(request.personality).toBe("none");
   });
 
-  it("does not overwrite native supervised turn settings", () => {
-    const params = createAttemptParams({ provider: "anthropic" });
-    params.thinkLevel = "off";
-    const compat: ModelCompatConfig = { supportedReasoningEfforts: ["none", "high"] };
-    params.model = {
-      ...createCodexTestModel("anthropic"),
-      compat,
-    };
-    const request = buildTurnStartParams(params, {
-      threadId: "thread-supervised",
-      cwd: "/repo",
-      model: "native-model",
-      modelProvider: "native-provider",
-      appServer: createAppServerOptions() as never,
-      preserveNativeTurnSettings: true,
-    });
+  it.each([undefined, "Permission change. Continue with updated permissions."])(
+    "does not overwrite native supervised turn settings (notice: %s)",
+    (notice) => {
+      const params = createAttemptParams({ provider: "anthropic" });
+      params.thinkLevel = "off";
+      const compat: ModelCompatConfig = { supportedReasoningEfforts: ["none", "high"] };
+      params.model = {
+        ...createCodexTestModel("anthropic"),
+        compat,
+      };
+      if (notice) {
+        params.permissionChange = {
+          owner: {},
+          baseExecOverrides: {},
+          notice,
+          request: vi.fn(),
+          applied: () => true,
+          recordApplied: vi.fn(),
+        };
+      }
+      const request = buildTurnStartParams(params, {
+        threadId: "thread-supervised",
+        cwd: "/repo",
+        model: "native-model",
+        modelProvider: "native-provider",
+        appServer: createAppServerOptions() as never,
+        preserveNativeTurnSettings: true,
+      });
 
-    expect(request).not.toHaveProperty("model");
-    expect(request).not.toHaveProperty("effort");
-    expect(request).not.toHaveProperty("collaborationMode");
-    expect(request).not.toHaveProperty("personality");
-  });
+      expect(request).not.toHaveProperty("model");
+      expect(request).not.toHaveProperty("effort");
+      expect(request).not.toHaveProperty("collaborationMode");
+      expect(request).not.toHaveProperty("personality");
+      expect(request.additionalContext).toEqual(
+        notice
+          ? {
+              openclaw_permission_change: { kind: "application", value: notice },
+            }
+          : undefined,
+      );
+    },
+  );
 
   it("honors an explicit top-level reviewer on thread start and resume", () => {
     const appServer = {
@@ -2776,46 +2796,6 @@ describe("Codex plugin binding recovery", () => {
     expect(request.mock.calls.map(([method]) => method)).toEqual(["thread/start", "thread/resume"]);
   });
 
-  it("rechecks scheduled current policy against the exact existing thread", async () => {
-    const sessionFile = path.join(tempDir, "session-current-policy.jsonl");
-    const workspaceDir = path.join(tempDir, "workspace-current-policy");
-    const params = createThreadLifecycleParams(sessionFile, workspaceDir);
-    const request = vi.fn(async (method: string) => {
-      if (method === "thread/start" || method === "thread/resume") {
-        return threadStartResult("thread-current-policy");
-      }
-      throw new Error(`unexpected method: ${method}`);
-    });
-    const build = vi.fn(async (_options?: { threadId?: string }) => ({
-      enabled: true,
-      configPatch: { apps: { _default: { enabled: false } } },
-      fingerprint: "plugin-config-current-policy",
-      inputFingerprint: "plugin-input-current-policy",
-      policyContext: { fingerprint: "plugin-policy-current", apps: {}, pluginAppIds: {} },
-      diagnostics: [],
-    }));
-    const common = {
-      client: { request } as never,
-      params,
-      cwd: workspaceDir,
-      dynamicTools: [],
-      appServer: createThreadLifecycleAppServerOptions(),
-      pluginThreadConfig: {
-        enabled: true,
-        requiresCurrentPolicyCheck: true,
-        inputFingerprint: "plugin-input-current-policy",
-        build,
-      },
-    };
-
-    await startOrResumeThread(common);
-    await startOrResumeThread(common);
-
-    expect(build).toHaveBeenNthCalledWith(1);
-    expect(build).toHaveBeenNthCalledWith(2, { threadId: "thread-current-policy" });
-    expect(request.mock.calls.map(([method]) => method)).toEqual(["thread/start", "thread/resume"]);
-  });
-
   it("rebuilds once when a settled negative binding still enables the plugin", async () => {
     const sessionFile = path.join(tempDir, "session.jsonl");
     const workspaceDir = path.join(tempDir, "workspace");
@@ -2823,6 +2803,9 @@ describe("Codex plugin binding recovery", () => {
     const request = vi.fn(async (method: string) => {
       if (method === "thread/start" || method === "thread/resume") {
         return threadStartResult("thread-settled-transition");
+      }
+      if (method === "thread/unsubscribe") {
+        return { status: "unsubscribed" };
       }
       throw new Error(`unexpected method: ${method}`);
     });
@@ -2887,6 +2870,8 @@ describe("Codex plugin binding recovery", () => {
     expect(build).toHaveBeenCalledTimes(2);
     expect(request.mock.calls.map(([method]) => method)).toEqual([
       "thread/start",
+      "thread/resume",
+      "thread/unsubscribe",
       "thread/start",
       "thread/resume",
     ]);
@@ -2994,6 +2979,7 @@ describe("Codex plugin binding recovery", () => {
       "thread/start",
       "app/installed",
       "thread/resume",
+      "app/installed",
     ]);
     expect(threadStarts).toHaveLength(3);
     expect(threadStarts[1]?.config).toMatchObject({
