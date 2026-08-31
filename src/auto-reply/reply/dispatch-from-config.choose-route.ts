@@ -34,12 +34,12 @@ import {
 import { suppressPendingFinalDelivery } from "./dispatch-from-config.pending-final.js";
 import { extendPreparedDispatchState } from "./dispatch-from-config.phase-state.js";
 import type { PrepareDispatchOperationReadyState } from "./dispatch-from-config.prepare-operation.js";
-import { createSessionMetadataChangeNotifier } from "./dispatch-from-config.session-metadata.js";
 import { runReplyDispatchTakeover } from "./dispatch-from-config.reply-dispatch-hook.js";
 import {
   maybeRefuseRestrictedRuntimeTakeover,
   runtimeTakeoverHooksAllowed,
 } from "./dispatch-from-config.restricted-runtime.js";
+import { createSessionMetadataChangeNotifier } from "./dispatch-from-config.session-metadata.js";
 import {
   captureDeliveredTranscriptMirror,
   mirrorDeliveredReplyToTranscript,
