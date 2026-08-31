@@ -305,6 +305,7 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
     ...new Set(profiles.map((profile) => card.profileProviderIds[profile.profileId] ?? card.id)),
   ];
   const lockedProviders = new Set(card.profileOrderLockedProviders);
+  const storedOrderProviders = new Set(card.profileOrderStoredProviders);
   const reorderOffered = providers.some((provider) => {
     const order = movableOrder(card, provider, props.profileOrders);
     return (
@@ -373,7 +374,11 @@ export function renderProviderProfiles(card: ModelProviderCard, props: ProviderP
               : locked
                 ? t("modelProviders.profiles.priorityManaged")
                 : !complete
-                  ? t("modelProviders.profiles.partialOrder")
+                  ? t(
+                      storedOrderProviders.has(provider)
+                        ? "modelProviders.profiles.partialStoredOrder"
+                        : "modelProviders.profiles.partialOrder",
+                    )
                   : "";
             const move = (targetId: string, position: ArrayDropPosition) => {
               const next = moveArrayEntry(order, profile.profileId, targetId, position);

@@ -1774,6 +1774,7 @@ describe("models.authStatus", () => {
     expect(refreshed.providers[0]?.authProvider).toBe("anthropic");
     expect(refreshed.providers[0]?.usage).toEqual({
       providerId: "anthropic",
+      refreshedAt: 0,
       windows: [{ label: "5h", usedPercent: 22 }],
       plan: "Max (20x)",
       billing: [{ type: "budget", used: 157.85, limit: 400, unit: "USD", period: "month" }],
@@ -2136,6 +2137,7 @@ describe("models.authStatus", () => {
     const refreshed = expectDefined(result, "refreshed auth status");
     expect(refreshed.providers[0]?.usage).toEqual({
       providerId: "deepseek",
+      refreshedAt: 0,
       windows: [],
       summary: "Balance ¥42.50",
     });

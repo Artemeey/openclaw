@@ -216,15 +216,27 @@ export async function loadProviderUsageSummary(
     // timed-out provider keeps its permit until its underlying work settles.
     let workPromise: Promise<ProviderUsageSnapshot | undefined>;
     if (opts.authProfile) {
+      let queued = true;
       let markStarted: (() => void) | undefined;
       const started = new Promise<void>((resolve) => {
         markStarted = resolve;
       });
       workPromise = profileUsageRefreshLimit(async () => {
+        if (!queued) {
+          return undefined;
+        }
         markStarted?.();
         return await work();
       });
-      await started;
+      const acquired = await raceUsageTimeout(
+        started.then(() => true),
+        timeoutMs * 2,
+        false,
+      );
+      if (!acquired) {
+        queued = false;
+        return failureSnapshot(provider, "Refresh queue timeout");
+      }
     } else {
       workPromise = work();
     }

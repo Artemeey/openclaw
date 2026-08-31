@@ -21,7 +21,7 @@ const USAGE_CACHE_TTL_MS = 60_000;
 export type ProviderUsageStatus = Pick<
   ProviderUsageSnapshot,
   "windows" | "summary" | "plan" | "billing" | "costHistory" | "accountEmail" | "error"
-> & { providerId: UsageProviderId };
+> & { providerId: UsageProviderId; refreshedAt: number };
 
 type UsageCacheRead = {
   usageByProvider: Map<string, ProviderUsageStatus>;
@@ -96,6 +96,7 @@ function mapProviderUsage(usage: Awaited<ReturnType<typeof loadProviderUsageSumm
   for (const snap of usage.providers) {
     usageByProvider.set(snap.provider, {
       providerId: snap.provider,
+      refreshedAt: usage.updatedAt,
       windows: snap.windows,
       ...(snap.summary ? { summary: snap.summary } : {}),
       ...(snap.plan ? { plan: snap.plan } : {}),

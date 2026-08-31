@@ -107,10 +107,8 @@ describe("renderProviderProfiles", () => {
     expect(document.body.textContent).toContain("Provider config");
     expect(document.body.textContent).toContain("Codex import");
     expect(document.body.textContent).toContain("Saved in OpenClaw");
-    expect(document.body.textContent).toContain("Inherited from main");
-    expect(document.body.textContent).toContain(
-      "Priority set in provider config; update or remove auth.order there to reorder",
-    );
+    expect(document.body.textContent).toContain("Shared credential");
+    expect(document.body.textContent).toContain("Priority is managed by provider configuration");
     expect(document.body.textContent).toContain("drag to set priority");
     expect(
       [...document.querySelectorAll("button")].map((button) => button.textContent),
@@ -152,6 +150,7 @@ describe("renderProviderProfiles", () => {
         "openai:two": "openai",
       },
       profileOrders: { openai: ["openai:removed", "openai:one"] },
+      profileOrderStoredProviders: ["openai"],
     });
 
     const container = mount(renderProviderProfiles(providerCard, props({ onProfileOrderChange })));
