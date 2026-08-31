@@ -458,31 +458,9 @@ jobs:
             echo "value=openclaw@${INPUT_PREVIOUS_VERSION}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          PUBLISHED_VERSIONS="$RUNNER_TEMP/openclaw-published-versions.json"
-          npm view openclaw versions --json > "$PUBLISHED_VERSIONS"
-          BASELINE_VERSION="$(node - "$CANDIDATE_JSON" "$PUBLISHED_VERSIONS" <<'NODE'
-          const fs = require("node:fs");
-          const candidate = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).candidateVersion;
-          const published = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
-          const parse = (version) => {
-            const match = /^(\d+)\.(\d+)\.(\d+)/u.exec(version);
-            if (!match) throw new Error(`Invalid package version: ${version}`);
-            return match.slice(1).map(Number);
-          };
-          const compare = (left, right) => {
-            const a = parse(left);
-            const b = parse(right);
-            return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
-          };
-          const baseline = published
-            .filter((version) => /^\d+\.\d+\.\d+$/u.test(version) && compare(version, candidate) < 0)
-            .sort(compare)
-            .at(-1);
-          if (!baseline) throw new Error(`No published stable baseline predates ${candidate}`);
-          process.stdout.write(baseline);
-          NODE
-          )"
-          echo "value=openclaw@${BASELINE_VERSION}" >> "$GITHUB_OUTPUT"
+          CANDIDATE_VERSION="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).candidateVersion' "$CANDIDATE_JSON")"
+          BASELINE_SPEC="$(node scripts/lib/release-upgrade-baseline.mjs --candidate-version "$CANDIDATE_VERSION")"
+          echo "value=${BASELINE_SPEC}" >> "$GITHUB_OUTPUT"
 
       - name: Pack baseline artifact
         if: ${{ inputs.mode != 'fresh' }}
