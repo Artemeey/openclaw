@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 2026.8.1 - 2026-08-31
+
+Adds conversation search, grouped threads, live subagent activity, progress cards, colors, remote desktop views, and new Wear controls.
+
+Adds masked credential requests, recurring approvals, question replies, notifications, and one-paste pairing.
+
+Improves chat/media recovery, offline history, Gateway paths and discovery, Talk cancellation, permissions, and Wear security. Aligns Gateway protocol v3/v4 methods/events and migrates the offline cache to schema 3.
+
 ## 2026.7.4 - 2026-07-30
 
 Adds inline audio/video playback and uploads, session dashboards, run telemetry, chat rewind/fork, a Settings repair assistant, and Wear instant Talk.
