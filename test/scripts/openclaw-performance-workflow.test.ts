@@ -128,6 +128,16 @@ describe("OpenClaw performance workflow", () => {
     );
   });
 
+  it("installs Kova runtime dependencies before invoking its CLI", () => {
+    const install = findStep("Install OCM and Kova");
+
+    expect(install.run).toContain(
+      'npm --prefix "$KOVA_SRC" ci --ignore-scripts --no-audit --no-fund',
+    );
+    expect(install.run).toContain('for (const dependency of ["mock-ai-provider", "zod"])');
+    expect(install.run).toContain("require.resolve(dependency, { paths: [root] })");
+  });
+
   it("fails selected live Kova lanes when live auth is missing", () => {
     const configureAuth = findStep("Configure live OpenAI auth");
     const runKova = findStep("Run Kova");
