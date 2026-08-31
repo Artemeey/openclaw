@@ -1,6 +1,7 @@
 /** Channel recovery replies preserve decisions from the real account lifecycle owner. */
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { WebSocket } from "ws";
 import { createDeferred } from "../../test/helpers/promise.js";
 import "../secrets/runtime-telegram.test-support.ts";
 import type { ChannelGatewayContext } from "../channels/plugins/types.adapters.js";

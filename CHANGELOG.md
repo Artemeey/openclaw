@@ -73,6 +73,7 @@ Docs: https://docs.openclaw.ai
 
 - Matrix lifecycle: drain in-flight monitor tasks without deadlocking shared-client retirement, and reject late acquisitions after their owning task closes.
 - Anthropic/startup: defer auth and usage dependencies until their hooks run, avoiding slow cold provider registration while preserving setup choices and credential handling. (#134038)
+- Telegram/config types: accept the existing SecretRef form for bot tokens, matching the plugin schema and runtime credential contract. (#134038)
 - Provider error handling: reuse prepared or already loaded provider hooks instead of cold-loading plugins during error classification, avoiding long stalls in failure reporting and model fallback.
 - **Session settings:** restore merging of concurrent first writes after a startup optimization regressed lock ordering, preserving both global and project settings without adding filesystem side effects to missing-settings reads. Thanks @MrSwagatRathod, @obviyus, and @yetval for the original fix.
 - **Subagent completion:** recognize visible final answers delivered to internal and nested parent sessions, preventing false delivery failures while preserving external channel delivery checks.
