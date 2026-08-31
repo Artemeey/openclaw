@@ -31,10 +31,7 @@ import {
   resolveProviderIdForAuth,
 } from "../../agents/provider-auth-aliases.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import {
-  resolveProviderAuths,
-  resolveProviderUsageAuthEnvCredentialProviders,
-} from "../../infra/provider-usage.auth.js";
+import { resolveProviderUsageAuthEnvCredentialProviders } from "../../infra/provider-usage.auth.js";
 import { resolveUsageProviderId } from "../../infra/provider-usage.shared.js";
 import type { UsageProviderId } from "../../infra/provider-usage.types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -565,36 +562,16 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
         env: process.env,
         plugins: preparedSnapshot.metadataSnapshot.plugins,
       });
-      const storedProviderWideCandidates = [
-        ...new Set(
-          authHealth.profiles
-            .filter((profile) => {
-              if (profile.type !== "api_key") {
-                return false;
-              }
-              const credential = store.profiles[profile.profileId];
-              return credential?.type !== "api_key" || !credential.metadata?.authFlow;
-            })
-            .map((profile) =>
-              resolveUsageProviderId(profile.provider, { credentialType: profile.type }),
-            )
-            .filter((provider): provider is UsageProviderId => Boolean(provider)),
-        ),
-      ];
-      if (storedProviderWideCandidates.length > 0) {
-        const storedProviderAuths = await resolveProviderAuths({
-          providers: storedProviderWideCandidates,
-          store,
-          agentDir,
-          config: cfg,
-          env: process.env,
-          preserveAuthProfileId: true,
-          onError: () => undefined,
-        });
-        for (const auth of storedProviderAuths) {
-          if (!auth.authProfileId) {
-            providerWideUsageIds.add(auth.provider);
-          }
+      const providerUsageRuntime = getProviderUsageRuntimeSnapshot({
+        config: cfg,
+        agentId,
+        agentDir,
+        store,
+      });
+      const activeUsageProviderIds = new Set(providerUsageRuntime.providerIds);
+      for (const provider of providerUsageRuntime.providerIds) {
+        if (providerUsageRuntime.directApiKeys.has(provider)) {
+          providerWideUsageIds.add(provider);
         }
       }
       const usageProviderIds = [
@@ -607,6 +584,9 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
               if (!usageProvider) {
                 return false;
               }
+              if (!activeUsageProviderIds.has(usageProvider)) {
+                return false;
+              }
               if (p.type === "oauth" || p.type === "token") {
                 return providerWideUsageIds.has(usageProvider);
               }
@@ -616,14 +596,6 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
             .filter((id): id is UsageProviderId => Boolean(id)),
         ),
       ];
-
-      const providerUsageRuntime = getProviderUsageRuntimeSnapshot({
-        config: cfg,
-        agentId,
-        agentDir,
-        store,
-      });
-      const activeUsageProviderIds = new Set(providerUsageRuntime.providerIds);
       const usageByProvider =
         usageProviderIds.length > 0
           ? readProviderUsageStaleWhileRevalidate({

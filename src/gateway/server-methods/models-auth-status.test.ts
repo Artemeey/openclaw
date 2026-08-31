@@ -21,8 +21,6 @@ import { createChatRunState } from "../server-chat-state.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
 type BuildAuthHealthSummary = typeof import("../../agents/auth-health.js").buildAuthHealthSummary;
-type ResolveProviderAuths =
-  typeof import("../../infra/provider-usage.auth.js").resolveProviderAuths;
 type LoadProviderUsageSummary =
   typeof import("../../infra/provider-usage.load.js").loadProviderUsageSummary;
 
@@ -70,11 +68,6 @@ const mocks = vi.hoisted(() => ({
     (): AuthHealthSummary => ({ now: 0, warnAfterMs: 0, profiles: [], providers: [] }),
   ),
   loadProviderUsageSummary: vi.fn<LoadProviderUsageSummary>(async () => emptyUsageSummary()),
-  resolveProviderAuths: vi.fn<ResolveProviderAuths>(async (params) =>
-    params.providers
-      .filter((provider) => provider === "clawrouter" || provider === "deepseek")
-      .map((provider) => ({ provider, token: `${provider}-key` })),
-  ),
   listProviderUsagePluginDescriptors: vi.fn(() => [
     { provider: "anthropic", displayName: "Claude" },
     { provider: "deepseek", displayName: "DeepSeek" },
@@ -121,16 +114,6 @@ vi.mock("../../agents/auth-health.js", async () => {
 vi.mock("../../infra/provider-usage.load.js", () => ({
   loadProviderUsageSummary: mocks.loadProviderUsageSummary,
 }));
-
-vi.mock("../../infra/provider-usage.auth.js", async () => {
-  const actual = await vi.importActual<typeof import("../../infra/provider-usage.auth.js")>(
-    "../../infra/provider-usage.auth.js",
-  );
-  return {
-    ...actual,
-    resolveProviderAuths: mocks.resolveProviderAuths,
-  };
-});
 
 vi.mock("../../plugins/provider-runtime.js", () => ({
   listProviderUsagePluginDescriptors: mocks.listProviderUsagePluginDescriptors,
@@ -1603,12 +1586,24 @@ describe("models.authStatus", () => {
     expect(mocks.buildAuthHealthSummary).toHaveBeenCalledTimes(2);
   });
 
-  it("does not query usage for api-key-only providers", async () => {
+  it("does not query usage for static keys without an active usage contract", async () => {
+    const profile = createApiKeyProfile("groq");
+    setPreparedAuthStore({
+      version: 1,
+      profiles: {
+        [profile.profileId]: {
+          type: "api_key",
+          provider: "groq",
+          key: "gsk-test",
+        },
+      },
+    });
+    mocks.listProviderUsagePluginDescriptors.mockReturnValueOnce([]);
     mocks.buildAuthHealthSummary.mockReturnValue({
       now: 0,
       warnAfterMs: 0,
-      profiles: [createApiKeyProfile("anthropic")],
-      providers: [createStaticApiKeyProvider("anthropic")],
+      profiles: [profile],
+      providers: [createStaticApiKeyProvider("groq")],
     });
 
     await handler(createOptions());
@@ -1899,7 +1894,7 @@ describe("models.authStatus", () => {
     },
   );
 
-  it("keeps stored Anthropic Admin usage beside account-scoped OAuth usage", async () => {
+  it("keeps stored static-key auth resolution off the status RPC", async () => {
     const oauthProfileId = "anthropic:account";
     const adminProfileId = "anthropic:billing";
     const profiles = [
@@ -1943,20 +1938,8 @@ describe("models.authStatus", () => {
         },
       },
     });
-    mocks.resolveProviderAuths.mockResolvedValueOnce([
-      { provider: "anthropic", token: "encoded-admin-token" },
-    ]);
-
     await readAuthStatus();
-    await waitForFast(() => expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(2));
-
-    expect(mocks.loadProviderUsageSummary).toHaveBeenCalledWith({
-      providers: ["anthropic"],
-      agentDir: "/tmp/agent",
-      authStore: preparedAuthStore,
-      config: expect.any(Object),
-      timeoutMs: 5_000,
-    });
+    await waitForFast(() => expect(mocks.loadProviderUsageSummary).toHaveBeenCalledOnce());
     expect(mocks.loadProviderUsageSummary).toHaveBeenCalledWith({
       providers: ["anthropic"],
       authProfile: { provider: "anthropic", profileId: oauthProfileId },
@@ -2111,6 +2094,9 @@ describe("models.authStatus", () => {
   });
 
   it("adds DeepSeek API-key balance summaries to auth status usage", async () => {
+    mocks.getRuntimeConfig.mockReturnValue({
+      models: { providers: { deepseek: { apiKey: "direct-value" } } },
+    });
     mocks.buildAuthHealthSummary.mockReturnValue({
       now: 0,
       warnAfterMs: 0,

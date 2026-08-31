@@ -360,32 +360,35 @@ describe("usage.status provider usage cache", () => {
     }
   });
 
-  it("keeps a provider's last-good snapshot when its refresh times out", async () => {
-    const first = (await runUsageStatus()) as UsageSummary;
-    now = 61_000;
-    mocks.loadProviderUsageSummary.mockResolvedValueOnce({
-      updatedAt: now,
-      providers: [
-        {
-          provider: "openai",
-          displayName: "OpenAI",
-          windows: [],
-          error: "Timeout",
-        },
-      ],
-    });
+  it.each(["Timeout", "Refresh queue timeout"])(
+    "keeps a provider's last-good snapshot when its refresh fails with %s",
+    async (error) => {
+      const first = (await runUsageStatus()) as UsageSummary;
+      now = 61_000;
+      mocks.loadProviderUsageSummary.mockResolvedValueOnce({
+        updatedAt: now,
+        providers: [
+          {
+            provider: "openai",
+            displayName: "OpenAI",
+            windows: [],
+            error,
+          },
+        ],
+      });
 
-    const stale = await runUsageStatus();
-    expect(JSON.stringify(stale)).toBe(JSON.stringify(first));
-    await mocks.loadProviderUsageSummary.mock.results[1]?.value;
-    now = 62_000;
-    await vi.waitFor(async () => {
-      const retained = (await runUsageStatus()) as UsageSummary;
-      expect(retained.providers).toEqual(first.providers);
-      expect(retained.updatedAt).toBe(first.updatedAt);
-      expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(2);
-    });
-  });
+      const stale = await runUsageStatus();
+      expect(JSON.stringify(stale)).toBe(JSON.stringify(first));
+      await mocks.loadProviderUsageSummary.mock.results[1]?.value;
+      now = 62_000;
+      await vi.waitFor(async () => {
+        const retained = (await runUsageStatus()) as UsageSummary;
+        expect(retained.providers).toEqual(first.providers);
+        expect(retained.updatedAt).toBe(first.updatedAt);
+        expect(mocks.loadProviderUsageSummary).toHaveBeenCalledTimes(2);
+      });
+    },
+  );
 
   it("invalidates cached usage when the runtime config changes", async () => {
     const configFor = (baseUrl: string) =>
