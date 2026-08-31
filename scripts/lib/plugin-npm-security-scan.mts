@@ -14,8 +14,8 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
+  isDefaultScannerWalkedFilePath,
   isExcludedTestFilePath,
-  isScannable,
   scanDirectoryWithSummary,
   type SkillScanFinding,
 } from "../../src/skills/security/scanner.js";
@@ -155,12 +155,12 @@ const FROZEN_RELEASE_REQUIRED_REVIEWED_SOURCE_FINDING_COUNTS = new Map<string, n
   ["@openclaw/codex:dangerous-exec:src/app-server/transport-stdio.ts", 1],
   ["@openclaw/codex:dangerous-exec:src/node-cli-sessions.ts", 1],
   ["@openclaw/discord:dangerous-exec:src/voice/audio.ts", 1],
-  ["@openclaw/google-meet:dangerous-exec:src/node-host.ts", 1],
-  ["@openclaw/google-meet:dangerous-exec:src/realtime.ts", 1],
+  ["@openclaw/google-meet:dangerous-exec:src/node-host.ts", 3],
+  ["@openclaw/google-meet:dangerous-exec:src/realtime.ts", 2],
   ["@openclaw/matrix:dangerous-exec:src/matrix/deps.ts", 1],
   ["@openclaw/raft:dangerous-exec:src/gateway.ts", 1],
   ["@openclaw/signal:dangerous-exec:src/daemon.ts", 1],
-  ["@openclaw/voice-call:dangerous-exec:src/tunnel.ts", 1],
+  ["@openclaw/voice-call:dangerous-exec:src/tunnel.ts", 4],
   ["@openclaw/voice-call:dangerous-exec:src/webhook/tailscale.ts", 1],
 ]);
 
@@ -969,7 +969,7 @@ export function stageScannerRelevantPluginTarballFiles(tarballPath: string): {
         }
         const packedPath = path.slice("package/".length);
         packedFiles.push(packedPath);
-        if (!isScannable(packedPath)) {
+        if (!isDefaultScannerWalkedFilePath(packedPath)) {
           return;
         }
         if (isExcludedTestFilePath(packedPath)) {

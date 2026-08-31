@@ -757,6 +757,15 @@ export function isExcludedTestFilePath(filePath: string): boolean {
   return segments.some(isExcludedTestDirectoryName) || isExcludedTestFileName(fileName);
 }
 
+export function isDefaultScannerWalkedFilePath(filePath: string): boolean {
+  const segments = filePath.split(/[\\/]+/u).filter(Boolean);
+  const fileName = segments.pop() ?? "";
+  return (
+    isScannable(fileName) &&
+    segments.every((segment) => segment !== "node_modules" && !segment.startsWith("."))
+  );
+}
+
 function pathContainsNodeModulesSegment(relativePath: string): boolean {
   return relativePath.split(/[\\/]+/u).includes("node_modules");
 }

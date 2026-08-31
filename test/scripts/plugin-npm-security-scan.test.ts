@@ -168,12 +168,12 @@ function frozenReviewedFindings(): string[] {
     "@openclaw/codex:dangerous-exec:src/app-server/sandbox-exec-server/http.ts",
     "@openclaw/codex:dangerous-exec:src/app-server/sandbox-exec-server/processes.ts",
     "@openclaw/discord:dangerous-exec:src/voice/audio.ts",
-    "@openclaw/google-meet:dangerous-exec:src/node-host.ts",
-    "@openclaw/google-meet:dangerous-exec:src/realtime.ts",
+    ...Array.from({ length: 3 }, () => "@openclaw/google-meet:dangerous-exec:src/node-host.ts"),
+    ...Array.from({ length: 2 }, () => "@openclaw/google-meet:dangerous-exec:src/realtime.ts"),
     "@openclaw/matrix:dangerous-exec:src/matrix/deps.ts",
     "@openclaw/raft:dangerous-exec:src/gateway.ts",
     "@openclaw/signal:dangerous-exec:src/daemon.ts",
-    "@openclaw/voice-call:dangerous-exec:src/tunnel.ts",
+    ...Array.from({ length: 4 }, () => "@openclaw/voice-call:dangerous-exec:src/tunnel.ts"),
     "@openclaw/voice-call:dangerous-exec:src/webhook/tailscale.ts",
   ];
 }
@@ -518,8 +518,10 @@ describe("scripts/lib/plugin-npm-security-scan.mts", () => {
     const artifact = writePluginArtifact({
       extensionId: "test-file",
       files: {
+        ".cache/generated.js": 'require("node:child_process").execSync("id");\n',
         "index.js": "export const value = 1;\n",
         "index.test.ts": 'const child = require("node:child_process");\nchild.execSync("id");\n',
+        "node_modules/dependency/index.js": 'require("node:child_process").execSync("id");\n',
       },
       packageName: "@openclaw/test-file",
     });

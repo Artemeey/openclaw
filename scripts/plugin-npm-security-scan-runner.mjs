@@ -56,25 +56,32 @@ function boundedAppend(current, chunk) {
 
 function processGroupRssBytes(pid) {
   if (process.platform === "win32") {
-    return null;
+    return { status: "unavailable" };
   }
-  const result = spawnSync("ps", ["-o", "rss=", "-g", String(pid)], {
+  const result = spawnSync("ps", ["-A", "-o", "pid=,pgid=,rss=,stat="], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
     timeout: 5_000,
   });
-  if (result.status !== 0) {
-    return null;
+  if (result.error || result.status !== 0) {
+    return { status: "failed" };
   }
-  const samples = result.stdout
-    .trim()
-    .split(/\s+/u)
-    .filter(Boolean)
-    .map((value) => Number(value));
-  if (samples.length === 0 || samples.some((value) => !Number.isSafeInteger(value) || value <= 0)) {
-    return null;
+  const rows = result.stdout
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/u))
+    .filter((columns) => columns.length >= 4 && Number(columns[1]) === pid);
+  const activeRows = rows.filter((columns) => !columns[3].startsWith("Z"));
+  if (activeRows.length === 0) {
+    return rows.length > 0 || !processExists(pid) ? { status: "exited" } : { status: "failed" };
   }
-  return samples.reduce((total, value) => total + value, 0) * 1024;
+  const samples = activeRows.map((columns) => Number(columns[2]));
+  if (samples.some((value) => !Number.isSafeInteger(value) || value <= 0)) {
+    return { status: "failed" };
+  }
+  return {
+    bytes: samples.reduce((total, value) => total + value, 0) * 1024,
+    status: "measured",
+  };
 }
 
 function killProcessGroup(child) {
@@ -214,11 +221,11 @@ async function run(argv) {
     if (child.exitCode !== null || child.signalCode !== null || !child.pid) {
       return;
     }
-    const rssBytes = processGroupRssBytes(child.pid);
-    if (rssBytes === null && processExists(child.pid)) {
+    const rssMeasurement = processGroupRssBytes(child.pid);
+    if (rssMeasurement.status === "failed") {
       rssMeasurementFailed = true;
       killProcessGroup(child);
-    } else if (rssBytes !== null && rssBytes > rssLimitBytes) {
+    } else if (rssMeasurement.status === "measured" && rssMeasurement.bytes > rssLimitBytes) {
       rssExceeded = true;
       killProcessGroup(child);
     }
