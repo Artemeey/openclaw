@@ -106,6 +106,44 @@ function canonicalProviderId(provider: string): string {
   return canonicalModelAuthProviderId(provider);
 }
 
+function normalizeAccountEmail(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || undefined;
+}
+
+function attachAccountUsageSnapshot(
+  card: ModelProviderCard,
+  snapshot: ProviderUsageSnapshot,
+): boolean {
+  const accountEmail = normalizeAccountEmail(snapshot.accountEmail);
+  if (!accountEmail) {
+    return false;
+  }
+  const matches = card.profiles.filter((profile) => {
+    return [profile.email, profile.usage?.accountEmail].some(
+      (value) => normalizeAccountEmail(value) === accountEmail,
+    );
+  });
+  if (matches.length !== 1) {
+    return false;
+  }
+  const profile = matches[0];
+  if (!profile) {
+    return false;
+  }
+  profile.usage = {
+    providerId: snapshot.provider,
+    windows: snapshot.windows,
+    ...(snapshot.summary ? { summary: snapshot.summary } : {}),
+    ...(snapshot.plan ? { plan: snapshot.plan } : {}),
+    ...(snapshot.billing?.length ? { billing: snapshot.billing } : {}),
+    ...(snapshot.costHistory ? { costHistory: snapshot.costHistory } : {}),
+    ...(snapshot.accountEmail ? { accountEmail: snapshot.accountEmail } : {}),
+    ...(snapshot.error ? { error: snapshot.error } : {}),
+  };
+  return true;
+}
+
 function authKindForProvider(provider: ModelAuthStatusProvider): ModelProviderAuthKind {
   switch (provider.status) {
     case "ok":
@@ -336,6 +374,10 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
       findDraft(drafts, [id]) ??
       ensureDraft(drafts, id, snapshot.displayName || providerDisplayLabel(id));
     draft.ids.add(id);
+    if (attachAccountUsageSnapshot(draft.card, snapshot)) {
+      draft.hasUsageSnapshot = true;
+      continue;
+    }
     // usage.status snapshots carry cost history and errors that the
     // auth-status embed drops, so they win when both are present.
     draft.card.usage = snapshot;

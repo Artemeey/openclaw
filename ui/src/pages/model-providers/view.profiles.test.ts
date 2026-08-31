@@ -107,13 +107,6 @@ describe("renderModelProviders profiles", () => {
         cards: [
           card({
             apiKey: { source: "config" },
-            usageScope: "account",
-            usage: {
-              provider: "openai",
-              displayName: "OpenAI",
-              plan: "Pro",
-              windows: [{ label: "Weekly", usedPercent: 10 }],
-            },
             localCost: { totalCost: 12, totalTokens: 1_000, sessionCount: 2 },
             profiles: [
               {
@@ -144,6 +137,43 @@ describe("renderModelProviders profiles", () => {
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
     expect(container.querySelector(".model-providers__global-metrics")).toBeNull();
+  });
+
+  it("keeps unmatched account usage visible beside profile usage", () => {
+    const container = mount(
+      props({
+        cards: [
+          card({
+            usageScope: "account",
+            usage: {
+              provider: "openai",
+              displayName: "OpenAI",
+              accountEmail: "other@example.com",
+              windows: [{ label: "Other account week", usedPercent: 55 }],
+            },
+            profiles: [
+              {
+                profileId: "openai:first",
+                type: "oauth",
+                status: "ok",
+                email: "first@example.com",
+                usage: {
+                  providerId: "openai",
+                  windows: [{ label: "Profile week", usedPercent: 10 }],
+                },
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    expect(text(container.querySelector(".model-providers__profile-usage"))).toContain(
+      "Profile week",
+    );
+    expect(text(container.querySelector(".model-providers__global-metrics"))).toContain(
+      "Other account week",
+    );
   });
 
   it("distinguishes pending account usage from an unsupported usage source", () => {

@@ -236,8 +236,7 @@ function renderLocalCost(card: ModelProviderCard, costDays: number) {
 
 function renderProviderMetrics(card: ModelProviderCard, supplementalLoading: boolean) {
   const hasProfiles = card.profiles.length > 0;
-  const hasProfileUsage = card.profiles.some((profile) => profile.usage !== undefined);
-  const usage = hasProfileUsage && card.usageScope === "account" ? undefined : card.usage;
+  const usage = card.usage;
   if (!usage && hasProfiles) {
     return nothing;
   }

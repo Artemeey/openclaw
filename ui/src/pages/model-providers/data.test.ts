@@ -304,8 +304,15 @@ describe("buildModelProviderCards", () => {
           provider: "openai",
           displayName: "OpenAI",
           status: "ok",
-          profiles: [{ profileId: "p1", type: "oauth", status: "ok" }],
-          usage: { providerId: "openai", windows: [{ label: "5h", usedPercent: 10 }] },
+          profiles: [
+            {
+              profileId: "p1",
+              type: "oauth",
+              status: "ok",
+              email: "owner@example.com",
+              usage: { providerId: "openai", windows: [{ label: "5h", usedPercent: 10 }] },
+            },
+          ],
         },
       ]),
       providerUsage: {
@@ -338,9 +345,11 @@ describe("buildModelProviderCards", () => {
       },
     });
     expect(cards).toHaveLength(1);
-    expect(firstCard(cards).usage?.windows).toEqual([{ label: "5h", usedPercent: 55 }]);
-    expect(firstCard(cards).usage?.costHistory?.periodDays).toBe(30);
-    expect(firstCard(cards).usageScope).toBe("account");
+    expect(firstCard(cards).profiles[0]?.usage?.windows).toEqual([
+      { label: "5h", usedPercent: 55 },
+    ]);
+    expect(firstCard(cards).profiles[0]?.usage?.costHistory?.periodDays).toBe(30);
+    expect(firstCard(cards).usage).toBeUndefined();
   });
 
   it("preserves provider-scoped auth usage beside account usage", () => {
