@@ -31,6 +31,7 @@ describe("UrbitSSEClient", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
