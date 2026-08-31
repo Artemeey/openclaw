@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { runCiGitStep } from "./ci-git-owner.test-support.js";
+import type { PerformanceFixtureOptions } from "./openclaw-performance-workflow.test-support.js";
 
 // Performance jobs run on Ubuntu. Exercise their POSIX bodies here; the shared
 // ci-platform-checkout suite owns native Windows Job Object proof.
@@ -9,12 +10,13 @@ const steps = {
   target: ["resolve_target", "Resolve OpenClaw target ref"],
   record: ["source_performance", "Record source performance revision"],
   tested: ["kova", "Record tested revision"],
+  kova: ["kova", "Install OCM and Kova"],
   baseline: ["source_performance", "Fetch previous source performance baseline"],
   prepare: ["publish", "Prepare clawgrit report commit"],
   publish: ["publish", "Publish to clawgrit reports"],
 } as const;
 
-type PerformanceGitMode = keyof typeof steps;
+type PerformanceGitMode = Extract<PerformanceFixtureOptions["mode"], keyof typeof steps>;
 
 function performanceRun(
   mode: PerformanceGitMode,
@@ -98,6 +100,7 @@ const terminalCases = [
   ...["rev-parse"].map((operation) => ({ mode: "target" as const, operation })),
   { mode: "record" as const, operation: "rev-parse" },
   { mode: "tested" as const, operation: "rev-parse" },
+  ...["fetch", "checkout"].map((operation) => ({ mode: "kova" as const, operation })),
   ...["fetch", "ls-tree", "show", "sparse-checkout init", "sparse-checkout set", "checkout"].map(
     (operation) => ({ mode: "baseline" as const, operation }),
   ),
