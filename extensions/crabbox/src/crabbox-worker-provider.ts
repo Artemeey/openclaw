@@ -466,6 +466,7 @@ export function createCrabboxWorkerProvider(
               project.assertCurrent();
               const setup = createCrabboxNodeRuntimeSetup({
                 nodeBootstrap: runtime.nodeBootstrap,
+                workerBundle: runtime.workerBundle,
                 leaseId,
               });
               try {
