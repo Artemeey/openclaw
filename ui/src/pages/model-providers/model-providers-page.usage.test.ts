@@ -210,11 +210,26 @@ describe("ModelProvidersPage usage convergence", () => {
         },
       ],
     };
+    const refreshedStatus = {
+      ...authStatus,
+      ts: 2,
+      usageRefreshPending: undefined,
+      providers: [
+        {
+          ...authStatus.providers[0],
+          profileOrder: ["openai:two", "openai:one"],
+        },
+      ],
+    };
     let authStatusCalls = 0;
     harness.request.mockImplementation(async (method: string, params?: unknown) => {
       if (method === "models.authStatus") {
         authStatusCalls += 1;
-        return authStatusCalls === 1 ? authStatus : staleStatus.promise;
+        return authStatusCalls === 1
+          ? authStatus
+          : authStatusCalls === 2
+            ? staleStatus.promise
+            : refreshedStatus;
       }
       if (method === "models.authOrderSet") {
         return {};
@@ -229,6 +244,7 @@ describe("ModelProvidersPage usage convergence", () => {
 
     page.setProfileOrder("openai", "openai", ["openai:two", "openai:one"]);
     await vi.waitFor(() => expect(requestCount(harness.request, "models.authOrderSet")).toBe(1));
+    await vi.waitFor(() => expect(authStatusCalls).toBe(3));
     await vi.waitFor(() => expect(page.profileOrders.openai).toBeUndefined());
     expect(page.data?.authStatus?.providers[0]?.profileOrder).toEqual(["openai:two", "openai:one"]);
 

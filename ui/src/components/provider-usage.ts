@@ -25,7 +25,7 @@ type CompactWindowGroup = {
 };
 
 function compactWindowRank(cadence: string): number {
-  if (/\b\d+h\b/iu.test(cadence) && !/\b168h\b/iu.test(cadence)) {
+  if (/\b\d+(?:m|h)\b/iu.test(cadence) && !/\b168h\b/iu.test(cadence)) {
     return 0;
   }
   if (/\b(?:week|168h)\b/iu.test(cadence)) {

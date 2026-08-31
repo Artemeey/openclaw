@@ -634,6 +634,12 @@ describe("renderModelProviders", () => {
                       usedPercent: 30,
                     },
                     {
+                      label: "codex other · Week",
+                      groupLabel: "codex other",
+                      windowLabel: "Week",
+                      usedPercent: 35,
+                    },
+                    {
                       label: "codex other · 15m",
                       groupLabel: "codex other",
                       windowLabel: "15m",
@@ -672,7 +678,7 @@ describe("renderModelProviders", () => {
     );
     expect(
       [...(groups[2]?.querySelectorAll(".provider-usage-window__cadence") ?? [])].map(text),
-    ).toEqual(["15m"]);
+    ).toEqual(["15m", "Week"]);
   });
 
   it("keeps provider-scoped usage beside OAuth usage without an inference API key", () => {
