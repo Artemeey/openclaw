@@ -695,8 +695,7 @@ export function planPluginNpmSecurityArtifactDownloads(params: {
     throw new Error("Plugin security artifact metadata exceeds the package-count limit.");
   }
   const artifacts: PluginNpmSecurityArtifactDownloadPlan["artifacts"] = [];
-  const errors: string[] = [];
-  const rejectedPackageNames: string[] = [];
+  const rejections: Array<{ error: string; packageName: string }> = [];
   let totalBytes = 0;
   for (const artifact of candidates.toSorted((left, right) =>
     compareCodeUnits(left.name, right.name),
@@ -706,10 +705,13 @@ export function planPluginNpmSecurityArtifactDownloads(params: {
       throw new Error("Plugin security artifact metadata contains an unexpected package.");
     }
     if (artifact.sizeInBytes > MAX_PLUGIN_SECURITY_WORKFLOW_ARTIFACT_BYTES) {
-      errors.push(
-        pluginSecurityArtifactDownloadError(expectedPackage.packageName, "artifact-byte-limit"),
-      );
-      rejectedPackageNames.push(expectedPackage.packageName);
+      rejections.push({
+        error: pluginSecurityArtifactDownloadError(
+          expectedPackage.packageName,
+          "artifact-byte-limit",
+        ),
+        packageName: expectedPackage.packageName,
+      });
       continue;
     }
     const nextTotalBytes = totalBytes + artifact.sizeInBytes;
@@ -717,21 +719,27 @@ export function planPluginNpmSecurityArtifactDownloads(params: {
       !Number.isSafeInteger(nextTotalBytes) ||
       nextTotalBytes > MAX_PLUGIN_SECURITY_WORKFLOW_ARTIFACT_TOTAL_BYTES
     ) {
-      errors.push(
-        pluginSecurityArtifactDownloadError(expectedPackage.packageName, "aggregate-byte-limit"),
-      );
-      rejectedPackageNames.push(expectedPackage.packageName);
+      rejections.push({
+        error: pluginSecurityArtifactDownloadError(
+          expectedPackage.packageName,
+          "aggregate-byte-limit",
+        ),
+        packageName: expectedPackage.packageName,
+      });
       continue;
     }
     totalBytes = nextTotalBytes;
     artifacts.push(artifact);
   }
+  const sortedRejections = rejections.toSorted((left, right) =>
+    compareCodeUnits(left.packageName, right.packageName),
+  );
   return {
     artifacts,
     candidateSha: params.candidateSha,
-    errors: sortStrings(errors),
+    errors: sortedRejections.map((rejection) => rejection.error),
     expectedArtifactCount: expectedPackages.length,
-    rejectedPackageNames: sortStrings(rejectedPackageNames),
+    rejectedPackageNames: sortedRejections.map((rejection) => rejection.packageName),
     totalBytes,
   };
 }
@@ -769,7 +777,6 @@ export function parsePluginNpmSecurityArtifactDownloadRejections(params: {
     rejectedPackageNames.length !== errors.length ||
     errors.some((error) => typeof error !== "string") ||
     rejectedPackageNames.some((packageName) => typeof packageName !== "string") ||
-    JSON.stringify(sortStrings(errors as string[])) !== JSON.stringify(errors) ||
     JSON.stringify(sortStrings(rejectedPackageNames as string[])) !==
       JSON.stringify(rejectedPackageNames) ||
     new Set(rejectedPackageNames).size !== rejectedPackageNames.length

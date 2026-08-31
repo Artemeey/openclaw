@@ -480,6 +480,7 @@ jobs:
       - name: Setup trusted scanner pnpm
         uses: ./.github/actions/setup-pnpm-store-cache
         with:
+          cache-mode: restore
           node-version: "24.x"
 
       - name: Install trusted scanner dependencies
@@ -527,6 +528,7 @@ jobs:
       - name: Setup trusted inert pack environment
         uses: ./.github/actions/setup-node-env
         with:
+          cache-mode: off
           node-version: "24.x"
           install-bun: "false"
 
@@ -586,6 +588,7 @@ jobs:
       - name: Setup trusted scanner pnpm
         uses: ./.github/actions/setup-pnpm-store-cache
         with:
+          cache-mode: restore
           node-version: "24.x"
 
       - name: Install trusted scanner dependencies

@@ -20,6 +20,8 @@ import {
   listPluginNpmSecurityArtifacts,
   listPublishablePluginPackages,
   normalizePackedFindingPath,
+  parsePluginNpmSecurityArtifactDownloadRejections,
+  planPluginNpmSecurityArtifactDownloads,
   resolveCandidatePluginPackageDir,
   resolveReviewedSourceLayout,
   scanPublishablePluginPackages,
@@ -647,6 +649,55 @@ describe("scripts/lib/plugin-npm-security-scan.mts", () => {
     ]);
     expect(report.errors).toContain(preDownloadError);
     expect(report.errors.join("\n")).not.toContain("plugin security artifact is missing");
+  });
+
+  it("keeps pre-download rejection errors paired for prefix-related package names", () => {
+    const expectedPackages = [
+      {
+        extensionId: "foo",
+        packageDir: "extensions/foo",
+        packageName: "@scope/foo",
+        packageVersion: "1.0.0",
+      },
+      {
+        extensionId: "foo-bar",
+        packageDir: "extensions/foo-bar",
+        packageName: "@scope/foo-bar",
+        packageVersion: "1.0.0",
+      },
+    ];
+    const artifactPages = [
+      {
+        artifacts: expectedPackages.map((plugin, index) => ({
+          digest: `sha256:${String(index + 1).repeat(64)}`,
+          expired: false,
+          id: index + 1,
+          name: `plugin-npm-security-package-${CANDIDATE_SHA}-${plugin.extensionId}`,
+          size_in_bytes: 128 * 1024 * 1024 + 1,
+        })),
+      },
+    ];
+
+    const plan = planPluginNpmSecurityArtifactDownloads({
+      artifactPages,
+      candidateSha: CANDIDATE_SHA,
+      expectedPackages,
+    });
+
+    expect(plan.rejectedPackageNames).toEqual(["@scope/foo", "@scope/foo-bar"]);
+    expect(
+      parsePluginNpmSecurityArtifactDownloadRejections({
+        candidateSha: CANDIDATE_SHA,
+        expectedPackages,
+        plan,
+      }),
+    ).toEqual({
+      errors: [
+        "@scope/foo: plugin security artifact exceeds the pre-download byte limit.",
+        "@scope/foo-bar: plugin security artifact exceeds the pre-download byte limit.",
+      ],
+      rejectedPackageNames: ["@scope/foo", "@scope/foo-bar"],
+    });
   });
 
   it("bounds aggregate compressed and expanded artifact bytes deterministically", () => {
