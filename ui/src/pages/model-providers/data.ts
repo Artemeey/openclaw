@@ -65,6 +65,8 @@ export type ModelProviderCard = {
   profileOrders: Record<string, string[]>;
   /** Auth owners whose stored priority can be reset. */
   profileOrderStoredProviders: string[];
+  /** Auth owners whose priority is pinned by provider configuration. */
+  profileOrderLockedProviders: string[];
   apiKey?: ModelAuthStatusProvider["apiKey"];
   hasConfigApiKey: boolean;
   modelCount: number;
@@ -132,6 +134,7 @@ function ensureDraft(drafts: CardDraft[], id: string, displayName: string): Card
       profileProviderIds: {},
       profileOrders: {},
       profileOrderStoredProviders: [],
+      profileOrderLockedProviders: [],
       credentialProviderIds: [],
       logoutTargets: [],
       hasConfigApiKey: false,
@@ -275,6 +278,12 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
         !draft.card.profileOrderStoredProviders.includes(authProvider)
       ) {
         draft.card.profileOrderStoredProviders.push(authProvider);
+      }
+      if (
+        provider.profileOrderLocked === "provider-config" &&
+        !draft.card.profileOrderLockedProviders.includes(authProvider)
+      ) {
+        draft.card.profileOrderLockedProviders.push(authProvider);
       }
     }
     if (provider.apiKey || provider.profiles.length > 0) {

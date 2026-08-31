@@ -1,0 +1,109 @@
+/* @vitest-environment jsdom */
+
+import { nothing, render } from "lit";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { i18n } from "../../i18n/index.ts";
+import type { ModelProviderCard } from "./data.ts";
+import { renderProviderProfiles, type ProviderProfilesViewProps } from "./profiles-view.ts";
+
+function card(overrides: Partial<ModelProviderCard> = {}): ModelProviderCard {
+  return {
+    id: "openai",
+    displayName: "OpenAI",
+    profiles: [],
+    profileProviderIds: {},
+    profileOrders: {},
+    profileOrderStoredProviders: [],
+    profileOrderLockedProviders: [],
+    credentialProviderIds: ["openai"],
+    logoutTargets: [],
+    hasConfigApiKey: false,
+    modelCount: 1,
+    availableModelCount: 1,
+    ...overrides,
+  };
+}
+
+function props(overrides: Partial<ProviderProfilesViewProps> = {}): ProviderProfilesViewProps {
+  return {
+    busy: {},
+    canMutate: true,
+    mutationBlockedReason: null,
+    profileOrders: {},
+    onOpenModelSetup: () => undefined,
+    onProfileOrderChange: () => undefined,
+    onRequestLogout: () => undefined,
+    ...overrides,
+  };
+}
+
+describe("renderProviderProfiles", () => {
+  beforeEach(async () => {
+    await i18n.setLocale("en");
+  });
+
+  afterEach(() => {
+    render(nothing, document.body);
+    document.body.replaceChildren();
+  });
+
+  it("shows account provenance and removes drag controls for config-locked priority", () => {
+    const onProfileOrderChange = vi.fn();
+    const providerCard = card({
+      profiles: [
+        {
+          profileId: "openai:configured",
+          type: "oauth",
+          status: "ok",
+          source: "config",
+          email: "configured@example.com",
+        },
+        {
+          profileId: "openai:codex",
+          type: "oauth",
+          status: "ok",
+          source: "external",
+          displayName: "Codex import",
+          email: "codex@example.com",
+        },
+        {
+          profileId: "openai:saved",
+          type: "oauth",
+          status: "ok",
+          source: "saved",
+          email: "saved@example.com",
+        },
+        {
+          profileId: "openai:inherited",
+          type: "oauth",
+          status: "ok",
+          source: "inherited",
+          email: "inherited@example.com",
+        },
+      ],
+      profileProviderIds: {
+        "openai:configured": "openai-config",
+        "openai:codex": "openai",
+        "openai:saved": "openai",
+        "openai:inherited": "openai",
+      },
+      profileOrders: {
+        "openai-config": ["openai:configured"],
+        openai: ["openai:codex", "openai:saved", "openai:inherited"],
+      },
+      profileOrderLockedProviders: ["openai-config"],
+    });
+
+    render(renderProviderProfiles(providerCard, props({ onProfileOrderChange })), document.body);
+
+    expect(document.querySelectorAll(".model-providers__profile-grip-spacer")).toHaveLength(1);
+    expect(document.querySelectorAll(".model-providers__profile-grip")).toHaveLength(3);
+    expect(document.body.textContent).toContain("Provider config");
+    expect(document.body.textContent).toContain("Codex import");
+    expect(document.body.textContent).toContain("Saved in OpenClaw");
+    expect(document.body.textContent).toContain("Inherited from main");
+    expect(document.body.textContent).toContain("Priority set in provider config");
+    expect(document.body.textContent).toContain("drag to set priority");
+    expect(onProfileOrderChange).not.toHaveBeenCalled();
+  });
+});
