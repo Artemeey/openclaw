@@ -162,7 +162,7 @@ const MessageItemSchema = z
   })
   .strict()
   .superRefine((value, ctx) => {
-    if (value.phase != null && value.role !== "assistant") {
+    if (value.phase !== undefined && value.role !== "assistant") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["phase"],
