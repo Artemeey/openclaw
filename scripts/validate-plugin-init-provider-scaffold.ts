@@ -51,10 +51,10 @@ function packCandidate(cwd: string, archiveBase: string): string {
   if (result.status !== 0) {
     throw new Error(`pnpm pack exited with status ${result.status}`);
   }
-  const packageVersion = String(
-    (JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")) as { version?: unknown })
-      .version ?? "",
-  ).trim();
+  const packageVersionValue = (
+    JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8")) as { version?: unknown }
+  ).version;
+  const packageVersion = typeof packageVersionValue === "string" ? packageVersionValue.trim() : "";
   const candidateTarball = path.join(artifactRoot, `${archiveBase}-${packageVersion}.tgz`);
   if (!packageVersion || !fs.existsSync(candidateTarball)) {
     throw new Error(`pnpm pack did not create the expected candidate tarball: ${candidateTarball}`);
