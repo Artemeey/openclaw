@@ -3657,55 +3657,37 @@ console.log(JSON.stringify({ ok: true, channels: {} }));
     }
   });
 
-  test("treats an owner file creation race as a normal overlap", () => {
+  test.each([
+    ["treats an owner file creation race as a normal overlap", undefined],
+    ["re-reads an empty owner file left by a racing writer's creation window", ""],
+    ["re-reads a partial owner file left by a racing writer's creation window", '{"pid":'],
+  ])("%s", (_name, contents) => {
     const { root, mirror } = makeFixture();
     const lockPath = path.join(root, "maintenance.lock");
+    const ownerPath = path.join(lockPath, "owner.json");
     mkdirSync(lockPath);
-    const owner = { pid: process.pid, checkout: mirror, startedAt: "racing" };
-    const writer = spawn(
-      "sh",
-      ["-c", 'sleep 0.03; printf "%s\\n" "$OWNER_JSON" > "$LOCK_PATH/owner.json"'],
-      {
-        env: { ...process.env, LOCK_PATH: lockPath, OWNER_JSON: JSON.stringify(owner) },
-        stdio: "ignore",
-      },
-    );
-
-    try {
-      expect(acquireMaintenanceLock(mirror, lockPath)).toMatchObject({
-        acquired: false,
-        owner,
-      });
-    } finally {
-      writer.kill();
+    if (contents !== undefined) {
+      writeFileSync(ownerPath, contents);
     }
-  });
-
-  test("re-reads an empty owner file left by a racing writer's creation window", () => {
-    const { root, mirror } = makeFixture();
-    const lockPath = path.join(root, "maintenance.lock");
-    mkdirSync(lockPath);
-    // Freeze writeFileSync's open-truncate window (the #109140 flake class):
-    // owner.json exists but is still empty when the reader first sees it, and
-    // the racing writer publishes the owner content shortly after.
-    writeFileSync(path.join(lockPath, "owner.json"), "");
     const owner = { pid: process.pid, checkout: mirror, startedAt: "racing" };
-    const writer = spawn(
-      "sh",
-      ["-c", 'sleep 0.03; printf "%s\\n" "$OWNER_JSON" > "$LOCK_PATH/owner.json"'],
-      {
-        env: { ...process.env, LOCK_PATH: lockPath, OWNER_JSON: JSON.stringify(owner) },
-        stdio: "ignore",
-      },
-    );
+    const wait = Atomics.wait;
+    // Publish only after the reader sees incomplete state. A timed shell writer
+    // can exhaust the bounded retry window before it gets scheduled.
+    const publishOwner = vi.spyOn(Atomics, "wait").mockImplementationOnce((...args) => {
+      writeFileSync(ownerPath, `${JSON.stringify(owner)}\n`);
+      return wait(...args);
+    });
 
     try {
       expect(acquireMaintenanceLock(mirror, lockPath)).toMatchObject({
         acquired: false,
+        lockPath,
         owner,
       });
+      expect(publishOwner).toHaveBeenCalledOnce();
+      expect(JSON.parse(readFileSync(ownerPath, "utf8"))).toEqual(owner);
     } finally {
-      writer.kill();
+      publishOwner.mockRestore();
     }
   });
 
