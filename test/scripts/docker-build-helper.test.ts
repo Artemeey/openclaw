@@ -2038,6 +2038,12 @@ grep -qx -- "OPENCLAW_E2E_COMMAND_TIMEOUT=23s" "$TMPDIR/package-args"
         'openclaw_e2e_maybe_timeout "${OPENCLAW_E2E_NPM_INSTALL_TIMEOUT:-600s}" npm install -g',
       );
     }
+    expect(pluginCorrupt).toContain(
+      'plugins install "npm:@openclaw/demo-corrupt-plugin@0.0.1" --force',
+    );
+    expect(pluginCorrupt).toContain(
+      "openclaw_e2e_print_log /tmp/openclaw-corrupt-plugin-install.log",
+    );
   });
 
   it("keeps upgrade survivor mutable state off the host-mounted artifact tree", () => {
