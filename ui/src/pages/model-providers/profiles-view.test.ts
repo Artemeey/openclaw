@@ -83,27 +83,32 @@ describe("renderProviderProfiles", () => {
       ],
       profileProviderIds: {
         "openai:configured": "openai-config",
-        "openai:codex": "openai",
+        "openai:codex": "openai-config",
         "openai:saved": "openai",
         "openai:inherited": "openai",
       },
       profileOrders: {
         "openai-config": ["openai:configured"],
-        openai: ["openai:codex", "openai:saved", "openai:inherited"],
+        openai: ["openai:saved", "openai:inherited"],
       },
       profileOrderLockedProviders: ["openai-config"],
     });
 
     render(renderProviderProfiles(providerCard, props({ onProfileOrderChange })), document.body);
 
-    expect(document.querySelectorAll(".model-providers__profile-grip-spacer")).toHaveLength(1);
-    expect(document.querySelectorAll(".model-providers__profile-grip")).toHaveLength(3);
+    expect(document.querySelectorAll(".model-providers__profile-grip-spacer")).toHaveLength(2);
+    expect(document.querySelectorAll(".model-providers__profile-grip")).toHaveLength(2);
     expect(document.body.textContent).toContain("Provider config");
     expect(document.body.textContent).toContain("Codex import");
     expect(document.body.textContent).toContain("Saved in OpenClaw");
     expect(document.body.textContent).toContain("Inherited from main");
-    expect(document.body.textContent).toContain("Priority set in provider config");
+    expect(document.body.textContent).toContain(
+      "Priority set in provider config; update or remove auth.order there to reorder",
+    );
     expect(document.body.textContent).toContain("drag to set priority");
+    expect(
+      [...document.querySelectorAll("button")].map((button) => button.textContent),
+    ).not.toContain("Reset");
     expect(onProfileOrderChange).not.toHaveBeenCalled();
   });
 });
