@@ -33,6 +33,9 @@ const { fixtureLifetime, fixtureDirectory, createFixtureCommands } = createWorke
 const compilerModule = "scripts/lib/vitest-worker-run.mts";
 const compilerEntry = "scripts/lib/vitest-worker-compiler.mts";
 const artifactsModule = "scripts/lib/vitest-worker-artifacts.mts";
+// Fresh TS execution plus bundled-provider discovery can exceed the shared test
+// timeout on Windows hosted runners while remaining bounded in normal runs.
+const FRESH_PROVIDER_HOOK_TIMEOUT_MS = process.platform === "win32" ? 240_000 : 120_000;
 const tooling = [
   compilerModule,
   compilerEntry,
@@ -554,13 +557,15 @@ describe("fresh compiled subprocess invocation", () => {
     },
   );
 
-  it("uses the prepared Anthropic failover hook in a fresh process without global activation", (context) =>
-    fixtureLifetime.run(async () => {
-      const { node } = createFixtureCommands(context);
-      const probe = writeFixture(
-        fixtureDirectory(),
-        "anthropic-hook.mts",
-        `
+  it(
+    "uses the prepared Anthropic failover hook in a fresh process without global activation",
+    (context) =>
+      fixtureLifetime.run(async () => {
+        const { node } = createFixtureCommands(context);
+        const probe = writeFixture(
+          fixtureDirectory(),
+          "anthropic-hook.mts",
+          `
           import assert from 'node:assert/strict';
           import {coerceToFailoverError} from ${JSON.stringify(pathToFileURL(path.join(root, "src/agents/failover-error.ts")).href)};
           import {getActivePluginRegistry} from ${JSON.stringify(pathToFileURL(path.join(root, "src/plugins/runtime.ts")).href)};
@@ -581,14 +586,16 @@ describe("fresh compiled subprocess invocation", () => {
           assert.equal(result?.provider, 'anthropic');
           assert.equal(getActivePluginRegistry(), null);
         `,
-      );
-      const result = await node(resolveRuntimeWorkerArgv(pathToFileURL(probe)), root, {
-        ...process.env,
-        OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(root, "extensions"),
-        OPENCLAW_DISABLE_BUNDLED_PLUGINS: undefined,
-      });
-      expect(result.code, result.stderr + result.stdout).toBe(0);
-    }));
+        );
+        const result = await node(resolveRuntimeWorkerArgv(pathToFileURL(probe)), root, {
+          ...process.env,
+          OPENCLAW_BUNDLED_PLUGINS_DIR: path.join(root, "extensions"),
+          OPENCLAW_DISABLE_BUNDLED_PLUGINS: undefined,
+        });
+        expect(result.code, result.stderr + result.stdout).toBe(0);
+      }),
+    FRESH_PROVIDER_HOOK_TIMEOUT_MS,
+  );
 
   it("preserves scoped and prepared provider hooks in source and compiled TUI payloads", (context) =>
     fixtureLifetime.run(async () => {
