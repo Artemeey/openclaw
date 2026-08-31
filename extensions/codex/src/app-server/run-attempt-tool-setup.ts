@@ -29,6 +29,7 @@ import { emitCodexAppServerEvent } from "./run-attempt-lifecycle.js";
 import type { CodexAttemptRuntime } from "./run-attempt-runtime.js";
 import { resolveCodexDynamicToolDirectNames } from "./run-attempt-tools.js";
 import {
+  buildScheduledCodexAppServerConnectionIdentity,
   captureScheduledCodexAppAuthority,
   resolveScheduledCodexAppCreatorCaptureDecision,
 } from "./scheduled-app-authority.js";
@@ -150,7 +151,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
   const scheduledAppAuthoritySourceRef: {
     current?: Omit<
       Parameters<typeof captureScheduledCodexAppAuthority>[0],
-      "profileId" | "accountId"
+      "auth"
     >;
   } = {};
   const preparedChatgptAuth =
@@ -158,10 +159,21 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
     connection.startupPreparedAuth.snapshot?.loginParams.type === "chatgptAuthTokens" &&
     connection.startupPreparedAuth.snapshot.chatgptAccountId
       ? {
+          kind: "prepared-profile" as const,
           profileId: connection.startupPreparedAuth.profileId,
           accountId: connection.startupPreparedAuth.snapshot.chatgptAccountId,
         }
       : undefined;
+  const configuredAppServerAuth =
+    !preparedChatgptAuth && connection.appServer.start.transport !== "stdio"
+      ? {
+          kind: "configured-app-server" as const,
+          connectionFingerprint: buildScheduledCodexAppServerConnectionIdentity(
+            connection.appServer,
+          ),
+        }
+      : undefined;
+  const scheduledCodexAppAuth = preparedChatgptAuth ?? configuredAppServerAuth;
   const appPolicy = resolveCodexPluginsPolicy(pluginConfig);
   const codexAppsMayBeVisible =
     appPolicy.enabled &&
@@ -172,6 +184,7 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
     usesSupervisionConnection: connection.usesSupervisionConnection,
     homeScope: connection.appServer.start.homeScope,
     hasPreparedAccountIdentity: Boolean(preparedChatgptAuth),
+    hasConfiguredAppServerIdentity: Boolean(configuredAppServerAuth),
   });
   const codexAppAuthorityUnavailableReason = appCreatorCapture.unavailableReason;
   const canResolveScheduledCodexAppAuthority = appCreatorCapture.supported;
@@ -468,11 +481,11 @@ export async function prepareCodexAttemptTools(runtime: CodexAttemptRuntime) {
         }
         const appSource = scheduledAppAuthoritySourceRef.current;
         const runtimeAuthority =
-          canResolveScheduledCodexAppAuthority && preparedChatgptAuth
+          canResolveScheduledCodexAppAuthority && scheduledCodexAppAuth
             ? appSource
               ? await captureScheduledCodexAppAuthority({
                   ...appSource,
-                  ...preparedChatgptAuth,
+                  auth: scheduledCodexAppAuth,
                   signal: options?.signal,
                 })
               : (() => {
