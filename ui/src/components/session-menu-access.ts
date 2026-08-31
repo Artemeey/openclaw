@@ -53,10 +53,6 @@ export function sessionMenuReasons(params: {
   const archiveReason = lifecycleRows.some((row) => !row.sessionId?.trim())
     ? "Session lifecycle action requires a durable session identity."
     : batchPatchReason({ archived: true });
-  const groupReason = reason({
-    method: "sessions.groups.put",
-    requiredScope: "operator.write",
-  });
   const deleteReason = (batchRows ?? [session])
     .map((row) =>
       reason({
@@ -88,7 +84,7 @@ export function sessionMenuReasons(params: {
     ...(unreadReason ? { "toggle-unread": unreadReason } : {}),
     ...(categoryReason ? { "move-to-group": categoryReason } : {}),
     ...(archiveReason ? { "toggle-archived": archiveReason } : {}),
-    ...(groupReason || categoryReason ? { "new-group": groupReason ?? categoryReason } : {}),
+    ...(categoryReason ? { "new-group": categoryReason } : {}),
     ...(forkReason ? { fork: forkReason } : {}),
     ...(cloudWorkerStopReason ? { "stop-cloud-worker": cloudWorkerStopReason } : {}),
     ...(deleteReason ? { delete: deleteReason } : {}),

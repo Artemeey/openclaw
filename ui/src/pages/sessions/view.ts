@@ -800,7 +800,7 @@ function setDropTargetActive(event: DragEvent, active: boolean) {
 }
 
 function categoryDropHandlers(props: SessionsProps, category: string | null) {
-  if (props.groupBy !== "category" || props.groupWriteDisabledReason) {
+  if (props.groupBy !== "category" || props.patchWriteDisabledReason) {
     return { dragover: nothing, dragleave: nothing, drop: nothing } as const;
   }
   const carriesSessionKey = (event: DragEvent) =>
@@ -865,12 +865,12 @@ function renderCategoryCell(row: GatewaySessionRow, props: SessionsProps) {
   return html`
     <td>
       <select
-        ?disabled=${props.loading || Boolean(props.groupWriteDisabledReason)}
-        title=${props.groupWriteDisabledReason ?? nothing}
+        ?disabled=${props.loading || Boolean(props.patchWriteDisabledReason)}
+        title=${props.patchWriteDisabledReason ?? nothing}
         aria-label=${t("sessionsView.moveToGroup")}
         class="session-group-select"
         @change=${(e: Event) => {
-          if (props.groupWriteDisabledReason) {
+          if (props.patchWriteDisabledReason) {
             return;
           }
           const select = e.target as HTMLSelectElement;

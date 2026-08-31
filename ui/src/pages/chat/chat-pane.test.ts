@@ -199,13 +199,13 @@ describe("chat pane header state", () => {
     }
   });
 
-  it("skips a no-ID header group move when the session leaves during the catalog write", async () => {
+  it("assigns a header new group without prewriting the group catalog", async () => {
     const restoreDialogPolyfill = installDialogPolyfill();
     try {
-      let landCatalogWrite!: () => void;
       const patch = vi.fn(async () => ({}));
       const session = {
         key: "agent:main:current",
+        sessionId: "session-current",
         kind: "direct",
         updatedAt: 0,
       } satisfies GatewaySessionRow;
@@ -216,12 +216,7 @@ describe("chat pane header state", () => {
         defaults: { modelProvider: null, model: null, contextTokens: null },
         sessions: [session],
       };
-      const groupsPut = vi.fn(
-        () =>
-          new Promise<"completed">((resolve) => {
-            landCatalogWrite = () => resolve("completed");
-          }),
-      );
+      const groupsPut = vi.fn(async () => "completed" as const);
       const sessions = createSessionCapabilityFixture({
         groupsPut,
         patch,
@@ -235,14 +230,14 @@ describe("chat pane header state", () => {
       const pending = pane.handleHeaderSessionAction({ kind: "new-group" }, session);
       await waitForInputDialog();
       await submitInputDialog("Projects");
-      await vi.waitFor(() => expect(groupsPut).toHaveBeenCalledOnce());
-
-      result.sessions = [];
-      landCatalogWrite();
       await pending;
 
-      expect(patch).not.toHaveBeenCalled();
-      expect(showToast).toHaveBeenCalledWith({ message: t("sessionsView.newGroupMoveSkipped") });
+      expect(groupsPut).not.toHaveBeenCalled();
+      expect(patch).toHaveBeenCalledWith(
+        session.key,
+        { category: "Projects" },
+        { agentId: "main", expectedSessionId: session.sessionId },
+      );
     } finally {
       document.body.replaceChildren();
       restoreDialogPolyfill();

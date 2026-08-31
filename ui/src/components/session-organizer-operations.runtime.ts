@@ -25,7 +25,7 @@ import {
   sessionRowAgentId,
 } from "./session-organizer-batch-mutations.ts";
 import type { SessionActionHost, SessionActionRow } from "./session-organizer-batch-mutations.ts";
-import { rememberSessionGroup, type SessionGroupActionHost } from "./session-organizer-catalog.ts";
+import { rememberSessionGroup } from "./session-organizer-catalog.ts";
 import type { SessionOrganizerControllerHost } from "./session-organizer-controller.ts";
 import type { SessionOwnerOption } from "./session-owner-chip.ts";
 
@@ -418,16 +418,16 @@ export async function createSessionGroup(
     host.sessionData.publishSessionMutationError(scope, t("common.refresh"));
     return "failed";
   }
-  const remembered = await rememberSessionGroup(host, name, scope);
-  if (remembered !== "completed") {
-    return remembered;
-  }
   // The Gateway checks the identities captured with the action. A bounded
   // roster can page them out or replace a key, so it cannot authorize the move.
   if (sessions.length > 0) {
     return sessions.length === 1
       ? patchSession(host, sessions[0]!, { category: name }, scope)
       : patchSessions(host, sessions, { category: name }, scope);
+  }
+  const remembered = await rememberSessionGroup(host, name, scope);
+  if (remembered !== "completed") {
+    return remembered;
   }
   if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
     return "stale";
@@ -438,7 +438,7 @@ export async function createSessionGroup(
 }
 
 export async function assignSessionCategory(
-  host: SessionGroupActionHost,
+  host: SessionActionHost,
   session: SessionActionRow,
   category: string | null,
   scope: SidebarSessionMutationScope,
@@ -448,15 +448,9 @@ export async function assignSessionCategory(
   if (!host.sessionData.isSessionMutationScopeCurrent(scope)) {
     return;
   }
-  const catalogChanged = Boolean(category && !host.knownSessionGroups().includes(category));
-  if (category && (await rememberSessionGroup(host, category, scope)) !== "completed") {
-    return;
-  }
   const currentSession = options.resolveSession ? options.resolveSession() : session;
   if (!currentSession) {
-    showToast({
-      message: t(catalogChanged ? "sessionsView.newGroupMoveSkipped" : "common.refresh"),
-    });
+    showToast({ message: t("common.refresh") });
     return;
   }
   if ((currentSession.category ?? null) === category && patch.pinned === undefined) {

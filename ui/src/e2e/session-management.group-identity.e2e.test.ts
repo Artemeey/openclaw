@@ -44,7 +44,7 @@ suite.define(() => {
       const batch = surface === "selection";
       const method = batch ? "sessions.patchMany" : "sessions.patch";
       const gateway = await installMockGateway(page, {
-        deferredMethods: ["sessions.groups.put", method],
+        deferredMethods: [method],
         methodResponses: { "sessions.list": sessionsListResponse([original, survivor]) },
         sessionKey: original.key,
       });
@@ -91,7 +91,7 @@ suite.define(() => {
         await input.fill(group);
         await capture("editing");
         await input.press("Enter");
-        await gateway.waitForRequest("sessions.groups.put");
+        const request = await gateway.waitForRequest(method);
 
         // Deletion/recreation changes the durable identity, unlike ordinary reset.
         await gateway.setMethodResponse(
@@ -104,8 +104,6 @@ suite.define(() => {
           reason: "create",
         });
         await expect.poll(() => row.textContent()).toContain(replacement.label);
-        await gateway.resolveDeferred("sessions.groups.put");
-        const request = await gateway.waitForRequest(method);
         const params = requireRecord(request.params);
         const targets =
           batch && Array.isArray(params.targets) ? params.targets.map(requireRecord) : [params];
@@ -157,6 +155,7 @@ suite.define(() => {
         expect(targets.find((target) => target.key === original.key)).toMatchObject({
           expectedSessionId: original.sessionId,
         });
+        expect(await gateway.getRequests("sessions.groups.put")).toHaveLength(0);
         expect(await failure.textContent()).toContain("changed before patch. Retry.");
         if (batch) {
           expect(acceptedKeys).toEqual([survivor.key]);

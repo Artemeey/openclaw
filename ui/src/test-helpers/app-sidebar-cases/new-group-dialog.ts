@@ -12,7 +12,7 @@ import {
 import "../../components/app-sidebar.ts";
 
 describe("AppSidebar new group dialog", () => {
-  it("writes a new group catalog before assigning the selection through patchMany", async () => {
+  it("assigns a new group through one patchMany request", async () => {
     const restoreDialogPolyfill = installDialogPolyfill();
     try {
       const { sidebar, harness } = await mountMultiSelect([
@@ -35,16 +35,13 @@ describe("AppSidebar new group dialog", () => {
       await submitInputDialog("  Projects  ");
 
       await waitForFast(() => expect(harness.patchMany).toHaveBeenCalledOnce());
-      expect(harness.groupsPut).toHaveBeenCalledWith(["Projects"]);
+      expect(harness.groupsPut).not.toHaveBeenCalled();
       expect(harness.patchMany).toHaveBeenCalledWith(
         [
           { key: "agent:main:a", agentId: "main", expectedSessionId: "session:agent:main:a" },
           { key: "agent:main:b", agentId: "main", expectedSessionId: "session:agent:main:b" },
         ],
         { category: "Projects" },
-      );
-      expect(harness.groupsPut.mock.invocationCallOrder[0]).toBeLessThan(
-        harness.patchMany.mock.invocationCallOrder[0]!,
       );
       expect(harness.patch).not.toHaveBeenCalled();
       await waitForFast(() => expect(harness.refreshReplacement).toHaveBeenCalledOnce());
@@ -63,10 +60,16 @@ describe("AppSidebar new group dialog", () => {
         "sessions.groups.put",
         "sessions.patchMany",
       ]);
-      let landCatalogWrite!: () => void;
-      harness.groupsPut.mockReturnValueOnce(
+      let landPatch!: () => void;
+      harness.patchMany.mockReturnValueOnce(
         new Promise((resolve) => {
-          landCatalogWrite = () => resolve("completed");
+          landPatch = () =>
+            resolve({
+              outcomes: [
+                { ok: true, key: "agent:main:a", agentId: "main" },
+                { ok: true, key: "agent:main:b", agentId: "main" },
+              ],
+            });
         }),
       );
       click(rowLink(sidebar, "agent:main:a"), { altKey: true });
@@ -78,13 +81,14 @@ describe("AppSidebar new group dialog", () => {
       menu.querySelector<HTMLElement>('wa-dropdown-item[value="new-group"]')?.click();
 
       await waitForInputDialog();
-      await submitInputDialog("Projects");
-      await waitForFast(() => expect(harness.groupsPut).toHaveBeenCalledOnce());
+      const submitted = submitInputDialog("Projects");
+      await waitForFast(() => expect(harness.patchMany).toHaveBeenCalledOnce());
 
       // Projection absence is not deletion. The Gateway can still apply both
       // captured identities, and rejects either one if it was actually removed.
       harness.publish({ result: { count: 0, sessions: [] } as unknown as SessionsListResult });
-      landCatalogWrite();
+      landPatch();
+      await submitted;
 
       // The dialog is removed only once the submit chain has run to completion,
       // so waiting on that keeps the negative assertions below from passing
@@ -110,17 +114,15 @@ describe("AppSidebar new group dialog", () => {
   it("reports the failed target when the Gateway moves only part of the selection", async () => {
     const restoreDialogPolyfill = installDialogPolyfill();
     try {
-      const { sidebar, harness } = await mountMultiSelect([
-        "sessions.groups.put",
-        "sessions.patch",
-        "sessions.patchMany",
-      ]);
-      let landCatalogWrite!: () => void;
-      harness.groupsPut.mockReturnValueOnce(
-        new Promise((resolve) => {
-          landCatalogWrite = () => resolve("completed");
-        }),
-      );
+      const { sidebar, harness } = await mountMultiSelect(["sessions.patch", "sessions.patchMany"]);
+      const failure = "Session agent:main:a changed before patch. Retry.";
+      harness.patchMany.mockImplementationOnce(async (targets) => ({
+        outcomes: targets.map((target) =>
+          target.key === "agent:main:a"
+            ? { ok: false, ...target, error: { code: "INVALID_REQUEST", message: failure } }
+            : { ok: true, ...target },
+        ),
+      }));
       click(rowLink(sidebar, "agent:main:a"), { altKey: true });
       click(rowLink(sidebar, "agent:main:b"), { altKey: true });
       await sidebar.updateComplete;
@@ -131,23 +133,6 @@ describe("AppSidebar new group dialog", () => {
 
       await waitForInputDialog();
       await submitInputDialog("Projects");
-      await waitForFast(() => expect(harness.groupsPut).toHaveBeenCalledOnce());
-
-      const failure = "Session agent:main:a changed before patch. Retry.";
-      harness.patchMany.mockImplementationOnce(async (targets) => ({
-        outcomes: targets.map((target) =>
-          target.key === "agent:main:a"
-            ? { ok: false, ...target, error: { code: "INVALID_REQUEST", message: failure } }
-            : { ok: true, ...target },
-        ),
-      }));
-      harness.publish({
-        result: {
-          count: 1,
-          sessions: [{ key: "agent:main:b", sessionId: "session:agent:main:b", agentId: "main" }],
-        } as unknown as SessionsListResult,
-      });
-      landCatalogWrite();
 
       await waitForFast(() =>
         expect(
@@ -162,6 +147,7 @@ describe("AppSidebar new group dialog", () => {
         { category: "Projects" },
       );
       expect(harness.patch).not.toHaveBeenCalled();
+      expect(harness.groupsPut).not.toHaveBeenCalled();
       expect(harness.refreshReplacement).toHaveBeenCalledOnce();
       document.body
         .querySelector<HTMLButtonElement>('openclaw-modal-dialog button[type="button"]')

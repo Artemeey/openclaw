@@ -282,11 +282,7 @@ export function renderRecentSession(params: {
     .filter(Boolean)
     .join(" ");
   const childrenExpanded = host.isSessionChildrenExpanded(session);
-  const groupWriteAccess = host.readSessionMutationAccess({
-    method: "sessions.groups.put",
-    requiredScope: "operator.write",
-  });
-  const rowDraggable = !session.isChild && groupWriteAccess.allowed;
+  const rowDraggable = !session.isChild && pinAccess.allowed;
   const marqueeLabelTemplate = html`<span
     ${display ? ref(restartHoverMarqueeIfHovered) : nothing}
     class="sidebar-recent-session__name hover-marquee"

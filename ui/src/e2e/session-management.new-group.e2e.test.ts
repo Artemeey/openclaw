@@ -99,8 +99,7 @@ suite.define(() => {
       await page
         .locator('[data-session-section="category:Client work"]')
         .waitFor({ state: "visible" });
-      const putRequest = await gateway.waitForRequest("sessions.groups.put");
-      expect(requireRecord(putRequest.params)).toMatchObject({ names: ["Client work"] });
+      expect(await gateway.getRequests("sessions.groups.put")).toHaveLength(0);
       const patched = await waitForPatch(
         gateway,
         (params) => params.key === "agent:main:move-me" && params.category === "Client work",

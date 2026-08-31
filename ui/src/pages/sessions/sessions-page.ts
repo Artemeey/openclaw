@@ -951,9 +951,6 @@ class SessionsPage extends OpenClawLightDomElement {
     if (current === category) {
       return;
     }
-    if (category) {
-      void this.rememberCustomGroup(category);
-    }
     void this.patchSession(key, { category });
   }
 
@@ -1011,11 +1008,7 @@ class SessionsPage extends OpenClawLightDomElement {
     });
   }
 
-  /**
-   * One captured scope covers both writes: the catalog entry lands before the
-   * row moves, and a catalog write that outlived its connection must not be
-   * followed by an assignment issued on the replacement one.
-   */
+  /** A selected row creates its group atomically through sessions.patch. */
   private async writeNewCategory(
     name: string,
     session?: GatewaySessionRow,
@@ -1025,14 +1018,14 @@ class SessionsPage extends OpenClawLightDomElement {
     if (!scope) {
       return t("sessionsView.newGroupFailed");
     }
-    const remembered = await this.rememberCustomGroup(name, scope);
-    if (remembered !== "completed") {
+    if (!session) {
+      const remembered = await this.rememberCustomGroup(name, scope);
+      if (remembered === "completed") {
+        return null;
+      }
       return remembered === "failed"
         ? (this.error ?? t("sessionsView.newGroupFailed"))
         : t("sessionsView.newGroupStale");
-    }
-    if (!session) {
-      return null;
     }
     const assigned = await this.patchSession(
       session.key,

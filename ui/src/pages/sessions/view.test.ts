@@ -687,7 +687,7 @@ describe("sessions view", () => {
     expect(onAssignCategory).toHaveBeenCalledWith("agent:main:main", "Research");
   });
 
-  it("disables category assignment controls without group write access", async () => {
+  it("disables category assignment controls without session patch access", async () => {
     const container = document.createElement("div");
     const onAssignCategory = vi.fn();
     const reason = "Operator write access is required.";
@@ -700,7 +700,7 @@ describe("sessions view", () => {
         ),
         groupBy: "category",
         knownCategories: ["Research"],
-        groupWriteDisabledReason: reason,
+        patchWriteDisabledReason: reason,
         onAssignCategory,
       }),
       container,

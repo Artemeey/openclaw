@@ -42,6 +42,7 @@ describe("AppSidebar section reordering", () => {
       withCatalog?: boolean;
       withBuiltinGroup?: boolean;
       scopes?: string[];
+      methods?: string[];
       groupSessionCategories?: readonly string[];
     } = {},
   ) {
@@ -52,7 +53,10 @@ describe("AppSidebar section reordering", () => {
     if (options.withCatalog || options.scopes) {
       gateway.publish({
         hello: gatewayHelloForMethods(
-          [...(options.withCatalog ? ["sessions.catalog.list"] : []), "sessions.groups.put"],
+          [
+            ...(options.withCatalog ? ["sessions.catalog.list"] : []),
+            ...(options.methods ?? ["sessions.groups.put"]),
+          ],
           options.scopes,
         ),
       });
@@ -161,6 +165,38 @@ describe("AppSidebar section reordering", () => {
     dispatchDragEvent(threadsSection, "drop", dataTransfer);
 
     expect(dataTransfer.types).toEqual([]);
+    expect(harness.groupsPut).not.toHaveBeenCalled();
+  });
+
+  it("keeps row moves available without catalog write access", async () => {
+    const { sidebar, harness } = await mountWithGroups(["Alpha"], [], {
+      methods: ["sessions.patch"],
+      scopes: ["operator.write"],
+    });
+    const header = groupHeader(sidebar, "category:Alpha");
+    const row = sidebar.querySelector('[data-session-key="agent:main:plain"]');
+    if (!row) {
+      throw new Error("expected ungrouped session row");
+    }
+
+    expect(header.getAttribute("draggable")).toBe("false");
+    expect(row.getAttribute("draggable")).toBe("true");
+
+    const dataTransfer = createDataTransferStub();
+    dispatchDragEvent(row, "dragstart", dataTransfer);
+    const target = sidebar.querySelector('[data-session-section="category:Alpha"]');
+    if (!target) {
+      throw new Error("expected category drop target");
+    }
+    dispatchDragEvent(target, "drop", dataTransfer);
+
+    await waitForFast(() =>
+      expect(harness.patch).toHaveBeenCalledWith(
+        "agent:main:plain",
+        { category: "Alpha" },
+        { agentId: "main", expectedSessionId: "session:agent:main:plain" },
+      ),
+    );
     expect(harness.groupsPut).not.toHaveBeenCalled();
   });
 

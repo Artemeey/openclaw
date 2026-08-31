@@ -98,10 +98,14 @@ function renderSessionSection(params: {
     method: "sessions.groups.put",
     requiredScope: "operator.write",
   });
+  const patchWriteAllowed = host.readSessionMutationAccess({
+    method: "sessions.patch",
+    params: { category: null },
+  }).allowed;
   // Person/project sections are derived, not stored: dropping a session on
   // them cannot persist anything, so they take no drags at all.
   const derivedSection = Boolean(personOwner || section.project);
-  const sectionDropEnabled = groupWriteAccess.allowed && !derivedSection;
+  const sectionDropEnabled = (groupWriteAccess.allowed || patchWriteAllowed) && !derivedSection;
   const sectionClass = [
     "sidebar-recent-sessions__group",
     `sidebar-recent-sessions__group--zone-${zone}`,

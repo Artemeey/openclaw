@@ -17,7 +17,6 @@ import { openEditor } from "../../lib/editor-links.ts";
 import { formatUiError } from "../../lib/format-error.ts";
 import { isGatewayMethodAdvertised } from "../../lib/gateway-methods.ts";
 import { readSessionMethodAccess } from "../../lib/session-method-access.ts";
-import { collectKnownSessionGroups } from "../../lib/sessions/grouping.ts";
 import {
   areUiSessionKeysEquivalent,
   parseAgentSessionKey,
@@ -117,7 +116,7 @@ export abstract class ChatPaneSessionMenu extends ChatPaneContext {
     try {
       const operations = await (this.headerSessionOperationsLoad ??=
         import("../../components/session-organizer-operations.runtime.ts"));
-      const host: SessionActionHost & { knownSessionGroups(): string[] } = {
+      const host: SessionActionHost = {
         sessionData: {
           isSessionMutationScopeCurrent: (candidate) =>
             this.isHeaderSessionActionCurrent(candidate, owner),
@@ -139,11 +138,6 @@ export abstract class ChatPaneSessionMenu extends ChatPaneContext {
         },
         selectSession: (key) => this.onPaneSessionChange?.(this.paneId, key),
         sidebarSessionStatusFilter: () => "active",
-        knownSessionGroups: () =>
-          collectKnownSessionGroups(
-            scope.sessions.state.groups,
-            scope.sessions.state.result?.sessions ?? [],
-          ),
       };
       switch (action.kind) {
         case "toggle-pin": {
