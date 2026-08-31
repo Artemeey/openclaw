@@ -393,7 +393,7 @@ jobs:
       - name: Checkout trusted Plugin SDK API tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 3d12ee7cdc5b4ead9f2a00da4e64e5c955f56e53
+          ref: ${{ github.workflow_sha }}
           path: .artifacts/plugin-sdk-release-tooling
           fetch-depth: 0
           filter: blob:none
@@ -405,15 +405,15 @@ jobs:
 
       - name: Verify Plugin SDK API changes
         env:
-          PLUGIN_SDK_TOOLING_SHA: 3d12ee7cdc5b4ead9f2a00da4e64e5c955f56e53
           RELEASE_NPM_DIST_TAG: ${{ inputs.npm_dist_tag }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
           mkdir -p .artifacts
           target_sha="$(git rev-parse HEAD)"
           tooling_dir="${GITHUB_WORKSPACE}/.artifacts/plugin-sdk-release-tooling"
-          if [[ "$(git -C "$tooling_dir" rev-parse HEAD)" != "$PLUGIN_SDK_TOOLING_SHA" ]]; then
-            echo "Trusted Plugin SDK API tooling checkout does not match the pinned tooling SHA." >&2
+          if [[ "$(git -C "$tooling_dir" rev-parse HEAD)" != "$WORKFLOW_SHA" ]]; then
+            echo "Trusted Plugin SDK API tooling checkout does not match the workflow SHA." >&2
             exit 1
           fi
           if [[ -n "$(git -C "$tooling_dir" status --porcelain)" ]]; then
