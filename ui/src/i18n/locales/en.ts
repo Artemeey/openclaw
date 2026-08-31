@@ -4869,7 +4869,8 @@ export const en: TranslationMap = {
       accountOne: "1 account",
       accounts: "{count} accounts",
       reorderHint: "drag to set priority",
-      priorityManaged: "Priority set in provider config",
+      priorityManaged:
+        "Priority set in provider config; update or remove auth.order there to reorder",
       partialOrder: "Reset the saved order before changing priority.",
       resetOrder: "Reset",
       addAccount: "Add account",
