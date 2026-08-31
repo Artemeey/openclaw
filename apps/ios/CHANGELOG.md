@@ -6,6 +6,7 @@
 - Pair a fresh install from one QR scan, preserve the completed pairing while spent setup credentials are removed, and show clearer recovery guidance when setup is incomplete.
 - Browse sessions across multi-agent Gateways, page complete agent rosters, restore approval settings navigation, and use simpler sidebar and chat action menus.
 - Apply the Gateway profile accent throughout chat, load chat media correctly behind reverse-proxy paths, and surface Gateway, notification, Voice Wake delivery, and network failures.
+- Preserve numeric Gateway payload values as numbers instead of turning zero and one into booleans.
 - Keep Apple Watch prompts and commands ordered across reconnects, prevent message callbacks from crashing the app, and improve background refresh and silent-push completion reporting.
 - Show durable Gateway progress cards while retaining the temporary legacy plan-event fallback for older Gateways.
 
