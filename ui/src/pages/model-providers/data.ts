@@ -284,7 +284,7 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
         draft.card.profileOrderStoredProviders.push(authProvider);
       }
       if (
-        provider.profileOrderLocked === "provider-config" &&
+        provider.profileOrderLocked !== undefined &&
         !draft.card.profileOrderLockedProviders.includes(authProvider)
       ) {
         draft.card.profileOrderLockedProviders.push(authProvider);

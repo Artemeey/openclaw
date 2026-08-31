@@ -196,6 +196,7 @@ export function mapAuthStatusProvider(params: {
   );
   const localProfileIds = new Set(getRuntimeLocalProfileIds(store));
   const providerOrderLocked = params.configBoundAuthProviders.has(authProviderKey);
+  const configuredOrderLocked = profileOrder.order !== undefined && !profileOrder.fromStore;
   const effectiveProfiles = provider.effectiveProfiles ?? provider.profiles;
   const usageProfile =
     effectiveProfiles.find((profile) => profile.type === "oauth" || profile.type === "token") ??
@@ -258,7 +259,11 @@ export function mapAuthStatusProvider(params: {
     ...(profileOrder.fromStore && localOrderProviders.has(authProviderKey)
       ? { profileOrderStored: true }
       : {}),
-    ...(providerOrderLocked ? { profileOrderLocked: "provider-config" as const } : {}),
+    ...(providerOrderLocked
+      ? { profileOrderLocked: "provider-config" as const }
+      : configuredOrderLocked
+        ? { profileOrderLocked: "auth-config" as const }
+        : {}),
     ...(apiKey ? { apiKey } : {}),
     usage: usage && usageKey ? mapUsageStatus(usage, params.includeProfileDetails) : undefined,
     ...(usageScope ? { usageScope } : {}),
