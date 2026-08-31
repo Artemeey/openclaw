@@ -5,6 +5,7 @@ import { bundledPluginFile, bundledPluginRoot } from "openclaw/plugin-sdk/test-f
 import { afterEach, describe, expect, it } from "vitest";
 import { collectClawHubPublishablePluginPackages } from "../scripts/lib/plugin-clawhub-release.ts";
 import {
+  assertPluginReleaseDependencyFreshnessForTag,
   collectChangedExtensionIdsFromPaths,
   collectPluginReleaseDependencyFreshnessErrors,
   collectPluginReleaseVersionFloorErrors,
@@ -17,7 +18,6 @@ import {
   parsePluginReleaseSelectionMode,
   resolveChangedPublishablePluginPackages,
   resolveSelectedPublishablePluginPackages,
-  shouldEnforcePluginReleaseDependencyFreshness,
   type PublishablePluginPackage,
 } from "../scripts/lib/plugin-npm-release.ts";
 import { cleanupTempDirs, makeTempRepoRoot, writeJsonFile } from "./helpers/temp-repo.js";
@@ -452,10 +452,30 @@ describe("collectPluginReleaseDependencyFreshnessErrors", () => {
   });
 });
 
-describe("shouldEnforcePluginReleaseDependencyFreshness", () => {
+describe("assertPluginReleaseDependencyFreshnessForTag", () => {
   it("preserves frozen dependency pins only for extended-stable publication", () => {
-    expect(shouldEnforcePluginReleaseDependencyFreshness()).toBe(true);
-    expect(shouldEnforcePluginReleaseDependencyFreshness("extended-stable")).toBe(false);
+    const plugin: PublishablePluginPackage = {
+      extensionId: "demo-plugin",
+      packageDir: "extensions/demo-plugin",
+      packageName: "@openclaw/demo-plugin",
+      version: "2026.7.33",
+      channel: "stable",
+      publishTag: "extended-stable",
+      requiredLatestDependencies: [{ packageName: "demo-runtime", version: "1.2.3" }],
+    };
+    expect(() =>
+      assertPluginReleaseDependencyFreshnessForTag(
+        [plugin],
+        "test",
+        "extended-stable",
+        () => {
+          throw new Error("latest lookup must be skipped");
+        },
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertPluginReleaseDependencyFreshnessForTag([plugin], "test", undefined, () => "2.0.0"),
+    ).toThrow('demo-runtime must match npm latest for release; found "1.2.3", latest is "2.0.0"');
   });
 });
 
