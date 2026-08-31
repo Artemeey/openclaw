@@ -1,4 +1,4 @@
-name: iOS Timing Diagnostic Watch
+name: iOS Timing Diagnostic EarlyBoot
 
 on:
   workflow_dispatch:
@@ -52,7 +52,7 @@ on:
 permissions:
   contents: read
 
-run-name: ${{ inputs.dispatch_id != '' && format('iOS Timing Diagnostic Watch {0}', inputs.dispatch_id) || 'iOS Timing Diagnostic Watch' }}
+run-name: ${{ inputs.dispatch_id != '' && format('iOS Timing Diagnostic EarlyBoot {0}', inputs.dispatch_id) || 'iOS Timing Diagnostic EarlyBoot' }}
 
 concurrency:
   # Canonical main uses run-number parity for two non-canceling slots. Each
@@ -1668,6 +1668,39 @@ jobs:
             echo "Swift lint wrappers are absent; skipping iOS lint for this frozen target."
           fi
 
+      # Start the selected simulator while the existing builds run; test readiness
+      # remains a separate, required barrier at the lifecycle boundary.
+      - name: Prepare iOS lifecycle simulator
+        id: ios_lifecycle_simulator
+        if: env.HISTORICAL_TARGET != 'true'
+        run: |
+          set -euo pipefail
+          simulator_id="$(
+            xcrun simctl list devices available --json | node --input-type=module -e '
+              const chunks = [];
+              for await (const chunk of process.stdin) chunks.push(chunk);
+              const runtimes = JSON.parse(Buffer.concat(chunks).toString("utf8")).devices;
+              const simulator = Object.values(runtimes)
+                .flat()
+                .find((device) => device.isAvailable && device.name.startsWith("iPhone"));
+              if (!simulator) {
+                console.error("No available iPhone simulator for iOS lifecycle tests");
+                process.exit(1);
+              }
+              process.stdout.write(simulator.udid);
+            '
+          )"
+          printf '[ios-lifecycle] phase=boot-request-start timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          boot_output=""
+          if ! boot_output="$(xcrun simctl boot "$simulator_id" 2>&1)"; then
+            if [[ "$boot_output" != *"Unable to boot device in current state: Booted"* ]]; then
+              printf '%s\n' "$boot_output" >&2
+              exit 1
+            fi
+          fi
+          printf '[ios-lifecycle] phase=boot-request-complete timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf 'simulator_id=%s\n' "$simulator_id" >> "$GITHUB_OUTPUT"
+
       - name: Build iOS app
         run: pnpm ios:build
 
@@ -1689,25 +1722,17 @@ jobs:
       - name: Run focused iOS lifecycle simulator tests
         id: ios_lifecycle_tests
         if: env.HISTORICAL_TARGET != 'true'
+        env:
+          IOS_LIFECYCLE_SIMULATOR_ID: ${{ steps.ios_lifecycle_simulator.outputs.simulator_id }}
         run: |
           set -euo pipefail
-          simulator_id="$(
-            xcrun simctl list devices available --json | node --input-type=module -e '
-              const chunks = [];
-              for await (const chunk of process.stdin) chunks.push(chunk);
-              const runtimes = JSON.parse(Buffer.concat(chunks).toString("utf8")).devices;
-              const simulator = Object.values(runtimes)
-                .flat()
-                .find((device) => device.isAvailable && device.name.startsWith("iPhone"));
-              if (!simulator) {
-                console.error("No available iPhone simulator for iOS lifecycle tests");
-                process.exit(1);
-              }
-              process.stdout.write(simulator.udid);
-            '
-          )"
+          simulator_id="$IOS_LIFECYCLE_SIMULATOR_ID"
+          printf '[ios-lifecycle] phase=readiness-start timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          xcrun simctl bootstatus "$simulator_id" -b
+          printf '[ios-lifecycle] phase=ready timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           result_bundle="apps/ios/build/LifecycleTestResults/OpenClawLifecycleTests.xcresult"
           mkdir -p "apps/ios/build/LifecycleTestResults"
+          printf '[ios-lifecycle] phase=tests-start timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           xcodebuild \
             -project apps/ios/OpenClaw.xcodeproj \
             -scheme OpenClaw \
@@ -1721,6 +1746,7 @@ jobs:
             -only-testing:OpenClawTests/RootTabsSourceGuardTests \
             -only-testing:OpenClawTests/TraceHeadingVisualProofTests \
             test
+          printf '[ios-lifecycle] phase=tests-complete timestamp=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: Run focused Apple Watch operation simulator tests
         if: env.HISTORICAL_TARGET != 'true'
