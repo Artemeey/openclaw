@@ -4,23 +4,17 @@ import { pathToFileURL } from "node:url";
 import {
   constrainPluginNpmSecurityScanReport,
   MAX_PUBLISHABLE_PLUGIN_PACKAGES,
-  parsePluginNpmSecurityArtifactDownloadRejections,
   runPluginNpmSecurityScan,
   type PluginNpmSecurityScanReport,
 } from "./lib/plugin-npm-security-scan.mts";
-import { readBoundedRegularFile } from "./plugin-publication-artifact.mjs";
 
 const MAX_EXPECTED_PACKAGES_JSON_BYTES = 256 * 1024;
-const MAX_ARTIFACT_PLAN_JSON_BYTES = 256 * 1024;
 
 type ParsedArgs = {
-  artifactPlanPath: string | null;
   artifactRoot: string;
   candidateSha: string;
   expectedPackages: unknown;
   outputPath: string;
-  preDownloadErrors: string[];
-  preDownloadRejectedPackageNames: string[];
   targetContextRef: string;
   toolingSha: string;
 };
@@ -36,7 +30,6 @@ function parseArgs(argv: string[]): ParsedArgs {
     values.set(name, value);
   }
   const artifactRoot = values.get("--artifact-root") ?? "";
-  const artifactPlan = values.get("--artifact-plan") ?? "";
   const candidateSha = values.get("--candidate-sha") ?? "";
   const expectedPackagesJson = values.get("--expected-packages-json") ?? "";
   const outputPath = values.get("--report") ?? "";
@@ -67,27 +60,11 @@ function parseArgs(argv: string[]): ParsedArgs {
   ) {
     throw new Error("--expected-packages-json is not a bounded package inventory.");
   }
-  const artifactPlanPath = artifactPlan ? resolve(artifactPlan) : null;
-  const preDownload = artifactPlanPath
-    ? parsePluginNpmSecurityArtifactDownloadRejections({
-        candidateSha,
-        expectedPackages,
-        plan: JSON.parse(
-          readBoundedRegularFile(artifactPlanPath, {
-            label: "Plugin security artifact download plan",
-            maxBytes: MAX_ARTIFACT_PLAN_JSON_BYTES,
-          }).toString("utf8"),
-        ) as unknown,
-      })
-    : { errors: [], rejectedPackageNames: [] };
   return {
-    artifactPlanPath,
     artifactRoot: resolve(artifactRoot),
     candidateSha,
     expectedPackages,
     outputPath: resolve(outputPath),
-    preDownloadErrors: preDownload.errors,
-    preDownloadRejectedPackageNames: preDownload.rejectedPackageNames,
     targetContextRef,
     toolingSha,
   };
@@ -103,7 +80,6 @@ function sanitizeErrorMessage(error: unknown, args: ParsedArgs | undefined): str
   let message = error instanceof Error ? error.message : String(error);
   for (const [path, replacement] of [
     [args?.artifactRoot, "<artifacts>"],
-    [args?.artifactPlanPath ?? undefined, "<artifact-plan>"],
     [args?.outputPath ? dirname(args.outputPath) : undefined, "<report-dir>"],
     [process.cwd(), "<tooling>"],
   ] as const) {
@@ -143,8 +119,6 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       artifactRoot: args.artifactRoot,
       candidateSha: args.candidateSha,
       expectedPackages: args.expectedPackages,
-      preDownloadErrors: args.preDownloadErrors,
-      preDownloadRejectedPackageNames: args.preDownloadRejectedPackageNames,
       targetContextRef: args.targetContextRef,
       toolingDir: process.cwd(),
       toolingSha: args.toolingSha,

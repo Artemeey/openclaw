@@ -20,8 +20,6 @@ import {
   listPluginNpmSecurityArtifacts,
   listPublishablePluginPackages,
   normalizePackedFindingPath,
-  parsePluginNpmSecurityArtifactDownloadRejections,
-  planPluginNpmSecurityArtifactDownloads,
   resolveCandidatePluginPackageDir,
   resolveReviewedSourceLayout,
   scanPublishablePluginPackages,
@@ -66,6 +64,7 @@ function writePluginArtifact(params: {
   artifactRoot?: string;
   extensionId: string;
   files: Record<string, string | Buffer>;
+  manifest?: Record<string, unknown>;
   packageName: string;
   version?: string;
 }) {
@@ -83,7 +82,7 @@ function writePluginArtifact(params: {
   mkdirSync(artifactDir, { recursive: true });
   writeFileSync(
     join(packageRoot, "package.json"),
-    `${JSON.stringify({ name: params.packageName, version: packageVersion })}\n`,
+    `${JSON.stringify({ name: params.packageName, version: packageVersion, ...params.manifest })}\n`,
     "utf8",
   );
   writeFileSync(
@@ -516,7 +515,7 @@ describe("scripts/lib/plugin-npm-security-scan.mts", () => {
     expect(JSON.stringify(report)).not.toContain("execSync");
   });
 
-  it("excludes packed test files without weakening scan completeness", async () => {
+  it("scans all packed executable source including bundled, test-like, and hidden files", async () => {
     const artifact = writePluginArtifact({
       extensionId: "test-file",
       files: {
@@ -524,6 +523,11 @@ describe("scripts/lib/plugin-npm-security-scan.mts", () => {
         "index.js": "export const value = 1;\n",
         "index.test.ts": 'const child = require("node:child_process");\nchild.execSync("id");\n',
         "node_modules/dependency/index.js": 'require("node:child_process").execSync("id");\n',
+        "node_modules/dependency/package.json": '{"name":"dependency","version":"1.0.0"}\n',
+      },
+      manifest: {
+        bundledDependencies: ["dependency"],
+        dependencies: { dependency: "1.0.0" },
       },
       packageName: "@openclaw/test-file",
     });
@@ -534,9 +538,43 @@ describe("scripts/lib/plugin-npm-security-scan.mts", () => {
     expect(scanned.packageResults).toMatchObject([
       {
         packageName: "@openclaw/test-file",
-        scanFindingCount: 0,
-        unexpectedCriticalFindings: [],
+        scanFindingCount: 3,
+        unexpectedCriticalFindings: [
+          {
+            line: 1,
+            path: ".cache/generated.js",
+            ruleId: "dangerous-exec",
+          },
+          {
+            line: 1,
+            path: "node_modules/dependency/index.js",
+            ruleId: "dangerous-exec",
+          },
+          {
+            line: 2,
+            path: "index.test.ts",
+            ruleId: "dangerous-exec",
+          },
+        ],
       },
+    ]);
+  });
+
+  it("rejects ambiguous normalized bundle paths", async () => {
+    const artifact = writePluginArtifact({
+      extensionId: "ambiguous-bundle",
+      files: {
+        "dist/service-abcdefgh.js": "export const first = 1;\n",
+        "dist/service-ijklmnop.js": "export const second = 2;\n",
+      },
+      packageName: "@openclaw/test-ambiguous-bundle",
+    });
+
+    const scanned = await scanPublishablePluginPackages([artifact.artifact]);
+
+    expect(scanned.packageResults).toEqual([]);
+    expect(scanned.scanErrors).toEqual([
+      "@openclaw/test-ambiguous-bundle: package scan failed: multiple packed files normalize to dist/service-<hash>.js.",
     ]);
   });
 
@@ -605,99 +643,6 @@ describe("scripts/lib/plugin-npm-security-scan.mts", () => {
     expect(scanned.packageResults.map((result) => result.packageName)).toEqual([
       "@openclaw/test-valid",
     ]);
-  });
-
-  it("retains valid package reports when a sibling is rejected before download", async () => {
-    const artifactRoot = tempDirs.make("openclaw-plugin-npm-security-pre-download-");
-    const valid = writePluginArtifact({
-      artifactRoot,
-      extensionId: "valid",
-      files: { "index.js": "export const value = 1;\n" },
-      packageName: "@openclaw/test-valid",
-    });
-    const rejectedPackage = {
-      extensionId: "oversized",
-      packageDir: "extensions/oversized",
-      packageName: "@openclaw/test-oversized",
-      packageVersion: "1.0.0",
-    } satisfies PublishablePluginPackage;
-    const preDownloadError =
-      "@openclaw/test-oversized: plugin security artifact exceeds the pre-download byte limit.";
-    const loaded = loadPluginNpmSecurityArtifacts({
-      artifactRoot,
-      candidateSha: CANDIDATE_SHA,
-      expectedPackages: [rejectedPackage, valid.expectedPackage].toSorted((left, right) =>
-        left.packageName.localeCompare(right.packageName),
-      ),
-      rejectedPackageNames: [rejectedPackage.packageName],
-      toolingSha: TOOLING_SHA,
-    });
-
-    expect(loaded.ingestionErrors).toEqual([]);
-    expect(loaded.artifacts.map((artifact) => artifact.packageName)).toEqual([
-      valid.expectedPackage.packageName,
-    ]);
-    const scanned = await scanPublishablePluginPackages(loaded.artifacts);
-    const report = buildPluginNpmSecurityScanReport({
-      candidateSha: CANDIDATE_SHA,
-      packageResults: scanned.packageResults,
-      scanErrors: [preDownloadError, ...scanned.scanErrors],
-      toolingSha: TOOLING_SHA,
-    });
-    expect(report.packages.map((plugin) => plugin.packageName)).toEqual([
-      valid.expectedPackage.packageName,
-    ]);
-    expect(report.errors).toContain(preDownloadError);
-    expect(report.errors.join("\n")).not.toContain("plugin security artifact is missing");
-  });
-
-  it("keeps pre-download rejection errors paired for prefix-related package names", () => {
-    const expectedPackages = [
-      {
-        extensionId: "foo",
-        packageDir: "extensions/foo",
-        packageName: "@scope/foo",
-        packageVersion: "1.0.0",
-      },
-      {
-        extensionId: "foo-bar",
-        packageDir: "extensions/foo-bar",
-        packageName: "@scope/foo-bar",
-        packageVersion: "1.0.0",
-      },
-    ];
-    const artifactPages = [
-      {
-        artifacts: expectedPackages.map((plugin, index) => ({
-          digest: `sha256:${String(index + 1).repeat(64)}`,
-          expired: false,
-          id: index + 1,
-          name: `plugin-npm-security-package-${CANDIDATE_SHA}-${plugin.extensionId}`,
-          size_in_bytes: 128 * 1024 * 1024 + 1,
-        })),
-      },
-    ];
-
-    const plan = planPluginNpmSecurityArtifactDownloads({
-      artifactPages,
-      candidateSha: CANDIDATE_SHA,
-      expectedPackages,
-    });
-
-    expect(plan.rejectedPackageNames).toEqual(["@scope/foo", "@scope/foo-bar"]);
-    expect(
-      parsePluginNpmSecurityArtifactDownloadRejections({
-        candidateSha: CANDIDATE_SHA,
-        expectedPackages,
-        plan,
-      }),
-    ).toEqual({
-      errors: [
-        "@scope/foo: plugin security artifact exceeds the pre-download byte limit.",
-        "@scope/foo-bar: plugin security artifact exceeds the pre-download byte limit.",
-      ],
-      rejectedPackageNames: ["@scope/foo", "@scope/foo-bar"],
-    });
   });
 
   it("bounds aggregate compressed and expanded artifact bytes deterministically", () => {

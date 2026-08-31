@@ -447,30 +447,36 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
   it("keeps the trusted security scanner outside the candidate test process", () => {
     const workflow = readPluginPrereleaseWorkflow();
     const securityPlan = workflow.jobs["plugin-npm-security-plan"];
-    const securityPackage = workflow.jobs["plugin-npm-security-package"];
     const securityScan = workflow.jobs["plugin-npm-security-scan"];
     const source = readFileSync(".github/workflows/plugin-prerelease.yml", "utf8");
 
     expect(securityPlan.needs).toEqual(["preflight"]);
     expect(securityPlan.if).toBe("inputs.phase != 'candidate'");
-    expect(securityPackage.needs).toEqual(["preflight", "plugin-npm-security-plan"]);
-    expect(securityPackage.if).toBe("needs.plugin-npm-security-plan.result == 'success'");
-    expect(securityPackage.strategy["max-parallel"]).toBe(8);
+    expect(workflow.jobs["plugin-npm-security-package"]).toBeUndefined();
     const securityPlanStepNames = securityPlan.steps.map((step: WorkflowStep) => step.name);
     expect(securityPlanStepNames.indexOf("Install trusted scanner dependencies")).toBeLessThan(
       securityPlanStepNames.indexOf("Checkout candidate as inert data"),
     );
-    const securityPackageStepNames = securityPackage.steps.map((step: WorkflowStep) => step.name);
-    expect(securityPackageStepNames.indexOf("Setup trusted inert pack environment")).toBeLessThan(
-      securityPackageStepNames.indexOf("Checkout candidate package source"),
-    );
     expect(securityScan).toMatchObject({
       name: "plugin-npm-security-scan",
-      needs: ["preflight", "plugin-npm-security-plan", "plugin-npm-security-package"],
-      permissions: { actions: "read", contents: "read" },
+      needs: ["preflight", "plugin-npm-security-plan"],
+      permissions: { contents: "read" },
       "runs-on": "ubuntu-24.04",
-      "timeout-minutes": 20,
+      "timeout-minutes": 45,
     });
+    const securityScanStepNames = securityScan.steps.map((step: WorkflowStep) => step.name);
+    expect(securityScanStepNames.indexOf("Install trusted scanner dependencies")).toBeLessThan(
+      securityScanStepNames.indexOf("Checkout candidate as inert package input"),
+    );
+    const packStep = securityScan.steps.find(
+      (step: WorkflowStep) => step.name === "Pack supplemental inert plugin inputs",
+    );
+    expect(packStep?.env?.EXPECTED_PACKAGES_JSON).toBe(
+      "${{ needs.plugin-npm-security-plan.outputs.packages_json }}",
+    );
+    expect(packStep?.run).toContain("plugin-npm-security-prepare.mts prepare");
+    expect(packStep?.run).toContain("if ! node --import tsx");
+    expect(packStep?.run).toContain("Package preparation failed");
     expect(
       securityScan.steps.find(
         (step: WorkflowStep) => step.name === "Scan supplemental inert plugin inputs",
@@ -481,16 +487,8 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
         (step: WorkflowStep) => step.name === "Scan supplemental inert plugin inputs",
       )?.run,
     ).toContain('--target-context-ref "$TARGET_CONTEXT_REF"');
-    expect(
-      securityScan.steps.find(
-        (step: WorkflowStep) => step.name === "Scan supplemental inert plugin inputs",
-      )?.env?.PACKAGE_RESULT,
-    ).toBe("${{ needs.plugin-npm-security-package.result }}");
-    expect(
-      securityScan.steps.find(
-        (step: WorkflowStep) => step.name === "Scan supplemental inert plugin inputs",
-      )?.run,
-    ).toContain('[[ "$PACKAGE_RESULT" != "success" ]]');
+    expect(source).not.toContain("actions/download-artifact@");
+    expect(source).not.toContain("plugin-npm-security-artifact-plan");
     expect(source).not.toContain("npm-install-security-scan.release.test.ts");
     expect(workflow.on.workflow_dispatch.inputs.target_context_ref).toEqual({
       default: "",
@@ -791,11 +789,7 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
     expect(staticShard.strategy.matrix).toBe(
       "${{ fromJson(needs.preflight.outputs.plugin_prerelease_static_matrix) }}",
     );
-    expect(securityScan.needs).toEqual([
-      "preflight",
-      "plugin-npm-security-plan",
-      "plugin-npm-security-package",
-    ]);
+    expect(securityScan.needs).toEqual(["preflight", "plugin-npm-security-plan"]);
     expect(nodeShard.strategy.matrix).toBe(
       "${{ fromJson(needs.preflight.outputs.plugin_prerelease_node_matrix) }}",
     );

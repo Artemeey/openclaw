@@ -105,14 +105,6 @@ async function planPackages(args: ParsedArgs): Promise<void> {
   const packages = (await listPublishablePluginPackages(candidateRoot)).map((plugin) =>
     relativePackage(plugin, candidateRoot),
   );
-  const matrix = {
-    include: packages.map((plugin) => ({
-      extension_id: plugin.extensionId,
-      package_dir: plugin.packageDir,
-      package_name: plugin.packageName,
-    })),
-  };
-  appendFileSync(args.githubOutput, `matrix=${JSON.stringify(matrix)}\n`, "utf8");
   appendFileSync(args.githubOutput, `packages_json=${JSON.stringify(packages)}\n`, "utf8");
 }
 
