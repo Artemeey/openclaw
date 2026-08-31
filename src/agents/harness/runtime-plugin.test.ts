@@ -8,6 +8,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import * as installedManifests from "../../plugins/manifest-registry-installed.js";
 import { restorePluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import { prepareOwnedPluginLoadContext } from "../prepared-model-runtime.plugin-context.js";
 import {
   createAgentRuntimeMetadataPluginIdScope,
   resolveAgentRuntimePluginLoadPlan,
@@ -48,6 +49,24 @@ function installedProviderRecord(
     },
     compat: [],
   };
+}
+
+function attachPreparedPluginFacts(
+  pluginRegistry: ReturnType<typeof createEmptyPluginRegistry>,
+  config: OpenClawConfig,
+  manifestRegistry: ReturnType<typeof makeRegistry>,
+) {
+  prepareOwnedPluginLoadContext(
+    {
+      config,
+      workspaceDir: "/tmp/workspace",
+      loadRuntimePlugins: true,
+      runtimePluginSelections: [],
+    },
+    {},
+    pluginRegistry,
+    createPluginMetadataSnapshot({ config, manifestRegistry }),
+  );
 }
 
 vi.mock("../../plugins/providers.js", () => ({
@@ -97,18 +116,68 @@ describe("harness runtime plugins", () => {
     expect(pluginRegistry.agentHarnesses).toHaveLength(1);
   });
 
-  it("explains how to recover when the selected harness registration is missing", async () => {
+  it("carries the missing Codex owner reason and remediation into the turn guard", async () => {
+    const pluginRegistry = createEmptyPluginRegistry();
+    attachPreparedPluginFacts(pluginRegistry, {}, makeRegistry([]));
+
+    const error = await ensureSelectedAgentHarnessPlugin({
+      provider: "openai",
+      modelId: "gpt-5.5",
+      agentHarnessRuntimeOverride: "codex",
+      workspaceDir: "/tmp/workspace",
+      pluginRegistry,
+    }).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      'registration is missing from this prepared run. (reason=owner-plugin-not-activatable, ownerPluginId=codex). Owner plugin "codex" is absent from this prepared plugin generation.',
+    );
+    expect((error as Error).message).toContain('Run "openclaw doctor --fix"');
+  });
+
+  it("reports a manifest owner's restrictive allowlist blocker", async () => {
+    const pluginRegistry = createEmptyPluginRegistry();
+    const config = { plugins: { allow: ["telegram"] } } satisfies OpenClawConfig;
+    attachPreparedPluginFacts(
+      pluginRegistry,
+      config,
+      makeRegistry([
+        {
+          id: "custom-owner",
+          channels: [],
+          activation: { onAgentHarnesses: ["custom-harness"] },
+        },
+      ]),
+    );
+
+    const error = await ensureSelectedAgentHarnessPlugin({
+      provider: "custom-provider",
+      modelId: "custom-model",
+      agentHarnessRuntimeOverride: "custom-harness",
+      workspaceDir: "/tmp/workspace",
+      pluginRegistry,
+    }).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("ownerPluginId=custom-owner");
+    expect((error as Error).message).toContain(
+      'Owner plugin "custom-owner" is not activatable (not in allowlist)',
+    );
+  });
+
+  it("keeps the built-in OpenClaw harness independent from plugin registration", async () => {
+    const pluginRegistry = createEmptyPluginRegistry();
+    attachPreparedPluginFacts(pluginRegistry, { plugins: { enabled: false } }, makeRegistry([]));
+
     await expect(
       ensureSelectedAgentHarnessPlugin({
         provider: "openai",
         modelId: "gpt-5.5",
-        agentHarnessRuntimeOverride: "codex",
+        agentHarnessRuntimeOverride: "openclaw",
         workspaceDir: "/tmp/workspace",
-        pluginRegistry: createEmptyPluginRegistry(),
+        pluginRegistry,
       }),
-    ).rejects.toThrow(
-      'Agent harness runtime "codex" is unavailable because its plugin registration is missing from this prepared run. Enable or reinstall the plugin that provides this runtime, restart the Gateway, then retry.',
-    );
+    ).resolves.toBeUndefined();
   });
 
   it("force-activates a default-disabled harness owner selected for a run", () => {

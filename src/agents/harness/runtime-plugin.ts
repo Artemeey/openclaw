@@ -1,11 +1,16 @@
 /** Resolves the selected native harness from a run-owned plugin registry. */
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { ProviderRouteOverridePresence } from "../../plugin-sdk/provider-model-types.js";
+import {
+  normalizePluginsConfig,
+  resolveEffectivePluginActivationState,
+} from "../../plugins/config-state.js";
 import type { PluginRegistry } from "../../plugins/registry-types.js";
 import {
   pluginInstallPathMatchesRoot,
   type PluginVerificationFailureReason,
 } from "../../plugins/runtime-degraded-state.js";
+import { getPluginRuntimeLoadContext } from "../../plugins/runtime/load-context.js";
 import {
   isDefaultAgentRuntimeId,
   OPENCLAW_AGENT_RUNTIME_ID,
@@ -34,6 +39,60 @@ type AgentHarnessRuntimePayloadFailure = {
   installPath?: string;
   reason: PluginVerificationFailureReason;
 };
+
+function describeMissingHarnessRegistration(
+  runtime: string,
+  pluginRegistry: PluginRegistry | undefined,
+): string {
+  const context = getPluginRuntimeLoadContext(pluginRegistry);
+  const manifestOwnerPluginIds =
+    context?.metadataSnapshot?.plugins
+      .filter((plugin) =>
+        plugin.activation?.onAgentHarnesses?.some(
+          (candidate) => normalizeOptionalAgentRuntimeId(candidate) === runtime,
+        ),
+      )
+      .map((plugin) => plugin.id) ?? [];
+  const ownerPluginIds = [
+    ...new Set(
+      manifestOwnerPluginIds.length > 0
+        ? manifestOwnerPluginIds
+        : runtime === "codex"
+          ? ["codex"]
+          : [],
+    ),
+  ]
+    .toSorted()
+    .slice(0, 3);
+  if (ownerPluginIds.length === 0) {
+    return "Enable or reinstall the plugin that provides this runtime, restart the Gateway, then retry.";
+  }
+
+  const plugins = normalizePluginsConfig(context?.activationSourceConfig.plugins);
+  const blockers: string[] = [];
+  for (const pluginId of ownerPluginIds) {
+    const plugin = context?.metadataSnapshot?.byPluginId.get(pluginId);
+    if (!plugin) {
+      blockers.push(`Owner plugin "${pluginId}" is absent from this prepared plugin generation`);
+      continue;
+    }
+    const activation = resolveEffectivePluginActivationState({
+      id: pluginId,
+      origin: plugin.origin,
+      config: plugins,
+      rootConfig: context?.activationSourceConfig,
+    });
+    if (!activation.activated) {
+      blockers.push(
+        `Owner plugin "${pluginId}" is not activatable${activation.reason ? ` (${activation.reason})` : ""}`,
+      );
+    }
+  }
+  const ownerField = ownerPluginIds.length === 1 ? "ownerPluginId" : "ownerPluginIds";
+  const reason = blockers.length > 0 ? "reason=owner-plugin-not-activatable, " : "";
+  const detail = blockers.length > 0 ? blockers.join("; ") : "The owner plugin did not register";
+  return `(${reason}${ownerField}=${ownerPluginIds.join(",")}). ${detail}. Run "openclaw doctor --fix" or select a model that does not require this runtime, restart the Gateway, then retry.`;
+}
 
 /**
  * Resolves whether manifest-owned harness code is loadable without importing it.
@@ -135,7 +194,7 @@ export async function ensureSelectedAgentHarnessPlugin(params: {
 
   if (!params.pluginRegistry?.agentHarnesses.some((entry) => entry.harness.id === runtime)) {
     throw new Error(
-      `Agent harness runtime "${runtime}" is unavailable because its plugin registration is missing from this prepared run. Enable or reinstall the plugin that provides this runtime, restart the Gateway, then retry.`,
+      `Agent harness runtime "${runtime}" is unavailable because its plugin registration is missing from this prepared run. ${describeMissingHarnessRegistration(runtime, params.pluginRegistry)}`,
     );
   }
 }
