@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 
-import { nothing, render } from "lit";
+import { render } from "lit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "../../i18n/index.ts";
 import type { ModelProviderCard } from "./data.ts";
@@ -37,13 +37,19 @@ function props(overrides: Partial<ProviderProfilesViewProps> = {}): ProviderProf
   };
 }
 
+function mount(template: unknown): HTMLElement {
+  const container = document.createElement("div");
+  document.body.append(container);
+  render(template, container);
+  return container;
+}
+
 describe("renderProviderProfiles", () => {
   beforeEach(async () => {
     await i18n.setLocale("en");
   });
 
   afterEach(() => {
-    render(nothing, document.body);
     document.body.replaceChildren();
   });
 
@@ -94,7 +100,7 @@ describe("renderProviderProfiles", () => {
       profileOrderLockedProviders: ["openai-config"],
     });
 
-    render(renderProviderProfiles(providerCard, props({ onProfileOrderChange })), document.body);
+    mount(renderProviderProfiles(providerCard, props({ onProfileOrderChange })));
 
     expect(document.querySelectorAll(".model-providers__profile-grip-spacer")).toHaveLength(2);
     expect(document.querySelectorAll(".model-providers__profile-grip")).toHaveLength(2);
@@ -109,6 +115,29 @@ describe("renderProviderProfiles", () => {
     expect(
       [...document.querySelectorAll("button")].map((button) => button.textContent),
     ).not.toContain("Reset");
+    expect(onProfileOrderChange).not.toHaveBeenCalled();
+  });
+
+  it("disables reordering when a same-length stored order contains a stale profile", () => {
+    const onProfileOrderChange = vi.fn();
+    const providerCard = card({
+      profiles: [
+        { profileId: "openai:one", type: "oauth", status: "ok" },
+        { profileId: "openai:two", type: "oauth", status: "ok" },
+      ],
+      profileProviderIds: {
+        "openai:one": "openai",
+        "openai:two": "openai",
+      },
+      profileOrders: { openai: ["openai:removed", "openai:one"] },
+    });
+
+    const container = mount(renderProviderProfiles(providerCard, props({ onProfileOrderChange })));
+    const grips = container.querySelectorAll<HTMLButtonElement>(".model-providers__profile-grip");
+
+    expect([...grips].every((grip) => grip.disabled)).toBe(true);
+    expect(grips[0]?.title).toContain("Reset");
+    grips[0]?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
     expect(onProfileOrderChange).not.toHaveBeenCalled();
   });
 });
