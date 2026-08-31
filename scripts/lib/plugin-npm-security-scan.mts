@@ -10,10 +10,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import {
   isScannable,
+  scanSource,
   scanDirectoryWithSummary,
   type SkillScanFinding,
 } from "../../src/skills/security/scanner.js";
@@ -741,6 +743,8 @@ export function listPluginNpmSecurityArtifacts(params: {
 }
 
 export function stageScannerRelevantPluginTarballFiles(tarballPath: string): {
+  directlyScannedFileCount: number;
+  directlyScannedFindings: SkillScanFinding[];
   fileCount: number;
   inspection: {
     inventory: Array<{ path: string; sizeBytes: number; type: string }>;
@@ -752,6 +756,8 @@ export function stageScannerRelevantPluginTarballFiles(tarballPath: string): {
   totalBytes: number;
 } {
   const stageDir = mkdtempSync(join(tmpdir(), "openclaw-plugin-npm-scan-"));
+  let directlyScannedFileCount = 0;
+  const directlyScannedFindings: SkillScanFinding[] = [];
   let fileCount = 0;
   let totalBytes = 0;
   const packedFiles: string[] = [];
@@ -767,13 +773,40 @@ export function stageScannerRelevantPluginTarballFiles(tarballPath: string): {
       maxExpandedBytes: MAX_PACKED_TOTAL_BYTES_PER_PACKAGE,
       maxPathBytes: 4 * 1024 * 1024,
       maxTotalFileBytes: MAX_PACKED_TOTAL_BYTES_PER_PACKAGE,
+    }) as {
+      inventory: Array<{ path: string; sizeBytes: number; type: string }>;
+      packageManifest: Record<string, unknown>;
+      tarballSha256: string;
+    };
+    for (const entry of inspection.inventory) {
+      if (entry.type !== "file") {
+        continue;
+      }
+      if (!entry.path.startsWith("package/")) {
+        throw new Error("Plugin tarball file escaped package/.");
+      }
+      packedFiles.push(entry.path.slice("package/".length));
+    }
+    const declaredExecutablePaths = resolveDeclaredPackedExecutablePaths(
+      inspection.packageManifest,
+      packedFiles,
+    );
+    inspectPackageTarballBytes(tarballBytes, {
+      maxArchiveBytes: MAX_PLUGIN_TARBALL_BYTES,
+      maxEntries: MAX_PACKED_FILES_PER_PACKAGE,
+      maxEntryBytes: MAX_PACKED_FILE_BYTES,
+      maxExpandedBytes: MAX_PACKED_TOTAL_BYTES_PER_PACKAGE,
+      maxPathBytes: 4 * 1024 * 1024,
+      maxTotalFileBytes: MAX_PACKED_TOTAL_BYTES_PER_PACKAGE,
       onFile: ({ content, path }: { content: Uint8Array; path: string }) => {
         if (!path.startsWith("package/")) {
           throw new Error("Plugin tarball file escaped package/.");
         }
         const packedPath = path.slice("package/".length);
-        packedFiles.push(packedPath);
-        if (!isScannable(packedPath)) {
+        const extensionless = posix.extname(posix.basename(packedPath)) === "";
+        const directlyScan =
+          !isScannable(packedPath) && (extensionless || declaredExecutablePaths.has(packedPath));
+        if (!directlyScan && !isScannable(packedPath)) {
           return;
         }
         if (content.byteLength > MAX_SCANNABLE_FILE_BYTES) {
@@ -790,13 +823,17 @@ export function stageScannerRelevantPluginTarballFiles(tarballPath: string): {
         const target = join(stageDir, ...packedPath.split("/"));
         mkdirSync(dirname(target), { recursive: true });
         writeFileSync(target, content);
+        if (directlyScan) {
+          directlyScannedFileCount += 1;
+          directlyScannedFindings.push(
+            ...scanSource(Buffer.from(content).toString("utf8"), target),
+          );
+        }
       },
-    }) as {
-      inventory: Array<{ path: string; sizeBytes: number; type: string }>;
-      packageManifest: Record<string, unknown>;
-      tarballSha256: string;
-    };
+    });
     return {
+      directlyScannedFileCount,
+      directlyScannedFindings,
       fileCount,
       inspection,
       packedFiles: packedFiles.toSorted(),
@@ -807,6 +844,71 @@ export function stageScannerRelevantPluginTarballFiles(tarballPath: string): {
     rmSync(stageDir, { recursive: true, force: true });
     throw error;
   }
+}
+
+function normalizeDeclaredExecutablePath(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0 || value.includes("\\")) {
+    throw new Error(`${label} is not a safe packed path.`);
+  }
+  const withoutDotPrefix = value.replace(/^(?:\.\/)+/u, "");
+  const normalized = posix.normalize(withoutDotPrefix);
+  if (
+    !withoutDotPrefix ||
+    normalized !== withoutDotPrefix ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    posix.isAbsolute(normalized)
+  ) {
+    throw new Error(`${label} is not a safe packed path.`);
+  }
+  return normalized;
+}
+
+function resolveDeclaredPackedExecutablePaths(
+  manifest: Record<string, unknown>,
+  packedFiles: readonly string[],
+): Set<string> {
+  const packedFileSet = new Set(packedFiles);
+  const declared = new Set<string>();
+  const addBinTarget = (value: unknown) => {
+    const packedPath = normalizeDeclaredExecutablePath(value, "Plugin npm bin target");
+    if (!packedFileSet.has(packedPath)) {
+      throw new Error(`Plugin npm bin target is absent from the tarball: ${packedPath}`);
+    }
+    declared.add(packedPath);
+  };
+
+  if (manifest.bin !== undefined) {
+    if (typeof manifest.bin === "string") {
+      addBinTarget(manifest.bin);
+    } else if (isRecord(manifest.bin)) {
+      for (const value of Object.values(manifest.bin)) {
+        addBinTarget(value);
+      }
+    } else {
+      throw new Error("Plugin npm bin declaration is invalid.");
+    }
+  }
+
+  if (manifest.directories !== undefined) {
+    if (!isRecord(manifest.directories)) {
+      throw new Error("Plugin npm directories declaration is invalid.");
+    }
+    if (manifest.directories.bin !== undefined) {
+      const binDirectory = normalizeDeclaredExecutablePath(
+        manifest.directories.bin,
+        "Plugin npm directories.bin",
+      ).replace(/\/$/u, "");
+      const prefix = `${binDirectory}/`;
+      for (const packedPath of packedFiles) {
+        if (packedPath.startsWith(prefix)) {
+          declared.add(packedPath);
+        }
+      }
+    }
+  }
+  return declared;
 }
 
 function findingRecord(stageDir: string, finding: SkillScanFinding): CriticalFindingRecord {
@@ -864,16 +966,17 @@ async function scanSupplementalInertPluginInput(
       maxFiles: MAX_SCANNABLE_FILES_PER_PACKAGE,
     });
     assertCompleteScannerSummary(plugin.packageName, summary);
-    if (summary.findings.length > MAX_PLUGIN_SCAN_FINDINGS_PER_PACKAGE) {
+    const findings = [...summary.findings, ...staged.directlyScannedFindings];
+    if (findings.length > MAX_PLUGIN_SCAN_FINDINGS_PER_PACKAGE) {
       throw new Error(`${plugin.packageName}: security scan exceeded the finding-count limit.`);
     }
-    scanFindingCount = summary.findings.length;
-    if (summary.scannedFiles !== staged.fileCount) {
+    scanFindingCount = findings.length;
+    if (summary.scannedFiles + staged.directlyScannedFileCount !== staged.fileCount) {
       throw new Error(
-        `${plugin.packageName}: security scan processed ${summary.scannedFiles} of ${staged.fileCount} staged files.`,
+        `${plugin.packageName}: security scan processed ${summary.scannedFiles + staged.directlyScannedFileCount} of ${staged.fileCount} staged files.`,
       );
     }
-    for (const finding of summary.findings) {
+    for (const finding of findings) {
       if (finding.severity !== "critical") {
         continue;
       }

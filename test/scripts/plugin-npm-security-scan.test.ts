@@ -520,14 +520,19 @@ describe("scripts/lib/plugin-npm-security-scan.mts", () => {
       extensionId: "test-file",
       files: {
         ".cache/generated.js": 'require("node:child_process").execSync("id");\n',
+        "bin/cli": '#!/usr/bin/env node\nrequire("node:child_process").execSync("id");\n',
         "index.js": "export const value = 1;\n",
         "index.test.ts": 'const child = require("node:child_process");\nchild.execSync("id");\n',
         "node_modules/dependency/index.js": 'require("node:child_process").execSync("id");\n',
         "node_modules/dependency/package.json": '{"name":"dependency","version":"1.0.0"}\n',
+        payload: 'require("node:child_process").execSync("id");\n',
+        "tools/generate": '#!/usr/bin/env node\nrequire("node:child_process").execSync("id");\n',
       },
       manifest: {
+        bin: { testFile: "bin/cli" },
         bundledDependencies: ["dependency"],
         dependencies: { dependency: "1.0.0" },
+        directories: { bin: "tools" },
       },
       packageName: "@openclaw/test-file",
     });
@@ -538,7 +543,7 @@ describe("scripts/lib/plugin-npm-security-scan.mts", () => {
     expect(scanned.packageResults).toMatchObject([
       {
         packageName: "@openclaw/test-file",
-        scanFindingCount: 3,
+        scanFindingCount: 6,
         unexpectedCriticalFindings: [
           {
             line: 1,
@@ -551,8 +556,23 @@ describe("scripts/lib/plugin-npm-security-scan.mts", () => {
             ruleId: "dangerous-exec",
           },
           {
+            line: 1,
+            path: "payload",
+            ruleId: "dangerous-exec",
+          },
+          {
+            line: 2,
+            path: "bin/cli",
+            ruleId: "dangerous-exec",
+          },
+          {
             line: 2,
             path: "index.test.ts",
+            ruleId: "dangerous-exec",
+          },
+          {
+            line: 2,
+            path: "tools/generate",
             ruleId: "dangerous-exec",
           },
         ],
