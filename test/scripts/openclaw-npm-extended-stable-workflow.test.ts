@@ -4,7 +4,14 @@ import { parse } from "yaml";
 
 const workflowPath = ".github/workflows/openclaw-npm-release.yml";
 
-type Step = { env?: Record<string, string>; id?: string; if?: string; name?: string; run?: string };
+type Step = {
+  env?: Record<string, string>;
+  id?: string;
+  if?: string;
+  name?: string;
+  run?: string;
+  with?: Record<string, string>;
+};
 type Job = { environment?: string; steps?: Step[] };
 type Workflow = {
   on?: {
@@ -32,6 +39,20 @@ function step(job: Job | undefined, name: string): Step {
 }
 
 describe("minimal npm extended-stable workflow", () => {
+  it("pins compatible mainline tooling for the Plugin SDK API diff", () => {
+    const parsed = workflow();
+    const expectedToolingSha = "3d12ee7cdc5b4ead9f2a00da4e64e5c955f56e53";
+    const checkout = step(
+      parsed.jobs?.preflight_openclaw_npm,
+      "Checkout trusted Plugin SDK API tooling",
+    );
+    const verify = step(parsed.jobs?.preflight_openclaw_npm, "Verify Plugin SDK API changes");
+
+    expect(checkout.with?.ref).toBe(expectedToolingSha);
+    expect(verify.env?.PLUGIN_SDK_TOOLING_SHA).toBe(expectedToolingSha);
+    expect(verify.run).toContain('pnpm --dir "$tooling_dir" run plugin-sdk:api:diff');
+  });
+
   it("adds extended-stable without adding policy or verifier contracts", () => {
     const raw = readFileSync(workflowPath, "utf8");
     const parsed = workflow();

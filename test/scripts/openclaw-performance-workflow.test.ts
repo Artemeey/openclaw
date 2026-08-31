@@ -52,6 +52,15 @@ describe("OpenClaw performance workflow", () => {
     expect(workflow).toContain(`inputs.kova_ref || '${kovaRef}'`);
   });
 
+  it("rewrites only Kova files that own the performance model pin", () => {
+    const pinModel = findStep("Pin Kova OpenAI model to GPT 5.5").run ?? "";
+
+    expect(pinModel).toContain('"support/configure-openclaw-mock-auth.mjs"');
+    expect(pinModel).toContain('"support/configure-openclaw-live-auth.mjs"');
+    expect(pinModel).toContain('"states/mock-openai-provider.json"');
+    expect(pinModel).not.toContain('"support/mock-openai-server.mjs"');
+  });
+
   it("resolves dispatch target refs before checkout", () => {
     const resolveTarget = findStep("Resolve OpenClaw target ref");
     const checkout = findStep("Checkout OpenClaw");
