@@ -134,8 +134,12 @@ describe("OpenClaw performance workflow", () => {
     expect(install.run).toContain(
       'npm --prefix "$KOVA_SRC" ci --ignore-scripts --no-audit --no-fund',
     );
-    expect(install.run).toContain('for (const dependency of ["mock-ai-provider", "zod"])');
-    expect(install.run).toContain("require.resolve(dependency, { paths: [root] })");
+    expect(install.run).toContain('require.resolve("mock-ai-provider/package.json", {');
+    expect(install.run).toContain('packageJson.bin?.["mock-ai-provider"]');
+    expect(install.run).toContain('path.join(root, "node_modules", ".bin", "mock-ai-provider")');
+    expect(install.run).toContain("fs.constants.X_OK");
+    expect(install.run).toContain('require.resolve("zod", { paths: [root] })');
+    expect(install.run).not.toContain('require.resolve("mock-ai-provider",');
   });
 
   it("fails selected live Kova lanes when live auth is missing", () => {
