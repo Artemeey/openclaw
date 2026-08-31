@@ -591,12 +591,13 @@ function selectSessionEntryCapVictims(
   }
 
   // Rank the whole eligible roster by its latest activity signal so the sessions untouched for
-  // longest are handled first. Key ordering makes timestamp ties deterministic.
+  // longest are handled first. Reversing first preserves the prior stable-sort behavior: later
+  // inserted entries win timestamp ties.
   return eligibleKeys
+    .toReversed()
     .toSorted(
       (a, b) =>
-        getSessionMaintenanceActivityAt(store[a]) - getSessionMaintenanceActivityAt(store[b]) ||
-        a.localeCompare(b),
+        getSessionMaintenanceActivityAt(store[a]) - getSessionMaintenanceActivityAt(store[b]),
     )
     .slice(0, victimCount);
 }

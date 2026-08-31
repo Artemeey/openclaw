@@ -1119,15 +1119,16 @@ describe("getActiveSessionMaintenanceWarning", () => {
 
   it("preserves insertion order tie behavior from stable sorting", () => {
     const now = Date.now();
+    const activeSessionKey = "z-active";
     const store = makeStore([
       ["same-before", makeEntry(now)],
-      ["active", makeEntry(now)],
+      [activeSessionKey, makeEntry(now)],
       ["same-after", makeEntry(now)],
     ]);
 
     const warning = getActiveSessionMaintenanceWarning({
       store,
-      activeSessionKey: "active",
+      activeSessionKey,
       pruneAfterMs: DAY_MS,
       maxEntries: 1,
       nowMs: now,
