@@ -12,7 +12,10 @@ import {
   setActivePluginRegistry,
 } from "../../plugins/runtime.js";
 import type { SkillCommandSpec } from "../../skills/types.js";
-import { createTestRegistry } from "../../test-utils/channel-plugins.js";
+import {
+  createChannelTestPluginBase,
+  createTestRegistry,
+} from "../../test-utils/channel-plugins.js";
 import { getReplyPayloadMetadata, setReplyPayloadMetadata } from "../reply-payload.js";
 import type { TemplateContext } from "../templating.js";
 import { markCommandSessionMetadataChanged } from "./command-session-metadata.js";
@@ -28,7 +31,6 @@ const {
   execExecuteMock,
   getChannelPluginMock,
   handleCommandsMock,
-  listChannelPluginsMock,
   listSkillCommandsForWorkspaceMock,
 } = vi.hoisted(() => ({
   buildStatusReplyMock: vi.fn(),
@@ -36,7 +38,6 @@ const {
   execExecuteMock: vi.fn(),
   getChannelPluginMock: vi.fn(),
   handleCommandsMock: vi.fn(),
-  listChannelPluginsMock: vi.fn(),
   listSkillCommandsForWorkspaceMock: vi.fn(),
 }));
 
@@ -68,10 +69,10 @@ vi.mock("../../skills/discovery/chat-commands.runtime.js", () => ({
   listSkillCommandsForWorkspace: (...args: unknown[]) => listSkillCommandsForWorkspaceMock(...args),
 }));
 
-vi.mock("../../channels/plugins/index.js", () => ({
+vi.mock("../../channels/plugins/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../channels/plugins/index.js")>()),
   getChannelPlugin: (...args: unknown[]) => getChannelPluginMock(...args),
   getLoadedChannelPlugin: (...args: unknown[]) => getChannelPluginMock(...args),
-  listChannelPlugins: listChannelPluginsMock,
   normalizeChannelId: (value?: string) => value?.trim().toLowerCase() || null,
 }));
 
@@ -275,8 +276,6 @@ describe("handleInlineActions", () => {
   beforeEach(() => {
     handleCommandsMock.mockReset();
     handleCommandsMock.mockResolvedValue({ shouldContinue: true, reply: undefined });
-    listChannelPluginsMock.mockReset();
-    listChannelPluginsMock.mockReturnValue([]);
     listSkillCommandsForWorkspaceMock.mockReset();
     listSkillCommandsForWorkspaceMock.mockReturnValue([]);
     getChannelPluginMock.mockReset();
@@ -298,10 +297,18 @@ describe("handleInlineActions", () => {
 
     beforeEach(async () => {
       registrySnapshot = captureActivePluginRegistrySnapshot();
-      setActivePluginRegistry(createTestRegistry([]));
-      listChannelPluginsMock.mockReturnValue([
-        { id: "discord", capabilities: { nativeCommands: true } },
-      ]);
+      setActivePluginRegistry(
+        createTestRegistry([
+          {
+            pluginId: "discord",
+            source: "test",
+            plugin: createChannelTestPluginBase({
+              id: "discord",
+              capabilities: { chatTypes: ["direct"], nativeCommands: true },
+            }),
+          },
+        ]),
+      );
       const { handleCommands } = await import("./commands-core.js");
       handleCommandsMock.mockImplementation(handleCommands);
       execExecuteMock.mockReset();
