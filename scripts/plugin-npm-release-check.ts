@@ -3,7 +3,7 @@
 
 import { pathToFileURL } from "node:url";
 import {
-  assertPluginReleaseDependencyFreshness,
+  assertPluginReleaseDependencyFreshnessForTag,
   assertPluginReleaseVersionFloors,
   collectPluginNpmGitRangeSelection,
   collectPublishablePluginPackages,
@@ -51,7 +51,7 @@ function runPluginNpmReleaseCheck(argv: string[]) {
   if (selectionMode !== undefined || selection.length > 0) {
     assertPluginReleaseVersionFloors(selected, "plugin-npm-release-check");
   }
-  assertPluginReleaseDependencyFreshness(selected, "plugin-npm-release-check");
+  assertPluginReleaseDependencyFreshnessForTag(selected, "plugin-npm-release-check", npmDistTag);
 
   console.log("plugin-npm-release-check: publishable plugin metadata looks OK.");
   if (baseRef && headRef && selected.length === 0) {

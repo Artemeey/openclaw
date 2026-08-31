@@ -11,6 +11,7 @@ const NPM_CHECK = resolve("scripts/plugin-npm-release-check.ts");
 const REPOSITORY_URL = "https://github.com/openclaw/openclaw";
 const PACKAGE_NAME = "@openclaw/demo-plugin";
 const INITIAL_VERSION = "2026.8.3";
+const EXTENDED_STABLE_VERSION = "2026.8.33";
 const tsxImport = import.meta.resolve("tsx");
 const tempDirs: string[] = [];
 
@@ -18,6 +19,7 @@ type FixtureOptions = {
   includeBuildVersion?: boolean;
   includePluginApi?: boolean;
   repositoryUrl?: string;
+  requireLatestDependency?: boolean;
   version?: string;
 };
 
@@ -42,6 +44,9 @@ function packageManifest(options: FixtureOptions = {}) {
       type: "git",
       url: options.repositoryUrl ?? REPOSITORY_URL,
     },
+    ...(options.requireLatestDependency
+      ? { dependencies: { "demo-frozen-runtime": "1.2.3" } }
+      : {}),
     openclaw: {
       extensions: ["./index.ts"],
       ...(options.includePluginApi === false
@@ -64,6 +69,9 @@ function packageManifest(options: FixtureOptions = {}) {
       release: {
         publishToClawHub: true,
         publishToNpm: true,
+        ...(options.requireLatestDependency
+          ? { requireLatestDependencies: ["demo-frozen-runtime"] }
+          : {}),
       },
     },
   };
@@ -76,6 +84,7 @@ function createPluginRepo(options: FixtureOptions = {}) {
   writeJsonFile(join(repoDir, "package.json"), {
     name: "openclaw-release-policy-fixture",
     private: true,
+    version: options.version ?? INITIAL_VERSION,
   });
   writeFileSync(join(repoDir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
   writeJsonFile(join(packageDir, "package.json"), packageManifest(options));
@@ -129,6 +138,24 @@ function expectValidPackage(result: ReturnType<typeof runCheck>, command: string
 }
 
 describe("ClawHub release policy contracts", () => {
+  it("preserves frozen dependency pins in the extended-stable npm checker", () => {
+    const repoDir = createPluginRepo({
+      requireLatestDependency: true,
+      version: EXTENDED_STABLE_VERSION,
+    });
+
+    expectValidPackage(
+      runCheck(NPM_CHECK, repoDir, [
+        "--selection-mode",
+        "all-publishable",
+        "--npm-dist-tag",
+        "extended-stable",
+      ]),
+      "plugin-npm-release-check",
+      EXTENDED_STABLE_VERSION,
+    );
+  });
+
   it("validates package identity, version, and extension metadata through both release checks", () => {
     const repoDir = createPluginRepo();
 
