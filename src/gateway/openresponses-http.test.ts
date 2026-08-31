@@ -3243,7 +3243,7 @@ describe("OpenResponses HTTP API (e2e)", () => {
   );
 
   it("accepts and preserves strict SDK replay items", async () => {
-    const replay: OpenAI.Responses.ResponseInput = [
+    const replay = [
       {
         type: "reasoning",
         id: "rs_1",
@@ -3251,7 +3251,7 @@ describe("OpenResponses HTTP API (e2e)", () => {
         content: [{ type: "reasoning_text", text: "Check Taipei." }],
         encrypted_content: null,
         status: "completed",
-      },
+      } satisfies OpenAI.Responses.ResponseReasoningItem,
       {
         type: "message",
         id: "msg_1",
@@ -3266,7 +3266,7 @@ describe("OpenResponses HTTP API (e2e)", () => {
             logprobs: [],
           },
         ],
-      },
+      } satisfies OpenAI.Responses.ResponseOutputMessage,
       {
         type: "function_call",
         id: "fc_1",
@@ -3276,7 +3276,7 @@ describe("OpenResponses HTTP API (e2e)", () => {
         caller: { type: "direct" },
         arguments: '{"city":"Taipei"}',
         status: "completed",
-      },
+      } satisfies OpenAI.Responses.ResponseFunctionToolCallItem,
       {
         type: "function_call_output",
         id: "fco_1",
@@ -3286,11 +3286,15 @@ describe("OpenResponses HTTP API (e2e)", () => {
         status: "completed",
         output: [
           { type: "input_text", text: "72F" },
-          { type: "input_image", image_url: "https://example.test/weather.png" },
+          { type: "input_image", detail: "auto", image_url: "https://example.test/weather.png" },
           { type: "input_file", file_url: "https://example.test/weather.json" },
         ],
       } satisfies OpenAI.Responses.ResponseFunctionToolCallOutputItem,
-      { type: "message", role: "user", content: "Summarize the result." },
+      {
+        type: "message",
+        role: "user",
+        content: "Summarize the result.",
+      } satisfies OpenAI.Responses.ResponseInputItem,
     ];
     agentCommandMock.mockResolvedValueOnce({ payloads: [{ text: "Taipei is 72F." }] } as never);
 
