@@ -1013,7 +1013,7 @@ private func assertConfigLookupCannotRecreateRoute(
         {
             Self.chatSendOkResponseData(id: $0)
         }
-        let route = try await connection.captureRequiredRoute()
+        let route = try await connection.acquireServerLease().route
 
         _ = try await connection.chatSend(
             sessionKey: "main",
