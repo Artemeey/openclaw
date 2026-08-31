@@ -456,6 +456,14 @@ describe("scripts/lib/plugin-prerelease-test-plan.mts", () => {
     expect(securityPackage.needs).toEqual(["preflight", "plugin-npm-security-plan"]);
     expect(securityPackage.if).toBe("needs.plugin-npm-security-plan.result == 'success'");
     expect(securityPackage.strategy["max-parallel"]).toBe(8);
+    const securityPlanStepNames = securityPlan.steps.map((step: WorkflowStep) => step.name);
+    expect(securityPlanStepNames.indexOf("Install trusted scanner dependencies")).toBeLessThan(
+      securityPlanStepNames.indexOf("Checkout candidate as inert data"),
+    );
+    const securityPackageStepNames = securityPackage.steps.map((step: WorkflowStep) => step.name);
+    expect(securityPackageStepNames.indexOf("Setup trusted inert pack environment")).toBeLessThan(
+      securityPackageStepNames.indexOf("Checkout candidate package source"),
+    );
     expect(securityScan).toMatchObject({
       name: "plugin-npm-security-scan",
       needs: ["preflight", "plugin-npm-security-plan", "plugin-npm-security-package"],
