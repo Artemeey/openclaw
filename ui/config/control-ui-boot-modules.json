@@ -1223,7 +1223,6 @@
  "ui/src/components/lobster-pet-sprites.ts",
  "ui/src/components/lobster-pet-traffic.ts",
  "ui/src/components/lobster-pet.runtime.ts",
- "ui/src/components/login-gate.ts",
  "ui/src/components/markdown-assistant-transcript.ts",
  "ui/src/components/markdown-code-blocks.ts",
  "ui/src/components/markdown-details.ts",
