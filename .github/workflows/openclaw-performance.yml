@@ -238,6 +238,13 @@ jobs:
           git -C "$KOVA_SRC" remote add origin "https://github.com/${KOVA_REPOSITORY}.git"
           git -C "$KOVA_SRC" fetch --filter=blob:none --depth 1 origin "$KOVA_REF"
           git -C "$KOVA_SRC" checkout --detach FETCH_HEAD
+          npm --prefix "$KOVA_SRC" ci --ignore-scripts --no-audit --no-fund
+          node - "$KOVA_SRC" <<'NODE'
+          const root = process.argv[2];
+          for (const dependency of ["mock-ai-provider", "zod"]) {
+            require.resolve(dependency, { paths: [root] });
+          }
+          NODE
           cat > "$HOME/.local/bin/kova" <<EOF
           #!/usr/bin/env bash
           export KOVA_HOME="${KOVA_HOME}"
