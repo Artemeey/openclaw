@@ -124,8 +124,9 @@ describe("openclaw.setup provider resolution", () => {
         record: { source: "npm", spec: "@example/runtime@1.0.0", integrity: "sha512-fixture" },
       });
       setupInferenceMocks.activateSetupInference.mockImplementationOnce(async (params) => {
-        const acknowledgment = await createPluginCapabilityConsentPrompter(params.prompter, () =>
-          params.signal.throwIfAborted(),
+        const acknowledgment = await createPluginCapabilityConsentPrompter(
+          params.prompter,
+          params.beforePersistentEffect,
         )(review);
         if (!acknowledgment) {
           return { ok: false, status: "unavailable", error: "Capabilities were not accepted." };
@@ -183,18 +184,49 @@ describe("openclaw.setup provider resolution", () => {
             ? {
                 done: true,
                 status: "done",
-                modelActivation: { modelRef: "example/model", gatewayRestartRequired: true },
+                setupActivation: {
+                  ok: true,
+                  modelRef: "example/model",
+                  latencyMs: 1,
+                  lines: [],
+                  gatewayRestartRequired: true,
+                },
               }
             : { done: true, status: "cancelled" },
         );
         if (answer !== true) {
-          expect(done).not.toHaveProperty("modelActivation");
+          expect(done).not.toHaveProperty("setupActivation");
         }
       }
       expect(commit).toHaveBeenCalledTimes(answer === true ? 1 : 0);
       expect(wizardSessions.has(sessionId)).toBe(false);
     },
   );
+
+  it("returns a definitive failed activation without turning it into a session error", async () => {
+    const { wizardSessions, context } = makeContext();
+    setupInferenceMocks.activateSetupInference.mockResolvedValueOnce({
+      ok: false,
+      status: "auth",
+      error: "Saved credential expired.",
+    });
+    await systemAgentHandler("openclaw.setup.activate.start")({
+      params: { sessionId: "failed-activation", kind: "openai-api-key" },
+      respond: () => undefined,
+      context,
+    } as never);
+
+    await expect(callWizardNext(context, { sessionId: "failed-activation" })).resolves.toEqual({
+      done: true,
+      status: "done",
+      setupActivation: {
+        ok: false,
+        status: "auth",
+        error: "Saved credential expired.",
+      },
+    });
+    expect(wizardSessions.has("failed-activation")).toBe(false);
+  });
 
   it.each([
     ["missing", null],

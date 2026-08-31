@@ -130,8 +130,11 @@ export class ModelSetupPage extends OpenClawLightDomElement {
       }
       const activation = this.firstRun.beginActivation(intent ?? { kind: "provider-auth" });
       return (result) => {
-        if (result.status === "done" && result.modelActivation) {
-          this.firstRun.recordActivation(activation, { ok: true, ...result.modelActivation });
+        const activationResult =
+          result.setupActivation ??
+          (result.modelActivation ? { ok: true as const, ...result.modelActivation } : undefined);
+        if (result.status === "done" && activationResult) {
+          this.firstRun.recordActivation(activation, activationResult);
           return () => this.firstRun.ownsActivation(activation);
         } else if (result.status === "cancelled" || result.status === "error") {
           this.firstRun.recordActivation(activation, { ok: false });
@@ -348,16 +351,19 @@ export class ModelSetupPage extends OpenClawLightDomElement {
     await this.verifyTask.run([client, this.context.agentSelection.state.selectedId]);
   }
 
-  private async activate(params: SystemAgentSetupActivateParams, targetId: string): Promise<void> {
+  private async activate(
+    params: SystemAgentSetupActivateParams,
+    targetId: string,
+  ): Promise<SystemAgentSetupActivateResult | undefined> {
     const client = this.context.gateway.snapshot.client;
     if (!this.canUseSetup(client) || this.actionsDisabled() || this.firstRun.unresolved) {
-      return;
+      return undefined;
     }
     this.manualError = null;
     this.activationState = { phase: "testing", targetId };
     this.pendingPrepareOption = null;
     this.wizardMode = "activate";
-    await this.runWizardMutation(() => this.wizard.activate(params, targetId));
+    return await this.runWizardMutation(() => this.wizard.activate(params, targetId));
   }
 
   private finishActivation(
@@ -420,26 +426,33 @@ export class ModelSetupPage extends OpenClawLightDomElement {
     preparedModelRef,
     activationTargetId: targetId,
     modelActivation,
+    setupActivation,
     isCurrent,
-  }: ModelSetupWizardCompletion): Promise<void> {
+  }: ModelSetupWizardCompletion): Promise<SystemAgentSetupActivateResult | undefined> {
     const prepareOption =
       startMethod === "openclaw.setup.prepare.start" ? this.pendingPrepareOption : null;
     this.pendingPrepareOption = null;
     if (prepareOption && preparedModelRef) {
       const kind = providerAutoSetupKind(prepareOption.id);
       this.wizard.close();
-      void this.activate(
+      return await this.activate(
         { kind, modelRef: preparedModelRef },
         activationTargetId(kind, preparedModelRef),
       );
-      return;
     }
     if (startMethod !== "openclaw.setup.prepare.start") {
       if (isCurrent?.() === false) {
         this.wizard.close();
-        return;
+        return undefined;
       }
-      if (!modelActivation) {
+      const activationResult =
+        startMethod === "openclaw.setup.activate.start"
+          ? (setupActivation ??
+            (modelActivation ? { ok: true as const, ...modelActivation } : undefined))
+          : modelActivation
+            ? { ok: true as const, ...modelActivation }
+            : undefined;
+      if (!activationResult) {
         this.wizard.fail(
           t(
             startMethod === "openclaw.setup.activate.start"
@@ -447,20 +460,20 @@ export class ModelSetupPage extends OpenClawLightDomElement {
               : "modelSetup.wizard.notComplete",
           ),
         );
-        return;
+        return undefined;
       }
       this.wizard.close();
       this.finishActivation(
-        { ok: true, ...modelActivation },
+        activationResult,
         targetId ?? "provider-auth",
         this.setupRefreshWarning,
       );
-      return;
+      return activationResult;
     }
     const result = await this.detect();
     if (!result) {
       this.wizard.fail(t("modelSetup.errors.requestFailed"));
-      return;
+      return undefined;
     }
     if (prepareOption) {
       // Provider setup can persist a model before the live activation check.
@@ -474,13 +487,14 @@ export class ModelSetupPage extends OpenClawLightDomElement {
         this.wizard.fail(
           t("modelSetup.prepare.providerNotReady", { provider: prepareOption.label }),
         );
-        return;
+        return undefined;
       }
       this.wizard.close();
       this.activateCandidate(candidate);
-      return;
+      return undefined;
     }
     this.wizard.close();
+    return undefined;
   }
 
   private closeWizard(): void {
@@ -493,14 +507,14 @@ export class ModelSetupPage extends OpenClawLightDomElement {
 
   private async runWizardMutation(
     task: () => Promise<ModelSetupWizardCompletion | null>,
-  ): Promise<void> {
+  ): Promise<SystemAgentSetupActivateResult | undefined> {
     const client = this.context.gateway.snapshot.client;
     if (
       this.wizardMutationActive ||
       !this.canUseSetup(client) ||
       (this.wizard.state.phase === "idle" && this.firstRun.unresolved)
     ) {
-      return;
+      return undefined;
     }
     if (this.wizard.state.phase === "idle") {
       // Disabling the initiating control can blur it before the modal opens.
@@ -534,11 +548,11 @@ export class ModelSetupPage extends OpenClawLightDomElement {
         if (this.isConnected && this.canUseSetup(this.context.gateway.snapshot.client)) {
           void this.detect();
         }
-        return;
+        return undefined;
       }
       if (!mutation.ok) {
         this.wizard.fail(mutation.error);
-        return;
+        return undefined;
       }
       this.setupRefreshWarning = mutation.refresh.ok ? null : mutation.refresh.error;
       const completion = mutation.value;
@@ -546,7 +560,7 @@ export class ModelSetupPage extends OpenClawLightDomElement {
         // The coordinated wizard action has settled; follow-up activation owns
         // its own mutation lane and must not be blocked by the prior busy flag.
         this.wizardMutationActive = false;
-        await this.handleWizardDone(completion);
+        return await this.handleWizardDone(completion);
       } else if (this.wizardState.phase === "step" && this.wizardState.busy) {
         this.wizardState = { ...this.wizardState, busy: false };
       }
@@ -560,6 +574,7 @@ export class ModelSetupPage extends OpenClawLightDomElement {
         this.requestUpdate();
       }
     }
+    return undefined;
   }
 
   private cancelWizard(): void {

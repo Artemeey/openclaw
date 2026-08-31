@@ -90,6 +90,29 @@ const WizardConfiguredAccountSchema = closedObject({
   accountId: NonEmptyString,
 });
 
+const WizardSetupActivationSchema = Type.Union([
+  closedObject({
+    ok: Type.Literal(true),
+    modelRef: NonEmptyString,
+    latencyMs: Type.Number(),
+    lines: Type.Array(Type.String()),
+    gatewayRestartRequired: Type.Optional(Type.Literal(true)),
+  }),
+  closedObject({
+    ok: Type.Literal(false),
+    status: Type.Union([
+      Type.Literal("auth"),
+      Type.Literal("rate_limit"),
+      Type.Literal("billing"),
+      Type.Literal("timeout"),
+      Type.Literal("format"),
+      Type.Literal("unavailable"),
+      Type.Literal("unknown"),
+    ]),
+    error: NonEmptyString,
+  }),
+]);
+
 /** Common response fields for start and next calls. */
 const WizardResultFields = {
   done: Type.Boolean(),
@@ -113,6 +136,9 @@ const WizardResultFields = {
       gatewayRestartRequired: Type.Optional(Type.Literal(true)),
     }),
   ),
+  // Full result for interactive setup activation. A definitive failed probe is
+  // distinct from declined consent, cancellation, or an ambiguous session error.
+  setupActivation: Type.Optional(WizardSetupActivationSchema),
 };
 
 /** Result after advancing a wizard session. */

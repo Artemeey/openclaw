@@ -135,12 +135,12 @@ function exerciseGuidedAdapters(): RunGuidedOnboarding {
   return vi.fn(run);
 }
 
-function gatewayHello(bootId?: string): HelloOk {
+function gatewayHello(bootId?: string, methods: string[] = []): HelloOk {
   return {
     type: "hello-ok",
     protocol: 1,
     server: { version: "test", connId: "test-connection", ...(bootId ? { bootId } : {}) },
-    features: { methods: [], events: [] },
+    features: { methods, events: [] },
     snapshot: { presence: [], health: {}, stateVersion: { presence: 0, health: 0 }, uptimeMs: 0 },
     auth: { role: "operator", scopes: [] },
     policy: { maxPayload: 1, maxBufferedBytes: 1, tickIntervalMs: 1 },
@@ -152,6 +152,107 @@ function asGatewayCall(mock: ReturnType<typeof vi.fn>): GatewayCall {
 }
 
 describe("runRemoteGatewayInferenceOnboarding", () => {
+  it("drives interactive activation consent through the local prompter", async () => {
+    const methods: string[] = [];
+    let next = 0;
+    const callGatewayMock = vi.fn(async (options: CallGatewayCliOptions): Promise<unknown> => {
+      methods.push(options.method);
+      if (options.method === "openclaw.setup.detect") {
+        options.onHelloOk?.(gatewayHello("old-boot", ["openclaw.setup.activate.start"]));
+        return detectResult();
+      }
+      if (options.method === "openclaw.setup.activate.start") {
+        options.onHelloOk?.(gatewayHello("old-boot"));
+        expect(options.params).toMatchObject({
+          sessionId: expect.any(String),
+          kind: "codex-cli",
+          modelRef: "openai/gpt-5.5",
+          workspace: "/gateway/workspace",
+        });
+        return { sessionId: (options.params as { sessionId: string }).sessionId, done: false };
+      }
+      if (options.method === "wizard.next") {
+        next += 1;
+        if (next === 1) {
+          return {
+            done: false,
+            status: "running",
+            step: { id: "review", type: "note", title: "Plugin capabilities", message: "tools" },
+          };
+        }
+        if (next === 2) {
+          expect(options.params).toMatchObject({ answer: { stepId: "review" } });
+          return {
+            done: false,
+            status: "running",
+            step: {
+              id: "consent",
+              type: "confirm",
+              message: "Accept these capabilities?",
+              initialValue: false,
+            },
+          };
+        }
+        expect(options.params).toMatchObject({
+          answer: { stepId: "consent", value: true },
+        });
+        return {
+          done: true,
+          status: "done",
+          setupActivation: {
+            ok: true,
+            modelRef: "openai/gpt-5.5",
+            latencyMs: 250,
+            lines: ["Default model: openai/gpt-5.5"],
+          },
+        };
+      }
+      if (options.method === "openclaw.setup.verify") {
+        return { ok: true, modelRef: "openai/gpt-5.5", latencyMs: 100 };
+      }
+      throw new Error(`unexpected Gateway method ${options.method}`);
+    });
+    const confirm = vi.fn(async () => true);
+    const note = vi.fn(async () => {});
+    const runGuidedOnboarding: RunGuidedOnboarding = async (_opts, runtime, deps) => {
+      const detected = await deps?.detect?.();
+      const candidate = detected?.candidates.find((entry) => entry.kind === "codex-cli");
+      expect(candidate).toBeDefined();
+      await expect(
+        deps?.activate?.({
+          kind: "codex-cli",
+          modelRef: candidate!.modelRef,
+          surface: "cli",
+          runtime,
+        }),
+      ).resolves.toMatchObject({ ok: true, modelRef: "openai/gpt-5.5" });
+    };
+
+    await runRemoteGatewayInferenceOnboarding(
+      makeTarget(makeLocalConfig(), { token: "selected-token" }),
+      makeRuntime(),
+      {
+        callGateway: asGatewayCall(callGatewayMock),
+        createPrompter: () => createWizardPrompter({ confirm, note }),
+        runGuidedOnboarding,
+      },
+    );
+
+    expect(methods).toEqual([
+      "openclaw.setup.detect",
+      "openclaw.setup.activate.start",
+      "wizard.next",
+      "wizard.next",
+      "wizard.next",
+      "openclaw.setup.verify",
+    ]);
+    expect(note).toHaveBeenCalledWith("tools", "Plugin capabilities");
+    expect(confirm).toHaveBeenCalledWith({
+      message: "Accept these capabilities?",
+      initialValue: false,
+    });
+  });
+
   it.each([
     { label: "token", auth: { token: "selected-token" }, secret: "selected-token" },
     {

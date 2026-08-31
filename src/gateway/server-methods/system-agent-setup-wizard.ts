@@ -11,6 +11,7 @@ export async function startSetupActivationWizard(params: {
     "kind" | "agentId" | "modelRef" | "authChoice" | "apiKey" | "workspace"
   >;
   timeoutMs: number;
+  resultMode: "provider-auth" | "activation";
   context: GatewayRequestContext;
   respond: RespondFn;
 }) {
@@ -30,10 +31,19 @@ export async function startSetupActivationWizard(params: {
             prompter,
             signal,
             isCancelled: () => signal.aborted,
+            beforePersistentEffect: () => runnerSession.lockCancellation(),
             onCommitStarted: () => runnerSession.lockCancellation(),
           });
           if (!result.ok) {
+            if (params.resultMode === "activation") {
+              runnerSession.setSetupActivation(result);
+              return;
+            }
             throw new Error(result.error);
+          }
+          if (params.resultMode === "activation") {
+            runnerSession.setSetupActivation(result);
+            return;
           }
           runnerSession.setModelActivation({
             modelRef: result.modelRef,

@@ -6,6 +6,10 @@ import type {
   SystemAgentSetupActivateResult,
   SystemAgentSetupDetectResult,
   SystemAgentSetupVerifyResult,
+  WizardNextResult,
+  WizardStartResult,
+  WizardStatusResult,
+  WizardStep,
 } from "../../packages/gateway-protocol/src/index.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
@@ -22,7 +26,7 @@ import type {
   SetupInferenceFailureStatus,
 } from "../system-agent/setup-inference.js";
 import { t } from "../wizard/i18n/index.js";
-import { WizardCancelledError } from "../wizard/prompts.js";
+import { WizardCancelledError, type WizardPrompter } from "../wizard/prompts.js";
 import type { GuidedOnboardingDeps } from "./onboard-guided.js";
 
 const GATEWAY_SETUP_DETECT_TIMEOUT_MS = 40_000;
@@ -161,6 +165,70 @@ function activationTimeoutMs(kind: ActivateSetupInferenceParams["kind"]): number
     : GATEWAY_SETUP_ACTIVATE_TIMEOUT_MS;
 }
 
+async function answerRemoteWizardStep(
+  prompter: WizardPrompter,
+  step: WizardStep,
+): Promise<{ stepId: string; value?: unknown } | undefined> {
+  const message = step.message ?? "";
+  switch (step.type) {
+    case "note":
+      await prompter.note(message, step.title);
+      return { stepId: step.id };
+    case "progress": {
+      prompter.progress(message).stop();
+      return undefined;
+    }
+    case "confirm":
+      return {
+        stepId: step.id,
+        value: await prompter.confirm({
+          message,
+          ...(typeof step.initialValue === "boolean" ? { initialValue: step.initialValue } : {}),
+        }),
+      };
+    case "select":
+      return {
+        stepId: step.id,
+        value: await prompter.select({
+          message,
+          options: step.options ?? [],
+          ...(step.initialValue !== undefined ? { initialValue: step.initialValue } : {}),
+        }),
+      };
+    case "multiselect":
+      return {
+        stepId: step.id,
+        value: await prompter.multiselect({
+          message,
+          options: step.options ?? [],
+          ...(Array.isArray(step.initialValue) ? { initialValues: step.initialValue } : {}),
+        }),
+      };
+    case "text":
+      return {
+        stepId: step.id,
+        value: await prompter.text({
+          message,
+          ...(typeof step.initialValue === "string" ? { initialValue: step.initialValue } : {}),
+          ...(step.placeholder !== undefined ? { placeholder: step.placeholder } : {}),
+          ...(step.sensitive === true ? { sensitive: true } : {}),
+        }),
+      };
+    case "action":
+      if (step.executor !== "client") {
+        return undefined;
+      }
+      if (step.externalUrl) {
+        await prompter.openUrl?.(step.externalUrl);
+      }
+      if (message || step.title) {
+        await prompter.note(message, step.title);
+      }
+      return { stepId: step.id };
+  }
+  throw new Error(`Unsupported Gateway wizard step: ${String(step.type)}`);
+}
+
 function bindGatewayConfig(target: RemoteGatewayInferenceTarget): OpenClawConfig {
   return {
     ...target.config,
@@ -215,6 +283,9 @@ export async function runRemoteGatewayInferenceOnboarding(
   const boundConfig = bindGatewayConfig(target);
   const explicitAuth = Boolean(target.token || target.password);
   let gatewayWorkspace: string | undefined;
+  let interactiveActivationAvailable = false;
+  const prompter = await (deps.createPrompter?.() ??
+    import("../wizard/clack-prompter.js").then(({ createClackPrompter }) => createClackPrompter()));
 
   const request = async <T>(
     params: Pick<
@@ -240,6 +311,11 @@ export async function runRemoteGatewayInferenceOnboarding(
       method: "openclaw.setup.detect",
       params: {},
       timeoutMs: GATEWAY_SETUP_DETECT_TIMEOUT_MS,
+      onHelloOk: (hello) => {
+        interactiveActivationAvailable = hello.features.methods.includes(
+          "openclaw.setup.activate.start",
+        );
+      },
     });
     const detection = toSetupInferenceDetection(result);
     gatewayWorkspace = detection.workspace;
@@ -250,20 +326,60 @@ export async function runRemoteGatewayInferenceOnboarding(
     params: ActivateSetupInferenceParams,
   ): Promise<ActivateSetupInferenceResult> => {
     let activationBootId: string | undefined;
-    const result = await request<SystemAgentSetupActivateResult>({
-      method: "openclaw.setup.activate",
-      params: {
-        kind: params.kind,
-        ...(params.modelRef !== undefined ? { modelRef: params.modelRef } : {}),
-        ...(params.authChoice !== undefined ? { authChoice: params.authChoice } : {}),
-        ...(params.apiKey !== undefined ? { apiKey: params.apiKey } : {}),
-        ...(gatewayWorkspace ? { workspace: gatewayWorkspace } : {}),
-      },
-      timeoutMs: activationTimeoutMs(params.kind),
-      onHelloOk: (hello) => {
-        activationBootId = hello.server.bootId?.trim();
-      },
-    });
+    const activationParams = {
+      kind: params.kind,
+      ...(params.modelRef !== undefined ? { modelRef: params.modelRef } : {}),
+      ...(params.authChoice !== undefined ? { authChoice: params.authChoice } : {}),
+      ...(params.apiKey !== undefined ? { apiKey: params.apiKey } : {}),
+      ...(gatewayWorkspace ? { workspace: gatewayWorkspace } : {}),
+    };
+    let result: SystemAgentSetupActivateResult;
+    if (interactiveActivationAvailable) {
+      const sessionId = randomUUID();
+      let wizardResult: WizardStartResult | WizardNextResult = await request<WizardStartResult>({
+        method: "openclaw.setup.activate.start",
+        params: { sessionId, ...activationParams },
+        timeoutMs: GATEWAY_SETUP_ACTIVATE_TIMEOUT_MS,
+        onHelloOk: (hello) => {
+          activationBootId = hello.server.bootId?.trim();
+        },
+      });
+      try {
+        while (!wizardResult.done) {
+          const answer = wizardResult.step
+            ? await answerRemoteWizardStep(prompter, wizardResult.step)
+            : undefined;
+          wizardResult = await request<WizardNextResult>({
+            method: "wizard.next",
+            params: { sessionId, ...(answer ? { answer } : {}) },
+            timeoutMs: activationTimeoutMs(params.kind),
+          });
+        }
+      } catch (error) {
+        await request<WizardStatusResult>({
+          method: "wizard.cancel",
+          params: { sessionId },
+          timeoutMs: GATEWAY_SETUP_VERIFY_TIMEOUT_MS,
+        }).catch(() => undefined);
+        throw error;
+      }
+      if (wizardResult.status === "cancelled") {
+        throw new WizardCancelledError(wizardResult.error ?? "Model activation was cancelled.");
+      }
+      if (wizardResult.status !== "done" || !wizardResult.setupActivation) {
+        throw new Error(wizardResult.error ?? "Gateway model activation did not complete.");
+      }
+      result = wizardResult.setupActivation;
+    } else {
+      result = await request<SystemAgentSetupActivateResult>({
+        method: "openclaw.setup.activate",
+        params: activationParams,
+        timeoutMs: activationTimeoutMs(params.kind),
+        onHelloOk: (hello) => {
+          activationBootId = hello.server.bootId?.trim();
+        },
+      });
+    }
     const activation = toSetupInferenceActivationResult(result);
     if (!activation.ok) {
       return activation;
@@ -339,12 +455,8 @@ export async function runRemoteGatewayInferenceOnboarding(
     // custodian flow (question zero, local setup apply, local hatch) is wrong here.
     handoffMode: "chat",
     runSetupMemoryImportStep: async () => ({ status: "skipped", providers: [] }),
-    ...(deps.createPrompter ? { createPrompter: deps.createPrompter } : {}),
+    createPrompter: () => prompter,
     runSystemAgentChat: async () => {
-      const prompter = await (deps.createPrompter?.() ??
-        import("../wizard/clack-prompter.js").then(({ createClackPrompter }) =>
-          createClackPrompter(),
-        ));
       await prompter.intro("OpenClaw");
       // One-shot RPCs have different connections. Preserve a signed device
       // owner across chat replies even when loopback shared auth needs no device.

@@ -127,8 +127,33 @@ function adaptRuntimePluginInstallIo(params: RuntimePluginEnsureParams): {
           runtime,
           (message) => `Runtime plugin install unexpectedly prompted: ${message}`,
         )
-      : { ...params.prompter, note: async () => {} },
+      : createRuntimePluginInstallPrompter(params.prompter),
     runtime,
+  };
+}
+
+function createRuntimePluginInstallPrompter(prompter: WizardPrompter): WizardPrompter {
+  const cancel = prompter.cancel?.bind(prompter);
+  const deviceCode = prompter.deviceCode?.bind(prompter);
+  const plain = prompter.plain?.bind(prompter);
+  const openUrl = prompter.openUrl?.bind(prompter);
+  const disableBackNavigation = prompter.disableBackNavigation?.bind(prompter);
+  return {
+    ...(cancel ? { cancel } : {}),
+    intro: (title) => prompter.intro(title),
+    outro: (message) => prompter.outro(message),
+    // The activation owner already presents installer failures once. Preserve
+    // that contract without assuming WizardPrompter methods are enumerable.
+    note: async () => {},
+    ...(deviceCode ? { deviceCode } : {}),
+    ...(plain ? { plain } : {}),
+    select: (params) => prompter.select(params),
+    multiselect: (params) => prompter.multiselect(params),
+    text: (params) => prompter.text(params),
+    confirm: (params) => prompter.confirm(params),
+    progress: (label) => prompter.progress(label),
+    ...(openUrl ? { openUrl } : {}),
+    ...(disableBackNavigation ? { disableBackNavigation } : {}),
   };
 }
 

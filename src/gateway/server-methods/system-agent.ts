@@ -91,7 +91,7 @@ export type SystemAgentChatSession =
 const MAX_SYSTEM_AGENT_SESSIONS = 8;
 const SYSTEM_AGENT_SEED_HISTORY_LIMIT = 30;
 const DEFAULT_SYSTEM_AGENT_HISTORY_LIMIT = 100;
-const ACTIVATION_SESSION_TIMEOUT_MS = 8 * 60 * 1000;
+const ACTIVATION_SESSION_TIMEOUT_MS = 10 * 60 * 1000;
 const PROVIDER_AUTH_SESSION_TIMEOUT_MS = 25 * 60 * 1000;
 const PROVIDER_PREPARE_SESSION_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const systemAgentSessionQueues = new WeakMap<
@@ -310,6 +310,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
       sessionId,
       activation: { ...activation, kind: "provider-auth" },
       timeoutMs: PROVIDER_AUTH_SESSION_TIMEOUT_MS,
+      resultMode: "provider-auth",
       context,
       respond,
     });
@@ -331,6 +332,7 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
       sessionId,
       activation,
       timeoutMs: ACTIVATION_SESSION_TIMEOUT_MS,
+      resultMode: "activation",
       context,
       respond,
     });

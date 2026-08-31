@@ -18,6 +18,13 @@ import {
   requestParameters,
 } from "./model-setup-first-run.test-support.ts";
 
+function requestedModelRef(params: unknown): string | undefined {
+  const request = requestParameters(params);
+  return "modelRef" in request && typeof request.modelRef === "string"
+    ? request.modelRef
+    : undefined;
+}
+
 describe("ModelSetupPage first-run inference", () => {
   beforeEach(async () => {
     vi.stubGlobal("localStorage", createStorageMock());
@@ -57,6 +64,55 @@ describe("ModelSetupPage first-run inference", () => {
     expect(request).toHaveBeenCalledOnce();
     expect(context.navigate).not.toHaveBeenCalled();
     expect(localStorage.getItem("openclaw.modelSetup.pendingActivation.v1")).toBeNull();
+  });
+
+  it("tries the next candidate after a definitive activation rejection", async () => {
+    const { context, client, request } = createFirstRunContext();
+    request.mockImplementation(async (method, params) => {
+      if (method !== "openclaw.setup.activate.start") {
+        throw new Error(`Unexpected method ${method}`);
+      }
+      const modelRef = requestedModelRef(params);
+      return modelRef === "openai/expired"
+        ? {
+            done: true,
+            status: "done",
+            setupActivation: { ok: false, status: "auth", error: "Saved key expired" },
+          }
+        : {
+            done: true,
+            status: "done",
+            setupActivation: {
+              ok: true,
+              modelRef: "anthropic/ready",
+              latencyMs: 10,
+              lines: ["ready"],
+            },
+          };
+    });
+
+    await mountPage(context, {
+      state: {
+        phase: "ready",
+        result: {
+          ...detection,
+          candidates: [
+            candidate("openai-api-key", "openai/expired", true),
+            candidate("anthropic-api-key", "anthropic/ready", true),
+          ],
+        },
+      },
+      client,
+      firstRun: true,
+    });
+
+    await waitForFast(() =>
+      expect(context.navigate).toHaveBeenCalledWith("custodian", { search: "?onboarding=1" }),
+    );
+    expect(request.mock.calls.map(([, params]) => requestedModelRef(params))).toEqual([
+      "openai/expired",
+      "anthropic/ready",
+    ]);
   });
 
   it("automatically activates newly discovered credentials when first-run setup is checked again", async () => {

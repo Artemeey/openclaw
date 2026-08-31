@@ -69,7 +69,16 @@ describe("ModelSetupPage activation consent", () => {
             };
           }
           return next.answer.value === true
-            ? { done: true, status: "done", modelActivation: { modelRef: "provider/selected" } }
+            ? {
+                done: true,
+                status: "done",
+                setupActivation: {
+                  ok: true,
+                  modelRef: "provider/selected",
+                  latencyMs: 10,
+                  lines: ["ready"],
+                },
+              }
             : { done: true, status: "cancelled", error: "Model setup was declined." };
         }
         if (method === "wizard.cancel") {

@@ -1256,7 +1256,8 @@ extension OnboardingAISetupModel {
                     status: wizardStatusString(result.status),
                     error: result.error,
                     preparedModelRef: result.preparedmodelref,
-                    modelActivation: result.modelactivation)
+                    modelActivation: result.modelactivation,
+                    setupActivation: result.setupactivation?.value as? [String: AnyCodable])
             } catch {
                 if self.activationWizardCompletion != nil, Self.setupAdmissionIsBusy(error),
                    token == self.attemptToken, authAttemptID == self.authAttemptID
@@ -1391,7 +1392,8 @@ extension OnboardingAISetupModel {
                     status: wizardStatusString(result.status),
                     error: result.error,
                     preparedModelRef: result.preparedmodelref,
-                    modelActivation: result.modelactivation)
+                    modelActivation: result.modelactivation,
+                    setupActivation: result.setupactivation?.value as? [String: AnyCodable])
             } catch {
                 let cancellation = await self.gateway.cancelWizardSession(sessionID, on: serverLease)
                 guard token == self.attemptToken, authAttemptID == self.authAttemptID else { return }
@@ -1424,27 +1426,37 @@ extension OnboardingAISetupModel {
         status: String?,
         error: String?,
         preparedModelRef: String?,
-        modelActivation: [String: AnyCodable]? = nil)
+        modelActivation: [String: AnyCodable]? = nil,
+        setupActivation: [String: AnyCodable]? = nil)
     {
         self.authBusy = false
         if self.activationWizardCompletion != nil,
            done || status == "done" || status == "cancelled" || status == "error"
         {
-            let result: Result<ActivateResult, Error> = if status == "done",
-                                                           let modelRef = modelActivation?["modelRef"]?
-                                                               .value as? String,
-                                                               !modelRef.isEmpty
+            let result: Result<ActivateResult, Error>
+            if status == "done", let setupActivation,
+               let ok = setupActivation["ok"]?.value as? Bool
             {
-                .success(ActivateResult(
+                result = .success(ActivateResult(
+                    ok: ok,
+                    modelRef: setupActivation["modelRef"]?.value as? String,
+                    status: setupActivation["status"]?.value as? String,
+                    error: setupActivation["error"]?.value as? String,
+                    gatewayRestartRequired: setupActivation["gatewayRestartRequired"]?.value as? Bool))
+            } else if status == "done",
+                      let modelRef = modelActivation?["modelRef"]?.value as? String,
+                      !modelRef.isEmpty
+            {
+                result = .success(ActivateResult(
                     ok: true,
                     modelRef: modelRef,
                     status: nil,
                     error: nil,
                     gatewayRestartRequired: modelActivation?["gatewayRestartRequired"]?.value as? Bool))
             } else if status == "cancelled" {
-                .failure(OnboardingAISetupError.activationCancelled)
+                result = .failure(OnboardingAISetupError.activationCancelled)
             } else {
-                .failure(OnboardingAISetupError
+                result = .failure(OnboardingAISetupError
                     .activationFailed(error ?? "The Gateway did not return a verified model."))
             }
             self.finishActivationWizard(result)

@@ -144,6 +144,10 @@ async function activateSetupInferenceUnredacted(
   const workspace = params.workspace?.trim()
     ? resolveUserPath(params.workspace)
     : resolveSetupInferenceWorkspace(snapshot);
+  const beforePersistentEffect = async () => {
+    throwIfSetupInferenceCancelled(params);
+    await params.beforePersistentEffect?.();
+  };
 
   const tempDir = await (
     deps.createTempDir ?? (() => fs.mkdtemp(path.join(os.tmpdir(), "openclaw-setup-inference-")))
@@ -218,9 +222,7 @@ async function activateSetupInferenceUnredacted(
             {
               workspaceDir: workspace,
               onCapabilityConsent: params.prompter
-                ? createPluginCapabilityConsentPrompter(params.prompter, () =>
-                    throwIfSetupInferenceCancelled(params),
-                  )
+                ? createPluginCapabilityConsentPrompter(params.prompter, beforePersistentEffect)
                 : undefined,
             },
           );
@@ -242,7 +244,7 @@ async function activateSetupInferenceUnredacted(
             prompter: params.prompter ?? createQuickstartNotePrompter(params.runtime),
             runtime: params.runtime,
             workspaceDir: tempDir,
-            beforePersistentEffect: () => throwIfSetupInferenceCancelled(params),
+            beforePersistentEffect,
           });
           if (!ensured.ok) {
             return {

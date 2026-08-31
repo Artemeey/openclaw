@@ -99,20 +99,23 @@ describe("WizardSession", () => {
     expect(done.done).toBe(true);
   });
 
-  test.each(["prepared", "activated"] as const)(
+  test.each(["prepared", "activated", "setup-activation"] as const)(
     "returns the exact %s model only on the successful terminal result",
     async (kind) => {
       const modelRef = "ollama/qwen3:0.6b";
       const session = new WizardSession(async (prompter, _signal, owner) => {
         if (kind === "prepared") {
           owner.setPreparedModelRef(modelRef);
-        } else {
+        } else if (kind === "activated") {
           owner.setModelActivation({ modelRef });
+        } else {
+          owner.setSetupActivation({ ok: true, modelRef, latencyMs: 10, lines: ["ready"] });
         }
         await prompter.note("Finishing setup");
       });
       const first = await session.next();
       expect(first).not.toHaveProperty("modelActivation");
+      expect(first).not.toHaveProperty("setupActivation");
       expect(first).not.toHaveProperty("preparedModelRef");
       if (!first.step) {
         throw new Error("expected setup step");
@@ -123,7 +126,11 @@ describe("WizardSession", () => {
         status: "done",
         ...(kind === "prepared"
           ? { preparedModelRef: modelRef }
-          : { modelActivation: { modelRef } }),
+          : kind === "activated"
+            ? { modelActivation: { modelRef } }
+            : {
+                setupActivation: { ok: true, modelRef, latencyMs: 10, lines: ["ready"] },
+              }),
       });
     },
   );
@@ -139,6 +146,11 @@ describe("WizardSession", () => {
         await gate;
         owner.setPreparedModelRef("ollama/qwen3:0.6b");
         owner.setModelActivation({ modelRef: "ollama/qwen3:0.6b", gatewayRestartRequired: true });
+        owner.setSetupActivation({
+          ok: false,
+          status: "auth",
+          error: "credential expired",
+        });
         if (status === "error") {
           throw new Error("activation setup failed");
         }
@@ -154,6 +166,7 @@ describe("WizardSession", () => {
         status,
       });
       expect(result).not.toHaveProperty("modelActivation");
+      expect(result).not.toHaveProperty("setupActivation");
       expect(result).not.toHaveProperty("preparedModelRef");
     },
   );

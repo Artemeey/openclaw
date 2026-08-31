@@ -59,7 +59,10 @@ type FirstRunSetupHost = {
   canUseSetup: (client: GatewayBrowserClient | null) => boolean;
   canVerify: (client: GatewayBrowserClient | null) => boolean;
   verify: () => Promise<SetupOutcome<SystemAgentSetupVerifyResult>>;
-  activate: (candidate: Candidate, targetId: string) => Promise<void>;
+  activate: (
+    candidate: Candidate,
+    targetId: string,
+  ) => Promise<SystemAgentSetupActivateResult | undefined>;
   setVerifyState: (state: ModelSetupVerifyState) => void;
   setActivationState: (state: ModelSetupActivationState) => void;
   setRefreshWarning: (warning: string | null) => void;
@@ -68,6 +71,7 @@ type FirstRunSetupHost = {
 export class FirstRunSetup {
   private generation = 0;
   private started = false;
+  private readonly attempts = new Set<string>();
   private readyConnection: ModelSetupConnection | null = null;
   private pending: FirstRunActivation | null = null;
 
@@ -392,6 +396,7 @@ export class FirstRunSetup {
   private reset(): void {
     this.generation += 1;
     this.started = false;
+    this.attempts.clear();
   }
 
   private owns(owner: FirstRunOwner): boolean {
@@ -431,17 +436,22 @@ export class FirstRunSetup {
       if (
         candidate.credentials === false ||
         (detection.configuredModel &&
-          (candidate.kind === "existing-model" || candidate.modelRef === detection.configuredModel))
+          (candidate.kind === "existing-model" ||
+            candidate.modelRef === detection.configuredModel)) ||
+        this.attempts.has(targetId)
       ) {
         continue;
       }
       if (!this.owns(owner)) {
         return;
       }
-      // Activation now owns an interactive review. A declined or cancelled
-      // review must never authorize another candidate's setup automatically.
-      await this.host.activate(candidate, targetId);
-      return;
+      this.attempts.add(targetId);
+      const result = await this.host.activate(candidate, targetId);
+      if (!this.owns(owner) || !result || result.ok) {
+        return;
+      }
+      // Only a definitive server-owned probe rejection tries the next candidate.
+      // Decline, cancellation, and transport failure return no activation result.
     }
   }
 

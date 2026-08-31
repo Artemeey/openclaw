@@ -158,6 +158,7 @@ describe("Codex runtime plugin install repair", () => {
 
   it("bridges fresh runtime installer progress through a hosted wizard", async () => {
     mocks.ensureOnboardingPluginInstalled.mockImplementationOnce(async ({ cfg, prompter }) => {
+      await prompter.note("suppressed duplicate installer note");
       prompter.progress("Installing runtime").stop();
       const accepted = await prompter.confirm({
         message: "Continue installation?",

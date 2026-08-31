@@ -953,7 +953,16 @@ struct OnboardingAISetupTests {
                         let accepted = try #require(answer?["value"] as? Bool)
                         #expect(accepted == (decision == "accept"))
                         payload = accepted
-                            ? ["done": true, "status": "done", "modelActivation": ["modelRef": "openai/gpt-5.5"]]
+                            ? [
+                                "done": true,
+                                "status": "done",
+                                "setupActivation": [
+                                    "ok": true,
+                                    "modelRef": "openai/gpt-5.5",
+                                    "latencyMs": 250,
+                                    "lines": ["ready"],
+                                ],
+                            ]
                             : ["done": true, "status": "cancelled", "error": "Plugin capability review was declined."]
                     default:
                         payload = ["done": false, "status": "running", "step": [
@@ -1018,6 +1027,63 @@ struct OnboardingAISetupTests {
         let requests = await recorder.snapshot()
         #expect(!requests.methods.contains("openclaw.setup.activate"))
         #expect(requests.methods.filter { $0 == "openclaw.setup.activate.start" }.count == 1)
+    }
+
+    @Test func `activation wizard preserves a definitive provider rejection`() async throws {
+        let recorder = AISetupRequestRecorder()
+        let session = makeAISetupRequestSession(
+            recorder: recorder,
+            handler: { task, request in
+                switch request.method {
+                case "openclaw.setup.detect":
+                    task.emitReceiveSuccess(.data(detectedSetupResponse(id: request.id)))
+                case "openclaw.setup.activate.start":
+                    let sessionID = try #require(request.params["sessionId"] as? String)
+                    task.emitReceiveSuccess(.data(try JSONSerialization.data(withJSONObject: [
+                        "type": "res",
+                        "id": request.id,
+                        "ok": true,
+                        "payload": [
+                            "sessionId": sessionID,
+                            "done": true,
+                            "status": "done",
+                            "setupActivation": [
+                                "ok": false,
+                                "status": "auth",
+                                "error": "Saved key expired",
+                            ],
+                        ],
+                    ])))
+                default:
+                    Issue.record("Unexpected setup request: \(request.method)")
+                }
+            },
+            receiveHook: { task, receiveIndex in
+                if receiveIndex == 0 { return .data(GatewayWebSocketTestSupport.connectChallengeData()) }
+                return .data(GatewayWebSocketTestSupport.connectOkData(
+                    id: task.snapshotConnectRequestID() ?? "connect",
+                    methods: ["openclaw.setup.activate", "openclaw.setup.activate.start"],
+                    capabilities: ["openclaw-setup-model-ref"]))
+            })
+        let gateway = try makeAISetupGateway(
+            url: #require(URL(string: "ws://example.invalid")),
+            session: session)
+        let model = makeAISetupModel(gateway: gateway)
+
+        await model.detectAndAutoConnect()
+        model.manualProviderID = "openai-api-key"
+        model.manualKey = "fixture-key"
+        model.submitManualKey()
+        for _ in 0..<400 where model.manualTesting {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+
+        #expect(model.manualError != nil)
+        #expect(!model.pendingActivationVerification)
+        #expect(await recorder.snapshot().methods == [
+            "openclaw.setup.detect",
+            "openclaw.setup.activate.start",
+        ])
     }
 
     @Test func `prepare starts the shared wizard and polls gateway progress`() async throws {

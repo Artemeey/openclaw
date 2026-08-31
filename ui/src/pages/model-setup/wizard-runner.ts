@@ -23,6 +23,7 @@ export type ModelSetupWizardCompletion = {
   preparedModelRef?: string;
   activationTargetId?: string;
   modelActivation?: WizardNextResult["modelActivation"];
+  setupActivation?: WizardNextResult["setupActivation"];
   isCurrent?: () => boolean;
 };
 
@@ -277,6 +278,7 @@ export class ModelSetupWizardRunner {
       ...(isCurrent ? { isCurrent } : {}),
       ...(next.preparedModelRef ? { preparedModelRef: next.preparedModelRef } : {}),
       ...(result.modelActivation ? { modelActivation: result.modelActivation } : {}),
+      ...(result.setupActivation ? { setupActivation: result.setupActivation } : {}),
     };
   }
 
