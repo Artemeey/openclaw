@@ -527,7 +527,12 @@ export function collectPluginReleasePlan(params?: {
   if (explicitPublishSelection) {
     assertPluginReleaseVersionFloors(selectedPublishable, "Plugin NPM release plan");
   }
-  assertPluginReleaseDependencyFreshness(selectedPublishable, "Plugin NPM release plan");
+  // Extended-stable publishes an intentionally frozen dependency snapshot.
+  // The latest-dependency opt-in still guards moving release lines, but must
+  // not force unrelated runtime upgrades across a frozen support boundary.
+  if (params?.npmDistTag !== "extended-stable") {
+    assertPluginReleaseDependencyFreshness(selectedPublishable, "Plugin NPM release plan");
+  }
 
   const all = selectedPublishable.map((plugin) =>
     Object.assign({}, plugin, {
