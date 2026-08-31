@@ -28,6 +28,7 @@ import type { NewSessionTarget } from "../pages/new-session/location.ts";
 import { pluginTabKey, pluginTabRefFromSearch } from "../pages/plugin/route.ts";
 import type { ShellRouteState } from "./app-host-route-state.ts";
 import { renderCommandPaletteLoading } from "./app-shell-command-palette-loading.ts";
+import { renderConnectionActionBlock } from "./app-shell-connection-status.ts";
 import type { OutboxStoreRuntime, StoredOutboxScopeHost } from "./app-shell-gateway.ts";
 import type { ApplicationRuntime } from "./bootstrap.ts";
 import type { ApplicationContext, ApplicationNavigationOptions } from "./context.ts";
@@ -204,6 +205,9 @@ export function renderApplicationShell(host: ShellViewHost) {
   const gatewaySnapshot = context.gateway.snapshot;
   const config = context.config.current;
   const gatewayConnected = gatewaySnapshot.phase === "connected";
+  const initialConnectPending =
+    gatewaySnapshot.lastError === null &&
+    (gatewaySnapshot.phase === "starting" || gatewaySnapshot.phase === "connecting");
   const operatorAccess = readGatewayOperatorAccess(gatewaySnapshot);
   const canUpdate = canCallGatewayMethod(gatewaySnapshot, "update.run", "operator.admin");
   const canHoldUpdate =
@@ -602,20 +606,12 @@ export function renderApplicationShell(host: ShellViewHost) {
         .tabIndex=${-1}
         ?inert=${pageActionsBlocked || (mobileNavLayout && navDrawerOpen)}
       >
-        ${pageActionsBlocked && gatewaySnapshot.phase !== "reload-required"
-          ? html`<div class="connection-action-block" role="status" aria-live="polite">
-              <span class="connection-action-block__icon" aria-hidden="true"
-                >${icons.globeOff}</span
-              >
-              <span class="connection-action-block__text">
-                ${t(
-                  settingsTakeover
-                    ? "connection.settingsChangesUnavailable"
-                    : "connection.actionsUnavailable",
-                )}
-              </span>
-            </div>`
-          : nothing}
+        ${renderConnectionActionBlock({
+          initialConnectPending,
+          pageActionsBlocked,
+          phase: gatewaySnapshot.phase,
+          settingsTakeover,
+        })}
         ${renderFloatingUpdateCard({
           navigationSurfaceHidden,
           mobileNavLayout,

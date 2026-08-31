@@ -4118,6 +4118,10 @@ wa-dropdown.sidebar-identity-menu::part(menu) {
   min-width: 0;
 }
 
+.shell:not(.shell--mobile-nav) .content--chat > .connection-action-block {
+  padding-left: var(--shell-chrome-safe-area-left);
+}
+
 .content--chat {
   display: flex;
   flex-direction: column;

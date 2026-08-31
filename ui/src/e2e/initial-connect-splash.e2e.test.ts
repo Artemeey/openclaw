@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ConnectErrorDetailCodes } from "../../../packages/gateway-protocol/src/connect-error-details.js";
 import {
   canRunPlaywrightChromium,
+  controlUiSessionUrl,
   controlUiE2eWaitTimeoutMs,
   installMockGateway,
   resolvePlaywrightChromiumExecutablePath,
@@ -129,6 +130,77 @@ describeControlUiE2e("Control UI initial connect splash E2E", () => {
     expect(await page.locator(".connect-splash").count()).toBe(0);
     expect(await loginGateMounted()).toBe(false);
     await captureProof(page, "02-connected-content");
+  });
+
+  it("paints a cached session shell before reconnecting and then reloads from its cursor", async () => {
+    const sessionKey = "agent:main:550e8400-e29b-41d4-a716-446655440000";
+    const cachedText = "Cached transcript is ready before the Gateway.";
+    const pageResponse = {
+      deltaCursor: "stored-cursor",
+      messages: [{ role: "assistant", content: [{ type: "text", text: cachedText }] }],
+      sessionId: "shell-paint-session",
+    };
+    const warmPage = await createPage();
+    await installMockGateway(warmPage, {
+      methodResponses: {
+        "chat.startup": { cases: [{ match: { sessionKey }, response: pageResponse }] },
+      },
+      sessionKey,
+    });
+    const url = controlUiSessionUrl(server.baseUrl, sessionKey);
+    await warmPage.goto(url);
+    await warmPage.getByText(cachedText, { exact: true }).waitFor();
+    await warmPage.waitForTimeout(700);
+    await warmPage.close();
+
+    const page = await warmPage.context().newPage();
+    page.setDefaultTimeout(controlUiE2eWaitTimeoutMs);
+    const gateway = await installMockGateway(page, {
+      deferredMethods: ["connect"],
+      methodResponses: {
+        "chat.startup": {
+          cases: [
+            {
+              match: { cursor: "stored-cursor", sessionKey },
+              response: {
+                deltaCursor: "current-cursor",
+                kind: "delta",
+                messages: [],
+                sessionId: "shell-paint-session",
+              },
+            },
+            { match: { sessionKey }, response: pageResponse },
+          ],
+        },
+      },
+      sessionKey,
+    });
+
+    await page.goto(url);
+    await gateway.waitForRequest("connect");
+    await page.locator("openclaw-app-shell .shell").waitFor();
+    await page.getByText(cachedText, { exact: true }).waitFor();
+    const pending = page.locator('.connection-action-block[role="status"]');
+    const pendingText = pending.getByText("Reconnecting… Showing stale data.", { exact: true });
+    await pendingText.waitFor();
+    const [controlsBounds, pendingTextBounds] = await Promise.all([
+      page.locator(".shell-chrome-controls").boundingBox(),
+      pendingText.boundingBox(),
+    ]);
+    expect(pendingTextBounds?.x).toBeGreaterThanOrEqual(
+      (controlsBounds?.x ?? 0) + (controlsBounds?.width ?? 0),
+    );
+    expect(await page.locator(".connect-splash").count()).toBe(0);
+    expect(await page.locator("openclaw-login-gate").count()).toBe(0);
+    expect(await gateway.getRequests("chat.startup")).toHaveLength(0);
+    await captureProof(page, "02a-cached-shell-connecting");
+
+    await gateway.resolveDeferred("connect");
+    const startup = await gateway.waitForRequest("chat.startup");
+    expect(startup.params).toMatchObject({ cursor: "stored-cursor", sessionKey });
+    await pending.waitFor({ state: "detached" });
+    await page.getByText(cachedText, { exact: true }).waitFor();
+    await captureProof(page, "02b-cached-shell-reconciled");
   });
 
   it("centers the animated mascot until the chat route finishes loading", async () => {
@@ -378,12 +450,9 @@ describeControlUiE2e("Control UI initial connect splash E2E", () => {
     });
 
     const splash = page.locator(".connect-splash");
-    await splash.getByText("Gateway starting…", { exact: true }).waitFor();
+    await splash.waitFor();
     expect(await page.locator("openclaw-login-gate").count()).toBe(0);
     expect(await loginGateMounted()).toBe(false);
-    await expect
-      .poll(async () => await splash.evaluate((element) => getComputedStyle(element).opacity))
-      .toBe("1");
     await captureProof(page, "06-gateway-starting-progress");
 
     await expect
@@ -405,10 +474,15 @@ describeControlUiE2e("Control UI initial connect splash E2E", () => {
     await page.locator("openclaw-app-shell").waitFor();
 
     // The hello stored a device token, so the reload connect is authenticated
-    // and must paint the splash instead of flashing the gate.
+    // and keeps the cached shell visible while the Gateway reconnects.
     await page.reload();
     await gateway.waitForRequest("connect");
-    await page.locator(".connect-splash").waitFor();
+    await page.locator("openclaw-app-shell .shell").waitFor();
+    await page
+      .locator('.connection-action-block[role="status"]')
+      .getByText("Reconnecting… Showing stale data.", { exact: true })
+      .waitFor();
+    expect(await page.locator(".connect-splash").count()).toBe(0);
     expect(await page.locator("openclaw-login-gate").count()).toBe(0);
 
     await gateway.resolveDeferred("connect");

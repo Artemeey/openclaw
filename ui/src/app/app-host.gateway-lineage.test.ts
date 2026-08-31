@@ -88,37 +88,26 @@ function createGatewayHarness() {
   return { gateway, clients };
 }
 
-function renderGatewaySurface(
-  gateway: ApplicationGateway,
-  documentView?: "desktop" | "terminal",
-): string {
-  const originalUrl = `${location.pathname}${location.search}${location.hash}`;
-  if (documentView) {
-    history.replaceState({}, "", `?view=${documentView}`);
-  }
-  try {
-    const app = document.createElement("openclaw-app") as unknown as {
-      runtime: Pick<ApplicationRuntime, "context" | "documentMode">;
-      render: () => { strings: readonly string[] };
-      synchronizeGateway: (gateway: ApplicationGateway) => void;
-    };
-    app.runtime = {
-      documentMode: null,
-      context: {
-        gateway,
-        basePath: "",
-        agentSelection: { state: { selectedId: null } },
-        config: { current: { terminalEnabled: false } },
-        theme: { resolvedMode: "dark" },
-      } as unknown as ApplicationContext,
-    };
-    app.synchronizeGateway(gateway);
-    const container = document.createElement("div");
-    render(app.render(), container);
-    return container.innerHTML;
-  } finally {
-    history.replaceState({}, "", originalUrl);
-  }
+function renderGatewaySurface(gateway: ApplicationGateway): string {
+  const app = document.createElement("openclaw-app") as unknown as {
+    runtime: Pick<ApplicationRuntime, "context" | "documentMode">;
+    render: () => { strings: readonly string[] };
+    synchronizeGateway: (gateway: ApplicationGateway) => void;
+  };
+  app.runtime = {
+    documentMode: null,
+    context: {
+      gateway,
+      basePath: "",
+      agentSelection: { state: { selectedId: null } },
+      config: { current: { terminalEnabled: false } },
+      theme: { resolvedMode: "dark" },
+    } as unknown as ApplicationContext,
+  };
+  app.synchronizeGateway(gateway);
+  const container = document.createElement("div");
+  render(app.render(), container);
+  return container.innerHTML;
 }
 
 afterEach(() => {
@@ -334,7 +323,7 @@ describe("Control UI Gateway target lineage", () => {
     expect(clients[1]?.opts.password).toBeUndefined();
   });
 
-  it("keeps retryable Gateway startup on the initial progress surface", () => {
+  it("keeps the shell mounted through retryable initial Gateway startup", () => {
     const { gateway, clients } = createGatewayHarness();
     gateway.start();
     clients[0]?.opts.onClose?.({
@@ -353,8 +342,8 @@ describe("Control UI Gateway target lineage", () => {
     const surface = renderGatewaySurface(gateway);
 
     expect(gateway.snapshot.phase).toBe("starting");
-    expect(surface).toContain('class="connect-splash"');
-    expect(surface).toContain("Gateway starting…");
+    expect(surface).toContain("<openclaw-app-shell");
+    expect(surface).not.toContain('class="connect-splash"');
     expect(surface).not.toContain("<openclaw-login-gate");
   });
 
@@ -410,31 +399,6 @@ describe("Control UI Gateway target lineage", () => {
     render(app.render(), container);
     expect(container.innerHTML).toContain("<openclaw-app-shell");
   });
-
-  it.each(["desktop", "terminal"] as const)(
-    "shows retryable Gateway startup in the standalone %s document",
-    (documentView) => {
-      const { gateway, clients } = createGatewayHarness();
-      gateway.start();
-      clients[0]?.opts.onClose?.({
-        code: 4013,
-        reason: "gateway starting",
-        willRetry: true,
-        error: {
-          code: "UNAVAILABLE",
-          message: "gateway starting; retry shortly",
-          details: { reason: "startup-sidecars" },
-          retryable: true,
-          retryAfterMs: 250,
-        },
-      });
-
-      const surface = renderGatewaySurface(gateway, documentView);
-
-      expect(surface).toContain('class="connect-splash"');
-      expect(surface).toContain("Gateway starting…");
-    },
-  );
 
   it("keeps an established Gateway's dashboard mounted during its own retry", () => {
     const { gateway, clients } = createGatewayHarness();

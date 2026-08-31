@@ -535,16 +535,19 @@ export class OpenClawApp extends OpenClawLightDomElement {
     if (focusTarget?.kind === "dashboard") {
       return this.renderFocusDashboard(gatewaySnapshot, gatewayConnected, gatewayStartupStatus);
     }
-    // In the normal Control UI document, the Gateway lifecycle owns unresolved
-    // first-connect state across every auth mode. Failures publish lastError
-    // before the gate returns; reconnects keep the shell mounted, and
-    // loginGatePinned protects manual submissions.
-    const initialConnectPending =
+    // Automatic first-connect attempts keep the local shell mounted; failures
+    // publish lastError before exposing the login gate. Manual submissions stay
+    // pinned to their form/progress surface so a target change cannot flash stale data;
+    // retryable startup errors keep that progress surface until the next attempt.
+    const shellOwnsInitialConnect =
       runtime.documentMode === null &&
       gatewaySnapshot.lastError === null &&
-      (gatewaySnapshot.phase === "starting" ||
-        (gatewaySnapshot.phase === "connecting" && !this.loginGatePinned));
-    if (initialConnectPending) {
+      !this.loginGatePinned &&
+      (gatewaySnapshot.phase === "starting" || gatewaySnapshot.phase === "connecting");
+    if (
+      gatewaySnapshot.phase === "starting" &&
+      (this.loginGatePinned || gatewaySnapshot.lastError !== null)
+    ) {
       return html`
         <openclaw-tooltip-provider>
           ${renderConnectingSplash(gatewayStartupStatus)} ${gatewayUrlConfirmation}
@@ -552,7 +555,9 @@ export class OpenClawApp extends OpenClawLightDomElement {
       `;
     }
     const shellOwnsRecovery =
-      gatewaySnapshot.phase === "reconnecting" || gatewaySnapshot.phase === "reload-required";
+      shellOwnsInitialConnect ||
+      gatewaySnapshot.phase === "reconnecting" ||
+      gatewaySnapshot.phase === "reload-required";
     const showLoginGate = !gatewayConnected && !shellOwnsRecovery;
     if (showLoginGate) {
       return html`
