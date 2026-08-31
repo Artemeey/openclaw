@@ -49,6 +49,7 @@ function runtimeStoreEntries(): Array<[string, RuntimeAuthProfileStore]> {
 type RuntimeAuthProfileStoreMutationListener = (event: {
   agentDir?: string;
   affectsInheritedStores: boolean;
+  profileSetChanged: boolean;
 }) => void;
 const runtimeAuthStoreMutationListeners = new Set<RuntimeAuthProfileStoreMutationListener>();
 let runtimeAuthStoreCredentialsRevision = 0;
@@ -233,10 +234,11 @@ function resolveRuntimeSnapshotEntryKey(entry: {
   return entry.databasePath ?? resolveRuntimeStoreKey(entry.agentDir);
 }
 
-function notifyRuntimeAuthStoreMutation(agentDir?: string): void {
+function notifyRuntimeAuthStoreMutation(agentDir?: string, profileSetChanged = false): void {
   const event = {
     ...(agentDir ? { agentDir } : {}),
     affectsInheritedStores: agentDir === undefined,
+    profileSetChanged,
   };
   for (const listener of runtimeAuthStoreMutationListeners) {
     listener(event);
@@ -248,6 +250,16 @@ function authProfilesChanged(
   next: RuntimeAuthProfileStore | undefined,
 ): boolean {
   return !isDeepStrictEqual(previous?.profiles ?? {}, next?.profiles ?? {});
+}
+
+function authProfileSetChanged(
+  previous: RuntimeAuthProfileStore | undefined,
+  next: RuntimeAuthProfileStore | undefined,
+): boolean {
+  return !isDeepStrictEqual(
+    Object.keys(previous?.profiles ?? {}).toSorted(),
+    Object.keys(next?.profiles ?? {}).toSorted(),
+  );
 }
 
 /** Observes credential snapshot changes at their lifecycle publication edge. */
@@ -394,6 +406,9 @@ export function replaceOwnedRuntimeAuthProfileStoreSnapshots(
   const next = new Map(
     entries.map((entry) => [resolveRuntimeSnapshotEntryKey(entry), entry.store] as const),
   );
+  const profileSetChanged = [
+    ...new Set([...runtimeAuthStoreSnapshots.keys(), ...next.keys()]),
+  ].some((key) => authProfileSetChanged(runtimeAuthStoreSnapshots.get(key)?.store, next.get(key)));
   for (const key of new Set([...runtimeAuthStoreSnapshots.keys(), ...next.keys()])) {
     if (
       reboundKeys.has(key) ||
@@ -419,7 +434,7 @@ export function replaceOwnedRuntimeAuthProfileStoreSnapshots(
     runtimeAuthStoreSnapshots.set(key, entry);
   }
   if (ownerChanged) {
-    notifyRuntimeAuthStoreMutation();
+    notifyRuntimeAuthStoreMutation(undefined, profileSetChanged);
   }
 }
 
@@ -427,6 +442,9 @@ export function replaceOwnedRuntimeAuthProfileStoreSnapshots(
 export function clearRuntimeAuthProfileStoreSnapshots(): void {
   const snapshotsChanged = runtimeAuthStoreSnapshots.size > 0;
   const credentialsChanged = credentialState(runtimeStoreEntries()).length > 0;
+  const profileSetChanged = runtimeStoreEntries().some(
+    ([, store]) => Object.keys(store.profiles).length > 0,
+  );
   if (credentialsChanged) {
     runtimeAuthStoreCredentialsRevision += 1;
   }
@@ -439,7 +457,7 @@ export function clearRuntimeAuthProfileStoreSnapshots(): void {
   clearAllRuntimeAuthMaterializations();
   runtimeAuthStoreSnapshotRevisions.clear();
   if (snapshotsChanged) {
-    notifyRuntimeAuthStoreMutation();
+    notifyRuntimeAuthStoreMutation(undefined, profileSetChanged);
   }
 }
 
@@ -466,7 +484,7 @@ export function clearRuntimeAuthProfileStoreSnapshotAtDatabasePath(
   runtimeAuthStoreSnapshots.delete(key);
   clearRuntimeAuthMaterializationsAtDatabasePath(key);
   runtimeAuthStoreSnapshotRevisions.delete(key);
-  notifyRuntimeAuthStoreMutation(agentDir);
+  notifyRuntimeAuthStoreMutation(agentDir, Object.keys(store.profiles).length > 0);
   return true;
 }
 
@@ -492,6 +510,7 @@ function setRuntimeAuthProfileStoreSnapshotAtKey(
     runtimeAuthStoreCredentialsRevision += 1;
   }
   const previousStore = previous?.store;
+  const profileSetChanged = authProfileSetChanged(previousStore, store);
   if (sharedOwnerRebound || authProfilesChanged(previousStore, store)) {
     clearRuntimeAuthMaterializationsAtDatabasePath(key);
   }
@@ -508,7 +527,7 @@ function setRuntimeAuthProfileStoreSnapshotAtKey(
     legacyCandidates: cloneRuntimeAuthProfileLegacyCandidates(legacyCandidates),
   });
   if (ownerChanged) {
-    notifyRuntimeAuthStoreMutation(agentDir);
+    notifyRuntimeAuthStoreMutation(agentDir, profileSetChanged);
   }
 }
 
@@ -649,7 +668,7 @@ export function noteRuntimeAuthProfileStorePersistedMutation(
     advanceRuntimeAuthStoreSnapshotsRevision();
   }
   if (mutation.credentialsChanged || mutation.profileSetChanged) {
-    notifyRuntimeAuthStoreMutation(agentDir);
+    notifyRuntimeAuthStoreMutation(agentDir, mutation.profileSetChanged === true);
   }
 }
 

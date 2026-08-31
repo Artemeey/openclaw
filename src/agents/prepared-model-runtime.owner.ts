@@ -61,7 +61,7 @@ export function prepareModelRuntimeOwner(
 ): PreparedModelRuntimeOwner {
   // Preparation precedes async discovery: auth may supersede the first build, or a new
   // preparation whose previous snapshot is still attached. Neither snapshot owns these facts.
-  return Object.assign(existing ?? { generation: 0, needsRefresh: true }, {
+  return Object.assign(existing ?? { generation: 0, needsRefresh: true, catalogStale: false }, {
     input,
     catalogOwner: preparePublishedModelCatalogOwnerIdentity(input),
     environmentFingerprint: effectiveEnvironmentFingerprint(input),
@@ -455,6 +455,7 @@ export async function publishPreparedModelRuntimeOwnerBatch(params: {
   owners: Map<string, PreparedModelRuntimeOwner>;
   agentBuildCompletions: Map<string, Promise<void>>;
   buildTimeoutMs: number;
+  includeCredentialProviders?: boolean;
   isPublicationCurrent?: () => boolean;
   isBuildCurrent?: () => boolean;
   onBuildStats?: (stats: PreparedModelRuntimeBuildStats) => void;
@@ -539,6 +540,7 @@ export async function publishPreparedModelRuntimeOwnerBatch(params: {
               catalogMode,
               params.onBuildStats,
               params.pluginMetadataSnapshot,
+              params.includeCredentialProviders,
             );
             for (const candidate of currentGroup) {
               if (params.registerEntriesAfterBuildStart === true) {

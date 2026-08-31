@@ -74,10 +74,18 @@ const preparedModelRuntimeMocks = vi.hoisted(() => ({
   resolveStaticCatalogModel: vi.fn<StaticCatalogResolver>(() => undefined),
   warn: vi.fn(),
   mutationListener: undefined as
-    | ((event: { agentDir?: string; affectsInheritedStores: boolean }) => void)
+    | ((event: {
+        agentDir?: string;
+        affectsInheritedStores: boolean;
+        profileSetChanged?: boolean;
+      }) => void)
     | undefined,
   mutationListeners: new Set<
-    (event: { agentDir?: string; affectsInheritedStores: boolean }) => void
+    (event: {
+      agentDir?: string;
+      affectsInheritedStores: boolean;
+      profileSetChanged?: boolean;
+    }) => void
   >(),
   materializationListeners: new Set<
     (event: { agentDir?: string; affectsInheritedStores: boolean }) => void
@@ -231,7 +239,11 @@ vi.mock("./auth-profiles/runtime-materializations.js", () => ({
   getPreparedRuntimeAuthMaterializations: () =>
     preparedModelRuntimeMocks.preparedAuthMaterializations,
   registerRuntimeAuthMaterializationMutationListener: (
-    listener: (event: { agentDir?: string; affectsInheritedStores: boolean }) => void,
+    listener: (event: {
+      agentDir?: string;
+      affectsInheritedStores: boolean;
+      profileSetChanged?: boolean;
+    }) => void,
   ) => {
     preparedModelRuntimeMocks.materializationListeners.add(listener);
     return () => preparedModelRuntimeMocks.materializationListeners.delete(listener);

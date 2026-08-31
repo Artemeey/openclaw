@@ -10,6 +10,7 @@ import type {
 export type PreparedModelRuntimeAuthMutation = {
   agentDir?: string;
   affectsInheritedStores: boolean;
+  profileSetChanged: boolean;
 };
 
 type PreparedModelRuntimeAuthTransaction = {
