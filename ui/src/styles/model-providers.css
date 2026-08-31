@@ -167,6 +167,7 @@
 }
 
 .model-providers__profile-grip,
+.model-providers__profile-grip-spacer,
 .model-providers__profile-logout {
   display: inline-grid;
   width: 44px;
@@ -184,6 +185,10 @@
 
 .model-providers__profile-logout {
   grid-area: logout;
+}
+
+.model-providers__profile-grip-spacer {
+  pointer-events: none;
 }
 
 .model-providers__profile-grip:not(:disabled) {

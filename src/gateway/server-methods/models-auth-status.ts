@@ -7,11 +7,13 @@ import {
   validateModelsAuthLogoutParams,
   validateModelsAuthOrderSetParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import { listAgentIds, tryResolveAmbientOwnerAgentId } from "../../agents/agent-scope-config.js";
+import { tryResolveAmbientOwnerAgentId } from "../../agents/agent-scope-config.js";
 import { type AuthHealthSummary, buildAuthHealthSummary } from "../../agents/auth-health.js";
 import {
+  AuthProfileOrderChangedError,
   ensureAuthProfileStoreWithoutExternalProfiles,
   externalCliDiscoveryForConfigStatus,
+  getRuntimeLocalProfileIds,
   listProfilesForProvider,
   removeAuthProfilesAcrossOwnerStores,
   removeProviderAuthProfilesWithLock,
@@ -19,12 +21,11 @@ import {
   setAuthProfileOrder,
 } from "../../agents/auth-profiles.js";
 import { getRuntimeExternalCliProfileIds } from "../../agents/auth-profiles/runtime-external-profile-references.js";
-import { resolveLegacyInheritedAuthAgentId } from "../../agents/legacy-inherited-auth-dir.js";
 import {
   clearCurrentProviderAuthState,
   warmCurrentProviderAuthStateOffMainThread,
 } from "../../agents/model-provider-auth.js";
-import { refreshPreparedModelRuntimeSnapshots } from "../../agents/prepared-model-runtime.js";
+import { preparedModelRuntimeConfigsMatch } from "../../agents/prepared-model-runtime.js";
 import {
   type ProviderAuthAliasLookupParams,
   resolveProviderIdForAuth,
@@ -271,6 +272,25 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
             resolveProviderIdForAuth(credential.provider, authAliasLookupParams) === authProvider,
         )
         .map(([profileId]) => profileId);
+      const configBoundProfileIds = resolveConfigBoundProfileIds(
+        preparedSnapshot.config,
+        preparedSnapshot.authStore,
+        authAliasLookupParams,
+      );
+      if (
+        selection.profileIds &&
+        availableProfileIds.some((profileId) => configBoundProfileIds.has(profileId))
+      ) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.INVALID_REQUEST,
+            `profile priority for provider ${provider} is controlled by provider configuration`,
+          ),
+        );
+        return;
+      }
       const invalidProfile = selection.profileIds?.find((profileId) => {
         const credential = preparedSnapshot.authStore.profiles[profileId];
         return (
@@ -300,10 +320,21 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
         );
         return;
       }
+      if (!preparedModelRuntimeConfigsMatch(preparedSnapshot.config, context.getRuntimeConfig())) {
+        throw new AuthProfileOrderChangedError();
+      }
       const updated = await setAuthProfileOrder({
         agentDir: preparedSnapshot.agentDir,
+        ...(preparedSnapshot.inheritedAuthDir
+          ? { inheritedAuthDir: preparedSnapshot.inheritedAuthDir }
+          : {}),
         provider: authProvider,
         order: selection.profileIds,
+        authAliasLookupParams,
+        expectedProviderProfileIds: availableProfileIds,
+        expectedLocalProviderProfileIds: availableProfileIds.filter((profileId) =>
+          getRuntimeLocalProfileIds(preparedSnapshot.authStore).includes(profileId),
+        ),
       });
       if (!updated) {
         respond(
@@ -315,25 +346,29 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
       }
       invalidateModelAuthStatusCache();
       await refreshActiveProviderAuthRuntimeSnapshot();
-      const affectedAgentIds =
-        scope.agentId === resolveLegacyInheritedAuthAgentId(cfg)
-          ? new Set(listAgentIds(cfg))
-          : new Set([scope.agentId]);
-      await Promise.all([
-        refreshPreparedModelRuntimeSnapshots(cfg, {
-          catalogMode: "static",
-          allowGatewaySubagentBinding: true,
-          agentIds: affectedAgentIds,
-          pluginMetadataSnapshot: preparedSnapshot.metadataSnapshot,
-        }),
-        warmCurrentProviderAuthStateOffMainThread(cfg),
-      ]);
+      await loadDeferredCatalog(context, scope.agentId, { readOnly: true });
+      void warmCurrentProviderAuthStateOffMainThread(context.getRuntimeConfig()).catch(
+        (err: unknown) => {
+          log.warn(`provider auth state rewarm after priority update failed: ${formatForLog(err)}`);
+        },
+      );
       const result: ModelAuthOrderSetResult = {
         provider,
         profileIds: selection.profileIds,
       };
       respond(true, result, undefined);
     } catch (err) {
+      if (err instanceof AuthProfileOrderChangedError) {
+        respond(
+          false,
+          undefined,
+          errorShape(
+            ErrorCodes.UNAVAILABLE,
+            "provider accounts changed while priority was being saved; refresh and try again",
+          ),
+        );
+        return;
+      }
       respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, formatForLog(err)));
     }
   },
@@ -643,6 +678,12 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
           .map(([profileId]) => profileId),
       );
       const configBoundProfileIds = resolveConfigBoundProfileIds(cfg, store, authAliasLookupParams);
+      const configBoundAuthProviders = new Set(
+        [...configBoundProfileIds].flatMap((profileId) => {
+          const profile = store.profiles[profileId];
+          return profile ? [resolveProviderIdForAuth(profile.provider, authAliasLookupParams)] : [];
+        }),
+      );
       const providers = authHealth.providers.map((provider) =>
         mapAuthStatusProvider({
           provider,
@@ -656,6 +697,8 @@ export const modelsAuthStatusHandlers: GatewayRequestHandlers = {
           apiKeys,
           logoutProfileIds,
           configBoundProfileIds,
+          configBoundAuthProviders,
+          externalProfileIds,
           externalCliProfileIds,
           includeProfileDetails,
         }),
