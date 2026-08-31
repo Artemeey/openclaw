@@ -47,6 +47,8 @@ import {
   DEFAULT_MODELS_REPLACE_PATHS,
 } from "./mutations.ts";
 import { isMissingMethodError, mergeProbeResults } from "./probe-results.ts";
+import { ModelProviderProfileActionsController } from "./profile-actions-controller.ts";
+import { updateRecordEntry } from "./record-state.ts";
 import type { ModelProvidersRouteData } from "./route.ts";
 import { ModelProviderSupplementalLoader } from "./supplemental-load.ts";
 import { renderModelProviders, type ModelProviderRowMessage } from "./view.ts";
@@ -81,11 +83,6 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
   // Global config writes survive agent switches; their card state does not.
   private agentEpoch = 0;
   private probeEpochs = new Map<string, number>();
-  private pendingProfileOrders = new Map<
-    string,
-    { cardId: string; profileIds: string[] | null; optimisticOrder: string[] }
-  >();
-  private activeProfileOrderProviders = new Set<string>();
   private readonly refreshTask = new Task(this, {
     autoRun: false,
     task: (
@@ -141,6 +138,33 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
     },
     onPageActivation: () => this.refreshPolicy.request("focus"),
   });
+  private readonly profileActions = new ModelProviderProfileActionsController({
+    getAgentEpoch: () => this.agentEpoch,
+    getAgentId: () => this.selectedAgentId,
+    getClient: () => this.context.gateway.snapshot.client,
+    getClientEpoch: () => this.gateway.epoch,
+    getData: () => this.data,
+    getOrders: () => this.profileOrders,
+    setData: (data) => (this.data = data),
+    setError: (cardId, error) =>
+      this.setMessage(cardId, { kind: "error", text: modelProviderErrorMessage(error) }),
+    setOrders: (orders) => (this.profileOrders = orders),
+    clearMessage: (cardId) => this.setMessage(cardId, null),
+    canMutate: () => this.canMutate(),
+    cancelRefresh: () => this.cancelCoreRefresh(),
+    refresh: () => this.refresh({ force: true }),
+    isCurrentClient: (client, epoch) => this.isCurrentClient(client, epoch),
+    isBusy: (key) => Boolean(this.busy[key]),
+    setBusy: (key, value) => this.setBusy(key, value),
+    clearProbe: (cardId) => this.clearProbe(cardId),
+    clearPendingLogout: (cardId) => {
+      if (this.pendingLogout?.cardId === cardId) {
+        this.pendingLogout = null;
+      }
+    },
+    setLogoutSuccess: (cardId) =>
+      this.setMessage(cardId, { kind: "success", text: t("modelProviders.logout.done") }),
+  });
   private readonly subscriptions = new SubscriptionsController(this)
     .watch(
       () => this.context?.runtimeConfig,
@@ -149,13 +173,13 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
         if (!runtimeConfig.state.configSnapshot && !runtimeConfig.state.configLoading) {
           void runtimeConfig.ensureLoaded().catch(() => undefined);
         }
-        this.flushPendingProfileOrders();
+        this.profileActions.flushPendingOrders();
       },
     )
     .watch(
       () => this.context?.overlays,
       (overlays, notify) => overlays.subscribe(notify),
-      () => this.flushPendingProfileOrders(),
+      () => this.profileActions.flushPendingOrders(),
     )
     .watch(
       () => this.context?.agents,
@@ -248,8 +272,7 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
     this.probeResults = {};
     this.closeKeyEditor();
     this.pendingLogout = null;
-    this.profileOrders = {};
-    this.pendingProfileOrders.clear();
+    this.profileActions.resetOrders();
     this.addProviderOpen = false;
     this.addProviderId = "";
     this.addProviderKey = "";
@@ -335,32 +358,16 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
     );
   }
 
-  private setBusy(key: string, value: boolean) {
-    const next = { ...this.busy };
-    if (value) {
-      next[key] = true;
-    } else {
-      delete next[key];
-    }
-    this.busy = next;
-  }
+  private setBusy = (key: string, value: boolean) =>
+    (this.busy = updateRecordEntry(this.busy, key, value ? true : null));
 
-  private setMessage(key: string, message: ModelProviderRowMessage | null) {
-    const next = { ...this.messages };
-    if (message) {
-      next[key] = message;
-    } else {
-      delete next[key];
-    }
-    this.messages = next;
-  }
+  private setMessage = (key: string, message: ModelProviderRowMessage | null) =>
+    (this.messages = updateRecordEntry(this.messages, key, message));
 
   private clearProbe(provider: string) {
     this.probeEpochs.set(provider, (this.probeEpochs.get(provider) ?? 0) + 1);
     this.setBusy(`probe:${provider}`, false);
-    const next = { ...this.probeResults };
-    delete next[provider];
-    this.probeResults = next;
+    this.probeResults = updateRecordEntry<ModelsProbeResult>(this.probeResults, provider, null);
   }
 
   private async patchConfig(
@@ -505,179 +512,11 @@ export class ModelProvidersPage extends OpenClawLightDomElement {
   }
 
   private async logout(cardId: string, targets: ModelProviderLogoutTarget[]) {
-    const client = this.context.gateway.snapshot.client;
-    const key = `logout:${cardId}`;
-    if (!client || !this.canMutate() || this.busy[key]) {
-      return;
-    }
-    const clientEpoch = this.gateway.epoch;
-    const agentId = this.selectedAgentId;
-    const agentEpoch = this.agentEpoch;
-    this.clearProbe(cardId);
-    this.setBusy(key, true);
-    this.setMessage(cardId, null);
-    try {
-      let firstError: unknown;
-      for (const target of targets) {
-        // OAuth profiles are agent-owned; stop undispatched targets after any
-        // scope change, including a switch away from and back to this agent.
-        if (!this.isCurrentClient(client, clientEpoch) || this.agentEpoch !== agentEpoch) {
-          return;
-        }
-        try {
-          await client.request("models.authLogout", { ...target, agentId });
-        } catch (error) {
-          firstError ??= error;
-        }
-      }
-      if (!this.isCurrentClient(client, clientEpoch) || this.agentEpoch !== agentEpoch) {
-        return;
-      }
-      await this.refresh({ force: true });
-      if (!this.isCurrentClient(client, clientEpoch) || this.agentEpoch !== agentEpoch) {
-        return;
-      }
-      if (firstError) {
-        this.setMessage(cardId, { kind: "error", text: modelProviderErrorMessage(firstError) });
-        return;
-      }
-      if (this.pendingLogout?.cardId === cardId) {
-        this.pendingLogout = null;
-      }
-      this.setMessage(cardId, { kind: "success", text: t("modelProviders.logout.done") });
-    } catch (error) {
-      if (this.isCurrentClient(client, clientEpoch) && this.agentEpoch === agentEpoch) {
-        this.setMessage(cardId, { kind: "error", text: modelProviderErrorMessage(error) });
-      }
-    } finally {
-      if (this.isCurrentClient(client, clientEpoch) && this.agentEpoch === agentEpoch) {
-        this.setBusy(key, false);
-      }
-    }
+    await this.profileActions.logout(cardId, targets);
   }
 
   private setProfileOrder(cardId: string, provider: string, profileIds: string[] | null) {
-    const providerStatus = this.data?.authStatus?.providers.find(
-      (candidate) => candidate.provider === provider,
-    );
-    const optimisticOrder =
-      profileIds ?? providerStatus?.profiles.map((profile) => profile.profileId) ?? [];
-    this.profileOrders = { ...this.profileOrders, [provider]: optimisticOrder };
-    this.pendingProfileOrders.set(provider, { cardId, profileIds, optimisticOrder });
-    this.setMessage(cardId, null);
-    void this.flushProfileOrder(provider);
-  }
-
-  private async flushProfileOrder(provider: string) {
-    if (this.activeProfileOrderProviders.has(provider)) {
-      return;
-    }
-    this.activeProfileOrderProviders.add(provider);
-    try {
-      while (true) {
-        const pending = this.pendingProfileOrders.get(provider);
-        if (!pending) {
-          return;
-        }
-        const client = this.context.gateway.snapshot.client;
-        if (!client || this.mutationBlockedReason() !== null) {
-          return;
-        }
-        if (this.configBusy()) {
-          return;
-        }
-        this.pendingProfileOrders.delete(provider);
-        const clientEpoch = this.gateway.epoch;
-        const agentEpoch = this.agentEpoch;
-        const agentId = this.selectedAgentId;
-        try {
-          await client.request("models.authOrderSet", {
-            provider,
-            ...(pending.profileIds ? { profileIds: pending.profileIds } : {}),
-            agentId,
-          });
-          if (
-            !this.isCurrentClient(client, clientEpoch) ||
-            this.agentEpoch !== agentEpoch ||
-            this.selectedAgentId !== agentId
-          ) {
-            return;
-          }
-          if (pending.profileIds) {
-            this.cancelCoreRefresh();
-            this.applyProfileOrder(provider, pending.profileIds);
-          } else {
-            await this.refresh({ force: true });
-            if (
-              !this.isCurrentClient(client, clientEpoch) ||
-              this.agentEpoch !== agentEpoch ||
-              this.selectedAgentId !== agentId
-            ) {
-              return;
-            }
-          }
-          if (this.profileOrders[provider] === pending.optimisticOrder) {
-            const { [provider]: _completed, ...remaining } = this.profileOrders;
-            this.profileOrders = remaining;
-          }
-        } catch (error) {
-          if (
-            !this.isCurrentClient(client, clientEpoch) ||
-            this.agentEpoch !== agentEpoch ||
-            this.selectedAgentId !== agentId
-          ) {
-            return;
-          }
-          const ownsDraft = this.profileOrders[provider] === pending.optimisticOrder;
-          if (ownsDraft) {
-            const { [provider]: _failed, ...remaining } = this.profileOrders;
-            this.profileOrders = remaining;
-            this.setMessage(pending.cardId, {
-              kind: "error",
-              text: modelProviderErrorMessage(error),
-            });
-          }
-        }
-      }
-    } finally {
-      this.activeProfileOrderProviders.delete(provider);
-      // A stale save can finish after a new agent queued the same provider.
-      // Re-enter after releasing the slot so the new scope's intent is not stranded.
-      if (this.pendingProfileOrders.has(provider) && this.canMutate()) {
-        void this.flushProfileOrder(provider);
-      }
-    }
-  }
-
-  private flushPendingProfileOrders() {
-    if (!this.canMutate()) {
-      return;
-    }
-    for (const provider of this.pendingProfileOrders.keys()) {
-      void this.flushProfileOrder(provider);
-    }
-  }
-
-  private applyProfileOrder(provider: string, profileIds: string[] | null) {
-    const authStatus = this.data?.authStatus;
-    if (!this.data || !authStatus) {
-      return;
-    }
-    this.data = {
-      ...this.data,
-      authStatus: {
-        ...authStatus,
-        providers: authStatus.providers.map((candidate) => {
-          if ((candidate.authProvider ?? candidate.provider) !== provider) {
-            return candidate;
-          }
-          const { profileOrder: _order, profileOrderStored: _stored, ...base } = candidate;
-          return profileIds
-            ? { ...base, profileOrder: [...profileIds], profileOrderStored: true as const }
-            : base;
-        }),
-      },
-    };
+    this.profileActions.setOrder(cardId, provider, profileIds);
   }
 
   private async addProvider() {
