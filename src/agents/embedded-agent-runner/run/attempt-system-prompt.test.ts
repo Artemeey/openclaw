@@ -10,11 +10,17 @@ import type { EmbeddedRunAttemptParams } from "./types.js";
 
 let buildAttemptSystemPrompt: typeof import("./attempt-system-prompt.js").buildAttemptSystemPrompt;
 let prepareEmbeddedAttemptSystemPrompt: typeof import("./attempt-system-prompt-prepare.js").prepareEmbeddedAttemptSystemPrompt;
+let providerRuntime: typeof import("../../../plugins/providers.runtime.js");
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
 beforeAll(async () => {
   ({ buildAttemptSystemPrompt } = await import("./attempt-system-prompt.js"));
   ({ prepareEmbeddedAttemptSystemPrompt } = await import("./attempt-system-prompt-prepare.js"));
+  providerRuntime = await import("../../../plugins/providers.runtime.js");
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 const baseProviderTransform = {
@@ -107,6 +113,7 @@ describe("buildAttemptSystemPrompt", () => {
   ])(
     "reports the selected sandbox policy for a global attempt ($sandboxSessionKey)",
     async (testCase) => {
+      const providerDiscovery = vi.spyOn(providerRuntime, "resolvePluginProvidersCore");
       const workspaceDir = tempDirs.make("openclaw-global-system-prompt-");
       const config = {
         agents: {
@@ -139,6 +146,8 @@ describe("buildAttemptSystemPrompt", () => {
         effectiveCwd: workspaceDir,
         effectiveTools: [],
         effectiveWorkspace: workspaceDir,
+        // Attempt setup binds even an absent provider plugin to the selected model.
+        // Omitting that binding makes this policy test rediscover runtime plugins.
         getProviderRuntimeHandle: () => ({ provider: "openai", modelId: "gpt-5.5" }),
         isRawModelRun: true,
         markStage: vi.fn(),
@@ -155,6 +164,7 @@ describe("buildAttemptSystemPrompt", () => {
         mode: testCase.mode,
         sandboxed: testCase.sandboxed,
       });
+      expect(providerDiscovery).not.toHaveBeenCalled();
     },
   );
   it("replaces an intermediate permission prompt after later changes", async () => {
