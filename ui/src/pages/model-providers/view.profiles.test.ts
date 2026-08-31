@@ -355,7 +355,9 @@ describe("renderModelProviders profiles", () => {
     );
     expect(container.querySelectorAll(".model-providers__profile-grip")).toHaveLength(0);
     expect(container.querySelectorAll(".model-providers__profile-grip-spacer")).toHaveLength(3);
-    expect(container.textContent).toContain("Priority rotates automatically across provider routes");
+    expect(container.textContent).toContain(
+      "Priority rotates automatically across provider routes",
+    );
 
     expect(onProfileOrderChange).not.toHaveBeenCalled();
   });
