@@ -225,14 +225,16 @@ describe("sessions_spawn tool", () => {
       "Spawn hidden subagent (ephemeral) or visible work session (durable).",
     );
     expect(tool.description).toContain('runtime="acp"');
-    expect(tool.description).toContain('unless ACP `streamTo="parent"`');
+    expect(tool.description).toContain("follow the receipt's completion mode");
     expect(schema.properties?.runtime?.enum).toEqual(["subagent", "acp"]);
     const resumeSessionId = requireSchemaProperty(schema.properties, "resumeSessionId");
     const streamTo = requireSchemaProperty(schema.properties, "streamTo");
     expect(resumeSessionId.description).toContain("ACP resume id");
     expect(resumeSessionId.description).toContain("ignored by subagent");
     expect(resumeSessionId.description).toContain("already recorded for requester");
+    expect(streamTo.enum).toEqual(["parent"]);
     expect(streamTo.description).toContain("ACP only");
+    expect(streamTo.description).toContain('"parent" streams turn to requester');
     expect(streamTo.description).toContain("Ignored by subagent");
   });
 
