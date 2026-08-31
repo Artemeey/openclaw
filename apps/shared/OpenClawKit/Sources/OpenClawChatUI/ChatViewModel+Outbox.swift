@@ -623,7 +623,7 @@ extension OpenClawChatViewModel {
         thinking: String,
         messageID: UUID,
         session: SessionSnapshot,
-        expectedSessionSettings: OpenClawChatSessionSettingsExpectation,
+        expectedSessionSettings: OpenClawChatSessionSettingsExpectation?,
         deliveryIsAmbiguous: Bool) async -> Bool
     {
         guard let outbox else { return false }

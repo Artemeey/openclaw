@@ -94,7 +94,8 @@ extension OpenClawChatViewModel {
             toolOverrides: entry.toolOverrides)
     }
 
-    func durableSessionSettingsExpectation() -> OpenClawChatSessionSettingsExpectation {
+    func durableSessionSettingsExpectation() -> OpenClawChatSessionSettingsExpectation? {
+        guard self.transport.outboxRequiresSessionRoutingContract else { return nil }
         let entry = self.currentSessionEntry()
         return OpenClawChatSessionSettingsExpectation(
             permissionMode: entry?.permissionMode,

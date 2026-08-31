@@ -835,7 +835,7 @@ actor ScriptedOutbox: OpenClawChatCommandOutbox {
         agentID: String?,
         deliverySessionKey: String,
         routingContract: String,
-        expectedSessionSettings: OpenClawChatSessionSettingsExpectation,
+        expectedSessionSettings: OpenClawChatSessionSettingsExpectation?,
         replacementID: String?) async -> OpenClawChatOutboxUpdateResult
     {
         await self.base.markCommandRetriedIfPresent(
@@ -1230,7 +1230,9 @@ struct ChatViewModelOutboxTests {
                 }
             }
         }
-        let failedMessageID = try #require(await MainActor.run { retryView.messages.last?.id })
+        let failedMessageID = try #require(await MainActor.run {
+            retryView.messages.first { retryView.outboxState(for: $0.id)?.isFailed == true }?.id
+        })
         await MainActor.run { retryView.retryOutboxMessage(failedMessageID) }
         try await waitUntil("legacy retry queues") {
             await store.loadCommands().first?.status == .queued

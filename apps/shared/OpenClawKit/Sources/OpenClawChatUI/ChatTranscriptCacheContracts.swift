@@ -374,7 +374,7 @@ public protocol OpenClawChatCommandOutbox: Sendable {
         agentID: String?,
         deliverySessionKey: String,
         routingContract: String,
-        expectedSessionSettings: OpenClawChatSessionSettingsExpectation,
+        expectedSessionSettings: OpenClawChatSessionSettingsExpectation?,
         replacementID: String?) async -> OpenClawChatOutboxUpdateResult
     /// Persistently parks automatic replay after a failed settings mutation.
     func parkQueuedCommands(
@@ -480,7 +480,7 @@ extension OpenClawChatCommandOutbox {
         agentID _: String?,
         deliverySessionKey _: String,
         routingContract _: String,
-        expectedSessionSettings _: OpenClawChatSessionSettingsExpectation,
+        expectedSessionSettings _: OpenClawChatSessionSettingsExpectation?,
         replacementID _: String? = nil) async -> OpenClawChatOutboxUpdateResult
     {
         .unavailable

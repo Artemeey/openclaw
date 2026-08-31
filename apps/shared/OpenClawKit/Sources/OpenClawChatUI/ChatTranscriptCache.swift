@@ -751,7 +751,7 @@ extension OpenClawChatSQLiteTranscriptCache {
         agentID: String?,
         deliverySessionKey: String,
         routingContract: String,
-        expectedSessionSettings: OpenClawChatSessionSettingsExpectation,
+        expectedSessionSettings: OpenClawChatSessionSettingsExpectation?,
         replacementID: String?) async -> OpenClawChatOutboxUpdateResult
     {
         guard !self.isRetired else { return .unavailable }
