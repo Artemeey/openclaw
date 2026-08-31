@@ -52,6 +52,36 @@ describe("upgrade survivor config recipe command resolution", () => {
     expect(summary.skippedIntents).toEqual([]);
   });
 
+  it("adapts Discord DM fields for explicit-ownership baselines", () => {
+    const summary = { skippedIntents: [] };
+    const step = adaptStepForBaseline(
+      {
+        id: "channels-discord",
+        intent: "discord-channel",
+        argv: [
+          "config",
+          "set",
+          "channels.discord",
+          JSON.stringify({
+            enabled: true,
+            dm: { policy: "allowlist", allowFrom: ["111111111111111111"] },
+          }),
+          "--strict-json",
+        ],
+      },
+      "2026.8.1",
+      summary,
+    );
+    const discord = JSON.parse(step?.argv[3] ?? "{}");
+
+    expect(discord).toMatchObject({
+      enabled: true,
+      dmPolicy: "allowlist",
+      allowFrom: ["111111111111111111"],
+    });
+    expect(discord.dm).toBeUndefined();
+  });
+
   it("wraps Windows openclaw npm shims through cmd.exe", () => {
     expect(
       resolveUpgradeSurvivorOpenClawCommand(

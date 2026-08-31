@@ -197,6 +197,16 @@ export function adaptStepForBaseline(step, baselineVersion, summary) {
   const legacyBaseline = isReleaseBefore(baselineVersion, "2026.4.0");
   const ownershipComparison = compareReleaseVersions(baselineVersion ?? "", "2026.8.1-beta.2");
   const explicitOwnershipBaseline = ownershipComparison !== null && ownershipComparison >= 0;
+  if (step.id === "channels-discord" && explicitOwnershipBaseline) {
+    const discord = JSON.parse(step.argv[3]);
+    discord.dmPolicy = discord.dm.policy;
+    discord.allowFrom = discord.dm.allowFrom;
+    delete discord.dm;
+    return {
+      ...step,
+      argv: [...step.argv.slice(0, 3), JSON.stringify(discord), ...step.argv.slice(4)],
+    };
+  }
   if (step.id === "agents" && (legacyBaseline || explicitOwnershipBaseline)) {
     const agents = JSON.parse(step.argv[3]);
     for (const agent of agents.list ?? []) {
