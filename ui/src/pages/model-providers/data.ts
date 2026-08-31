@@ -106,49 +106,6 @@ function canonicalProviderId(provider: string): string {
   return canonicalModelAuthProviderId(provider);
 }
 
-function normalizeAccountEmail(value: string | undefined): string | undefined {
-  const normalized = value?.trim().toLowerCase();
-  return normalized || undefined;
-}
-
-function attachAccountUsageSnapshot(
-  card: ModelProviderCard,
-  snapshot: ProviderUsageSnapshot,
-  refreshedAt: number,
-): boolean {
-  const accountEmail = normalizeAccountEmail(snapshot.accountEmail);
-  if (!accountEmail) {
-    return false;
-  }
-  const matches = card.profiles.filter((profile) => {
-    return [profile.email, profile.usage?.accountEmail].some(
-      (value) => normalizeAccountEmail(value) === accountEmail,
-    );
-  });
-  if (matches.length !== 1) {
-    return false;
-  }
-  const profile = matches[0];
-  if (!profile) {
-    return false;
-  }
-  if (profile.usage && refreshedAt < (profile.usage.refreshedAt ?? 0)) {
-    return true;
-  }
-  profile.usage = {
-    providerId: snapshot.provider,
-    refreshedAt,
-    windows: snapshot.windows,
-    ...(snapshot.summary ? { summary: snapshot.summary } : {}),
-    ...(snapshot.plan ? { plan: snapshot.plan } : {}),
-    ...(snapshot.billing?.length ? { billing: snapshot.billing } : {}),
-    ...(snapshot.costHistory ? { costHistory: snapshot.costHistory } : {}),
-    ...(snapshot.accountEmail ? { accountEmail: snapshot.accountEmail } : {}),
-    ...(snapshot.error ? { error: snapshot.error } : {}),
-  };
-  return true;
-}
-
 function authKindForProvider(provider: ModelAuthStatusProvider): ModelProviderAuthKind {
   switch (provider.status) {
     case "ok":
@@ -385,7 +342,6 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
     }
   }
 
-  const providerUsageUpdatedAt = input.providerUsage?.updatedAt ?? 0;
   for (const snapshot of input.providerUsage?.providers ?? []) {
     const id = canonicalProviderId(snapshot.provider);
     if (!id) {
@@ -395,10 +351,9 @@ export function buildModelProviderCards(input: ModelProviderCardsInput): ModelPr
       findDraft(drafts, [id]) ??
       ensureDraft(drafts, id, snapshot.displayName || providerDisplayLabel(id));
     draft.ids.add(id);
-    // A targeted auth refresh can outrun cached usage.status. Only let its
-    // account snapshot replace an existing profile when it is at least as new.
-    if (attachAccountUsageSnapshot(draft.card, snapshot, providerUsageUpdatedAt)) {
-      draft.hasUsageSnapshot = true;
+    // usage.status is scoped to the ambient auth owner. Without an account ID,
+    // its email cannot safely identify a selected agent's profile.
+    if (snapshot.accountEmail && draft.card.profiles.length > 0) {
       continue;
     }
     // usage.status snapshots carry cost history and errors that the

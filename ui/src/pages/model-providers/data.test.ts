@@ -322,7 +322,7 @@ describe("buildModelProviderCards", () => {
     expect(firstCard(cards).auth).toMatchObject({ kind: "missing", profileCount: 0 });
   });
 
-  it("keeps the newest account usage snapshot scoped to the account", () => {
+  it("does not attach ambient account usage to a selected profile by email", () => {
     const input = {
       ...EMPTY_INPUT,
       authStatus: {
@@ -377,25 +377,13 @@ describe("buildModelProviderCards", () => {
         ],
       },
     } satisfies Parameters<typeof buildModelProviderCards>[0];
-    const refreshedInput = structuredClone(input);
-    const refreshedProfile = refreshedInput.authStatus.providers[0]?.profiles[0];
-    if (refreshedProfile?.usage) {
-      refreshedProfile.usage.refreshedAt = 3;
-    }
     const cards = buildModelProviderCards(input);
     expect(cards).toHaveLength(1);
     expect(firstCard(cards).profiles[0]?.usage?.windows).toEqual([
-      { label: "5h", usedPercent: 55 },
-    ]);
-    expect(firstCard(cards).profiles[0]?.usage?.costHistory?.periodDays).toBe(30);
-    expect(firstCard(cards).usage).toBeUndefined();
-
-    const refreshed = buildModelProviderCards(refreshedInput);
-    expect(firstCard(refreshed).profiles[0]?.usage?.windows).toEqual([
       { label: "5h", usedPercent: 10 },
     ]);
-    expect(firstCard(refreshed).profiles[0]?.usage?.costHistory).toBeUndefined();
-    expect(firstCard(refreshed).usage).toBeUndefined();
+    expect(firstCard(cards).profiles[0]?.usage?.costHistory).toBeUndefined();
+    expect(firstCard(cards).usage).toBeUndefined();
   });
 
   it("does not repeat an account-scoped auth rollup below its profile", () => {
