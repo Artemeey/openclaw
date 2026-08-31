@@ -1142,10 +1142,10 @@ struct OnboardingAISetupTests {
                             "message":"Paste the redirect URL"}}}
                         """.utf8)))
                 case "wizard.next":
-                    sessionIDs.withValue {
-                        $0.append(request.params["sessionId"] as? String ?? "")
-                    }
-                    answerPresence.withValue { $0.append(request.params["answer"] != nil) }
+                    let requestSessionID = request.params["sessionId"] as? String ?? ""
+                    let includesAnswer = request.params["answer"] != nil
+                    sessionIDs.withValue { $0.append(requestSessionID) }
+                    answerPresence.withValue { $0.append(includesAnswer) }
                     if generation == 0, dropAfterDispatch {
                         task.emitReceiveFailure()
                     } else {
