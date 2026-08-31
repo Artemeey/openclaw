@@ -113,6 +113,15 @@ describe("OpenClaw performance workflow", () => {
     expect(runKova.run).not.toContain("report.summary?.statuses ?? {}");
   });
 
+  it("selects the full Kova report instead of its summary", () => {
+    const runKova = findStep("Run Kova");
+    const validate = findStep("Validate Kova evidence");
+
+    expect(runKova.run).toContain('kova-report-selector.mjs" --report-dir "$REPORT_DIR"');
+    expect(validate.run).toContain('kova-report-selector.mjs" --report-dir "$REPORT_DIR"');
+    expect(runKova.run).not.toContain("tail -n 1");
+  });
+
   it("installs local workspace packages beside the OCM root tarball", () => {
     const configure = findStep("Configure OCM local workspace dependencies");
 
@@ -161,7 +170,7 @@ describe("OpenClaw performance workflow", () => {
 
     expect(validateEvidence.if).toContain("always()");
     expect(validateEvidence.if).toContain("steps.lane.outputs.run == 'true'");
-    expect(validateEvidence.run).toContain('"$REPORT_DIR" -maxdepth 1 -type f -name');
+    expect(validateEvidence.run).toContain('kova-report-selector.mjs" --report-dir "$REPORT_DIR"');
     expect(validateEvidence.run).toContain('"$BUNDLE_DIR/bundle.json"');
     expect(validateEvidence.run).toContain('"$SUMMARY_DIR/${LANE_ID}.md"');
     expect(validateEvidence.run).toContain("exit 1");

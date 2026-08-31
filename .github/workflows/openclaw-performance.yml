@@ -383,11 +383,7 @@ jobs:
           status=${PIPESTATUS[0]}
           set -e
 
-          report_json="$(find "$REPORT_DIR" -maxdepth 1 -type f -name '*.json' -print | sort | tail -n 1)"
-          if [[ -z "$report_json" ]]; then
-            echo "Kova did not write a JSON report." >&2
-            exit 1
-          fi
+          report_json="$(node "$PERFORMANCE_HELPER_DIR/scripts/lib/kova-report-selector.mjs" --report-dir "$REPORT_DIR")"
           report_md="${report_json%.json}.md"
           effective_status="$status"
           if [[ "$FAIL_ON_REGRESSION" == "true" && "$status" != "0" ]]; then
@@ -449,8 +445,8 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          if ! find "$REPORT_DIR" -maxdepth 1 -type f -name '*.json' -size +0c -print -quit | grep -q .; then
-            echo "::error::Kova JSON report is missing for ${LANE_ID}."
+          if ! node "$PERFORMANCE_HELPER_DIR/scripts/lib/kova-report-selector.mjs" --report-dir "$REPORT_DIR" >/dev/null; then
+            echo "::error::Exactly one full Kova JSON report is required for ${LANE_ID}."
             missing=1
           fi
           if [[ ! -s "$BUNDLE_DIR/bundle.json" ]]; then
