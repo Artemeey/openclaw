@@ -12,6 +12,7 @@ import {
   mockClientRuntimeMethods,
   multiplexCodexTestClientHandlers,
   runCodexAppServerAttempt,
+  seedRunSessionOwnerForTest,
   setupRunAttemptTestHooks,
   tempDir,
   threadStartResult,
@@ -188,6 +189,9 @@ describe("Codex app-server main thread cleanup", () => {
       a: path.join(tempDir, "session-a.jsonl"),
       b: path.join(tempDir, "session-b.jsonl"),
     };
+    for (const label of ["a", "b"]) {
+      await seedRunSessionOwnerForTest(`session-${label}`, `agent:main:session-${label}`);
+    }
     const harness = createClientHarness();
     const clientStarted = createDeferred<void>();
     vi.spyOn(CodexAppServerClient, "start").mockImplementation(async () => {
@@ -301,6 +305,10 @@ describe("Codex app-server main thread cleanup", () => {
       path.join(tempDir, "concurrent-second-workspace"),
       "agent:main:telegram:topic:second",
     );
+    firstParams.sessionId = "session-first";
+    secondParams.sessionId = "session-second";
+    await seedRunSessionOwnerForTest(firstParams.sessionId, firstParams.sessionKey!);
+    await seedRunSessionOwnerForTest(secondParams.sessionId, secondParams.sessionKey!);
     firstParams.timeoutMs = 100;
     secondParams.timeoutMs = 100;
 
@@ -472,7 +480,8 @@ describe("Codex app-server main thread cleanup", () => {
 
     const result = await run;
     expect(readAttemptTerminal(result)).toMatchObject({ aborted: false, timedOut: false });
-    await expect(readCodexAppServerBinding(sessionFile)).resolves.toMatchObject({
+    const physicalIdentity = sessionBindingIdentity({ agentId: "main", sessionId: "session-1" });
+    await expect(testCodexAppServerBindingStore.read(physicalIdentity)).resolves.toMatchObject({
       threadId: "thread-1",
       clientId: harness.client.getInstanceId(),
     });
@@ -480,7 +489,7 @@ describe("Codex app-server main thread cleanup", () => {
     const requestStart = harness.writes.length;
     const retirement = retireCodexAppServerSessionGeneration({
       bindingStore: testCodexAppServerBindingStore,
-      identity: sessionBindingIdentity({ agentId: "main", sessionId: "session-1", sessionKey }),
+      identity: physicalIdentity,
       mode: "retire",
     });
     const unsubscribe = await waitForHarnessRequest(harness, "thread/unsubscribe", requestStart);
@@ -540,7 +549,11 @@ describe("Codex app-server main thread cleanup", () => {
       { threadId: "thread-1" },
       { timeoutMs: 5_000 },
     );
-    await expect(readCodexAppServerBinding(sessionFile)).resolves.toBeUndefined();
+    await expect(
+      testCodexAppServerBindingStore.read(
+        sessionBindingIdentity({ agentId: "main", sessionId: "session-1" }),
+      ),
+    ).resolves.toBeUndefined();
   });
 
   it.each([
@@ -847,7 +860,11 @@ describe("Codex app-server main thread cleanup", () => {
     expect(turnStartError).toBeInstanceOf(Error);
     expect(turnStartError).toMatchObject({ message: "turn start exploded" });
     expect(contaminated.stdinDestroyed).toBe(false);
-    await expect(readCodexAppServerBinding(sessionFile)).resolves.toBeUndefined();
+    await expect(
+      testCodexAppServerBindingStore.read(
+        sessionBindingIdentity({ agentId: "main", sessionId: "session-1" }),
+      ),
+    ).resolves.toBeUndefined();
 
     const replacementRun = runCodexAppServerAttempt(
       createParams(sessionFile, workspaceDir, sessionKey),

@@ -182,6 +182,8 @@ suite.define(() => {
         expect(await chat.locator(".agent-chat__composer-shell").count()).toBe(1);
         expect(await chat.getByRole("textbox").isDisabled()).toBe(true);
 
+        // Each deferral is consumed by one request, including the failed startup check.
+        await gateway.deferNext("openclaw.chat");
         await chat.getByRole("button", { name: "Retry", exact: true }).click();
         const retry = await gateway.waitForRequest("openclaw.chat", { after: 1 });
         expect(retry.params).not.toHaveProperty("message");
@@ -196,6 +198,7 @@ suite.define(() => {
         expect(await chat.locator(".custodian__error").count()).toBe(0);
         await captureProof(page, "02-runtime-recovered.png");
 
+        await gateway.deferNext("openclaw.chat", { message: "Check my setup" });
         await chat.getByRole("textbox").fill("Check my setup");
         await chat.getByRole("button", { name: "Send", exact: true }).click();
         const turn = await gateway.waitForRequest("openclaw.chat", { after: 2 });
