@@ -1,199 +1,694 @@
 ﻿# Changelog
 
 Docs: https://docs.openclaw.ai
-2026.8.1 release notes: https://docs.openclaw.ai/releases/2026.8.1
+2026.8.2 release notes: https://docs.openclaw.ai/releases/2026.8.2
 
-## Unreleased
+## 2026.8.2
+
+### Highlights
+
+- **Your Home agent, beside your work:** open Home in a right or bottom dock with `Cmd/Ctrl+Shift+H`, keep your current page in view, and preview or remove its work-context snapshot or attach selected text to your message. Related #133632. (#133676)
+- **A desktop companion for Linux:** install the `.deb` or AppImage on x86-64 Linux, connect to a local or remote Gateway, and open Quick Chat from the system tray or an X11 keyboard shortcut. AppImage updates are signature-verified; `.deb` installs remain under your package manager. See the [Linux guide](https://docs.openclaw.ai/platforms/linux).
+- **Safer upgrades:** preserve newer configuration, stop incomplete session migrations before claiming success, and recover a stopped Gateway after a failed update when the installed package or rollback is verified safe. Related #90551, #134206. (#134025, #134228, #119516) Thanks @obviyus, @stuart-minion-ai, @shakkernerd, @zyw02, @Issue-Hunter, @cursoragent, and @sercada.
+- **Replies that finish the job:** return a final answer after settled tool work and surface failures after an accepted turn, fixing conversations that stopped at tool output or an initial acknowledgement. Related #133960. (#133520, #133979) Thanks @fuller-stack-dev.
+- **More dependable voice:** keep internal reasoning out of speech, preserve tool-generated audio through delivery, and keep later browser Talk turns working after call setup. Related #90364, #83636, #134081. (#133615, #133324, #134170, #134138) Thanks @camball-strategies, @obviyus, @TurboTheTurtle, @clawSean, @Conan-Scott, and @mastertyko.
+- **Browser control without a running Gateway:** let supported macOS and Linux Chrome extension builds wake their paired local relay for authenticated CDP clients; this needs the updated native host and an extension build with relay wake-up support. (#128379)
+- **Four new looks:** personalize the Control UI with CRT, Manuscript, Rosé, or Miami, with theme choices preserved offline and applied without flashing the wrong theme during reload. Related #133416, #132785. (#133495, #133593, #133417, #132789) Thanks @vyctorbrzezowski.
+- **Drafts survive interruptions:** preserve offline drafts, resume the queue after canceling an edit, and avoid duplicate queued messages across chat clients. Related #133555, #133603. (#133628, #133542, #133575) Thanks @vincentkoc.
 
 ### Changes
 
-- **Release validation:** defer beta candidate Parallels smoke to postpublish `release:beta-smoke` by default, keep stable/full prepublish coverage, and bound nested release workflow monitors with explicit job timeouts.
-- **Developer workflow:** remove the obsolete scoped-commit helper and use standard Git commands in isolated worktrees.
-- Fixed Crabbox hydration on unprivileged cloud sandboxes by falling back to a user-writable pnpm store when the shared `/var/cache/crabbox` cache is unavailable, preserving the hardlink import mode after hydration, and making Docker an explicit routed capability instead of an implicit install requirement.
+- **Recovery cleanup:** preview retained migration originals with `openclaw update cleanup --dry-run`, then explicitly remove eligible originals while the selected Gateway is stopped; cleanup preserves current SQLite history but permanently gives up rollback to removed originals. Related #133805. (#133864)
+- **Session visibility default:** let unsandboxed sessions work with other sessions of the same agent by default, including retained cron sessions; shared-agent operators should set `tools.sessions.visibility` to `tree` or `self` when they need narrower access, while sandbox and cross-agent restrictions remain enforced. Related #133456. (#133469)
+- **Cross-session conversations:** render forwarded messages as distinct speech bubbles with source-session links and sending-agent identity, preserving attribution when messages steer an active conversation. (#132054, #133439)
+- **Session organization:** group session actions into clearer menus, copy transcripts as Markdown, open sessions in tabs, windows, or splits, edit icons and colors together, and optionally hide empty session groups. Related #133480, #133629. (#133490, #133638)
+- **Home without switching pages:** dock the selected agent’s existing Home conversation beside your work, retain its draft and attachments when opening it full page, and inspect or remove the “Working on” context before sending. Related #133632. (#133676)
+- **Prepared cloud projects:** reuse prepared project snapshots and validated workspace hashes before starting a cloud session, and preserve the required stop, snapshot, and restart cycle for Daytona-backed projects. Related #133436, #133450. (#133447, #134026, #134043)
+- **Readable Beam links:** share transcripts through readable `/beam/` URLs named after their sessions, with existing access checks and contextual navigation preserved. Related #125752. (#125755, #133463)
+- **Chrome relay wake-up:** support standalone local relays that start on demand, share their paired browser with the Gateway, and remain available to other CDP clients when the Gateway disconnects; see the [Chrome extension guide](https://docs.openclaw.ai/tools/chrome-extension#standalone-direct-loopback-relay) for supported builds and setup. (#128379)
 
-- **Channel plugin ingress monitors:** add a shared plugin SDK monitor for durable admission, polling, pruning, claim identity validation, adoption handoff, and shutdown, and migrate IRC, Synology Chat, and Google Chat to the shared lifecycle.
-- **TUI fuzzy selectors:** delegate list matching to pi-tui, adding slash-token and alpha-number matching while removing the local matcher fork.
-- **GPT-5.6 Ultra and runtime switching:** support Sol, Terra, and Luna across OpenClaw and Codex engines; keep model, runtime, and thinking selection atomic through `/model` and fallback; and add live matrix coverage for both harnesses. (#98021) Thanks @anyech.
-- **Meta provider:** add bundled `muse-spark-1.1` model support with Responses API streaming, tool calls, encrypted reasoning replay, onboarding, and standalone npm/ClawHub distribution. (#102873) Thanks @HamidShojanazeri.
-- **Android chat agent selector:** switch the active agent directly from the live chat screen while keeping chat, Talk mode, and home canvas on the same canonical session. (#80422) Thanks @bcperry.
-- **Gateway host status:** show the connected Gateway's host, network address, OS, runtime, uptime, CPU, memory, and disk details in Control UI Settings. (#100478)
-- **iOS offline chat:** pre-paint recent sessions and canonical transcripts from a protected, bounded per-gateway cache, keep sending disabled offline, and purge cached conversation text when pairing is reset. (#100194)
-- **Slack progress indicators:** use Slack's native assistant thread status and rotating loading messages by default while keeping acknowledgement reactions static; lifecycle reaction updates now require `messages.statusReactions.enabled: true`.
-- **Control UI Talk controls:** keep voice, model, sensitivity, and other realtime defaults in Settings → Communications → Talk, and use the composer microphone caret to select any browser audio input. (#101046)
-- **Cron model selection:** choose an agent-turn model in Control UI Quick Create and show configured or default models in cron job rows and details. (#95341) Thanks @ly85206559.
-- **Control UI GitHub previews:** show issue and pull request state, title, author, activity, comments, and change statistics in hover and keyboard-focus cards. (#100434)
-- **Logbook work journal:** add a disabled-by-default bundled plugin that turns paired-node screen snapshots into a private timeline, daily standup, and timeline-grounded Q&A in a plugin-contributed Control UI tab. (#99930)
-- **Control UI message context:** reveal per-message token, context, and model details from the timestamp on hover or activation instead of showing a separate Context button.
-- **Control UI session titles:** reveal truncated recent-session names with a reduced-motion-safe hover animation.
-- **Control UI sidebar navigation:** show a small customizable pinned destination set, keep the remaining pages under More, move Settings to the footer, and persist sidebar customization in the browser. (#100296)
-- **Control UI sidebar usage:** remove the provider usage quota row from the expanded sidebar while keeping usage details available in the chat composer and Usage page. Thanks @shakkernerd.
-- **Android chat code highlighting:** render fenced Kotlin, Swift, TypeScript, JavaScript, Python, Bash, and JSON blocks with bounded, theme-aware syntax colors while preserving plain rendering for unknown, partial, or oversized blocks. (#100217)
-- **Gateway TTS playback:** add an operator-scoped `tts.speak` RPC that returns configured-provider speech as inline whole-clip audio for remote clients. (#100708, #100770)
+- **Plugin SDK types:** type Telegram `botToken` as `SecretInput` (`string | SecretRef`), matching existing secret-reference support; plugin authors should use the resolved account `token` and read finalization-context `messages` only when `source === "openclaw-transcript"`. (#133988, #134238)
 
 ### Fixes
 
-- **Bun Gateway:** restore Gateway health checks and agent connections under Bun 1.4 while preserving WebSocket frame limits and authenticated request scheduling.
-- **Doctor recovery notes:** show interrupted auth-profile archive recovery failures and completions even when no further migration runs or another migration is declined. (#134009) Thanks @angeliti999.
-- Matrix lifecycle: drain in-flight monitor tasks without deadlocking shared-client retirement, and reject late acquisitions after their owning task closes.
-- Provider error handling: reuse prepared or already loaded provider hooks instead of cold-loading plugins during error classification, avoiding long stalls in failure reporting and model fallback.
-- **Session settings:** restore merging of concurrent first writes after a startup optimization regressed lock ordering, preserving both global and project settings without adding filesystem side effects to missing-settings reads. Thanks @MrSwagatRathod, @obviyus, and @yetval for the original fix.
-- **Control UI startup and history:** reduce configuration-schema construction and skip full-text duplicate comparisons for distinct transcript messages, preserving plugin hints, redaction, and message identity.
-- **Docker source builds:** include the shared package lifecycle module before dependency installation so production and cleanup smoke images build with lifecycle checks enabled.
-- **Subagent completion:** recognize visible final answers delivered to internal and nested parent sessions, preventing false delivery failures while preserving external channel delivery checks.
-- Codex/Linux: wait for a live app-server process to expose its startup command line within the existing inspection deadline, preserving process identity checks and preventing intermittent startup failures.
-- **Cloud session lifecycle:** prevent archive, delete, and restart recovery from deadlocking behind an earlier worker move, keep work admission closed through cleanup, and preserve the same successor for concurrent recovery requests.
-- **Restart recovery:** preserve resumed channel delivery routes when an older reply finishes cleanup during Gateway restart, including ownership changes immediately before the database write.
-- **Upgrade state metadata:** record the current application version after repairing older databases with an unset version marker, allowing CLI commands to use the running Gateway without attempting another schema repair.
-- **Gateway cancellation:** route the first `chat.abort` directly to its cancellation handler without loading unrelated chat history and send workflows.
+- **Workspace permissions:** apply permission changes to active runs and preserve session tool policies on cloud workers, so changing where work runs does not widen what it may do. Related #131947, #131661. (#132407, #131669) Thanks @jalehman, @anyech, and @sallyom.
+- **Private diagnostics:** redact values explicitly marked private in macOS app logs, keep credential values and prefixes out of routine Clawdock diagnostics, and preserve safe redaction of long secrets. Related #133736, #133535. (#133739, #133547, #134168)
+- **MCP response limits:** reject oversized HTTP responses and SSE events before parsing while preserving healthy long-lived streams and keepalives. Related #101554. (#123194) Thanks @SebTardif, @obviyus, and @aniruddhaadak80.
+- **Source-file fidelity:** preserve UTF-8 BOMs, line endings, fuzzy-match context bytes, and end-of-file state when applying patches, including formatting-only edits. Related #124390, #133319. (#124418, #133320) Thanks @synthalorian, @obviyus, and @yetval.
+- **Migration safety:** coordinate automatic agent-database maintenance with its current owner, check migration readiness before accepting workspace work, and preserve existing voice-call settings and disabled shared heartbeat owners during Doctor repair. Related #133478, #133951, #127596, #133389. (#133563, #133982, #134018, #133444) Thanks @omarshahine, @PollyBot13, and @obviyus.
+- **Safe session recovery:** preserve independently created files and symlinks during archive restore, repair supported legacy v17 agent databases, and fail updates clearly when session migration still blocks startup. Related #134163, #134206. (#133921, #134208, #134228) Thanks @EthDing, @obviyus, @abacha, and @shakkernerd.
+- **Keep newer configuration:** migrate a readable active configuration before considering last-known-good recovery, preserving newer valid settings rather than replacing them with an older copy. Related #90551. (#134025) Thanks @obviyus and @stuart-minion-ai.
+- **Update capability consent:** block a requested Gateway restart and return an actionable failure when a plugin update needs capability review; retain the previous plugin and finish with `openclaw update repair` after review. Related #134156. (#134183) Thanks @obviyus and @BrunoCerberus.
+- **Hardened npm updates:** complete OpenClaw’s verified package lifecycle on hosts using npm `ignore-scripts=true` without enabling scripts for unrelated packages or rolling a valid update back. Related #134177. (#134193) Thanks @obviyus and @botatdovly.
+- **Update progress and recovery:** show reliable progress and final outcomes, preserve offline diagnostics, refuse unsafe restarts when service state is unknown, and distinguish Gateway service setup from installing the CLI. (#133622, #133842, #132853, #133530) Thanks @jason-allen-oneal, @obviyus, and @RomneyDa.
+- **Failed-update recovery:** restart the managed Gateway through the selected installed CLI after a failed update when the replacement or restored installation is verified usable; retain backups and leave the Gateway stopped when rollback or package readiness remains uncertain. (#119516) Thanks @zyw02, @Issue-Hunter, @cursoragent, and @sercada.
+- **Scheduled jobs:** preserve and recover valid migrated cron jobs, avoid needless schedule-repair writes, and emit complete JSON when cron output is piped. Related #133347, #133442. (#133858, #133552, #133661) Thanks @fuller-stack-dev, @ejc3, @vincentkoc, and @josephbergvinson.
+- **Approval migration:** import historical execution approvals and usage metadata, and identify malformed legacy fields without exposing their values so operators can repair the preserved source. Related #118242. (#118282, #133952) Thanks @obviyus and @sercada.
+- **Plugin SDK compatibility:** preserve the published conversation-binding inspection API and existing command definitions when upgrading from 2026.8.1; legacy `docks` categories remain visible under Tools without restoring retired docking features.
+- **Plugin loading and updates:** load packaged TypeScript plugins consistently, normalize file URLs for native loading, preserve bundled provider compatibility, and keep official plugins aligned with targeted beta updates. Related #133306, #123297, #97680. (#117199, #133337, #123416, #124415) Thanks @sunlit-deng, @easyteacher, @lonexreb, @obviyus, @bradenmcleish, @synthalorian, and @chac4l.
+- **Plugin discovery:** keep bundled plugins bundled when selected through load paths and prune stale path-install records that otherwise shadow the active source. Related #133935. (#133584, #133991) Thanks @ZengWen-DT, @obviyus, @lsr911, @chelsealong, @SebTardif, and @JeffSteinbok.
+- **Bun Gateway compatibility:** restore authenticated Gateway connections under Bun 1.4 while preserving payload limits and request scheduling. (#134282)
+- **Docker image builds:** prevent dependency installation from failing on missing package-lifecycle files. (#134231)
+- **Installer and container access:** repair npm-prefix shell initialization, surface failed install finalization, and restore in-container CLI access when Docker uses a custom host port. Related #133503. (#133869, #133504)
+- **Channel recovery:** resume recovery after crash-loop suppression, isolate unavailable accounts in diagnostics, and explain why an account recovery start was skipped. Related #134134, #133977, #133954. (#134165, #134044, #133973) Thanks @shakkernerd, @lsr911, @obviyus, @chelsealong, @ZengWen-DT, and @SebTardif.
+- **Matrix shutdown:** drain active monitor tasks before retiring shared clients, preventing shutdown deadlocks and late reuse of a closed client. (#134033) Thanks @lsr911, @obviyus, @chelsealong, @ZengWen-DT, and @SebTardif.
+- **Reply completion:** finish settled tool turns with a visible answer, recover failed-tool batches, report failures after accepted turns, and recognize completion replies delivered to internal requesters. Related #133292, #133960. (#133520, #133300, #133979, #133543) Thanks @fuller-stack-dev and @VACInc.
+- **Subagent ownership:** preserve conversation bindings and task visibility, clear stale owners, and keep status and command targets aligned with the agent that owns the work. Related #127141. (#127147, #133461, #133578, #133715)
+- **Human priority and cancellation:** prioritize human messages over inter-session work, stop queued Swarm collectors with their parent, and persist blocked completion alerts atomically. Related #70634, #131553, #133058. (#132738, #133076, #133192) Thanks @sylvesterkaczmarek, @obviyus, @ewrurwteurwU, @shojikumaru, @vincentkoc, and @potterdigital.
+- **Conversation context:** reject summaries that revive superseded tasks, stop repeated byte-triggered compaction, retain policy ownership, and carry saved conversation summaries into a fresh Codex thread when switching runtimes. Related #123668, #126900, #134224. (#123737, #127110, #133912, #134259) Thanks @wangyan2026, @obviyus, @andersonjeccel, @yu-xin-c, @fede-kamel, @lsr911, @chelsealong, @ZengWen-DT, and @SebTardif.
+- **Draft and queue recovery:** preserve offline drafts and restored draft text, resume draining after canceling a queued edit, and let you discard unconfirmed messages that block the queue. Related #133555, #133603. (#133628, #133575, #133440) Thanks @vincentkoc.
+- **Starting chats:** preserve typing on the new-session page, prevent duplicate initial prompts during workspace preparation, and avoid duplicate queued messages across clients. Related #132783, #133719. (#132773, #133861, #133542) Thanks @vyctorbrzezowski.
+- **Workspace continuity:** keep non-Git workspaces usable, preserve the selected worktree base branch through reconnects, and reload projects after startup identity is resolved. (#133664, #133744, #133817)
+- **Chat refresh and reconnect:** keep images visible while refreshed history loads, recover suspended tabs after Gateway updates, and keep the earlier-history action steady during pagination. Related #134237. (#134310, #134189, #132445) Thanks @Takhoffman and @RomneyDa.
+- **Chat controls:** restore text selection and simpler GitHub code copying, keep rewind confirmation controls accessible, and integrate Goal mode into the composer. Related #131201, #132786. (#133536, #133791, #132787) Thanks @RomneyDa, @Grynn, and @vyctorbrzezowski.
+- **Voice privacy and delivery:** exclude internal reasoning from spoken summaries, preserve accepted speech through media delivery, and retain speech and process-output delivery state through nested tools. Related #90364, #83636. (#133615, #133324, #133968, #134170, #134056) Thanks @camball-strategies, @obviyus, @TurboTheTurtle, @clawSean, and @Conan-Scott.
+- **Browser Talk:** keep later voice turns admitted after call setup, preserve provider conversation order, keep internal consultations out of user history, pass questions literally, and honor the configured agent for default sessions. Related #133855, #134037, #134081. (#133493, #133947, #134093, #133958, #134138) Thanks @vmbbz, @chelsealong, @lsr911, @obviyus, @ZengWen-DT, @SebTardif, @Conan-Scott, @YogevKr, and @mastertyko.
+- **Microphone and transcription:** explain pending microphone permission, avoid expiring a voice session while permission is pending, report transcription failures, and honor the selected transcription model. Related #133348, #133359, #133448. (#133353, #133384, #133473, #133613) Thanks @lsr911.
+- **Voice settings and calls:** retain canonical voice selections, discover configured providers, prevent late callbacks from creating phantom calls or obsolete replies, and preserve call capacity after storage failures. Related #112360, #129473. (#117527, #133507, #133811, #133484, #129847) Thanks @itkdm, @ruel225, @DonShelly, and @aniruddhaadak80.
+- **Speech providers:** resolve persona-level TTS secret references, report malformed MiniMax speech responses clearly, and consume interrupted Google voice-turn completion correctly. Related #89607, #133351. (#89636, #123245, #133365) Thanks @SebTardif, @lsr911, @obviyus, @chelsealong, @ZengWen-DT, @pablonunoutande-source, and @coaiMax.
+- **iMessage and Telegram:** keep iMessage replies in the current conversation and preserve Telegram’s rich button labels when building reply context. Related #133468. (#133499, #133307) Thanks @omarshahine and @obviyus.
+- **Slack Enterprise approvals:** deliver plugin approval requests to workspace-qualified approvers and accept their buttons only from the intended workspace. Related #133932. (#134251) Thanks @obviyus and @marmar9615-cloud.
+- **Discord and LINE routing:** suppress replies aimed at other Discord bots, avoid LINE introductions in unauthorized rooms, apply per-group wildcard defaults, and respect quote-as-mention policy. Related #133618. (#130327, #132628, #132918, #133619) Thanks @PollyBot13, @obviyus, and @edenfunf.
+- **LINE presentation:** preserve recognizable inline emoji, pace block replies using the agent’s configured human delay, and offer LINE card commands only on LINE. Related #132082, #133430. (#132083, #133443, #132895) Thanks @edenfunf.
+- **Media compatibility:** restore AVI playback and filenames, normalize detected Matroska and ASF media for the right handling, and decode quoted input-file charsets correctly. Related #133328, #133608. (#133329, #133383, #133386, #133610) Thanks @ly85206559.
+- **Text fidelity:** preserve Unicode when truncating email and runtime text, retain HTML paragraph boundaries, and avoid leaking code-span placeholders into outbound messages. Related #132969. (#132170, #132366, #132998, #125184) Thanks @harjothkhara, @ly85206559, @pengzh1, @yifanxiong272, and @wanyongstar.
+- **Audio language detection:** omit the implicit audio prompt during automatic language detection so it does not bias transcription. Related #123305. (#133674) Thanks @synthalorian and @aleps001.
+- **Cloud cancellation:** persist canceled queued turns, stop work without waiting for unrelated provider inspection, fence canceled bundle installation, and wait for pending SSH workspace cleanup. Related #133455. (#133241, #133476, #133976, #133472)
+- **Cloud lifecycle:** prevent archive, delete, and recovery from hanging behind worker moves, preserve actionable execution and workspace-recovery failures, fix bootstrap archive races, and release idle desktops before reuse. Related #133654, #134199. (#133551, #133663, #133655, #133451, #134200, #134043) Thanks @Takhoffman.
+- **Native Codex sessions:** continue selected native sessions without scanning an entire large Codex home, preserve conversations across app-server restarts, and avoid intermittent Linux startup failures. Related #133929. (#134073, #134098, #133485)
+- **Provider failures:** retain provider ownership in errors, explain unavailable selected Codex authentication profiles, and preserve the real retry and rate-limit outcome when a pinned model disables fallbacks. Related #134012, #113169. (#134029, #133970, #133355, #134111) Thanks @vincentkoc, @Jeehut, and @obviyus.
+- **Model browsing and search:** recover model browsing after catalog replacement and distinguish missing answers from malformed Google and xAI responses. Related #133166, #130550. (#133221, #130583, #133667) Thanks @chelsealong, @vincentkoc, @r3n3x, @Darren2030, and @jailbirt.
+- **Usage accuracy:** keep output-token counts cumulative and recoverable, restore native-session usage after `/new`, refresh native pricing without pinning defaults, and correct cached long-context costs. Related #133562, #133346, #133343. (#133605, #133441, #133695, #133349)
+- **Long-history performance:** avoid excessive context copies, release transcript backing storage after eviction, reuse prepared batch writers, and reduce repeated Control UI history processing while preserving full-fidelity fork evidence. Related #133738, #133939, #123540, #133941. (#133753, #133565, #133680, #133965, #123541, #134238, #133988, #134252, #134209) Thanks @njuboy11 and @obviyus.
+- **Concurrent session work:** reuse session facts and remove repeated history scans from concurrent turns, status reads, and bounded task pages. Related #133053. (#133061, #133683, #133903, #134176, #132903) Thanks @jason-allen-oneal and @obviyus.
+- **Browser reliability:** retain accepted browser follow-ups through restarts, preserve contextless workers and iframe sessions, and use CDP for managed role snapshots. Related #133569, #133514. (#133457, #133571, #133614) Thanks @vincentkoc and @josephbergvinson.
+- **Beam transcript fidelity:** preserve uploader identity, restart delivery when the receiver changes, and omit mixed Claude tool content without losing snapshot state. (#133425, #133533, #133460)
+- **Windows support:** preserve PowerShell profile encoding and pnpm shim arguments, and retain resource scope across Windows path casing differences. (#133729, #133395, #134052) Thanks @ly85206559 and @vincentkoc.
+- **CLI output and tools:** keep Unicode session and task tables aligned, fail session tailing on follow-read errors, preserve escaped Code Mode output prefixes, and retain readable grep context and literal `@`-prefixed paths. Related #133776. (#133758, #133422, #132660, #133777, #131621, #133815) Thanks @Alix-007, @xialonglee, and @qingminglong.
+- **Skills and memory wiki:** recover colon-rich skill frontmatter, allow disposal of malformed proposals, and reject unsupported wiki operations and self-imported source pages. Related #124486, #125139. (#122884, #124488, #123448, #125160) Thanks @xydt-tanshanshan, @obviyus, @woodym-dotcom, @wanyongstar, @rajmp999, and @YouBeerMe.
+- **Settings and configuration:** preserve concurrent first saves, retain owners across legacy agent imports and store changes, preserve QQBot multi-account settings, and honor per-agent tool-progress detail overrides. Related #133868, #133889, #133899. (#134072, #133920, #133788, #133948) Thanks @MrSwagatRathod, @obviyus, @lsr911, @chelsealong, @ZengWen-DT, @SebTardif, @marmar9615-cloud, and @yubingjiaocn.
+- **Native authentication:** preserve Anthropic native authentication when API keys are also stored, retain explicitly pinned npm versions during stale-runtime repair, and keep the correct pnpm installation owner after launcher respawn. Related #134004, #123616, #134037. (#134030, #128250, #134075) Thanks @obviyus, @rayseling, @SunnyShu0925, @sblindt, and @YogevKr.
+- **macOS ChatGPT login:** finish onboarding after a same-route Gateway reconnect by resubmitting a callback only when it was never dispatched, preserving the existing login session. Related #134182. (#134268) Thanks @obviyus and @Sedrak-Hovhannisyan.
+- **Gateway setup and repair:** require actual Gateway protocol readiness before declaring setup complete, preserve the operator’s home during sudo service installation, and allow stopping a Gateway even when its state schema is newer. Related #133273, #133953, #134000. (#133434, #133989, #134084, #133595) Thanks @obviyus, @itanyplus, and @RomneyDa.
+- **Diagnostics stay on target:** keep embedded triage on the installation being diagnosed, and let TLS status and connection checks read certificates without creating or repairing certificate files. Related #133842, #128598, #134222. (#134244, #134223) Thanks @obviyus.
+- **Doctor maintenance:** coordinate state repair with the matching managed Gateway, preserve its installed service definition, and verify it after any restart; use `openclaw gateway install --force` when you explicitly want to replace the managed launcher. Related #133957. (#134031)
+- **Gateway restart after repair:** release Doctor’s database handles before restarting, so completed session migrations no longer leave the Gateway blocked by Doctor’s own database leases. (#134429)
+- **Update restart ordering:** let the updater control Gateway restarts through Doctor repairs and plugin setup, preventing Doctor from restarting it before the update is ready.
+- **Clearer repair outcomes:** report when configuration errors block state repair, fail unhealthy plugin Doctor checks, preserve newly written stability bundles, and stop warning about canonical database links and nested Git workspaces. Related #134036, #133388, #127418, #133981, #133923. (#134078, #133431, #132626, #134087, #133964) Thanks @obviyus, @YogevKr, @PollyBot13, @Alix-007, @02-dino, and @jeffsteinbok-openclaw.
+- **Auth archive recovery:** show completed or failed interrupted recovery even when Doctor returns early or another migration is declined, preserving failed source data. Related #133881, #133962. (#134009) Thanks @angeliti999 and @shakkernerd.
+- **Provider configuration:** migrate retired xAI image-model selections, ignore missing optional secret-backed command environment values, and report plugin-registry persistence differences instead of silently losing changes. Related #124527, #133561, #133901. (#126495, #133582, #133963) Thanks @Schimuneck, @obviyus, @tiniecookie, @pengzh1, @vincentkoc, @jodok, and @yubingjiaocn.
 
-- **Buzz plugin packaging:** keep the live QA runner on the shipped QA runner SDK surface and remove the obsolete package shrinkwrap so standalone npm and ClawHub package builds use current host exports and dependency resolutions. Thanks @shakkernerd.
-- **Parallels release smoke:** preserve Windows installer reboot results across Parallels, wait for WSL MSI/default-version readiness, force explicit test-owned gateway stops, and reset Linux package, config, and cache state before install lanes, preventing false prerequisite, safety-gate, and stale-config failures.
+### Upcoming deprecations
 
-- **Buzz standalone sends:** let `openclaw message send` and other non-Gateway processes open a bounded authenticated relay connection, publish the message, and close cleanly while running Gateways continue to reuse their active connection. Thanks @shakkernerd.
-- **Buzz presence:** publish nonblocking online presence when the Gateway connects, refresh it without overlapping heartbeat writes, and let Buzz's final-connection cleanup provide accurate offline state across reconnects and multiple Gateway instances. Thanks @shakkernerd.
-- **Buzz bot profiles:** persist optional Buzz account names, publish them as bot display names without delaying Gateway startup, preserve existing profile metadata, and include configured owner attestations so Buzz can show verified provenance. Thanks @shakkernerd.
-- **Buzz agent identity:** register connected bots in Buzz's agent directory without overwriting existing profile policy, so later room invitations retain the Bot role instead of downgrading the identity to a normal member. Thanks @shakkernerd.
-- **Buzz guided setup:** reuse or generate the bot identity automatically, wait for Bot-role approval before falling back to identity-preserving Retry/Back controls, select single-room defaults, preserve advanced access settings, accept normal room messages by default without relying on composer mentions, verify setup without posting test messages, finish targeted channel setup directly, derive new bot profiles from the routed agent identity, and authorize fresh setups from Buzz's live room roster without per-message relay queries. Thanks @shakkernerd.
-- **Buzz resumable setup:** persist paused bot identities, resume disabled setup in place, retry authenticated room discovery without rotating keys, require verified **Bot**-role room membership instead of accepting unverified room UUIDs, and give accurate CLI authorization guidance for generated identities that Buzz desktop cannot discover. Thanks @shakkernerd.
-- **Buzz inbound authorization:** apply shared room sender and command authorization before agent dispatch, allow authorized control commands to bypass mention gating, and preserve Buzz thread/reply identifiers through delivery. Thanks @shakkernerd.
-- **Channel outbound echo suppression:** drop recently emitted platform message and source identities at shared inbound admission and migrate Discord thread unbinds off channel-local expiry state, preventing delayed webhook copies from re-entering agents.
-- **ClawHub registry reads:** retry bounded HTTP 500 responses alongside other transient gateway failures so multi-package release scans survive isolated registry errors.
-- **Microsoft Teams HTML text:** decode HTML5 entities consistently in quoted and Graph-fetched messages while preserving literal escaped entity text.
-- **Gateway source watch:** hand the configured port off from the installed service before starting the tmux watcher, preserve failed panes for attach/capture, and keep explicit alternate-port watches side by side with the managed Gateway.
-- **QA profile channel execution:** partition mixed Crabline channel scenarios into one aggregate host suite so taxonomy-backed profile commands and evidence workflows no longer abort before execution.
-- **Plugin SDK API baseline:** cover every public entrypoint, preserve complete declaration shapes without source-line churn, and run baseline and export-surface guards from changed-file validation.
-- **Gateway chat typecheck:** import chat event types from their owning protocol schema after the retired aggregate type module was removed, restoring full project typechecks.
-- **Packaged Crabbox commands:** include the lease-freshness helper imported by the published wrapper so `crabbox:*` commands do not fail with `ERR_MODULE_NOT_FOUND` in npm installs.
-- **CLI installer cleanup:** remove Node staging directories and pnpm workspace-rewrite temporary files on failure. (#103725) Thanks @SebTardif.
-- **Codex runtime switching:** accept the bundled Codex runtime for both `codex/*` and `openai/*` model routes while keeping unsupported provider/runtime pairs rejected. (#103762)
-- **Swift protocol initializers:** default every schema-optional generated initializer parameter to `nil` so additive protocol fields no longer break SDK construction call sites.
-- **OpenCode Zen model catalog:** refresh the provider-owned static seed for Claude Sonnet 5, Grok 4.5, Hy3 Free, Kimi K2.7 Code, and MiniMax M3 with verified routing, pricing, limits, and input capabilities, remove retired free-tier rows, and expose the same catalog through unauthenticated model listing. (#103184)
-- **Gateway startup migrations:** release the shared migration lease before exiting when the selected config changes during startup, allowing immediate retries instead of blocking readiness until the five-minute lease expires. (#103145)
-- **CLI plugin listing:** skip state-migration runtime loading when no legacy inputs exist, reducing packaged cold-start memory while preserving migrations for legacy plugin indexes and configured session stores.
-- **Browser actions on Node 24:** keep browser request cancellation bound to the client and response lifetime instead of Node 24.16+'s prematurely aborted body-stream signal, preventing valid POST actions from failing after JSON parsing. Thanks @obviyus and @vincentkoc.
-- **SecretRef model credentials:** keep resolved provider secrets behind process-local sentinels through auth storage, stream setup, SDK configuration, and managed local-provider probing, then inject plaintext only at the final network or provider-plugin boundary while retaining exact-value log redaction. (#102008, #102009)
-- **Lean local model shell access:** keep `exec` directly visible beside the default structured Tool Search controls so coding-tuned local models can use their shell fallback instead of searching for missing domain tools. (#87587) Thanks @vincentkoc.
-- **OAuth refresh contention diagnostics:** keep local lock paths out of user-facing refresh failures and avoid duplicate failure prefixes while preserving structured provider and profile classification. (#83383) Thanks @vincentkoc.
-- **Exec approval prompts:** keep background-disabled fallback warnings out of pending gateway/node approvals and show them only after a command actually runs in the foreground. (#78184) Thanks @vincentkoc.
-- **Direct poll delivery:** route direct and hybrid channel polls through the owning outbound adapter while preserving gateway-mode routing and channel option checks. (#99950) Thanks @NianJiuZst.
-- **Agent wait hard-timeout snapshots:** preserve canonical hard-timeout phase and timestamps when the outer `agent.wait` timer wins the retry-grace race, while leaving queue, draining, and restart-cancelled waits correctable. (#89367) Thanks @Pick-cat.
-- **Control UI typed approvals:** send `/approve` commands immediately through the authorized Gateway command path while an agent run is blocked instead of queueing the command behind that run. (#77672) Thanks @vincentkoc.
-- **Microsoft Teams Graph response bounds:** cap successful file-upload and chat JSON reads so oversized Microsoft Graph responses cannot be buffered without limit. (#97784) Thanks @Alix-007.
-- **Packaged speech runtime:** stop treating package-backed `speech-core` as a bundled plugin sidecar, restoring TTS startup in npm installs while release checks keep true activation-bypassing facades package-complete. (#89899, #89425) Thanks @zhangguiping-xydt.
-- **Codex app-server protocol:** require app-server 0.142 or newer, remove pre-0.142 wire-shape compatibility, and teach Codex to retrieve deferred native `spawn_agent` through `tool_search` so native subagent task mirroring works on search-capable models. (#101221)
-- **Android hardware keyboard chat:** send with unmodified Enter on physical keyboards while preserving Shift+Enter and other modified Enter combinations for multiline input. (#101239) Thanks @3ninyt3nin-creator.
-- **CJK Markdown emphasis:** render adjacent Chinese, Japanese, and Korean emphasis punctuation through the shared Markdown pipeline instead of leaking literal markers across channels. (#101230, #101120) Thanks @nicknmorty.
-- **Backup retry cleanup:** close partial archive output handles and isolate each retry path after live-write failures, preventing Windows `EBUSY` locks from cascading across attempts or leaving stale temp archives. (#101397, #101449) Thanks @ZOOWH and @LiLan0125.
-- **Codex yielded native subagents:** keep the parent app-server subscription and shared client alive until yielded native subagent completion delivery settles, preventing lost wakeups and leaked one-shot cleanup.
-- **Delivery recovery pacing:** pace eligible outbound and restart-continuation replays after gateway startup so outage backlogs do not burst into channel rate limits, while preserving the wall-clock recovery budget. (#101118, #101058) Thanks @ZengWen-DT.
-- **Outbound pre-connect recovery:** clear stale platform-send evidence atomically when a connect or DNS failure proves no request was sent, allowing queued Discord and other channel messages to replay after connectivity returns without weakening the unknown-send duplicate guard. (#101024, #100979) Thanks @SunnyShu0925.
-- **Discord streamed finals:** send completion replies as fresh messages so inactive channels become unread, while preserving targeted mentions without escalating `@everyone` or `@here`. (#99711, #99662) Thanks @davelutztx.
-- **OpenAI-compatible SSE parsing:** recognize event streams mislabeled as JSON without prepending a second `data:` prefix, preserving valid streamed responses from non-conforming providers. (#96503) Thanks @ZengWen-DT.
-- **LM Studio embedding preload:** honor model- and provider-level context-window limits when preloading embedding models, preventing avoidable GPU out-of-memory failures. (#100750) Thanks @zak-li, @ZOOWH, and @hxz398.
-- **Provider overload messaging:** keep rate-limited responses classified for retry and fallback behavior while using overload wording when the provider supplies no explicit retry detail. (#98165) Thanks @SunnyShu0925.
-- **Microsoft Teams attachment metadata:** bound Bot Framework `attachmentInfo` JSON reads and cancel oversized streams before they can exhaust Gateway memory. (#99125) Thanks @ly85206559.
-- **Agent auth copy order:** preserve the source agent's portable auth-profile precedence when copying credentials to a new agent while excluding skipped profiles and transient auth state. (#100833) Thanks @machine3at.
-- **Memory session repair:** keep daily dreaming ingestion bookkeeping outside session-corpus audit and repair so `memory status --fix` preserves healthy daily state. (#93389) Thanks @Alix-007 and @vincentkoc.
-- **Config unset diagnostics:** explain when an inherited or default configuration value cannot be unset instead of reporting a misleading successful deletion. (#96557) Thanks @moeghashim.
-- **Crestodian command probes:** contain stdout and stderr stream failures while keeping child-process close and spawn errors authoritative, preventing unhandled probe crashes. (#100741) Thanks @lsr911.
-- **Feishu mention forwarding:** fail closed when the bot Open ID is unavailable so group messages cannot be misclassified as explicit bot mentions. (#100891) Thanks @zhangguiping-xydt.
-- **Cron edit delivery:** preserve each job's implicit delivery mode when applying partial delivery updates, so disabling best-effort delivery no longer turns detached job announcements off. (#100846) Thanks @machine3at.
-- **Control UI session creation:** keep newly created sessions at the front of the stable sidebar order after selecting another session. Thanks @shakkernerd.
-- **Control UI file previews:** keep large Skill Workshop files responsive with cached, offscreen-contained text chunks while preserving wrapped content, stable file switching, full-file copy, and clean focus behavior. (#101319) Thanks @xianshishan and @shakkernerd.
-- **FTS-only memory startup:** skip plugin capability discovery when `memorySearch.provider` is explicitly `none`, avoiding an unnecessary cold-start scan.
-- **Control UI agent model labels:** show each selected agent's effective model in the Default picker option instead of the global model. (#100719, #77690, #77440) Thanks @hyspacex.
-- **Control UI inbound image previews:** render canonical inbound media references through the authenticated ticket route after chat-history reloads. (#100725, #90172, #89591) Thanks @sweetcornna.
-- **Small-context compaction:** cap the effective reserve against the known model context window so small local models do not enter compaction from the first token. (#100621) Thanks @vincentkoc.
-- **Detail-less provider failures:** keep opaque upstream failures from cooling API-key auth profiles while preserving WHAM-backed OpenAI OAuth health checks and configured model fallback. (#100600, #100617) Thanks @fengjikui.
-- **Plugin install diagnostics:** suppress the misleading hook-pack fallback after plugin install failures only when the hook manifest is absent, while preserving actionable malformed hook-pack errors. (#100554) Thanks @vincentkoc.
-- **Config validation diagnostics:** emit each unchanged sanitized validation-warning payload once per config path, reset deduplication after a clean validation, and preserve the warning fingerprint across transient invalid reads and failed refreshes. (#100569, #25574) Thanks @vincentkoc.
-- **Config size-drop guard:** compare writes against canonical bytes for parseable object configs instead of raw BOM and indentation overhead, while preserving raw audit telemetry and the conservative malformed-input fallback. (#100591, #71865) Thanks @vincentkoc.
-- **Control UI coalesced updates:** show a clear queued-restart completion banner when an update joins an already-running Gateway restart. (#93082) Thanks @goutamadwant.
-- **Control UI connection errors:** preserve structured pairing and authentication failures for pending RPC callers while keeping generic disconnect behavior unchanged. (#54758) Thanks @ruanrrn.
-- **iOS embedded terminal:** open the terminal-only Control surface directly while native Gateway authentication connects instead of exposing the Web UI login screen.
-- **TUI startup status:** show `starting up` during post-connect initialization without overwriting active-run or reconnect state. (#93999) Thanks @ml12580.
-- **Control UI restart recovery:** recover stale bundle pages through a bounded whole-document refresh after Gateway updates or restarts. (#99111) Thanks @ZengWen-DT.
-- **TUI active Gateway ports:** follow the verified active local Gateway port when no explicit URL, port, or remote target is configured. (#73338, #42461) Thanks @haishmg and @vincentkoc.
-- **Apple chat run recovery:** restore active responses from canonical Gateway history after reconnects, foreground resumes, and event gaps, while preserving gateway user-turn identity across Codex and Copilot transcript mirrors to prevent duplicate rows. (#100277)
-- **Claude CLI streamed replies:** preserve assistant text already received from Claude CLI when its terminal result envelope is empty, preventing false empty-response failover after a complete streamed answer. (#90450) Thanks @totobusnello.
-- **Phone identity normalization:** canonicalize stray plus signs, preserve non-phone iMessage handles, and reject digit-free Signal identities across shared channel routing. (#100467) Thanks @morluto.
-- **Tlon scry response bounds:** cap successful Urbit scry JSON reads and cancel oversized streams instead of buffering unbounded peer responses. (#100376) Thanks @hugenshen.
-- **Source build portability:** keep tsdown configuration self-contained so builds do not depend on resolving the tsdown package from unrun's temporary module directory.
-- **Agent tool-call decoding:** preserve surrogate-range numeric HTML entities as literal text while still decoding valid supplementary-plane values, preventing malformed model output from injecting lone UTF-16 surrogates into tool arguments. (#99564) Thanks @mikasa0818.
-- **Gateway event dispatch:** catch and log lazy subscriber setup and handler failures instead of leaking unhandled promise rejections. (#100401) Thanks @cxbAsDev.
-- **Ollama fallback routing:** classify incomplete native streams through the Ollama provider hook so configured model fallbacks can advance. (#100482) Thanks @TurboTheTurtle.
-- **Diffs rendering:** render viewer and image output from one SSR preload, preserve language-pack highlighting through hydration, normalize language hints case-insensitively, skip identical before/after inputs with an explicit `changed` result, report truthful file-render and input errors, cache hash-pinned viewer runtimes, and prefer canonical file settings over stale aliases. (#100487)
-- **Remote browser reliability:** bound persistent Playwright tab enumeration by the existing remote CDP timeout budget and retire timed-out connection attempts so late completions cannot restore a stuck connection. (#80147, #58968) Thanks @HemantSudarshan and @KeaneYan.
-- **Browser attachment downloads:** return managed URL, filename, and path metadata when direct Playwright navigation starts an attachment download, while validating final URLs before saving bytes and preserving single-owner explicit downloads. (#48045, #89416) Thanks @zhangguiping-xydt.
-- **Browser action downloads:** return managed URL, filename, and path metadata when agent actions trigger downloads, while preserving explicit ownership, validating final URLs before saving bytes, and quarantining policy-denied tabs without closing them. (#93250, #93307) Thanks @sunlit-deng.
-- **Managed browser cookie persistence:** initialize new isolated macOS headless profiles with a non-interactive encryption key while preserving existing profile keys, and close Chromium through CDP before bounded signal fallback so persistent logins survive graceful browser and Gateway restarts. (#96704, #98284) Thanks @TurboTheTurtle.
-- **MCP OAuth response bounds:** reject body-less foreign error bodies without calling their inherently unbounded `text()` fallback, while preserving HTTP status and headers for safe SDK diagnostics. (#98143) Thanks @Pick-cat.
-- **Tlon image upload bounds:** cap remote image fetches before upload and fail closed on oversized or stalled responses instead of buffering them without a limit. (#100374) Thanks @hugenshen.
-- **Control UI approval prompts:** keep stale resolve failures and busy-state cleanup from leaking across newer approvals or Gateway reconnects. (#98394) Thanks @haruaiclone-droid.
-- **macOS service SecretRefs:** preserve generated env-file values for SecretRefs that remain in config when stale Gateway LaunchAgents are repaired or reinstalled without those variables in the invoking shell. (#99124) Thanks @mushuiyu886.
-- **Anthropic OAuth callbacks:** keep the provider-required `localhost` redirect URI stable while allowing the local callback listener to bind an explicit loopback host. (#96917) Thanks @xialonglee.
-- **Anthropic plugin startup:** defer authentication and live catalog runtime loading until their hooks run, avoiding cold source-registration timeouts while preserving provider setup and diagnostics.
-- **Prompt-release media delivery:** accept active-leaf-preserving side appends while an embedded run temporarily releases its session lock, so successive message-tool media replies merge without a false session-takeover failure. (#100033, #100490) Thanks @scotthuang.
-- **Control UI Skills filters:** align agent and search controls, use translated labels, and preserve native checkbox and radio sizing. (#100526, #99996) Thanks @evan-YM.
-- **Control UI completed-run state:** bind active and completed updates to run identities so stale completions keep Send available while newer runs remain active. (#100527, #91680) Thanks @tiffanychum.
-- **Control UI context usage:** keep stale cached totals visible as approximate without triggering warning styling or Compact actions. (#89772) Thanks @bladin.
-- **Control UI file previews:** remove the duplicate Escape header hint while retaining the Close-button shortcut hint and Escape behavior. (#100528, #99029) Thanks @xianshishan.
-- **Control UI autonomous tool failures:** preserve an earlier Tool error outcome across later autonomous recovery turns. (#100514, #98888) Thanks @qingminglong.
-- **Agent empty replies:** surface a visible failure when a completed interactive turn has no deliverable reply, including queued follow-ups, while preserving explicit silence, pending continuations, and committed side effects, honoring queued send policies, and treating compaction notices as progress. (#100456) Thanks @mushuiyu886.
-- **Child process output safety:** prevent stdout/stderr pipe failures from crashing agent exec sessions, local TUI shell commands, and bounded process execution. (#100407, #100406, #100410) Thanks @cxbAsDev.
-- **Docker sandbox command output:** fail and terminate Docker sandbox operations when stdout/stderr capture breaks instead of returning success with incomplete output. (#100523) Thanks @cxbAsDev.
-- **Background refresh isolation:** keep remote skill-bin refreshes running when one node fails, and contain periodic subagent-sweeper failures without hiding errors from direct callers. (#100393, #100390) Thanks @cxbAsDev.
-- **Skill scan diagnostics:** report directory enumeration failures through the existing resource diagnostics instead of silently dropping affected skills. (#100380) Thanks @wendy-chsy.
-- **Exec output sanitization:** remove complete ANSI sequences and render residual C0/C1 controls as visible escapes instead of silently discarding output bytes. (#100327) Thanks @LavyaTandel.
-- **Assistant visible text:** unwrap leaked standalone `<parameter>` tags while preserving their content and literal code/XML examples. (#100302) Thanks @nankingjing.
-- **Android microphone capture:** treat negative `AudioRecord.read` results as fatal shared-session errors so both transcription and Talk capture stop cleanly after device loss. (#100028) Thanks @NianJiuZst.
-- **Android push-to-talk lifecycle:** serialize gateway PTT preparation with app foreground and Manual Mic ownership so stale background or retry work cannot restart, replace, or tear down a newer capture. (#99840) Thanks @xialonglee.
-- **Lean local-model tools:** trim media generation, TTS, and PDF tools from lean agent surfaces while preserving explicit config and runtime opt-ins. (#88881) Thanks @vincentkoc.
-- **iOS development app identity:** keep the development app labeled OpenClaw while using its distinct debug icon to differentiate it from release builds.
-- **Android chat recovery:** preserve optimistic user messages and locally owned runs while reconnect and sequence-gap history snapshots catch up, preventing sent messages from disappearing or stale runs from taking ownership. (#100197)
-- **iOS QR gateway handoff:** stop VisionKit before delivering scanned setup codes, and keep deferred auth, approval, Watch, and foreground-node work bound to its originating gateway across reconnects. (#99572) Thanks @PollyBot13.
-- **Agent terminal failures:** surface a safe interactive reply when an agent run ends without visible output, while preserving completed message-tool delivery and heartbeat-specific guidance. (#99304) Thanks @moeedahmed.
-- **MCP loopback tool results:** preserve schema-valid text, image, and embedded-resource content through HTTP tool calls while rendering malformed or protocol-incompatible blocks as safe text. (#100336) Thanks @tzy-17.
-- **Control UI tool-result images:** render direct image content blocks from Gateway history and make the delayed-send scroll E2E setup deterministic. (#100295) Thanks @lzyyzznl.
-- **Control UI live tool ordering:** keep assistant stream text before its matching tool card when browser and Gateway timestamps disagree. (#93184) Thanks @Pick-cat.
-- **Plugin approval diagnostics:** distinguish request validation rejections, expired wait decisions, and unavailable Gateways while keeping approval failures fail-closed. (#100337) Thanks @tzy-17.
-- **IRC Unicode messages:** split outbound PRIVMSG payloads on UTF-16 code-point boundaries so emoji cannot be cut into lone surrogates. (#96572) Thanks @llagy009.
-- **OpenAI realtime voice greetings:** prevent server VAD from creating a second outbound greeting while an explicit greeting response owns the turn, without disabling caller interruption. (#86285) Thanks @giodl73-repo.
-- **Realtime voice tools:** filter malformed tool names at each OpenAI, Azure, and Google realtime payload boundary while preserving provider-specific valid names. (#89175) Thanks @vincentkoc.
-- **Discord voice status:** treat Discord error 10065 as a normal disconnected state while preserving unrelated REST failures. (#90969) Thanks @asock.
-- **Discord voice accounts:** isolate `@discordjs/voice` connections by Discord account and recover auto-join when gateway readiness predates listener registration. (#87530) Thanks @geekhuashan.
-- **iOS Voice Wake cleanup:** avoid initializing the microphone audio pipeline while disabling inactive Voice Wake, preventing simulator launch aborts and unnecessary audio setup.
-- **Cron duration validation:** reject positive durations that truncate below one millisecond instead of silently scheduling a zero-duration interval. (#100311) Thanks @qingminglong.
-- **Skill workshop proposals:** preserve the terminal newline in generated proposal Markdown while still rejecting blank raw content. (#100293) Thanks @anyech.
-- **Agent tool inputs and LSP startup:** treat blank optional integer arguments as absent, and fail embedded LSP startup immediately when its child process cannot spawn. (#100273, #99922) Thanks @snotty and @cxbAsDev.
-- **Gateway and memory diagnostics:** report failed start-session persistence and close-time memory work instead of silently discarding those failures. (#100313, #100308) Thanks @masatohoshino and @lin-hongkuan.
-- **Unicode and plugin package verification:** match native slice semantics for reversed UTF-16 bounds, and reject published plugin packages that omit `openclaw.plugin.json`. (#100014, #99904) Thanks @Simon-XYDT and @849261680.
-- **Android invoke cancellation:** preserve coroutine cancellation through camera handlers and the Gateway invoke boundary so cancelled work cannot emit a stale result. (#99916) Thanks @xialonglee.
-- **Codex native hook relay diagnostics:** avoid bridge registry writes before the local relay server begins listening. (#100300) Thanks @nankingjing.
-- **Voice Call completed status:** resolve finalized calls from the full retained event store across Gateway, tool, and CLI status paths while preserving active-call lookup performance. (#99797) Thanks @Darren2030.
-- **Agent stop recovery:** prevent late-aborting prompts from reacquiring orphaned session locks after teardown, so `/stop` leaves the conversation ready for the next turn.
-- **Message delivery status:** report failed and partially failed best-effort channel delivery instead of returning a success-shaped message-tool result. (#99928) Thanks @masatohoshino.
-- **WhatsApp credential recovery:** restore malformed primary auth state from a valid backup during startup. (#99070) Thanks @LeonidasLux.
-- **WhatsApp quoted replies:** preserve bot-authored outbound quote metadata so replies to those messages keep their reply bubble in WhatsApp Desktop. (#94879) Thanks @Bartok9.
-- **WhatsApp reconnect catch-up:** admit recently missed Baileys `append` messages during a bounded reconnect window while preserving startup stale-history guards. (#80642) Thanks @VishalJ99.
-- **WhatsApp restart recovery:** stop automatic restart loops after logged-out or connection-replaced disconnects until the account reconnects. (#78511) Thanks @openperf.
-- **Local Gateway CLI auth:** keep loopback CLI token/password calls off durable device scopes so read probes cannot block later write/admin commands behind a stale pairing baseline. (#95997) Thanks @vincentkoc.
-- **Plugin module identity:** keep OpenClaw package chunks on Node's native module graph when jiti transforms plugin entries, preventing duplicate evaluation and class identity drift. (#88384) Thanks @vincentkoc.
-- **Shell completion repair:** generate core-only caches during doctor and update repair while preserving full plugin command completion for onboarding and explicit user rebuilds. (#76235)
-- **MCP schema diagnostics:** attribute draft-2020-12 compiler failures to the external MCP schema so malformed patterns produce actionable setup errors. Thanks @vincentkoc.
-- **Windows Scheduled Task recovery:** keep clean early exits inside the existing bounded launch poll, falling back only when neither the task process nor Gateway listener becomes observable. (#76245)
-- **iMessage group warnings:** suppress the false drop-all startup warning when an effective group sender allowlist can admit groups, and point true empty-allowlist configurations at the correct remedy. (#100046)
-- **Control UI mobile login:** keep Gateway recovery guidance visible after connection failures, make the disconnected gate scroll safely on constrained screens, and improve mobile keyboard and tap-target behavior. (#100208)
-- **TUI streaming:** render delta-only assistant events in live Gateway and embedded TUI sessions instead of waiting for the final response. (#83000) Thanks @flashosophy.
-- **Model aliases:** resolve provider-qualified aliases during session and chat-command model switches without collisions when providers share a display alias. (#100209) Thanks @sahilsatralkar.
-- **TUI new-session hooks:** create `/new` sessions through the shared Gateway lifecycle so command and session hooks receive the completed parent transcript in both Gateway and embedded modes, while preventing rollover during an active turn. (#100241, #49918) Thanks @BingqingLyu.
-- **TUI abort diagnostics:** show sanitized tool argument-validation summaries for aborted runs in both Gateway and local TUI modes without exposing raw model arguments. (#91002) Thanks @wsyjh8.
-- **iOS Watch replies:** persist queued quick replies in the gateway-scoped chat outbox and submit them through idempotent chat delivery, preventing losses, duplicates, and cross-gateway sends after reconnects. (#100031) Thanks @NianJiuZst.
-- **iOS Gateway auth retry:** restrict stored device-token retry to parsed loopback hosts and reject wildcard bind addresses, preventing remote lookalike hostnames from receiving trusted retry credentials. (#99859) Thanks @ly85206559.
-- **Bedrock Mantle discovery:** bound model-catalog fetch time and response size, and release rejected response bodies so stalled, oversized, or failed provider responses fall back safely. (#99961) Thanks @zhangguiping-xydt.
-- **Discord thread-title prompts:** truncate generated-title message and channel context on UTF-16 boundaries so emoji cannot leave malformed model prompt text. (#101551) Thanks @Alix-007.
-- **Task state migration:** canonicalize legacy `not-requested` delivery statuses during sidecar import and existing shared-database open so upgraded task registries and linked TaskFlows recover without manual SQL, and surface rejected persisted values in compact console diagnostics. (#103946) Thanks @bek91.
+These already-deprecated Plugin SDK import paths remain available in **2026.8.2**. Their recorded removal target is **2026-09-01**; plugin authors should prepare the following migrations using the [Plugin SDK migration guide](https://docs.openclaw.ai/plugins/sdk-migration).
 
+- **`openclaw/plugin-sdk/config-runtime`:** use `api.pluginConfig` for plugin configuration, `openclaw/plugin-sdk/config-contracts` for types, `openclaw/plugin-sdk/runtime-config-snapshot` for snapshot reads, and `openclaw/plugin-sdk/config-mutation` for writes. (`plugin-sdk-config-runtime-subpath`)
+- **`openclaw/plugin-sdk/channel-reply-pipeline`:** import reply pipeline helpers from `openclaw/plugin-sdk/channel-outbound`. (`plugin-sdk-channel-reply-pipeline-subpath`)
+- **`openclaw/plugin-sdk/infra-runtime`:** move helpers to focused imports, including `openclaw/plugin-sdk/delivery-queue-runtime`, `openclaw/plugin-sdk/diagnostic-runtime`, `openclaw/plugin-sdk/error-runtime`, `openclaw/plugin-sdk/exec-approvals-runtime`, `openclaw/plugin-sdk/fetch-runtime`, and `openclaw/plugin-sdk/ssrf-runtime`. The migration guide records that system-event snapshot inspection and consumption still have no modern public replacement. (`plugin-sdk-infra-runtime-subpath`)
+- **`openclaw/plugin-sdk/channel-lifecycle`:** use `openclaw/plugin-sdk/channel-outbound`. (`plugin-sdk-channel-lifecycle-subpath`)
+- **`openclaw/plugin-sdk/channel-message`:** use `openclaw/plugin-sdk/channel-outbound` and `openclaw/plugin-sdk/channel-inbound`. (`plugin-sdk-channel-message-subpath`)
+
+### Complete contribution record
+
+This audited record covers the complete 0a6c013be5f50981b12d021b387b4fd1ea7e491e..d8e71381888c59bb6dd54d909a601d2b2c40a6e1 history: 573 in-range PRs + 0 retained seed-only PRs = 573 unique PRs. The generation manifest also supplies direct commits as editorial input; the grouped notes above prioritize user impact.
+
+Shipped baseline exclusions: v2026.8.1 (10 PRs: #111111, #119051, #122346, #124471, #127978, #129694, #132960, #133260, #133454, #133471).
+
+#### Pull requests
+
+- **PR #125269** [fix(gateway): reject usage.cost agentScope=all with agentId](https://github.com/openclaw/openclaw/pull/125269) Related #125268. Thanks @zyw02 and @obviyus.
+- **PR #132054** [feat(ui): render cross-session messages as linked speech bubbles](https://github.com/openclaw/openclaw/pull/132054)
+- **PR #125160** [fix(memory-wiki): exclude vault's own pages from unsafe-local import](https://github.com/openclaw/openclaw/pull/125160) Related #125139. Thanks @rajmp999 and @obviyus and @YouBeerMe.
+- **PR #133293** [refactor(plugins): reuse the void hook binder](https://github.com/openclaw/openclaw/pull/133293)
+- **PR #127110** [fix(compaction): stop repeated transcript byte compaction](https://github.com/openclaw/openclaw/pull/127110) Related #126900. Thanks @yu-xin-c and @obviyus and @fede-kamel.
+- **PR #133322** [test: preserve Vitest project ownership for CLI filters](https://github.com/openclaw/openclaw/pull/133322)
+- **PR #133320** [fix: apply formatting-only file edits](https://github.com/openclaw/openclaw/pull/133320) Related #133319.
+- **PR #133316** [perf(history): reuse prepared display and session facts](https://github.com/openclaw/openclaw/pull/133316)
+- **PR #133326** [chore(ui): refresh control ui locales](https://github.com/openclaw/openclaw/pull/133326)
+- **PR #133307** [fix(telegram): preserve rich button labels in reply context](https://github.com/openclaw/openclaw/pull/133307) Thanks @obviyus.
+- **PR #130327** [fix(discord): prevent bots interrupting replies to other bots](https://github.com/openclaw/openclaw/pull/130327) Thanks @PollyBot13 and @obviyus.
+- **PR #133329** [fix(media): restore AVI attachment playback and file extensions](https://github.com/openclaw/openclaw/pull/133329) Related #133328.
+- **PR #133325** [refactor(tests): isolate planner environment fixtures](https://github.com/openclaw/openclaw/pull/133325)
+- **PR #122884** [fix(skills): generalize freeform frontmatter value recovery beyond description](https://github.com/openclaw/openclaw/pull/122884) Thanks @xydt-tanshanshan and @obviyus.
+- **PR #133300** [fix(agents): recover after settled failed-tool batches](https://github.com/openclaw/openclaw/pull/133300) Related #133292. Thanks @VACInc.
+- **PR #132789** [fix(ui): prevent dark flash on light-system reload](https://github.com/openclaw/openclaw/pull/132789) Related #132785. Thanks @vyctorbrzezowski.
+- **PR #124488** [fix(skills): allow disposal of malformed proposals](https://github.com/openclaw/openclaw/pull/124488) Related #124486. Thanks @woodym-dotcom and @obviyus.
+- **PR #133321** [fix(release): record approved Telegram waiver for 2026.8.1](https://github.com/openclaw/openclaw/pull/133321)
+- **PR #133332** [refactor: simplify command handler registration](https://github.com/openclaw/openclaw/pull/133332)
+- **PR #133309** [fix(test): keep complete multi-project JSON reports](https://github.com/openclaw/openclaw/pull/133309) Related #133305.
+- **PR #124418** [fix(agents): preserve file bytes in apply_patch outside the hunk](https://github.com/openclaw/openclaw/pull/124418) Thanks @synthalorian and @obviyus.
+- **PR #131621** [fix(agents): preserve decoded grep context and readable paths](https://github.com/openclaw/openclaw/pull/131621) Thanks @xialonglee.
+- **PR #133336** [fix: remove ignored arguments from agent tools](https://github.com/openclaw/openclaw/pull/133336) Related #133333.
+- **PR #133241** [fix: stop queued cloud work and persist canceled turns](https://github.com/openclaw/openclaw/pull/133241)
+- **PR #123541** [fix(sessions): branches.list stalls the event loop for ~12s on long-lived sessions](https://github.com/openclaw/openclaw/pull/123541) Related #123540. Thanks @njuboy11 and @obviyus.
+- **PR #133350** [improve: avoid hashing imported transcript events twice](https://github.com/openclaw/openclaw/pull/133350)
+- **PR #130583** [fix(google): distinguish missing search answers from malformed responses](https://github.com/openclaw/openclaw/pull/130583) Related #130550. Thanks @Darren2030 and @jailbirt.
+- **PR #133353** [fix(ui): explain pending voice microphone access](https://github.com/openclaw/openclaw/pull/133353) Related #133348.
+- **PR #133375** [docs: consolidate Crabbox guidance with shared skill](https://github.com/openclaw/openclaw/pull/133375)
+- **PR #126495** [fix(xai): doctor migrates retired image models in tools.media.models](https://github.com/openclaw/openclaw/pull/126495) Related #124527. Thanks @Schimuneck and @obviyus and @tiniecookie.
+- **PR #133365** [fix(google): avoid duplicate turn completion after voice interruption](https://github.com/openclaw/openclaw/pull/133365) Related #133351.
+- **PR #133357** [fix(ci): make Telegram release tests best effort](https://github.com/openclaw/openclaw/pull/133357)
+- **PR #123432** [fix(agents): default agent-run admissions to static catalog mode](https://github.com/openclaw/openclaw/pull/123432) Thanks @xialonglee and @obviyus.
+- **PR #133373** [fix: reject unsupported Testbox no-sync runs](https://github.com/openclaw/openclaw/pull/133373)
+- **PR #133362** [perf: reduce repeated prompt and plugin metadata work](https://github.com/openclaw/openclaw/pull/133362)
+- **PR #133355** [fix(codex): explain unavailable selected auth profiles](https://github.com/openclaw/openclaw/pull/133355) Related #113169. Thanks @vincentkoc and @Jeehut.
+- **PR #133153** [refactor: remove channel docking and manual session focus](https://github.com/openclaw/openclaw/pull/133153)
+- **PR #133378** [improve: update initialized transcript windows directly](https://github.com/openclaw/openclaw/pull/133378)
+- **PR #133352** [chore(ui): refresh control ui locales](https://github.com/openclaw/openclaw/pull/133352)
+- **PR #123194** [fix(mcp): cap HTTP/SSE response bodies before SDK parse](https://github.com/openclaw/openclaw/pull/123194) Related #101554. Thanks @SebTardif and @obviyus and @aniruddhaadak80.
+- **PR #133061** [fix: keep Gateway and Control UI responsive during concurrent session updates](https://github.com/openclaw/openclaw/pull/133061) Related #133053.
+- **PR #133384** [fix(ui): avoid voice session expiry while waiting for microphone access](https://github.com/openclaw/openclaw/pull/133384) Related #133359.
+- **PR #133401** [docs: clarify provider normalization ownership](https://github.com/openclaw/openclaw/pull/133401)
+- **PR #132799** [fix(ui): unify connected composer stack surface](https://github.com/openclaw/openclaw/pull/132799) Related #132796. Thanks @vyctorbrzezowski.
+- **PR #132787** [fix(ui): integrate Goal mode into the composer](https://github.com/openclaw/openclaw/pull/132787) Related #132786. Thanks @vyctorbrzezowski.
+- **PR #133404** [docs: retire historical implementation plans](https://github.com/openclaw/openclaw/pull/133404)
+- **PR #133409** [refactor(ui): simplify outbox custody and draft persistence](https://github.com/openclaw/openclaw/pull/133409)
+- **PR #133407** [fix(channels): preserve long WhatsApp replies with less formatting work](https://github.com/openclaw/openclaw/pull/133407)
+- **PR #133413** [refactor(settings): restore one storage load path](https://github.com/openclaw/openclaw/pull/133413) Thanks @obviyus.
+- **PR #133356** [test: reuse performance workflow repository fixtures](https://github.com/openclaw/openclaw/pull/133356)
+- **PR #133402** [fix(ui): hide URL tooltips while rich cards are open](https://github.com/openclaw/openclaw/pull/133402) Related #133397.
+- **PR #133410** [fix(ui): avoid restoring retired voice transports after restart failure](https://github.com/openclaw/openclaw/pull/133410) Related #133387.
+- **PR #133399** [fix(openrouter): reject malformed catalog envelopes](https://github.com/openclaw/openclaw/pull/133399) Thanks @vincentkoc.
+- **PR #133382** [fix: preserve conversation order across session catalogs](https://github.com/openclaw/openclaw/pull/133382) Related #133377.
+- **PR #125755** [feat(beam): add readable transcript share URLs](https://github.com/openclaw/openclaw/pull/125755) Related #125752.
+- **PR #133420** [refactor(plugins): consolidate registry snapshot test fixtures](https://github.com/openclaw/openclaw/pull/133420)
+- **PR #133422** [fix(cli): keep sessions tail columns aligned for Unicode keys](https://github.com/openclaw/openclaw/pull/133422)
+- **PR #133403** [improve: reduce transcript import watermark overhead](https://github.com/openclaw/openclaw/pull/133403)
+- **PR #133424** [perf(media): avoid redundant attachment scans and base64 round trips](https://github.com/openclaw/openclaw/pull/133424)
+- **PR #133411** [fix(maintainers): block rewritten contributor squashes](https://github.com/openclaw/openclaw/pull/133411) Thanks @vincentkoc.
+- **PR #133427** [improve: speed up Git workflow fixture execution](https://github.com/openclaw/openclaw/pull/133427)
+- **PR #133433** [chore(ui): refresh control ui locales](https://github.com/openclaw/openclaw/pull/133433)
+- **PR #133076** [fix(agents): stop queued Swarm collectors with their parent](https://github.com/openclaw/openclaw/pull/133076) Related #131553.
+- **PR #133434** [fix: keep Model Setup pending until Gateway settings are active](https://github.com/openclaw/openclaw/pull/133434) Related #133273.
+- **PR #133369** [fix(ui): hide redundant error details](https://github.com/openclaw/openclaw/pull/133369) Related #133367. Thanks @vyctorbrzezowski.
+- **PR #133425** [fix: preserve uploader identity in Beam transcripts](https://github.com/openclaw/openclaw/pull/133425)
+- **PR #133440** [fix(ui): allow discarding unconfirmed messages blocking the queue](https://github.com/openclaw/openclaw/pull/133440)
+- **PR #133423** [fix(release): accept protected-tag npm preflight candidates](https://github.com/openclaw/openclaw/pull/133423)
+- **PR #129847** [fix(voice-call): preserve call capacity after storage failure](https://github.com/openclaw/openclaw/pull/129847) Related #129473. Thanks @aniruddhaadak80.
+- **PR #133438** [test: reuse publish workflow repository fixtures](https://github.com/openclaw/openclaw/pull/133438)
+- **PR #133426** [fix(ci): keep full release evidence out of argv](https://github.com/openclaw/openclaw/pull/133426)
+- **PR #133437** [improve(ui): remove media device refresh buttons](https://github.com/openclaw/openclaw/pull/133437)
+- **PR #133451** [fix: release idle desktops and await cleanup before reuse](https://github.com/openclaw/openclaw/pull/133451)
+- **PR #133441** [fix: native Codex session usage stays zero after /new](https://github.com/openclaw/openclaw/pull/133441) Related #133346.
+- **PR #133429** [fix(gateway): reduce control-plane stalls during concurrent turns](https://github.com/openclaw/openclaw/pull/133429)
+- **PR #133458** [chore(ui): refresh control ui locales](https://github.com/openclaw/openclaw/pull/133458)
+- **PR #133453** [refactor(agents): reuse Workshop text result envelopes](https://github.com/openclaw/openclaw/pull/133453)
+- **PR #133463** [feat(beam): name share URLs after their sessions](https://github.com/openclaw/openclaw/pull/133463)
+- **PR #133446** [improve: reduce session import, compaction, and UI startup overhead](https://github.com/openclaw/openclaw/pull/133446)
+- **PR #133466** [perf: reduce repeated diagnostic lifecycle scans](https://github.com/openclaw/openclaw/pull/133466)
+- **PR #133467** [fix(ci): update Kova gateway-call contract pin](https://github.com/openclaw/openclaw/pull/133467) Thanks @RomneyDa.
+- **PR #133474** [refactor(ui): simplify chat message rendering and recovery](https://github.com/openclaw/openclaw/pull/133474)
+- **PR #133473** [fix(talk): report browser input transcription failures](https://github.com/openclaw/openclaw/pull/133473) Related #133448.
+- **PR #133363** [improve(ui): shimmer while GitHub link previews load](https://github.com/openclaw/openclaw/pull/133363)
+- **PR #133452** [fix(status): preserve prepared context windows](https://github.com/openclaw/openclaw/pull/133452) Related #133405. Thanks @vincentkoc and @Finn763 and @ahmedsaed.
+- **PR #132660** [fix(cli): fail sessions tail on follow read errors](https://github.com/openclaw/openclaw/pull/132660) Thanks @Alix-007.
+- **PR #133485** [fix(codex): wait for Linux process command readiness](https://github.com/openclaw/openclaw/pull/133485)
+- **PR #133349** [fix(usage): correct cached long-context cost estimates](https://github.com/openclaw/openclaw/pull/133349) Related #133343.
+- **PR #133483** [perf(markdown): reuse fallback and table preparation](https://github.com/openclaw/openclaw/pull/133483)
+- **PR #117527** [fix(tts): preserve canonical voice selections through normalization](https://github.com/openclaw/openclaw/pull/117527)
+- **PR #133472** [fix: Stop waits for pending SSH workspace cleanup](https://github.com/openclaw/openclaw/pull/133472) Related #133455.
+- **PR #132798** [fix(ui): keep Inbox tabs stable across empty categories](https://github.com/openclaw/openclaw/pull/132798) Related #132795. Thanks @vyctorbrzezowski.
+- **PR #133484** [fix(voice-call): fence obsolete automatic replies](https://github.com/openclaw/openclaw/pull/133484) Related #112360. Thanks @DonShelly.
+- **PR #133417** [fix(ui): preserve explicit theme while reconnecting](https://github.com/openclaw/openclaw/pull/133417) Related #133416. Thanks @vyctorbrzezowski.
+- **PR #133460** [fix(beam): omit mixed Claude tool content and preserve snapshot state](https://github.com/openclaw/openclaw/pull/133460)
+- **PR #133492** [docs(ci): correct performance lane auth and scheduling](https://github.com/openclaw/openclaw/pull/133492)
+- **PR #133494** [fix(ui): preserve the original error when a Control UI build fails](https://github.com/openclaw/openclaw/pull/133494)
+- **PR #133469** [feat(sessions): default session tools to agent visibility](https://github.com/openclaw/openclaw/pull/133469) Related #133456.
+- **PR #133489** [fix: avoid repeated naming and regressing session startup progress](https://github.com/openclaw/openclaw/pull/133489) Related #133488.
+- **PR #133498** [fix(release): allow guarded stable Docker recovery](https://github.com/openclaw/openclaw/pull/133498)
+- **PR #133491** [perf(process): reuse capacity facts within group selection](https://github.com/openclaw/openclaw/pull/133491)
+- **PR #133439** [feat(ui): identify sending agents on forwarded messages](https://github.com/openclaw/openclaw/pull/133439)
+- **PR #133461** [fix: isolate conversation bindings and align subagent command targets](https://github.com/openclaw/openclaw/pull/133461)
+- **PR #133496** [improve: speed up legacy session transcript imports](https://github.com/openclaw/openclaw/pull/133496)
+- **PR #133443** [fix(line): pace block replies with the agent's humanDelay](https://github.com/openclaw/openclaw/pull/133443) Related #133430. Thanks @edenfunf.
+- **PR #133505** [test(docker): retain self-upgrade failure diagnostics](https://github.com/openclaw/openclaw/pull/133505)
+- **PR #133506** [fix(release): preserve frozen plugin prerelease context](https://github.com/openclaw/openclaw/pull/133506) Thanks @RomneyDa.
+- **PR #133504** [fix(docker): restore container CLI access with custom host ports](https://github.com/openclaw/openclaw/pull/133504) Related #133503.
+- **PR #133368** [fix(ci): drain plugin publication Git before trust and readback](https://github.com/openclaw/openclaw/pull/133368)
+- **PR #133509** [refactor: share ordered Claw update rollback handling](https://github.com/openclaw/openclaw/pull/133509)
+- **PR #133495** [feat(ui): add CRT terminal theme](https://github.com/openclaw/openclaw/pull/133495)
+- **PR #133519** [fix(ui): deduplicate participant and viewer avatars](https://github.com/openclaw/openclaw/pull/133519)
+- **PR #133493** [fix(talk): preserve provider conversation order in browser transcripts](https://github.com/openclaw/openclaw/pull/133493) Thanks @vmbbz.
+- **PR #133470** [fix(ui): replace startup hourglasses with capacity-aware rings](https://github.com/openclaw/openclaw/pull/133470) Related #133464.
+- **PR #133532** [test(auto-reply): prepare memory flush model capabilities](https://github.com/openclaw/openclaw/pull/133532)
+- **PR #133508** [refactor(ui): consolidate chat rendering ownership](https://github.com/openclaw/openclaw/pull/133508)
+- **PR #133518** [perf(plugins): avoid eager loader imports for active registry reads](https://github.com/openclaw/openclaw/pull/133518)
+- **PR #133364** [refactor(plugins): simplify registration lifecycle policy](https://github.com/openclaw/openclaw/pull/133364)
+- **PR #133521** [refactor(agents): simplify compaction accounting](https://github.com/openclaw/openclaw/pull/133521)
+- **PR #132895** [fix(line): offer the card command only on LINE](https://github.com/openclaw/openclaw/pull/132895) Thanks @edenfunf.
+- **PR #133512** [perf(agents): prepare only consumed tool and skill diagnostics](https://github.com/openclaw/openclaw/pull/133512)
+- **PR #133527** [perf(terminal): reuse control scans and simplify sanitization](https://github.com/openclaw/openclaw/pull/133527)
+- **PR #133221** [fix(models): recover /models browse from a replaced prepared catalog](https://github.com/openclaw/openclaw/pull/133221) Related #133166. Thanks @chelsealong and @vincentkoc and @r3n3x.
+- **PR #133533** [fix(beam): resume sharing when the mirror receiver changes](https://github.com/openclaw/openclaw/pull/133533)
+- **PR #133544** [chore(ui): refresh control ui locales](https://github.com/openclaw/openclaw/pull/133544)
+- **PR #133542** [fix: prevent duplicate queued user messages in chat clients](https://github.com/openclaw/openclaw/pull/133542)
+- **PR #133543** [fix(agents): recognize internal requester completion replies](https://github.com/openclaw/openclaw/pull/133543)
+- **PR #133548** [refactor(ui): avoid redundant presence work in avatar lists](https://github.com/openclaw/openclaw/pull/133548)
+- **PR #133547** [fix(clawdock): keep credentials out of diagnostic output](https://github.com/openclaw/openclaw/pull/133547) Related #133535.
+- **PR #133560** [fix(memory): clarify default agent scope in command help](https://github.com/openclaw/openclaw/pull/133560) Related #133559.
+- **PR #133554** [test: guard multi-project Vitest cache ownership](https://github.com/openclaw/openclaw/pull/133554)
+- **PR #133557** [docs: add draft v2026.8.1 release notes](https://github.com/openclaw/openclaw/pull/133557) Thanks @hannesrudolph.
+- **PR #133546** [improve: speed up legacy imports and transcript replacement](https://github.com/openclaw/openclaw/pull/133546)
+- **PR #133566** [test: reduce maturity fixture cleanup time](https://github.com/openclaw/openclaw/pull/133566)
+- **PR #133567** [refactor(ui): simplify chat rendering and lifecycle state](https://github.com/openclaw/openclaw/pull/133567)
+- **PR #133507** [fix(voice): discover configured provider candidates](https://github.com/openclaw/openclaw/pull/133507) Thanks @itkdm.
+- **PR #133571** [fix(browser): preserve contextless worker and iframe sessions](https://github.com/openclaw/openclaw/pull/133571) Related #133569.
+- **PR #133585** [docs: add complete v2026.8.1 maintainer change index](https://github.com/openclaw/openclaw/pull/133585) Thanks @hannesrudolph.
+- **PR #133549** [fix(package): publish readable dist inventory](https://github.com/openclaw/openclaw/pull/133549) Thanks @RomneyDa.
+- **PR #133525** [fix(release): detect optional target E2E capability](https://github.com/openclaw/openclaw/pull/133525) Thanks @RomneyDa.
+- **PR #133526** [fix(e2e): keep delete fixture target-compatible](https://github.com/openclaw/openclaw/pull/133526) Thanks @RomneyDa.
+- **PR #133476** [fix: stop cloud work before unrelated provider inspection finishes](https://github.com/openclaw/openclaw/pull/133476)
+- **PR #133581** [test: include v2026.8.1 release navigation](https://github.com/openclaw/openclaw/pull/133581) Thanks @fuller-stack-dev.
+- **PR #133552** [fix(cron): keep read RPCs from blocking the gateway](https://github.com/openclaw/openclaw/pull/133552) Related #133442. Thanks @vincentkoc and @josephbergvinson.
+- **PR #133568** [test: isolate shared /tmp session-store paths in runner and health suites](https://github.com/openclaw/openclaw/pull/133568)
+- **PR #133584** [fix(plugins): keep bundled plugins bundled when selected by plugins.load.paths](https://github.com/openclaw/openclaw/pull/133584)
+- **PR #133565** [perf: load web chat history in larger, faster batches](https://github.com/openclaw/openclaw/pull/133565)
+- **PR #133598** [perf(browser): reuse snapshot refs and screenshot metadata](https://github.com/openclaw/openclaw/pull/133598)
+- **PR #133594** [refactor(docker): retire ClawDock shell helpers](https://github.com/openclaw/openclaw/pull/133594) Related #133587.
+- **PR #133383** [fix(media): preserve Matroska extensions after byte detection](https://github.com/openclaw/openclaw/pull/133383) Thanks @ly85206559.
+- **PR #133588** [test: reduce workflow sanity fixture cleanup time](https://github.com/openclaw/openclaw/pull/133588)
+- **PR #133572** [fix: correct MCP URI schema resolution with patched fast-uri](https://github.com/openclaw/openclaw/pull/133572) Related #133558.
+- **PR #133575** [fix(ui): wait for restored draft before clearing](https://github.com/openclaw/openclaw/pull/133575) Thanks @vincentkoc.
+- **PR #133556** [fix(ui): keep branch and editor tooltips beside their buttons](https://github.com/openclaw/openclaw/pull/133556) Related #133553.
+- **PR #132830** [improve(memory-lancedb): reduce plugin startup memory](https://github.com/openclaw/openclaw/pull/132830) Thanks @jason-allen-oneal.
+- **PR #132151** [docs(line): scope the loading animation to one-to-one chats](https://github.com/openclaw/openclaw/pull/132151) Thanks @edenfunf.
+- **PR #133601** [fix(channels): include nested channel diagnostics in logs](https://github.com/openclaw/openclaw/pull/133601) Related #133600.
+- **PR #133589** [fix(release): preserve waiver context when reusing validation](https://github.com/openclaw/openclaw/pull/133589)
+- **PR #133580** [fix(sandbox): preserve file data and 308 redirects on Python 3.9](https://github.com/openclaw/openclaw/pull/133580) Related #133573, #133574.
+- **PR #133591** [docs: lead v2026.8.1 notes with install and downgrade guidance](https://github.com/openclaw/openclaw/pull/133591) Thanks @hannesrudolph.
+- **PR #132918** [fix(line): apply a group's wildcard defaults to its own entry](https://github.com/openclaw/openclaw/pull/132918) Thanks @edenfunf.
+- **PR #132366** [fix: avoid malformed Unicode at runtime text limits](https://github.com/openclaw/openclaw/pull/132366) Thanks @ly85206559.
+- **PR #133386** [fix(media): transcode byte-detected ASF audio](https://github.com/openclaw/openclaw/pull/133386) Thanks @ly85206559.
+- **PR #133570** [test: consolidate model and plugin metadata fixtures](https://github.com/openclaw/openclaw/pull/133570)
+- **PR #133578** [fix: clear stale binding owners and restore global subagent status](https://github.com/openclaw/openclaw/pull/133578)
+- **PR #128151** [docs(channels): document per-account channels.start/stop recovery and selfChatMode](https://github.com/openclaw/openclaw/pull/128151) Related #127954. Thanks @LiuwqGit and @markswitch83.
+- **PR #132170** [fix(imap): keep email prompt truncation code-point-safe](https://github.com/openclaw/openclaw/pull/132170) Thanks @harjothkhara.
+- **PR #133595** [fix: gateway stop fails with a newer state schema](https://github.com/openclaw/openclaw/pull/133595) Thanks @RomneyDa.
+- **PR #133607** [perf(terminal): prepare table home formatting and flex growth](https://github.com/openclaw/openclaw/pull/133607)
+- **PR #133579** [perf: separate static provider catalogs from live discovery](https://github.com/openclaw/openclaw/pull/133579)
+- **PR #133610** [fix(media): quoted file charsets corrupt extracted text](https://github.com/openclaw/openclaw/pull/133610) Related #133608.
+- **PR #132641** [fix(cli): reject explicit empty nodes RPC --timeout instead of defaulting](https://github.com/openclaw/openclaw/pull/132641) Thanks @xydt-juyaohui.
+- **PR #133342** [fix(ui): remove duplicate emoji from error alerts](https://github.com/openclaw/openclaw/pull/133342) Related #133341. Thanks @vyctorbrzezowski.
+- **PR #133611** [improve: reduce legacy transcript scanning overhead](https://github.com/openclaw/openclaw/pull/133611)
+- **PR #133477** [perf(gateway): reuse prepared facts across control-plane reads](https://github.com/openclaw/openclaw/pull/133477)
+- **PR #133620** [docs: link v2026.8.1 release story](https://github.com/openclaw/openclaw/pull/133620) Thanks @hannesrudolph.
+- **PR #133609** [perf(test): prepare source Gateway runtimes before live shards](https://github.com/openclaw/openclaw/pull/133609)
+- **PR #133615** [fix(tts): keep internal reasoning out of spoken summaries](https://github.com/openclaw/openclaw/pull/133615) Related #90364. Thanks @camball-strategies.
+- **PR #133457** [fix: retain accepted browser follow-ups across restarts](https://github.com/openclaw/openclaw/pull/133457)
+- **PR #133605** [fix: keep run output token counts cumulative and recoverable](https://github.com/openclaw/openclaw/pull/133605) Related #133562.
+- **PR #128379** [feat(browser): standalone extension relay daemon with native-host wake-up](https://github.com/openclaw/openclaw/pull/128379)
+- **PR #133614** [fix(browser): prefer CDP for managed role snapshots](https://github.com/openclaw/openclaw/pull/133614) Related #133514. Thanks @vincentkoc and @josephbergvinson.
+- **PR #133604** [refactor(config): avoid evaluating type-only configuration modules](https://github.com/openclaw/openclaw/pull/133604)
+- **PR #133613** [fix(talk): honor advertised transcription model selections](https://github.com/openclaw/openclaw/pull/133613) Thanks @lsr911.
+- **PR #133523** [fix(release): resolve frozen candidate entrypoints](https://github.com/openclaw/openclaw/pull/133523) Thanks @RomneyDa.
+- **PR #133524** [fix(release): seal frozen candidate package metadata](https://github.com/openclaw/openclaw/pull/133524) Thanks @RomneyDa.
+- **PR #133192** [fix(subagents): atomically persist blocked completion alerts](https://github.com/openclaw/openclaw/pull/133192) Related #133058. Thanks @shojikumaru and @vincentkoc and @potterdigital.
+- **PR #133626** [chore(autoreview): sync reviewer-led credential checks](https://github.com/openclaw/openclaw/pull/133626) Thanks @Patrick-Erichsen.
+- **PR #133627** [perf(state): streamline SQLite schema comparison](https://github.com/openclaw/openclaw/pull/133627)
+- **PR #133639** [chore(ui): refresh control ui locales](https://github.com/openclaw/openclaw/pull/133639)
+- **PR #133490** [feat(ui): organize session menus and combine appearance controls](https://github.com/openclaw/openclaw/pull/133490) Related #133480.
+- **PR #133634** [perf(test): shorten escaped-output timeout grace](https://github.com/openclaw/openclaw/pull/133634)
+- **PR #133635** [perf: speed up chat history preparation](https://github.com/openclaw/openclaw/pull/133635)
+- **PR #133638** [feat(ui): add a preference to hide empty session groups](https://github.com/openclaw/openclaw/pull/133638) Related #133629.
+- **PR #133502** [fix(config): avoid repeated health-state startup warnings](https://github.com/openclaw/openclaw/pull/133502) Thanks @RomneyDa.
+- **PR #133640** [docs: guide routine Gateway updates through their installation owner](https://github.com/openclaw/openclaw/pull/133640)
+- **PR #133631** [fix(test): retire repository test APIs after non-isolated files](https://github.com/openclaw/openclaw/pull/133631) Related #133630.
+- **PR #133656** [test(plugins): drive plugin tool registry reuse through the real seam](https://github.com/openclaw/openclaw/pull/133656)
+- **PR #133622** [fix(update): show reliable progress and final outcomes](https://github.com/openclaw/openclaw/pull/133622)
+- **PR #133643** [improve(ui): tuck Setup preferences into Advanced settings](https://github.com/openclaw/openclaw/pull/133643)
+- **PR #133641** [improve: speed up legacy session transcript imports](https://github.com/openclaw/openclaw/pull/133641)
+- **PR #130207** [fix(docs): respect nested fenced code boundaries](https://github.com/openclaw/openclaw/pull/130207) Thanks @qingminglong.
+- **PR #133652** [test: assert release navigation shape instead of pinned versions](https://github.com/openclaw/openclaw/pull/133652)
+- **PR #133657** [improve(ui): capitalize permission mode names](https://github.com/openclaw/openclaw/pull/133657)
+- **PR #133655** [fix(node-host): report container hosting startup failures in the native worker](https://github.com/openclaw/openclaw/pull/133655) Related #133654.
+- **PR #133663** [fix: identify cloud worker bootstrap failures](https://github.com/openclaw/openclaw/pull/133663)
+- **PR #133659** [perf(logging): reuse prepared diagnostic facts](https://github.com/openclaw/openclaw/pull/133659)
+- **PR #133516** [improve: quiet Discord and Slack progress](https://github.com/openclaw/openclaw/pull/133516) Related #133479.
+- **PR #133551** [fix: prevent cloud session lifecycle actions from hanging behind worker moves](https://github.com/openclaw/openclaw/pull/133551)
+- **PR #132998** [fix(infra): preserve block boundaries for attributed p and div tags](https://github.com/openclaw/openclaw/pull/132998) Related #132969. Thanks @pengzh1 and @yifanxiong272.
+- **PR #133665** [docs: link v2026.8.1 release notes to feature guides](https://github.com/openclaw/openclaw/pull/133665) Thanks @hannesrudolph.
+- **PR #133624** [fix(scripts): preserve protected GitHub CLI routing](https://github.com/openclaw/openclaw/pull/133624)
+- **PR #133670** [perf(test): trim fixture subprocess overhead](https://github.com/openclaw/openclaw/pull/133670)
+- **PR #133672** [chore(ui): refresh control ui locales](https://github.com/openclaw/openclaw/pull/133672)
+- **PR #133667** [fix(xai): distinguish missing answer text from malformed JSON](https://github.com/openclaw/openclaw/pull/133667)
+- **PR #133671** [fix(config): refresh stale docs baseline for merged settings](https://github.com/openclaw/openclaw/pull/133671)
+- **PR #127147** [fix: preserve binding ownership and task visibility](https://github.com/openclaw/openclaw/pull/127147) Related #127141.
+- **PR #133664** [fix(ui): keep non-Git agent workspaces usable for new sessions](https://github.com/openclaw/openclaw/pull/133664)
+- **PR #133668** [fix(sessions): keep failed deletions in cleanup accounting](https://github.com/openclaw/openclaw/pull/133668)
+- **PR #133447** [feat(workers): snapshot prepared projects before session enrollment](https://github.com/openclaw/openclaw/pull/133447) Related #133436, #133450.
+- **PR #133666** [test: validate upgrades from latest stable](https://github.com/openclaw/openclaw/pull/133666)
+- **PR #133669** [refactor(ui): consolidate forwarded message presentation](https://github.com/openclaw/openclaw/pull/133669)
+- **PR #133680** [perf: load retained chat history faster](https://github.com/openclaw/openclaw/pull/133680)
+- **PR #132407** [fix: apply workspace permission changes to active runs](https://github.com/openclaw/openclaw/pull/132407) Related #131947. Thanks @jalehman.
+- **PR #133675** [fix(release): consume verified historical release evidence](https://github.com/openclaw/openclaw/pull/133675)
+- **PR #133691** [perf(sessions): reuse opaque-key matchers and pruning cursors](https://github.com/openclaw/openclaw/pull/133691)
+- **PR #133673** [refactor: use canonical installed-plugin index in post-upgrade doctor](https://github.com/openclaw/openclaw/pull/133673)
+- **PR #133689** [improve: reduce CPU overhead during session imports](https://github.com/openclaw/openclaw/pull/133689)
+- **PR #132773** [fix(ui): preserve typing on new session page](https://github.com/openclaw/openclaw/pull/132773) Related #132783. Thanks @vyctorbrzezowski.
+- **PR #133684** [fix(cli): recover invalidated control-only resumes](https://github.com/openclaw/openclaw/pull/133684) Related #133475. Thanks @vincentkoc and @jakestenger.
+- **PR #130258** [docs: document node install --no-tls option](https://github.com/openclaw/openclaw/pull/130258) Thanks @qingminglong.
+- **PR #133696** [test: simplify runner fixtures and cover in-flight mock registration](https://github.com/openclaw/openclaw/pull/133696)
+- **PR #133683** [fix(gateway): reduce control-plane stalls during concurrent turns](https://github.com/openclaw/openclaw/pull/133683)
+- **PR #133708** [chore(ui): refresh control ui locales](https://github.com/openclaw/openclaw/pull/133708)
+- **PR #133712** [test(line): remove redundant adapter and webhook checks](https://github.com/openclaw/openclaw/pull/133712)
+- **PR #133697** [fix(sessions): count successful zero-byte artifact deletions](https://github.com/openclaw/openclaw/pull/133697) Related #133681.
+- **PR #133706** [refactor(browser): simplify relay lifecycle helpers](https://github.com/openclaw/openclaw/pull/133706)
+- **PR #133688** [fix: dependency audits miss published upstream advisories](https://github.com/openclaw/openclaw/pull/133688) Related #133685.
+- **PR #133698** [refactor(cli): make update help and planning faster](https://github.com/openclaw/openclaw/pull/133698)
+- **PR #133710** [perf(normalization): reuse schema branches and JSON traversal state](https://github.com/openclaw/openclaw/pull/133710)
+- **PR #133705** [refactor(ui): simplify workspace discovery and preference restoration](https://github.com/openclaw/openclaw/pull/133705)
+- **PR #133713** [refactor(ui): unify working indicator status rendering](https://github.com/openclaw/openclaw/pull/133713)
+- **PR #133586** [fix: retain debug capture headers from Undici requests](https://github.com/openclaw/openclaw/pull/133586)
+- **PR #133718** [fix(ui): keep submenu parent rows highlighted](https://github.com/openclaw/openclaw/pull/133718) Related #133711.
+- **PR #133714** [refactor: simplify quiet channel progress rendering](https://github.com/openclaw/openclaw/pull/133714)
+- **PR #133707** [fix(apple): stop JSON numbers becoming booleans](https://github.com/openclaw/openclaw/pull/133707) Related #133704.
+- **PR #122632** [docs(cli): complete config and backup command tree](https://github.com/openclaw/openclaw/pull/122632) Thanks @Adkid-Zephyr.
+- **PR #131684** [docs: document node installed-app sharing flags](https://github.com/openclaw/openclaw/pull/131684) Thanks @qingminglong.
+- **PR #133726** [improve: speed up managed worktree test fixtures](https://github.com/openclaw/openclaw/pull/133726)
+- **PR #133582** [fix(commands): ignore missing SecretRef passEnv values](https://github.com/openclaw/openclaw/pull/133582) Related #133561. Thanks @pengzh1 and @vincentkoc and @jodok.
+- **PR #132738** [fix(agents): deprioritize inter-session turns](https://github.com/openclaw/openclaw/pull/132738) Related #70634. Thanks @sylvesterkaczmarek and @obviyus and @ewrurwteurwU.
+- **PR #133701** [test: consolidate CJK estimator coverage at its owner](https://github.com/openclaw/openclaw/pull/133701)
+- **PR #133717** [test: require complete non-isolated runner evidence](https://github.com/openclaw/openclaw/pull/133717)
+- **PR #123737** [fix(compaction): reject summaries foregrounding superseded tasks](https://github.com/openclaw/openclaw/pull/123737) Related #123668. Thanks @wangyan2026 and @obviyus and @andersonjeccel.
+- **PR #133737** [test: consolidate token formatting coverage at its owner](https://github.com/openclaw/openclaw/pull/133737)
+- **PR #133725** [improve: prepare the first cloud-session runtime archive faster](https://github.com/openclaw/openclaw/pull/133725)
+- **PR #133623** [docs: remove v2026.8.1 draft warning](https://github.com/openclaw/openclaw/pull/133623) Thanks @hannesrudolph.
+- **PR #133741** [test(qa): remove duplicate summary file-reader checks](https://github.com/openclaw/openclaw/pull/133741)
+- **PR #133745** [test: remove redundant plugin construction and stream smoke checks](https://github.com/openclaw/openclaw/pull/133745)
+- **PR #133361** [fix(cli): reject partial approval grant limits](https://github.com/openclaw/openclaw/pull/133361) Thanks @qingminglong.
+- **PR #133739** [fix(macos): redact values marked private in app logs](https://github.com/openclaw/openclaw/pull/133739) Related #133736.
+- **PR #133742** [improve: speed up session imports with less code](https://github.com/openclaw/openclaw/pull/133742)
+- **PR #133748** [test(agents): remove duplicate apply-patch byte-preservation cases](https://github.com/openclaw/openclaw/pull/133748)
+- **PR #133682** [fix(ui): center the working claw in chat layout](https://github.com/openclaw/openclaw/pull/133682) Thanks @Patrick-Erichsen.
+- **PR #133734** [improve: load 800 chat messages with less layout work](https://github.com/openclaw/openclaw/pull/133734)
+- **PR #133593** [feat(ui): add Manuscript, Rosé, and Miami themes](https://github.com/openclaw/openclaw/pull/133593)
+- **PR #133732** [perf(tooling): simplify guard preparation and bound alias copies](https://github.com/openclaw/openclaw/pull/133732)
+- **PR #133746** [refactor: test conflict markers through the real scanner](https://github.com/openclaw/openclaw/pull/133746)
+- **PR #133744** [fix(ui): preserve worktree base branch across reconnects](https://github.com/openclaw/openclaw/pull/133744)
+- **PR #133756** [test(macos): remove reintroduced onboarding subset checks](https://github.com/openclaw/openclaw/pull/133756)
+- **PR #132853** [fix(update): fail closed when gateway service state is unknown](https://github.com/openclaw/openclaw/pull/132853) Thanks @jason-allen-oneal and @obviyus.
+- **PR #133754** [refactor(meetings): share command argv splitting](https://github.com/openclaw/openclaw/pull/133754) Thanks @vincentkoc.
+- **PR #133764** [docs: link latest release notes from changelog](https://github.com/openclaw/openclaw/pull/133764) Thanks @hannesrudolph.
+- **PR #133761** [chore(ui): refresh control ui locales](https://github.com/openclaw/openclaw/pull/133761)
+- **PR #133762** [test(ui): remove redundant title and working-phrase renders](https://github.com/openclaw/openclaw/pull/133762)
+- **PR #133628** [fix(ui): preserve offline drafts and resume canceled queue edits](https://github.com/openclaw/openclaw/pull/133628) Related #133555, #133603.
+- **PR #133759** [test: remove identical core fixture replays](https://github.com/openclaw/openclaw/pull/133759)
+- **PR #133753** [fix: reduce memory spikes when preparing long session histories](https://github.com/openclaw/openclaw/pull/133753) Related #133738.
+- **PR #133740** [fix(macos): unblock builds with custom SwiftPM scratch paths](https://github.com/openclaw/openclaw/pull/133740)
+- **PR #133765** [refactor(xai): remove unused web-search credential test seam](https://github.com/openclaw/openclaw/pull/133765)
+- **PR #133722** [docs: retire redundant guides and fix gateway package instructions](https://github.com/openclaw/openclaw/pull/133722)
+- **PR #133646** [chore(cron): remove duplicate Shanghai schedule assertion](https://github.com/openclaw/openclaw/pull/133646) Thanks @RomneyDa.
+- **PR #133645** [chore(test): remove docs spellcheck source mirror](https://github.com/openclaw/openclaw/pull/133645) Thanks @RomneyDa.
+- **PR #133644** [chore(parallel): remove duplicate session ID test seam](https://github.com/openclaw/openclaw/pull/133644) Thanks @RomneyDa.
+- **PR #132903** [improve(tasks): bound task list page selection](https://github.com/openclaw/openclaw/pull/132903) Thanks @jason-allen-oneal and @obviyus.
+- **PR #123416** [fix(plugins): preserve bundled provider compat across allowlists](https://github.com/openclaw/openclaw/pull/123416) Related #123297. Thanks @lonexreb and @obviyus and @bradenmcleish.
+- **PR #133774** [test: release wizard progress fixture listeners](https://github.com/openclaw/openclaw/pull/133774)
+- **PR #133790** [docs: publish 2026.8.1 release notes and macOS update feed](https://github.com/openclaw/openclaw/pull/133790)
+- **PR #133770** [test: remove repeated agent transport and recovery fixtures](https://github.com/openclaw/openclaw/pull/133770)
+- **PR #130370** [fix(system-agent): normalize route-neutral roster entries](https://github.com/openclaw/openclaw/pull/130370) Thanks @RomneyDa.
+- **PR #133324** [fix(tts): deliver tool audio in private reply mode](https://github.com/openclaw/openclaw/pull/133324) Related #83636. Thanks @obviyus and @TurboTheTurtle and @clawSean and @Conan-Scott.
+- **PR #133771** [test(cli): keep parser coverage without formatter self-comparison](https://github.com/openclaw/openclaw/pull/133771)
+- **PR #132716** [feat(test): compile subprocesses once per invocation](https://github.com/openclaw/openclaw/pull/132716)
+- **PR #133787** [fix(ci): deduplicate Control UI skeleton styles](https://github.com/openclaw/openclaw/pull/133787) Thanks @fuller-stack-dev.
+- **PR #133499** [fix(imessage): keep replies in the current conversation](https://github.com/openclaw/openclaw/pull/133499) Related #133468. Thanks @omarshahine.
+- **PR #133760** [test: isolate fs-safe default mode fixtures](https://github.com/openclaw/openclaw/pull/133760)
+- **PR #133769** [test: avoid duplicate fs-safe boundary scans](https://github.com/openclaw/openclaw/pull/133769)
+- **PR #133796** [fix(ui): restore attachment stylesheet build budget](https://github.com/openclaw/openclaw/pull/133796)
+- **PR #133678** [refactor(context-engine): simplify compaction and turn handoffs](https://github.com/openclaw/openclaw/pull/133678)
+- **PR #133715** [fix: preserve agent ownership across global sessions and bindings](https://github.com/openclaw/openclaw/pull/133715)
+- **PR #133779** [test: consolidate audio contract fixtures](https://github.com/openclaw/openclaw/pull/133779)
+- **PR #133807** [docs: link the verified 2026.8.1 Mac DMG](https://github.com/openclaw/openclaw/pull/133807)
+- **PR #133801** [perf(update): reduce preflight work and unattended prompts](https://github.com/openclaw/openclaw/pull/133801)
+- **PR #131669** [fix(workers): honor session tool policies on cloud sessions](https://github.com/openclaw/openclaw/pull/131669) Related #131661. Thanks @anyech and @sallyom.
+- **PR #132083** [fix(line): name the inline emoji LINE leaves as bare parentheses](https://github.com/openclaw/openclaw/pull/132083) Related #132082. Thanks @edenfunf.
+- **PR #133520** [fix(agent): always reply after settled tool work](https://github.com/openclaw/openclaw/pull/133520) Thanks @fuller-stack-dev.
+- **PR #132628** [fix(line): do not introduce the bot in a room it may not act in](https://github.com/openclaw/openclaw/pull/132628) Thanks @edenfunf.
+- **PR #133798** [improve: load and scroll chat history with less repeated work](https://github.com/openclaw/openclaw/pull/133798)
+- **PR #123448** [fix(memory-wiki): reject unknown wiki_apply ops instead of falling back to update_metadata](https://github.com/openclaw/openclaw/pull/123448) Thanks @wanyongstar.
+- **PR #133304** [fix(cli): skip the startup config guard for plugin authoring commands](https://github.com/openclaw/openclaw/pull/133304) Related #133303. Thanks @ruel225.
+- **PR #133791** [fix(ui): keep rewind confirmation controls accessible](https://github.com/openclaw/openclaw/pull/133791)
+- **PR #124688** [docs(docker): warn against single-file binding openclaw.json](https://github.com/openclaw/openclaw/pull/124688) Thanks @ericcaiwx-star and @cursoragent.
+- **PR #125184** [fix(outbound): skip code-span placeholders consumed by tag stripping](https://github.com/openclaw/openclaw/pull/125184) Thanks @wanyongstar.
+- **PR #133809** [fix(update): keep persisted and printed completion durations consistent](https://github.com/openclaw/openclaw/pull/133809)
+- **PR #130280** [refactor(infra): share error cause reader](https://github.com/openclaw/openclaw/pull/130280) Thanks @vincentkoc.
+- **PR #133674** [fix(media): omit English prompts during audio language autodetection](https://github.com/openclaw/openclaw/pull/133674) Related #123305. Thanks @synthalorian and @aleps001.
+- **PR #133794** [test: simplify WhatsApp formatting oracles](https://github.com/openclaw/openclaw/pull/133794)
+- **PR #133616** [perf(qa): run isolated live transports with bounded concurrency](https://github.com/openclaw/openclaw/pull/133616)
+- **PR #133812** [perf(ci): stripe the tallest node test group across three jobs](https://github.com/openclaw/openclaw/pull/133812)
+- **PR #133817** [fix(ui): reload projects after startup identity resolves](https://github.com/openclaw/openclaw/pull/133817)
+- **PR #133818** [docs: correct session migration and discovery guidance](https://github.com/openclaw/openclaw/pull/133818)
+- **PR #133826** [test(ui): remove duplicate catalog display assertions](https://github.com/openclaw/openclaw/pull/133826)
+- **PR #133831** [docs: correct SQLite downgrade restore guidance](https://github.com/openclaw/openclaw/pull/133831)
+- **PR #133821** [test(qa): join fixture owners before removing resources](https://github.com/openclaw/openclaw/pull/133821)
+- **PR #133830** [test(ai): avoid runtime barrel in environment key tests](https://github.com/openclaw/openclaw/pull/133830)
+- **PR #133804** [docs(session): document the fixed main-session key](https://github.com/openclaw/openclaw/pull/133804)
+- **PR #133763** [perf(plugins): prepare doctor owners without obsolete setup imports](https://github.com/openclaw/openclaw/pull/133763)
+- **PR #133530** [fix(cli): distinguish Gateway service prompts from CLI installation](https://github.com/openclaw/openclaw/pull/133530) Thanks @RomneyDa.
+- **PR #118282** [fix(doctor): import historical exec approval metadata](https://github.com/openclaw/openclaw/pull/118282) Related #118242. Thanks @obviyus and @sercada.
+- **PR #133822** [perf: shrink cloud bootstrap archives and memory use](https://github.com/openclaw/openclaw/pull/133822)
+- **PR #123245** [fix(minimax): report malformed speech responses clearly](https://github.com/openclaw/openclaw/pull/123245) Thanks @coaiMax.
+- **PR #133833** [test(ci): streamline Docker pull retry fixtures](https://github.com/openclaw/openclaw/pull/133833)
+- **PR #133766** [fix(docs): document nodes invoke transport timeout](https://github.com/openclaw/openclaw/pull/133766) Thanks @qingminglong.
+- **PR #133834** [test(tooling): batch conflict marker fixtures](https://github.com/openclaw/openclaw/pull/133834)
+- **PR #133824** [test: remove redundant fixture and helper probes](https://github.com/openclaw/openclaw/pull/133824)
+- **PR #133835** [test(docs): batch docs list CLI fixtures](https://github.com/openclaw/openclaw/pull/133835)
+- **PR #117199** [fix(plugins): load packaged TypeScript plugins consistently](https://github.com/openclaw/openclaw/pull/117199)
+- **PR #133838** [test(tooling): inspect formatter failure once](https://github.com/openclaw/openclaw/pull/133838)
+- **PR #133851** [docs: identify v2026.8.1 release notes link](https://github.com/openclaw/openclaw/pull/133851) Thanks @hannesrudolph.
+- **PR #133839** [test(retry): unify Retry-After coverage at scheduler owner](https://github.com/openclaw/openclaw/pull/133839)
+- **PR #133832** [fix(pr): avoid drain delays from detached Git maintenance](https://github.com/openclaw/openclaw/pull/133832) Related #133825.
+- **PR #133846** [test(media): mock QR runtime at loader boundary](https://github.com/openclaw/openclaw/pull/133846)
+- **PR #133837** [refactor(agents): share trailing empty-line trimming](https://github.com/openclaw/openclaw/pull/133837) Thanks @vincentkoc.
+- **PR #133782** [improve(gateway): reduce repeated turn preparation work](https://github.com/openclaw/openclaw/pull/133782)
+- **PR #133816** [test: await QA deadline unwind without sleeps](https://github.com/openclaw/openclaw/pull/133816)
+- **PR #133842** [fix(cli): preserve triage diagnostics when the Gateway is offline](https://github.com/openclaw/openclaw/pull/133842)
+- **PR #133854** [perf(ci): balance process-heavy tooling checks](https://github.com/openclaw/openclaw/pull/133854)
+- **PR #133866** [test(signal): drive control-lane clocks deterministically](https://github.com/openclaw/openclaw/pull/133866)
+- **PR #133853** [test(plugins): advance lifecycle lease contention virtually](https://github.com/openclaw/openclaw/pull/133853)
+- **PR #133872** [test(feishu): prove concurrent sends without wall-clock waits](https://github.com/openclaw/openclaw/pull/133872)
+- **PR #133869** [fix(install): repair set-npm-prefix rc line and surface silent finalization failures](https://github.com/openclaw/openclaw/pull/133869)
+- **PR #133857** [fix(ui): re-accent CRT as the monochrome white console](https://github.com/openclaw/openclaw/pull/133857)
+- **PR #133661** [fix(cron): preserve complete JSON when run output is piped](https://github.com/openclaw/openclaw/pull/133661)
+- **PR #133865** [perf(ci): balance release verification work and trim runtime builds](https://github.com/openclaw/openclaw/pull/133865)
+- **PR #133859** [test(gateway): exercise authorized exec suppression](https://github.com/openclaw/openclaw/pull/133859)
+- **PR #133695** [fix(models): refresh native pricing without pinning defaults](https://github.com/openclaw/openclaw/pull/133695)
+- **PR #133751** [refactor(ui): retire grandfathered oversized chat modules](https://github.com/openclaw/openclaw/pull/133751)
+- **PR #133873** [perf(gateway): batch bounded operator request starts](https://github.com/openclaw/openclaw/pull/133873)
+- **PR #124293** [fix(infra): unify Windows process identity reads \[AI-assisted\]](https://github.com/openclaw/openclaw/pull/124293) Thanks @Chinmayrawat15 and @obviyus.
+- **PR #133870** [improve: load Control UI history with less blocking](https://github.com/openclaw/openclaw/pull/133870)
+- **PR #133874** [test(ui): consolidate duplicate owner coverage](https://github.com/openclaw/openclaw/pull/133874)
+- **PR #133887** [refactor(infra): share Git commit prefix matching](https://github.com/openclaw/openclaw/pull/133887) Thanks @vincentkoc.
+- **PR #133840** [perf(queue): prepare snapshots and bounded diagnostic pruning](https://github.com/openclaw/openclaw/pull/133840)
+- **PR #133536** [fix(ui): restore text selection and simplify GitHub code copying](https://github.com/openclaw/openclaw/pull/133536) Related #131201. Thanks @RomneyDa and @Grynn.
+- **PR #133875** [test: consolidate IRC socket fixture lifetimes](https://github.com/openclaw/openclaw/pull/133875)
+- **PR #133863** [perf(ci): use runtime build for browser extension proof](https://github.com/openclaw/openclaw/pull/133863)
+- **PR #133337** [fix(plugins): normalize file URLs for native require](https://github.com/openclaw/openclaw/pull/133337) Related #133306. Thanks @sunlit-deng and @easyteacher.
+- **PR #133861** [fix: prevent duplicate initial prompts during workspace preparation](https://github.com/openclaw/openclaw/pull/133861) Related #133719.
+- **PR #133867** [fix(ci): honor measured durations for split test groups](https://github.com/openclaw/openclaw/pull/133867)
+- **PR #133811** [fix(voice-call): prevent phantom calls from late callbacks](https://github.com/openclaw/openclaw/pull/133811) Thanks @ruel225.
+- **PR #133802** [improve: speed up session projection indexing with less code](https://github.com/openclaw/openclaw/pull/133802)
+- **PR #133876** [test: simplify plugin slot selection oracles](https://github.com/openclaw/openclaw/pull/133876)
+- **PR #133919** [perf(imessage): prepare code marker offset shifts once](https://github.com/openclaw/openclaw/pull/133919)
+- **PR #133768** [test: exercise tooling owners instead of private facades](https://github.com/openclaw/openclaw/pull/133768)
+- **PR #133858** [fix(cron): preserve valid jobs during SQLite migration](https://github.com/openclaw/openclaw/pull/133858) Related #133347. Thanks @fuller-stack-dev and @ejc3.
+- **PR #133619** [fix(line): let the configured policy turn off quote-as-mention](https://github.com/openclaw/openclaw/pull/133619) Related #133618. Thanks @edenfunf.
+- **PR #133841** [refactor(cli): consolidate precomputed help caching](https://github.com/openclaw/openclaw/pull/133841)
+- **PR #133916** [docs: clarify Swarm progress across chat clients](https://github.com/openclaw/openclaw/pull/133916)
+- **PR #133903** [perf(gateway): reuse owned history snapshots](https://github.com/openclaw/openclaw/pull/133903)
+- **PR #133781** [fix(cli): reject blank channels capabilities --timeout instead of defaulting](https://github.com/openclaw/openclaw/pull/133781) Thanks @marmar9615-cloud.
+- **PR #133777** [fix: preserve escaped Code Mode output prefixes](https://github.com/openclaw/openclaw/pull/133777) Related #133776.
+- **PR #127524** [docs: clarify ${VAR} substitution doesn't reach .env file values](https://github.com/openclaw/openclaw/pull/127524) Thanks @dkling-it.
+- **PR #133949** [fix(ui): prevent blank splash proof captures](https://github.com/openclaw/openclaw/pull/133949)
+- **PR #133948** [fix(doctor): preserve QQBot multi-account configuration](https://github.com/openclaw/openclaw/pull/133948) Related #133899. Thanks @obviyus and @yubingjiaocn.
+- **PR #132626** [fix(logging): preserve newly written stability bundles](https://github.com/openclaw/openclaw/pull/132626) Related #127418. Thanks @Alix-007.
+- **PR #133927** [refactor(plugins): share LLM completion error construction](https://github.com/openclaw/openclaw/pull/133927) Thanks @vincentkoc.
+- **PR #133943** [test(feishu): consolidate retry policy coverage](https://github.com/openclaw/openclaw/pull/133943)
+- **PR #129475** [fix(postinstall): avoid registry state migration](https://github.com/openclaw/openclaw/pull/129475) Related #128782. Thanks @BryanTegomoh and @obviyus and @BillVerhelle.
+- **PR #133773** [fix(doctor): allow legacy exec approvals migration](https://github.com/openclaw/openclaw/pull/133773) Thanks @dailytrap and @obviyus.
+- **PR #124286** [\[AI-assisted\] docs(android): clarify fork/source builds need own signing identity](https://github.com/openclaw/openclaw/pull/124286) Related #119609. Thanks @santhiprakash and @minoosara5426-prog.
+- **PR #133877** [test: restore inherited logging environment](https://github.com/openclaw/openclaw/pull/133877)
+- **PR #133431** [fix(cli): fail unhealthy plugin doctor checks](https://github.com/openclaw/openclaw/pull/133431) Related #133388. Thanks @PollyBot13 and @obviyus.
+- **PR #124415** [fix(plugins): keep official plugins aligned with targeted beta updates](https://github.com/openclaw/openclaw/pull/124415) Related #97680. Thanks @synthalorian and @chac4l.
+- **PR #133395** [fix(canvas): preserve Windows pnpm shim arguments](https://github.com/openclaw/openclaw/pull/133395) Thanks @ly85206559.
+- **PR #133945** [fix(docs): rerun failing validation after translation repair](https://github.com/openclaw/openclaw/pull/133945)
+- **PR #133973** [fix(channels): explain skipped account recovery starts](https://github.com/openclaw/openclaw/pull/133973) Related #133954.
+- **PR #133878** [test: consolidate Slack thread-root predicate cases](https://github.com/openclaw/openclaw/pull/133878)
+- **PR #133942** [test(ui): classify workspace icon fetch failures](https://github.com/openclaw/openclaw/pull/133942)
+- **PR #133915** [refactor(media): simplify image helper tests](https://github.com/openclaw/openclaw/pull/133915)
+- **PR #133964** [fix(doctor): stop warning for nested Git workspaces](https://github.com/openclaw/openclaw/pull/133964) Related #133923. Thanks @obviyus and @jeffsteinbok-openclaw.
+- **PR #133986** [refactor(core): share UTF-16 ellipsis truncation](https://github.com/openclaw/openclaw/pull/133986) Thanks @vincentkoc.
+- **PR #133879** [test: drain subsystem log writes before cleanup](https://github.com/openclaw/openclaw/pull/133879)
+- **PR #128250** [fix(doctor): preserve explicit npm pin during stale runtime repair](https://github.com/openclaw/openclaw/pull/128250) Related #123616. Thanks @SunnyShu0925 and @obviyus and @sblindt.
+- **PR #133993** [test(scripts): share approved package patch fixtures](https://github.com/openclaw/openclaw/pull/133993)
+- **PR #133880** [test: simplify Gradium request fixtures](https://github.com/openclaw/openclaw/pull/133880)
+- **PR #133913** [feat(scripts): materialize the scripts/pr trust anchor for mismatched worktrees](https://github.com/openclaw/openclaw/pull/133913)
+- **PR #133908** [fix(update): complete package lifecycle outside dist inventory](https://github.com/openclaw/openclaw/pull/133908) Thanks @obviyus.
+- **PR #133917** [test: simplify bound-account routing fixtures](https://github.com/openclaw/openclaw/pull/133917)
+- **PR #134013** [test: await bounded concurrency task starts directly](https://github.com/openclaw/openclaw/pull/134013)
+- **PR #133970** [perf(agents): reuse loaded provider hooks during error handling](https://github.com/openclaw/openclaw/pull/133970)
+- **PR #133976** [fix(node): fence cancelled worker bundle installation](https://github.com/openclaw/openclaw/pull/133976)
+- **PR #134011** [refactor(sessions): share session entry admission](https://github.com/openclaw/openclaw/pull/134011) Thanks @vincentkoc.
+- **PR #133979** [fix(reply): report failures after a turn is accepted](https://github.com/openclaw/openclaw/pull/133979) Related #133960.
+- **PR #133975** [test(searxng): remove an unused normalization test exposure](https://github.com/openclaw/openclaw/pull/133975)
+- **PR #133729** [fix(completion): preserve Windows PowerShell profile encoding](https://github.com/openclaw/openclaw/pull/133729) Thanks @ly85206559.
+- **PR #133788** [fix(agents): honor per-agent toolProgressDetail overrides](https://github.com/openclaw/openclaw/pull/133788) Thanks @marmar9615-cloud.
+- **PR #133989** [fix(gateway): require protocol evidence for readiness](https://github.com/openclaw/openclaw/pull/133989) Related #133953.
+- **PR #133944** [test: simplify cron delivery planning fixtures](https://github.com/openclaw/openclaw/pull/133944)
+- **PR #133983** [fix(cli): resolve agent ownership only where setup needs it](https://github.com/openclaw/openclaw/pull/133983) Related #133959.
+- **PR #133965** [fix(ui): release evicted chat transcript payloads](https://github.com/openclaw/openclaw/pull/133965) Related #133939.
+- **PR #134019** [test(whatsapp): exercise real outbound target policy](https://github.com/openclaw/openclaw/pull/134019)
+- **PR #129145** [fix: every agent attempt re-hashes unchanged tool descriptions because the report digest cache can never hit](https://github.com/openclaw/openclaw/pull/129145) Related #129116. Thanks @quangtran88.
+- **PR #134030** [fix(anthropic): preserve native auth with stored API keys](https://github.com/openclaw/openclaw/pull/134030) Related #134004. Thanks @obviyus and @rayseling.
+- **PR #133815** [fix(agents): preserve literal @-prefixed session paths](https://github.com/openclaw/openclaw/pull/133815) Thanks @qingminglong.
+- **PR #133961** [test: share daemon inspection fixture cleanup](https://github.com/openclaw/openclaw/pull/133961)
+- **PR #133982** [fix(workspace): verify migration readiness before accepting work](https://github.com/openclaw/openclaw/pull/133982) Related #133951.
+- **PR #133444** [fix(doctor): preserve disabled shared heartbeat owners](https://github.com/openclaw/openclaw/pull/133444) Related #133389. Thanks @PollyBot13 and @obviyus.
+- **PR #133968** [fix(tts): honor delivered audio when finalizing turns](https://github.com/openclaw/openclaw/pull/133968)
+- **PR #134023** [test(release): assert current wizard admission contract](https://github.com/openclaw/openclaw/pull/134023)
+- **PR #133974** [test(build): import stamp writers from their shared owner](https://github.com/openclaw/openclaw/pull/133974)
+- **PR #134007** [perf(heartbeat): reduce queue and diagnostic snapshot scans](https://github.com/openclaw/openclaw/pull/134007)
+- **PR #134028** [perf(browser): avoid redundant snapshot traversal allocations](https://github.com/openclaw/openclaw/pull/134028)
+- **PR #133966** [test: simplify Microsoft speech fixtures](https://github.com/openclaw/openclaw/pull/133966)
+- **PR #134027** [fix(macos): avoid release packaging failures and slow notes](https://github.com/openclaw/openclaw/pull/134027)
+- **PR #134002** [fix: keep stable-upgrade validation compatible with older installs](https://github.com/openclaw/openclaw/pull/134002)
+- **PR #134025** [fix: prevent Doctor from rolling back migratable config](https://github.com/openclaw/openclaw/pull/134025) Related #90551. Thanks @obviyus and @stuart-minion-ai.
+- **PR #133967** [test: restore native OS module after tool-manager cases](https://github.com/openclaw/openclaw/pull/133967)
+- **PR #134052** [fix(resources): preserve source scope for Windows path casing](https://github.com/openclaw/openclaw/pull/134052) Thanks @vincentkoc.
+- **PR #133963** [fix(plugins): report registry persistence differences](https://github.com/openclaw/openclaw/pull/133963) Related #133901. Thanks @obviyus and @yubingjiaocn.
+- **PR #133969** [test: consolidate link-understanding runner cases](https://github.com/openclaw/openclaw/pull/133969)
+- **PR #133904** [perf(approvals): reuse redaction views and bounded text checks](https://github.com/openclaw/openclaw/pull/133904)
+- **PR #133896** [docs: offer local coding harness help for failed updates](https://github.com/openclaw/openclaw/pull/133896)
+- **PR #133892** [test: remove native Promise conformance replays](https://github.com/openclaw/openclaw/pull/133892)
+- **PR #134018** [fix(voice-call): preserve current settings during legacy migration](https://github.com/openclaw/openclaw/pull/134018) Related #127596.
+- **PR #133971** [test: share broad tooling routing assertions](https://github.com/openclaw/openclaw/pull/133971)
+- **PR #134008** [refactor(agents): avoid unnecessary failure classification](https://github.com/openclaw/openclaw/pull/134008)
+- **PR #134054** [ci: resolve OpenGrep base before fetching history](https://github.com/openclaw/openclaw/pull/134054) Thanks @lsr911 and @obviyus and @chelsealong and @ZengWen-DT and @SebTardif.
+- **PR #134039** [test(scripts): batch distribution import fixtures](https://github.com/openclaw/openclaw/pull/134039) Thanks @lsr911 and @obviyus and @chelsealong and @ZengWen-DT and @SebTardif.
+- **PR #134075** [fix(update): retain pnpm owner across launcher respawn](https://github.com/openclaw/openclaw/pull/134075) Related #134037. Thanks @obviyus and @YogevKr.
+- **PR #133891** [test(parallel): assert user agent at the request boundary](https://github.com/openclaw/openclaw/pull/133891) Thanks @lsr911 and @obviyus and @chelsealong and @ZengWen-DT and @SebTardif.
+- **PR #134033** [fix(matrix): drain monitor tasks before retiring clients](https://github.com/openclaw/openclaw/pull/134033) Thanks @lsr911 and @obviyus and @chelsealong and @ZengWen-DT and @SebTardif.
+- **PR #134044** [fix(channels): isolate unavailable accounts from gateway diagnostics](https://github.com/openclaw/openclaw/pull/134044) Related #133977. Thanks @lsr911 and @obviyus and @chelsealong and @ZengWen-DT and @SebTardif.
+- **PR #133920** [fix(config): preserve owners across legacy roster imports and store changes](https://github.com/openclaw/openclaw/pull/133920) Related #133868, #133889. Thanks @lsr911 and @obviyus and @chelsealong and @ZengWen-DT and @SebTardif.
+- **PR #133947** [fix(talk): keep Browser Talk agent-consult turns out of user chat history](https://github.com/openclaw/openclaw/pull/133947) Related #133855. Thanks @chelsealong and @lsr911 and @obviyus and @ZengWen-DT and @SebTardif and @Conan-Scott.
+- **PR #133912** [fix: preserve policy owners across reviews and compaction](https://github.com/openclaw/openclaw/pull/133912) Thanks @lsr911 and @obviyus and @chelsealong and @ZengWen-DT and @SebTardif.
+- **PR #133991** [fix(doctor): prune stale path install records shadowed by load paths](https://github.com/openclaw/openclaw/pull/133991) Related #133935. Thanks @ZengWen-DT and @obviyus and @lsr911 and @chelsealong and @SebTardif and @JeffSteinbok.
+- **PR #89636** [fix(secrets): collect persona-level TTS provider SecretRefs](https://github.com/openclaw/openclaw/pull/89636) Related #89607. Thanks @SebTardif and @lsr911 and @obviyus and @chelsealong and @ZengWen-DT and @pablonunoutande-source.
+- **PR #119201** [fix(state-migrations): isolate a throwing channel plan callback into a warning (#119200)](https://github.com/openclaw/openclaw/pull/119201) Related #119200. Thanks @ruel225.
+- **PR #133893** [test(discord): consolidate successful request signal coverage](https://github.com/openclaw/openclaw/pull/133893)
+- **PR #134064** [perf(security): prepare external content scans once](https://github.com/openclaw/openclaw/pull/134064)
+- **PR #134029** [fix(agents): preserve provider ownership in error diagnostics](https://github.com/openclaw/openclaw/pull/134029) Related #134012.
+- **PR #134098** [fix(codex): preserve conversations across app-server restarts](https://github.com/openclaw/openclaw/pull/134098)
+- **PR #133890** [test(logging): exercise canonical owners without duplicate checks](https://github.com/openclaw/openclaw/pull/133890)
+- **PR #134107** [ci: typecheck graphs that consume changed tests](https://github.com/openclaw/openclaw/pull/134107)
+- **PR #134082** [test(shared): simplify text assertions](https://github.com/openclaw/openclaw/pull/134082)
+- **PR #134084** [fix(gateway): sudo install no longer writes root state](https://github.com/openclaw/openclaw/pull/134084) Related #134000. Thanks @obviyus and @itanyplus.
+- **PR #134087** [fix(memory): stop legacy warnings for canonical database links](https://github.com/openclaw/openclaw/pull/134087) Related #133981. Thanks @obviyus and @02-dino.
+- **PR #134078** [fix(doctor): report state blocked by config errors](https://github.com/openclaw/openclaw/pull/134078) Related #134036. Thanks @obviyus and @YogevKr.
+- **PR #134165** [fix: restore channel recovery after crash-loop suppression](https://github.com/openclaw/openclaw/pull/134165) Related #134134. Thanks @shakkernerd.
+- **PR #134118** [test(scripts): call package consent parser directly](https://github.com/openclaw/openclaw/pull/134118)
+- **PR #134195** [docs: restore v2026.8.1 editorial release page](https://github.com/openclaw/openclaw/pull/134195) Thanks @hannesrudolph.
+- **PR #134121** [test(scripts): share Android catalogs and strengthen scanner assertions](https://github.com/openclaw/openclaw/pull/134121)
+- **PR #134103** [fix(agents): carry classified provider facts into assistant failure copy](https://github.com/openclaw/openclaw/pull/134103) Thanks @obviyus.
+- **PR #134122** [test(scripts): assert each dated TODO exclusion](https://github.com/openclaw/openclaw/pull/134122)
+- **PR #134133** [test(scripts): batch accepted Docker stats fixtures](https://github.com/openclaw/openclaw/pull/134133)
+- **PR #133958** [fix(talk): honor configured owners for default sessions](https://github.com/openclaw/openclaw/pull/133958)
+- **PR #134149** [test(imessage): reuse RPC client imports](https://github.com/openclaw/openclaw/pull/134149)
+- **PR #134031** [fix(doctor): coordinate explicit repair with the managed gateway](https://github.com/openclaw/openclaw/pull/134031) Related #133957.
+- **PR #134017** [test(scripts): avoid duplicate SDK sync cycles](https://github.com/openclaw/openclaw/pull/134017)
+- **PR #134140** [ci: remove a serial release candidate queue hop](https://github.com/openclaw/openclaw/pull/134140)
+- **PR #134080** [test(ai): colocate JSON parser coverage](https://github.com/openclaw/openclaw/pull/134080)
+- **PR #134086** [test(ai): colocate model utility coverage](https://github.com/openclaw/openclaw/pull/134086)
+- **PR #134072** [fix(settings): preserve concurrent first saves](https://github.com/openclaw/openclaw/pull/134072) Thanks @MrSwagatRathod and @obviyus.
+- **PR #134091** [test(gateway): await scope upgrade cancellation signals](https://github.com/openclaw/openclaw/pull/134091)
+- **PR #134092** [test(scripts): exercise real iOS team selection](https://github.com/openclaw/openclaw/pull/134092)
+- **PR #134073** [fix(codex): avoid import timeouts in large native homes](https://github.com/openclaw/openclaw/pull/134073) Related #133929.
+- **PR #134094** [test(agents): derive prompt handle identity from fixture](https://github.com/openclaw/openclaw/pull/134094)
+- **PR #134108** [test(infra): await APNS request lifecycle signals](https://github.com/openclaw/openclaw/pull/134108)
+- **PR #134176** [perf(gateway): reduce repeated session snapshot copying](https://github.com/openclaw/openclaw/pull/134176)
+- **PR #134102** [test: bound concurrency startup observations](https://github.com/openclaw/openclaw/pull/134102)
+- **PR #134104** [test(infra): await environment log completion directly](https://github.com/openclaw/openclaw/pull/134104)
+- **PR #134117** [test(scripts): set ratchet fixture identity per Git invocation](https://github.com/openclaw/openclaw/pull/134117)
+- **PR #134128** [test(scripts): share retry fixture counters](https://github.com/openclaw/openclaw/pull/134128)
+- **PR #134168** [fix(logging): keep long secret redaction safe and defer repeated probes](https://github.com/openclaw/openclaw/pull/134168)
+- **PR #134139** [test(nostr): exercise cursor retries with virtual time](https://github.com/openclaw/openclaw/pull/134139)
+- **PR #134146** [test(teams): reuse prerequisite setup imports](https://github.com/openclaw/openclaw/pull/134146)
+- **PR #133758** [fix(cli): keep Unicode session and task tables aligned](https://github.com/openclaw/openclaw/pull/133758)
+- **PR #134157** [test(mistral): observe terminal WebSocket completion](https://github.com/openclaw/openclaw/pull/134157)
+- **PR #134093** [fix(gateway): preserve literal Talk consult questions](https://github.com/openclaw/openclaw/pull/134093) Related #133855, #134037. Thanks @lsr911 and @obviyus and @chelsealong and @ZengWen-DT and @SebTardif and @Conan-Scott and @YogevKr.
+- **PR #134162** [test(imap): await committed cursor notifications](https://github.com/openclaw/openclaw/pull/134162)
+- **PR #134147** [test(ui): remove duplicate status tests](https://github.com/openclaw/openclaw/pull/134147)
+- **PR #134035** [fix(ci): bound macOS Swift test concurrency](https://github.com/openclaw/openclaw/pull/134035) Thanks @vincentkoc.
+- **PR #134164** [test(telegram): isolate network imports only for cache cases](https://github.com/openclaw/openclaw/pull/134164)
+- **PR #133918** [fix(ui): preserve mocked browser proof across reruns](https://github.com/openclaw/openclaw/pull/133918)
+- **PR #134171** [test(telegram): await buffered media task completion](https://github.com/openclaw/openclaw/pull/134171)
+- **PR #134174** [test(video): share provider imports across transport cases](https://github.com/openclaw/openclaw/pull/134174)
+- **PR #134112** [test(infra): simplify HTTP response assertions](https://github.com/openclaw/openclaw/pull/134112)
+- **PR #134183** [fix(update): block restart while plugin consent is pending](https://github.com/openclaw/openclaw/pull/134183) Related #134156. Thanks @obviyus and @BrunoCerberus.
+- **PR #133864** [feat(update): clean up retained migration recovery files](https://github.com/openclaw/openclaw/pull/133864) Related #133805.
+- **PR #133563** [fix(state): fence automatic agent database migrations](https://github.com/openclaw/openclaw/pull/133563) Related #133478. Thanks @omarshahine.
+- **PR #134151** [test(browser): consolidate trash behavior at the SDK owner](https://github.com/openclaw/openclaw/pull/134151)
+- **PR #134062** [fix(doctor): refresh SQLite planner stats after migration](https://github.com/openclaw/openclaw/pull/134062) Thanks @VACInc.
+- **PR #134005** [refactor(state): preserve concrete keyed-store capabilities](https://github.com/openclaw/openclaw/pull/134005)
+- **PR #134207** [fix: restore gateway recovery fixture lint and types](https://github.com/openclaw/openclaw/pull/134207) Thanks @shakkernerd.
+- **PR #134193** [fix(update): npm-hardened global updates no longer roll back](https://github.com/openclaw/openclaw/pull/134193) Related #134177. Thanks @obviyus and @botatdovly.
+- **PR #134014** [fix(pr): prevent parallel main refreshes from colliding](https://github.com/openclaw/openclaw/pull/134014) Thanks @shakkernerd.
+- **PR #134100** [ci: balance expensive tooling lifecycle tests](https://github.com/openclaw/openclaw/pull/134100)
+- **PR #134111** [fix(agents): single-source model fallback availability](https://github.com/openclaw/openclaw/pull/134111) Thanks @obviyus.
+- **PR #134260** [test(plugins): expect structured registry differences](https://github.com/openclaw/openclaw/pull/134260)
+- **PR #134232** [ci: remove redundant image readiness queue hops](https://github.com/openclaw/openclaw/pull/134232)
+- **PR #134251** [fix(slack): workspace-scoped plugin approvers can approve](https://github.com/openclaw/openclaw/pull/134251) Related #133932. Thanks @obviyus and @marmar9615-cloud.
+- **PR #134053** [fix(release): complete ClawHub publication after parent success](https://github.com/openclaw/openclaw/pull/134053) Thanks @shakkernerd.
+- **PR #134189** [fix(ui): recover suspended tabs after gateway updates](https://github.com/openclaw/openclaw/pull/134189) Thanks @Takhoffman.
+- **PR #134105** [refactor(agents): consolidate session text component reuse](https://github.com/openclaw/openclaw/pull/134105) Thanks @vincentkoc.
+- **PR #134223** [fix(gateway): keep TLS diagnostics from generating certificates](https://github.com/openclaw/openclaw/pull/134223) Related #134222.
+- **PR #133914** [refactor(brave): remove redundant test facade](https://github.com/openclaw/openclaw/pull/133914)
+- **PR #134009** [fix(doctor): report interrupted auth archive recovery](https://github.com/openclaw/openclaw/pull/134009) Thanks @shakkernerd.
+- **PR #134216** [perf(ci): bound plugin lint project discovery](https://github.com/openclaw/openclaw/pull/134216)
+- **PR #132445** [fix(ui): stop earlier-history loading action from jumping](https://github.com/openclaw/openclaw/pull/132445) Thanks @RomneyDa.
+- **PR #134209** [perf: reduce Control UI startup and history processing](https://github.com/openclaw/openclaw/pull/134209)
+- **PR #134266** [test(infra): consolidate abort relay coverage at its owner](https://github.com/openclaw/openclaw/pull/134266)
+- **PR #134263** [test(infra): exercise real transport backoff](https://github.com/openclaw/openclaw/pull/134263)
+- **PR #134208** [fix(state): let doctor repair legacy v17 agent databases](https://github.com/openclaw/openclaw/pull/134208) Related #134163. Thanks @EthDing and @obviyus and @abacha.
+- **PR #133921** [fix(doctor): preserve files created during session restore](https://github.com/openclaw/openclaw/pull/133921)
+- **PR #134270** [test(llm-core): batch event stream sequence assertions](https://github.com/openclaw/openclaw/pull/134270)
+- **PR #133676** [feat: keep the Home agent beside your work](https://github.com/openclaw/openclaw/pull/133676) Related #133632.
+- **PR #134273** [test(tooling): remove delayed activity fixture responses](https://github.com/openclaw/openclaw/pull/134273)
+- **PR #134271** [perf: avoid scanning unused package-root candidates](https://github.com/openclaw/openclaw/pull/134271)
+- **PR #134200** [fix(worker): preserve cloud execution and recovery failures](https://github.com/openclaw/openclaw/pull/134200) Related #134199. Thanks @Takhoffman.
+- **PR #134280** [test(infra): move duration cases to the formatter owner](https://github.com/openclaw/openclaw/pull/134280)
+- **PR #134259** [fix(codex): preserve summarized context when switching runtimes](https://github.com/openclaw/openclaw/pull/134259) Related #134224.
+- **PR #134284** [test(infra): synchronize approval shutdown races at callback entry](https://github.com/openclaw/openclaw/pull/134284)
+- **PR #134138** [fix(talk): keep later voice turns admitted after call setup](https://github.com/openclaw/openclaw/pull/134138) Related #134081. Thanks @mastertyko.
+- **PR #134282** [fix(gateway): use the npm WebSocket receiver under Bun](https://github.com/openclaw/openclaw/pull/134282)
+- **PR #134228** [fix: fail updates when session migration is incomplete](https://github.com/openclaw/openclaw/pull/134228) Related #134206. Thanks @shakkernerd.
+- **PR #134287** [refactor(core): share first-wins keyed dedupe](https://github.com/openclaw/openclaw/pull/134287) Thanks @vincentkoc.
+- **PR #134026** [perf(workers): reuse validated hashes during workspace activation](https://github.com/openclaw/openclaw/pull/134026)
+- **PR #134289** [test(feishu): consolidate backoff coverage at its owner](https://github.com/openclaw/openclaw/pull/134289)
+- **PR #134298** [perf(ci): report type failures before broad audits](https://github.com/openclaw/openclaw/pull/134298)
+- **PR #134293** [test(tooling): use value fixtures for mobile release renderers](https://github.com/openclaw/openclaw/pull/134293)
+- **PR #134170** [fix(codex): preserve accepted speech through media delivery](https://github.com/openclaw/openclaw/pull/134170)
+- **PR #134123** [test(macos): remove duplicate shell smoke check](https://github.com/openclaw/openclaw/pull/134123)
+- **PR #134244** [fix(cli): keep embedded triage on the diagnosed installation](https://github.com/openclaw/openclaw/pull/134244)
+- **PR #134296** [test(tooling): batch startup benchmark state cases](https://github.com/openclaw/openclaw/pull/134296)
+- **PR #134315** [test(xai): verify OAuth runtime imports stay lazy](https://github.com/openclaw/openclaw/pull/134315)
+- **PR #134294** [perf(ci): use runtime-only builds for Node test prerequisites](https://github.com/openclaw/openclaw/pull/134294)
+- **PR #134252** [perf(sessions): reuse prepared transcript batch writers](https://github.com/openclaw/openclaw/pull/134252)
+- **PR #133988** [fix(gateway): release cached transcript backing storage](https://github.com/openclaw/openclaw/pull/133988) Related #133941.
+- **PR #134231** [fix(docker): include shared lifecycle marker in install stages](https://github.com/openclaw/openclaw/pull/134231)
+- **PR #133952** [fix(doctor): identify malformed legacy exec approval fields](https://github.com/openclaw/openclaw/pull/133952)
+- **PR #134277** [test(tooling): configure fixture identity in the commit command](https://github.com/openclaw/openclaw/pull/134277)
+- **PR #134045** [fix: retain 2026.8.1 release fixes on main](https://github.com/openclaw/openclaw/pull/134045) Thanks @shakkernerd.
+- **PR #134268** [fix(macos): finish ChatGPT login after Gateway reconnect](https://github.com/openclaw/openclaw/pull/134268) Related #134182. Thanks @obviyus and @Sedrak-Hovhannisyan.
+- **PR #134246** [refactor(agents): reduce per-turn policy and tool preparation](https://github.com/openclaw/openclaw/pull/134246)
+- **PR #134043** [perf(workers): streamline cloud startup and fix bootstrap archive races](https://github.com/openclaw/openclaw/pull/134043)
+- **PR #134056** [fix: preserve speech and process output through nested tools](https://github.com/openclaw/openclaw/pull/134056)
+- **PR #134328** [fix(test): preserve Git update fixture identity through postinstall](https://github.com/openclaw/openclaw/pull/134328)
+- **PR #134238** [fix(sessions): avoid excessive history copies and preserve fork provenance](https://github.com/openclaw/openclaw/pull/134238)
+- **PR #134245** [test(auto-reply): avoid catalog discovery in media fixtures](https://github.com/openclaw/openclaw/pull/134245)
+- **PR #134324** [test(browser): remove duplicated profile allocation demonstrations](https://github.com/openclaw/openclaw/pull/134324)
+- **PR #134310** [fix(ui): keep images visible during hard refresh](https://github.com/openclaw/openclaw/pull/134310) Related #134237.
+- **PR #119516** [fix(update): recover the managed gateway after a failed CLI update](https://github.com/openclaw/openclaw/pull/119516) Related #118244. Thanks @zyw02 and @Issue-Hunter and @cursoragent and @sercada.
+- **PR #134429** [fix: release doctor database leases before gateway restart](https://github.com/openclaw/openclaw/pull/134429)
 ## 2026.8.1
 
 ### Highlights
