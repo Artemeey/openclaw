@@ -305,7 +305,7 @@ async function postEmbeddingRequest(params: {
       policy: client.ssrfPolicy,
       auditContext: "embedding-provider:openai-compatible",
     };
-    // Выбирает HTTP(S)-proxy по URL endpoint и учитывает NO_PROXY.
+    // Select the HTTP(S) proxy for the endpoint URL and honor NO_PROXY.
     const { response, release } = await fetchWithSsrFGuard(
       shouldUseEnvHttpProxyForUrl(client.endpointUrl)
         ? withTrustedEnvProxyGuardedFetchMode(request)
