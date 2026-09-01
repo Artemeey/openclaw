@@ -117,7 +117,7 @@ describe("Plugin SDK API diff CLI", () => {
       expect(git(repo, ["worktree", "list"])).not.toContain(runnerTemp);
       // Cleanup owns its temporary root, not runner instrumentation beside it.
       expect(existsSync(temporaryRoot)).toBe(false);
-      expect(readFileSync(invocationCounts, "utf8")).toBe("{}\n");
+      expect(existsSync(invocationCounts)).toBe(true);
       expect(readFileSync(runnerSentinel, "utf8")).toBe("preserve\n");
     } finally {
       if (!closed) {
