@@ -68,6 +68,20 @@ function describeMissingHarnessRegistration(
     return "Enable or reinstall the plugin that provides this runtime, restart the Gateway, then retry.";
   }
 
+  const failedOwner = ownerPluginIds
+    .map((pluginId) => pluginRegistry?.plugins.find((plugin) => plugin.id === pluginId))
+    .find((plugin) => plugin?.status === "error");
+  if (failedOwner) {
+    const phase = failedOwner.failurePhase ?? "load";
+    return `(reason=owner-plugin-degraded, ownerPluginId=${failedOwner.id}). Owner plugin "${failedOwner.id}" failed during ${phase}. Run "openclaw plugins inspect ${failedOwner.id} --runtime --json", repair the reported plugin failure, restart the Gateway, then retry or select a model that does not require this runtime.`;
+  }
+  const loadedOwner = ownerPluginIds
+    .map((pluginId) => pluginRegistry?.plugins.find((plugin) => plugin.id === pluginId))
+    .find((plugin) => plugin?.status === "loaded");
+  if (loadedOwner) {
+    return `(reason=owner-plugin-degraded, ownerPluginId=${loadedOwner.id}). Owner plugin "${loadedOwner.id}" loaded but did not register agent harness "${runtime}". Run "openclaw plugins inspect ${loadedOwner.id} --runtime --json", repair the reported plugin failure, restart the Gateway, then retry or select a model that does not require this runtime.`;
+  }
+
   const plugins = normalizePluginsConfig(context?.activationSourceConfig.plugins);
   const blockers: string[] = [];
   for (const pluginId of ownerPluginIds) {

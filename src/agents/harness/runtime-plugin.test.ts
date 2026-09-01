@@ -8,6 +8,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import * as installedManifests from "../../plugins/manifest-registry-installed.js";
 import { restorePluginMetadataSnapshot } from "../../plugins/plugin-metadata-snapshot.js";
 import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
+import { createPluginRecord } from "../../plugins/status.test-helpers.js";
 import { prepareOwnedPluginLoadContext } from "../prepared-model-runtime.plugin-context.js";
 import {
   createAgentRuntimeMetadataPluginIdScope,
@@ -184,6 +185,79 @@ describe("harness runtime plugins", () => {
       'Owner plugin "codex" is not activatable (plugins disabled)',
     );
     expect((error as Error).message).not.toContain("absent from this prepared plugin generation");
+  });
+
+  it("reports the prepared owner's loader failure before activation policy", async () => {
+    const pluginRegistry = createEmptyPluginRegistry();
+    const config = { plugins: { allow: ["telegram"] } } satisfies OpenClawConfig;
+    attachPreparedPluginFacts(
+      pluginRegistry,
+      config,
+      makeRegistry([
+        {
+          id: "custom-owner",
+          channels: [],
+          activation: { onAgentHarnesses: ["custom-harness"] },
+        },
+      ]),
+    );
+    pluginRegistry.plugins.push(
+      createPluginRecord({
+        id: "custom-owner",
+        status: "error",
+        failurePhase: "register",
+        error: "registration exploded",
+      }),
+    );
+
+    const error = await ensureSelectedAgentHarnessPlugin({
+      provider: "custom-provider",
+      modelId: "custom-model",
+      agentHarnessRuntimeOverride: "custom-harness",
+      workspaceDir: "/tmp/workspace",
+      pluginRegistry,
+    }).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      '(reason=owner-plugin-degraded, ownerPluginId=custom-owner). Owner plugin "custom-owner" failed during register.',
+    );
+    expect((error as Error).message).toContain(
+      'Run "openclaw plugins inspect custom-owner --runtime --json"',
+    );
+    expect((error as Error).message).not.toContain("not in allowlist");
+    expect((error as Error).message).not.toContain("registration exploded");
+  });
+
+  it("reports a loaded owner that omitted the selected harness registration", async () => {
+    const pluginRegistry = createEmptyPluginRegistry();
+    const config = { plugins: { allow: ["telegram"] } } satisfies OpenClawConfig;
+    attachPreparedPluginFacts(
+      pluginRegistry,
+      config,
+      makeRegistry([
+        {
+          id: "custom-owner",
+          channels: [],
+          activation: { onAgentHarnesses: ["custom-harness"] },
+        },
+      ]),
+    );
+    pluginRegistry.plugins.push(createPluginRecord({ id: "custom-owner", status: "loaded" }));
+
+    const error = await ensureSelectedAgentHarnessPlugin({
+      provider: "custom-provider",
+      modelId: "custom-model",
+      agentHarnessRuntimeOverride: "custom-harness",
+      workspaceDir: "/tmp/workspace",
+      pluginRegistry,
+    }).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      '(reason=owner-plugin-degraded, ownerPluginId=custom-owner). Owner plugin "custom-owner" loaded but did not register agent harness "custom-harness".',
+    );
+    expect((error as Error).message).not.toContain("not in allowlist");
   });
 
   it("keeps the built-in OpenClaw harness independent from plugin registration", async () => {
