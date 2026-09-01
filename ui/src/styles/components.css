@@ -3756,6 +3756,9 @@ td.data-table-key-col {
   background: var(--bg-elevated);
   box-shadow: var(--overlay-shadow);
   color: var(--text);
+  /* Keep page content from showing through Web Awesome's menu fade.
+   * The scale animation still communicates that the picker opened. */
+  opacity: 1 !important;
 }
 
 .agent-select__trigger {
