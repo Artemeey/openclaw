@@ -5290,9 +5290,12 @@ export const en: TranslationMap = {
     togglePasswordVisibility: "Toggle password visibility",
     failure: {
       rawError: "Raw error",
-      docsAuth: "Control UI auth docs",
-      docsPairing: "Device pairing docs",
-      docsInsecure: "Insecure HTTP docs",
+      profileUnavailable: {
+        title: "Profile verification unavailable",
+        stepRetry: "Retry shortly.",
+        stepAdmin:
+          "If this continues, ask a Gateway administrator to check the identity provider and GitHub API credential.",
+      },
       authRequired: {
         title: "Auth required",
         summary:
