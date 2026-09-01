@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
 import type { OpenClawTestState } from "../test-utils/openclaw-test-state.js";
+import type { ModelCatalogSnapshot } from "./model-catalog.types.js";
 import type { AuthStorageData } from "./sessions/auth-storage.js";
 
 type LoadStaticCatalog =
@@ -65,10 +66,12 @@ const preparedModelRuntimeMocks = vi.hoisted(() => ({
     pluginCatalogs: [],
   })),
   prepareStaticCatalog: vi.fn(async (..._args: unknown[]) => ({ entries: [] })),
-  runPreparedModelCatalogWorker: vi.fn(async (..._args: unknown[]) => ({
-    entries: [],
-    routeVariants: [],
-  })),
+  runPreparedModelCatalogWorker: vi.fn(
+    async (..._args: unknown[]): Promise<ModelCatalogSnapshot> => ({
+      entries: [],
+      routeVariants: [],
+    }),
+  ),
   runtimeSyntheticAuthProviderRefs: [] as string[],
   resolveAmbientCredentials: vi.fn((..._args: unknown[]) => ({})),
   resolveStaticCatalogModel: vi.fn<StaticCatalogResolver>(() => undefined),
