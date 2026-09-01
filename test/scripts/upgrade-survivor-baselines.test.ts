@@ -65,6 +65,18 @@ describe("scripts/resolve-upgrade-survivor-baselines", () => {
     ).toEqual(["openclaw@2026.7.33"]);
   });
 
+  it("caps stable baselines at a prerelease candidate", () => {
+    expect(
+      resolveBaselines(
+        new Map([
+          ["requested", "2026.8.1 2026.7.33"],
+          ["fallback", "openclaw@latest"],
+          ["maximum-version", "2026.8.1-beta.2"],
+        ]),
+      ),
+    ).toEqual(["openclaw@2026.7.33"]);
+  });
+
   it("resolves release-history to last six stable releases plus explicit legacy anchors", () => {
     const releases = (
       [

@@ -38,14 +38,21 @@ function capSpecsAtMaximum(specs, maximumVersion) {
   if (!maximumVersion) {
     return specs;
   }
-  if (!parseStableVersion(maximumVersion)) {
+  if (!parseReleaseVersion(maximumVersion)) {
     throw new Error(`invalid maximum baseline version: ${maximumVersion}`);
   }
   return specs
     .map((spec) => (spec === "openclaw@latest" ? `openclaw@${maximumVersion}` : spec))
     .filter((spec) => {
       const version = spec.replace(/^openclaw@/u, "");
-      return !parseStableVersion(version) || compareStableVersions(version, maximumVersion) <= 0;
+      if (!parseStableVersion(version)) {
+        return true;
+      }
+      const comparison = compareReleaseVersions(version, maximumVersion);
+      if (comparison === null) {
+        throw new Error(`cannot compare release versions: ${version} ${maximumVersion}`);
+      }
+      return comparison <= 0;
     });
 }
 

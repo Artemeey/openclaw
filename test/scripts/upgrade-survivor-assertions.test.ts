@@ -153,6 +153,7 @@ describe("upgrade survivor assertions", () => {
       const coveragePath = join(root, "coverage.json");
       writeJson(configPath, {
         agents: {
+          defaults: { contextTokens: 64000 },
           entries: {
             main: {},
             ops: { fastModeDefault: true },

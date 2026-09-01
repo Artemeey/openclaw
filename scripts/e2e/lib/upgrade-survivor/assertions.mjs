@@ -276,6 +276,7 @@ function assertConfigSurvived() {
       config.agents?.entries?.ops ?? legacyAgents.find((agent) => agent?.id === "ops");
     assert(mainAgent, "main agent missing");
     assert(opsAgent, "ops agent missing");
+    assert(config.agents?.defaults?.contextTokens === 64000, "default contextTokens changed");
     if (!hasCoverage(coverage) || !coverage.skippedIntents?.includes("agent-modern-preferences")) {
       assert(opsAgent.fastModeDefault === true, "ops fastModeDefault changed");
     }
