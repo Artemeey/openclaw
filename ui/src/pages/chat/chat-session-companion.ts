@@ -7,6 +7,7 @@ import type {
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 
 const COMPANION_BUSY_DETAIL_CODE = "SESSION_COMPANION_BUSY";
+const STALE_INSTALL_DETAIL_CODE = "STALE_INSTALL";
 const MAX_COMPANION_EXCHANGES = 24;
 const COMPANION_ASK_TIMEOUT_MS = 70_000;
 
@@ -21,6 +22,7 @@ export type ChatSessionCompanionThread = {
     | "missing"
     | "model-unavailable"
     | "rate-limited"
+    | "stale-install"
     | "unavailable"
     | null;
   retryable?: boolean;
@@ -202,20 +204,24 @@ export class ChatSessionCompanionThreads {
       }
       thread.failedQuestion = normalized;
       thread.failedQuestionKnownExchanges = knownExchanges;
+      const detailCode = errorDetailCode(error);
       const reason = errorDetailReason(error);
       thread.hint =
-        errorDetailCode(error) === COMPANION_BUSY_DETAIL_CODE
+        detailCode === COMPANION_BUSY_DETAIL_CODE
           ? "busy"
-          : reason === "context-unavailable"
-            ? "history-unavailable"
-            : reason === "session-missing"
-              ? "missing"
-              : reason === "rate-limited"
-                ? "rate-limited"
-                : reason === "utility-model-unavailable"
-                  ? "model-unavailable"
-                  : "unavailable";
-      thread.retryable = errorIsRetryable(error) || reason === null;
+          : detailCode === STALE_INSTALL_DETAIL_CODE
+            ? "stale-install"
+            : reason === "context-unavailable"
+              ? "history-unavailable"
+              : reason === "session-missing"
+                ? "missing"
+                : reason === "rate-limited"
+                  ? "rate-limited"
+                  : reason === "utility-model-unavailable"
+                    ? "model-unavailable"
+                    : "unavailable";
+      thread.retryable =
+        detailCode !== STALE_INSTALL_DETAIL_CODE && (errorIsRetryable(error) || reason === null);
     } finally {
       if (this.submissionTokens.get(key) === token) {
         this.submissionTokens.delete(key);

@@ -10,6 +10,13 @@ function moduleNotFoundError(filePath: string): Error {
   });
 }
 
+function missingFileError(filePath: string): Error {
+  return Object.assign(new Error(`ENOENT: no such file or directory, open '${filePath}'`), {
+    code: "ENOENT",
+    path: filePath,
+  });
+}
+
 async function dispatchThrowingHandler(error: Error, respond = vi.fn()) {
   await handleGatewayRequest({
     req: { type: "req", id: "stale-install", method: "test.stale-install" },
@@ -50,6 +57,25 @@ describe("gateway stale install errors", () => {
           code: "STALE_INSTALL",
           restartCommand: "openclaw --profile sd1 gateway restart",
         },
+      }),
+    );
+  });
+
+  it("turns a missing built chunk from the OpenClaw install into restart guidance", async () => {
+    const missingChunk = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "missing-built-chunk.js",
+    );
+    const respond = await dispatchThrowingHandler(missingFileError(missingChunk));
+
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        code: "UNAVAILABLE",
+        retryable: false,
+        message: expect.stringContaining("gateway restart"),
+        details: expect.objectContaining({ code: "STALE_INSTALL" }),
       }),
     );
   });

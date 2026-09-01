@@ -21,6 +21,7 @@ import {
 } from "./session-companion-state.js";
 import type { SessionObserverCompanionSnapshot } from "./session-observer-contract.js";
 import { sessionObserverScopeKey } from "./session-observer-model.js";
+import { classifyGatewayStaleInstall } from "./stale-install.js";
 
 const companionLog = createSubsystemLogger("gateway/session-companion");
 
@@ -587,6 +588,9 @@ export function createSessionCompanionAskRuntime(params: SessionCompanionAskRunt
       thread.lastUsedAt = ts;
       return { answer, ts };
     } catch (error) {
+      if (classifyGatewayStaleInstall(error)) {
+        throw error;
+      }
       if (error instanceof SessionCompanionAskError) {
         throw error;
       }

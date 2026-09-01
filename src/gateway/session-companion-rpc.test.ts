@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { GatewayErrorDetailCodes } from "../../packages/gateway-protocol/src/index.js";
 import { SessionCompanionAskError } from "./session-companion-ask.js";
@@ -139,6 +141,35 @@ describe("session companion RPC", () => {
         code: "UNAVAILABLE",
         retryable: true,
         details: { reason: "context-unavailable" },
+      }),
+    );
+  });
+
+  it("returns restart guidance for a missing built chunk", async () => {
+    const missingChunk = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "missing-companion-rpc-chunk.js",
+    );
+    const ask = vi.fn(async () => {
+      throw Object.assign(new Error(`ENOENT: no such file or directory, open '${missingChunk}'`), {
+        code: "ENOENT",
+        path: missingChunk,
+      });
+    });
+    const respond = await invoke(
+      "sessions.companion.ask",
+      { sessionKey: "agent:main:main", question: "Why?" },
+      { ask },
+    );
+
+    expect(respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({
+        code: "UNAVAILABLE",
+        retryable: false,
+        message: expect.stringContaining("gateway restart"),
+        details: expect.objectContaining({ code: "STALE_INSTALL" }),
       }),
     );
   });

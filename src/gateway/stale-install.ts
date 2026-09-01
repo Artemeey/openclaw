@@ -20,25 +20,31 @@ type GatewayStaleInstall = {
   restartCommand: string;
 };
 
-export function classifyGatewayStaleInstall(error: unknown): GatewayStaleInstall | null {
-  if (
-    !gatewayInstallRoot ||
-    !(error instanceof Error) ||
-    !hasNodeErrorCode(error, "ERR_MODULE_NOT_FOUND")
-  ) {
+function resolveMissingInstallPath(error: Error): string | null {
+  if (hasNodeErrorCode(error, "ENOENT")) {
+    const missingPath: unknown = Object.getOwnPropertyDescriptor(error, "path")?.value;
+    return typeof missingPath === "string" && /\.[cm]?js$/u.test(missingPath) ? missingPath : null;
+  }
+  if (!hasNodeErrorCode(error, "ERR_MODULE_NOT_FOUND")) {
     return null;
   }
   const url = (error as Error & { url?: unknown }).url;
   if (typeof url !== "string") {
     return null;
   }
-  let missingPath: string;
   try {
-    missingPath = fileURLToPath(url);
+    return fileURLToPath(url);
   } catch {
     return null;
   }
-  if (!isPathInside(gatewayInstallRoot, missingPath)) {
+}
+
+export function classifyGatewayStaleInstall(error: unknown): GatewayStaleInstall | null {
+  if (!gatewayInstallRoot || !(error instanceof Error)) {
+    return null;
+  }
+  const missingPath = resolveMissingInstallPath(error);
+  if (!missingPath || !isPathInside(gatewayInstallRoot, missingPath)) {
     return null;
   }
   const restartCommand = formatCliCommand("openclaw gateway restart");

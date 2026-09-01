@@ -199,6 +199,7 @@ const COMPANION_HINT_KEYS = {
   missing: "chat.rail.askMissing",
   "model-unavailable": "chat.rail.askModelUnavailable",
   "rate-limited": "chat.rail.askRateLimited",
+  "stale-install": "chat.rail.askStaleInstall",
   unavailable: "chat.rail.askUnavailable",
 } as const satisfies Record<
   NonNullable<ChatSessionCompanionThread["hint"]>,

@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createAgentToAgentPolicy,
@@ -651,6 +653,36 @@ describe("session companion asks", () => {
     expect(harness.service.state({ agentId: "main", sessionKey: "agent:main:main" })).toEqual({
       exchanges: [],
     });
+    harness.service.dispose();
+  });
+
+  it("preserves a stale-install failure for the Gateway recovery boundary", async () => {
+    vi.useFakeTimers();
+    const missingChunk = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "missing-companion-chunk.js",
+    );
+    const error = Object.assign(
+      new Error(`ENOENT: no such file or directory, open '${missingChunk}'`),
+      {
+        code: "ENOENT",
+        path: missingChunk,
+      },
+    );
+    const harness = createHarness({
+      run: async () => {
+        throw error;
+      },
+    });
+
+    await expect(
+      harness.service.ask({
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        question: "Why did the companion stop?",
+        connId: "conn-1",
+      }),
+    ).rejects.toBe(error);
     harness.service.dispose();
   });
 

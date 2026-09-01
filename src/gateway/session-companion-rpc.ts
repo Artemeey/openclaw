@@ -14,6 +14,7 @@ import type { GatewayRequestHandlers } from "./server-methods/types.js";
 import { SessionCompanionAskError } from "./session-companion-ask.js";
 import { resolveRequestedSessionAgentId } from "./session-request-agent.js";
 import { resolveSessionStoreKey } from "./session-store-key.js";
+import { classifyGatewayStaleInstall } from "./stale-install.js";
 
 function resolveCompanionTarget(
   params: { sessionKey: string; agentId?: string | undefined },
@@ -84,6 +85,11 @@ export const sessionCompanionHandlers: GatewayRequestHandlers = {
       });
       respond(true, result);
     } catch (error) {
+      const staleInstall = classifyGatewayStaleInstall(error);
+      if (staleInstall) {
+        respond(false, undefined, staleInstall.error);
+        return;
+      }
       if (!(error instanceof SessionCompanionAskError)) {
         respond(
           false,

@@ -286,6 +286,22 @@ describe("ChatSessionCompanionThreads", () => {
     });
   });
 
+  it("maps a stale Gateway install to restart guidance", async () => {
+    const threads = new ChatSessionCompanionThreads();
+    await threads.submit("one", "What changed?", async () => {
+      throw Object.assign(new Error("stale install"), {
+        details: { code: "STALE_INSTALL" },
+        retryable: false,
+      });
+    });
+
+    expect(threads.view("one")).toMatchObject({
+      failedQuestion: "What changed?",
+      hint: "stale-install",
+      retryable: false,
+    });
+  });
+
   it("preserves a context failure for an explicit retry", async () => {
     const threads = new ChatSessionCompanionThreads();
     await threads.submit("one", "What changed?", async () => {
