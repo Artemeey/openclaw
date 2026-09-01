@@ -330,7 +330,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: manifest-owned plugin capability secret availability guard.
       // +1: canonical diagnostic flag checker through its focused subpath.
       // +4: public provider-entry scaffold contract and its focused types.
-      4357,
+      // +2: focused provider-auth routes for shipped auth ordering and provider-map lookup.
+      4359,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -437,7 +438,8 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +1: manifest-owned plugin capability secret availability guard.
       // +1: canonical diagnostic flag checker through its focused subpath.
       // +1: public provider-entry scaffold builder.
-      2592,
+      // +2: focused provider-auth routes for shipped auth ordering and provider-map lookup.
+      2594,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
