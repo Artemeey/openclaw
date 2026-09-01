@@ -527,7 +527,7 @@ describe("models.authStatus", () => {
     try {
       await expect(
         Promise.race([
-          request.then(() => "replied" as const),
+          Promise.resolve(request).then(() => "replied" as const),
           new Promise<"timed-out">((resolve) => {
             setTimeout(() => resolve("timed-out"), 25);
           }),
