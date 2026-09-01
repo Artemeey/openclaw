@@ -1,7 +1,9 @@
+import MarkdownIt from "markdown-it";
 import { describe, expect, it } from "vitest";
 import { formatMSTeamsMarkdown } from "./format.js";
 
 describe("formatMSTeamsMarkdown", () => {
+  const commonmark = new MarkdownIt("commonmark");
   const fixtures = [
     {
       name: "falls headings back to bold text",
@@ -112,6 +114,7 @@ describe("formatMSTeamsMarkdown", () => {
       name: "keeps inline code delimiters that protect embedded backticks",
       before: "``value `with` ticks``",
       after: "``value `with` ticks``",
+      codeHtml: "<code>value `with` ticks</code>",
     },
     {
       name: "includes escaped backticks when choosing inline code delimiters",
@@ -119,9 +122,10 @@ describe("formatMSTeamsMarkdown", () => {
       after: "``a \\` b``",
     },
     {
-      name: "preserves inline code semantics while normalizing boundary spaces",
+      name: "preserves both boundary spaces in inline code",
       before: "`  foo  `",
-      after: "` foo`",
+      after: "`  foo  `",
+      codeHtml: "<code> foo </code>",
     },
     {
       name: "serializes link destinations with angle brackets",
@@ -142,7 +146,13 @@ describe("formatMSTeamsMarkdown", () => {
 
   for (const fixture of fixtures) {
     it(fixture.name, () => {
-      expect(formatMSTeamsMarkdown(fixture.before, "off")).toBe(fixture.after);
+      const rendered = formatMSTeamsMarkdown(fixture.before, "off");
+      expect(rendered).toBe(fixture.after);
+      if ("codeHtml" in fixture) {
+        // CommonMark payloads distinguish semantic spaces from delimiter padding.
+        expect(commonmark.renderInline(fixture.before)).toBe(fixture.codeHtml);
+        expect(commonmark.renderInline(rendered)).toBe(fixture.codeHtml);
+      }
     });
   }
 
