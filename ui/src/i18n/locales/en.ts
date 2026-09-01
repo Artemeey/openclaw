@@ -5974,6 +5974,8 @@ export const en: TranslationMap = {
     },
     questions: {
       other: "Type your own answer here",
+      answer: "Answer",
+      answerPlaceholder: "{label}",
       submit: "Submit",
       next: "Next",
       back: "Back",
@@ -6069,6 +6071,9 @@ export const en: TranslationMap = {
       searchModels: "Search models",
       noMatchingModels: "No models match your search",
       onlyForSession: "Only for this session",
+      selectionTargetSession: "Selection target: This session only",
+      selectionTargetAgent: "Selection target: This agent's default",
+      selectionTargetGlobal: "Selection target: Global default",
       useDefaultModel: "Use default ({model})",
       defaultWithModel: "Default ({model})",
       defaultWithLevel: "Default ({level})",
