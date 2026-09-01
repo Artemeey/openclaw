@@ -99,7 +99,6 @@ actor OutboxTransportState {
     var sendRoutingChanged = false
     var sendSettingsChanged = false
     var sendActiveLeafChanged = false
-    var sendSessionSettingsChanged = false
     var historyFails = false
     var sessionListFails = false
     var historyRequestCount = 0
@@ -434,7 +433,7 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
                 method: "chat.send",
                 code: "INVALID_REQUEST",
                 message: "session settings changed; review and retry",
-                details: ["reason": AnyCodable(OpenClawChatSessionSettingsContract.changedErrorReason)])
+                details: ["reason": AnyCodable("session-settings-changed")])
         }
         if await self.state.sendActiveLeafChanged {
             throw GatewayResponseError(
@@ -442,13 +441,6 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
                 code: "INVALID_REQUEST",
                 message: "active leaf changed",
                 details: ["reason": AnyCodable("active-leaf-changed")])
-        }
-        if await self.state.sendSessionSettingsChanged {
-            throw GatewayResponseError(
-                method: "chat.send",
-                code: "INVALID_REQUEST",
-                message: "session settings changed",
-                details: ["reason": AnyCodable("session-settings-changed")])
         }
         if await self.state.sendRejects {
             // Gateway responded but refused to start the run.
@@ -806,6 +798,8 @@ actor ScriptedOutbox: OpenClawChatCommandOutbox {
                 id: id, attemptVersion: attemptVersion, retryCount: retryCount, lastError: nil)
             _ = await self.base.claimNextCommand()
             return .superseded
+        case .nonRetryable:
+            return self.terminalWriteResult
         case .updated:
             break
         }
@@ -2406,7 +2400,7 @@ struct ChatViewModelOutboxTests {
             lastError: nil)
         #expect(await store.enqueueCommand(command))
         let transport = OutboxTestTransport(healthy: true)
-        await transport.state.update { $0.sendSessionSettingsChanged = true }
+        await transport.state.update { $0.sendSettingsChanged = true }
         let vm = await makeOutboxViewModel(transport: transport, outbox: store)
 
         await MainActor.run { vm.load() }

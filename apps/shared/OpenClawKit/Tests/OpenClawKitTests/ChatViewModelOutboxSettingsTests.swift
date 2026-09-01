@@ -169,6 +169,7 @@ struct ChatViewModelOutboxSettingsTests {
             case .confirmed, .missing: commands.isEmpty
             case .superseded: commands.first?.status == .sending && commands.first?.attemptVersion == command
                 .attemptVersion + 1
+            case .nonRetryable: commands.first?.status == .sending
             }
             return await MainActor.run {
                 storedResult && !vm.isFlushingOutbox && (terminalResult != .unavailable || !vm.healthOK)
