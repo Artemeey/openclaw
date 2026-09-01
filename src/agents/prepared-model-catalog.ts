@@ -76,7 +76,7 @@ async function materializeRequestedModelCatalog(
     return snapshot;
   }
   const staleCatalog =
-    readOnly === true && refreshFullCatalog !== false
+    readOnly === true && refreshFullCatalog === true
       ? await refreshStalePreparedModelRuntimeCatalog(snapshot)
       : undefined;
   const modelCatalog =

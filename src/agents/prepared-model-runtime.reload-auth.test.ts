@@ -11,6 +11,7 @@ import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../test-utils/openclaw-test-state.js";
+import { loadPreparedModelCatalogOwnerSnapshot } from "./prepared-model-catalog.js";
 import {
   acquireAgentRunPreparedModelRuntime,
   loadPublishedGatewayReplyDispatchRuntime,
@@ -48,6 +49,10 @@ describe("prepared model runtime reload auth adoption", () => {
       inheritedAuthDir: state.agentDir("default"),
       config: {},
     };
+    const liveBuild = createDeferred<{
+      entries: Array<typeof model>;
+      routeVariants: Array<typeof model>;
+    }>();
 
     await refreshPreparedModelRuntimeSnapshots(input.config, {
       gatewayLifecycle: true,
@@ -73,11 +78,46 @@ describe("prepared model runtime reload auth adoption", () => {
     expect(mocks.buildPreparedModelCatalogSnapshot).not.toHaveBeenCalled();
     expect(mocks.runPreparedModelCatalogWorker).not.toHaveBeenCalled();
 
-    await expect(refreshStalePreparedModelRuntimeCatalog(published)).resolves.toMatchObject({
-      entries: [model],
+    let requestReadSettled = false;
+    const requestRead = loadPreparedModelCatalogOwnerSnapshot({
+      ...input,
+      readOnly: true,
+    }).then(() => {
+      requestReadSettled = true;
     });
+    for (let i = 0; i < 5; i += 1) {
+      await Promise.resolve();
+    }
+    expect(requestReadSettled).toBe(true);
+    expect(mocks.runPreparedModelCatalogWorker).not.toHaveBeenCalled();
+    await requestRead;
+
+    mocks.runPreparedModelCatalogWorker.mockImplementation(() => liveBuild.promise);
+    const explicitRefresh = refreshStalePreparedModelRuntimeCatalog(published);
+    await vi.waitFor(() => expect(mocks.runPreparedModelCatalogWorker).toHaveBeenCalledOnce());
+    liveBuild.resolve({ entries: [model], routeVariants: [model] });
+    await expect(explicitRefresh).resolves.toMatchObject({ entries: [model] });
     expect(mocks.runPreparedModelCatalogWorker).toHaveBeenCalledOnce();
     await expect(refreshStalePreparedModelRuntimeCatalog(published)).resolves.toBeUndefined();
+  });
+
+  it("does not refresh a catalog snapshot that is not owned by the runtime", async () => {
+    mocks.configuredAgentIds = ["default"];
+    const input = {
+      agentId: "default",
+      agentDir: state.agentDir("default"),
+      inheritedAuthDir: state.agentDir("default"),
+      config: {},
+    };
+    await refreshPreparedModelRuntimeSnapshots(input.config, {
+      gatewayLifecycle: true,
+      catalogMode: "static",
+    });
+    const published = await prepareModelRuntimeSnapshot(input);
+    const unowned = { ...published };
+
+    await expect(refreshStalePreparedModelRuntimeCatalog(unowned)).resolves.toBeUndefined();
+    expect(mocks.runPreparedModelCatalogWorker).not.toHaveBeenCalled();
   });
 
   it("does not live-refresh a token rotation with the same profile set", async () => {

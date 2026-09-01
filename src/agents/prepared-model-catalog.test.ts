@@ -199,9 +199,9 @@ describe("prepared model catalog access", () => {
       authModes: fullSnapshot.authModes,
     });
 
-    await expect(loadPreparedModelCatalogOwnerSnapshot({ readOnly: true })).resolves.toMatchObject({
-      modelCatalog: staleCatalog,
-    });
+    await expect(
+      loadPreparedModelCatalogOwnerSnapshot({ readOnly: true, refreshFullCatalog: true }),
+    ).resolves.toMatchObject({ modelCatalog: staleCatalog });
     expect(mocks.refreshStaleCatalog).toHaveBeenCalledWith(snapshot);
     expect(snapshot.readFullModelCatalog).not.toHaveBeenCalled();
   });
@@ -224,6 +224,26 @@ describe("prepared model catalog access", () => {
     ).resolves.toMatchObject({ modelCatalog: fullSnapshot.modelCatalog });
     expect(mocks.refreshStaleCatalog).not.toHaveBeenCalled();
     expect(snapshot.readFullModelCatalog).toHaveBeenCalledOnce();
+  });
+
+  it("does not await a stale full catalog for read-only request paths", async () => {
+    const snapshot = {
+      ...fullSnapshot,
+      loadFullModelCatalog: vi.fn(),
+      readFullModelCatalog: vi.fn(() => fullSnapshot.modelCatalog),
+    };
+    mocks.getSnapshot.mockReturnValue(snapshot);
+    mocks.prepareSnapshot.mockResolvedValue(snapshot);
+    mocks.refreshStaleCatalog.mockRejectedValue(new Error("full discovery was awaited"));
+    setPreparedModelFullCatalogAuth(snapshot.modelCatalog, {
+      authStore: fullSnapshot.authStore,
+      authModes: fullSnapshot.authModes,
+    });
+
+    await expect(loadPreparedModelCatalogSnapshot({ readOnly: true })).resolves.toBe(
+      snapshot.modelCatalog,
+    );
+    expect(mocks.refreshStaleCatalog).not.toHaveBeenCalled();
   });
 
   it("reuses a published full generation for a provider-scoped read-only load", async () => {
@@ -319,6 +339,7 @@ describe("prepared model catalog access", () => {
       expect.objectContaining({ readOnly: true, workspaceDir: "/tmp/dynamic-workspace" }),
     );
     expect(mocks.releaseSnapshot).toHaveBeenCalledOnce();
+    expect(mocks.refreshStaleCatalog).not.toHaveBeenCalled();
   });
 
   it("rejects a full generation replaced with another config", async () => {
