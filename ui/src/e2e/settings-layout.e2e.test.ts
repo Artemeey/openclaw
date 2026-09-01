@@ -117,6 +117,124 @@ const responsiveViewports = [
 ] as const;
 
 suite.define(() => {
+  it("keeps the Automations overview on one aligned page grid", async () => {
+    const context = await suite.browser.newContext({
+      colorScheme: "dark",
+      locale: "en-US",
+      serviceWorkers: "block",
+      viewport: { height: 908, width: 874 },
+    });
+    const page = await context.newPage();
+    await installMockGateway(page, {
+      methodResponses: {
+        "agents.list": {
+          agents: [
+            { id: "main", identity: { name: "Molty" }, name: "Molty" },
+            { id: "writer", identity: { name: "Writer" }, name: "Writer" },
+          ],
+          defaultId: "main",
+          mainKey: "main",
+          scope: "agent",
+        },
+        "cron.list": {
+          hasMore: false,
+          jobs: [
+            {
+              configRevision: "automations-layout-job",
+              createdAtMs: 0,
+              enabled: true,
+              id: "daily-digest",
+              name: "Daily digest",
+              payload: { kind: "systemEvent", text: "Prepare the daily digest" },
+              schedule: { everyMs: 86_400_000, kind: "every" },
+              sessionTarget: "main",
+              state: { nextRunAtMs: Date.parse("2026-09-01T16:00:00.000Z") },
+              updatedAtMs: 0,
+              wakeMode: "next-heartbeat",
+            },
+          ],
+          limit: 50,
+          nextOffset: null,
+          offset: 0,
+          snapshotRevision: "automations-layout",
+          total: 1,
+        },
+        "cron.runs": { entries: [], hasMore: false, limit: 50, offset: 0, total: 0 },
+        "cron.status": {
+          enabled: true,
+          jobs: 1,
+          nextWakeAtMs: Date.parse("2026-09-01T16:00:00.000Z"),
+          triggersEnabled: true,
+        },
+      },
+    });
+
+    try {
+      const pathname = pathForRoute("cron");
+      await page.goto(new URL(pathname, suite.server.baseUrl).toString());
+      await waitForControlUiRoute(page, { pathname, routeId: "cron" });
+
+      const title = page.locator(".content-header .page-title");
+      const subtitle = page.locator(".content-header .page-subtitle");
+      const createAction = page.locator('.content-header [data-test-id="cron-new-task"]');
+      const tabs = page.locator(".cron-toolbar__primary");
+      const summary = page.locator(".cron-overview-summary");
+      const filters = page.locator(".cron-toolbar__filters");
+      await Promise.all([
+        title.waitFor(),
+        subtitle.waitFor(),
+        createAction.waitFor(),
+        tabs.waitFor(),
+        summary.waitFor(),
+        filters.waitFor(),
+      ]);
+
+      expect(await subtitle.textContent()).toContain(
+        "Schedule tasks for OpenClaw to run automatically",
+      );
+      expect(await page.locator('.cron-toolbar [data-test-id="cron-new-task"]').count()).toBe(0);
+      const geometry = await page.evaluate(() => {
+        const box = (selector: string) => {
+          const element = document.querySelector<HTMLElement>(selector);
+          if (!element) {
+            throw new Error(`Automations layout is missing ${selector}`);
+          }
+          const rect = element.getBoundingClientRect();
+          return {
+            bottom: Math.round(rect.bottom),
+            left: Math.round(rect.left),
+            right: Math.round(rect.right),
+            top: Math.round(rect.top),
+          };
+        };
+        return {
+          filters: box(".cron-toolbar__filters"),
+          summary: box(".cron-overview-summary"),
+          tabs: box(".cron-toolbar__primary"),
+          title: box(".content-header .page-title"),
+        };
+      });
+      expect(geometry.title.left).toBe(geometry.tabs.left);
+      expect(geometry.summary.left).toBe(geometry.tabs.left);
+      expect(geometry.summary.right).toBe(geometry.tabs.right);
+      expect(geometry.filters.left).toBe(geometry.tabs.left);
+      expect(geometry.tabs.bottom).toBeLessThanOrEqual(geometry.summary.top);
+      expect(geometry.summary.bottom).toBeLessThanOrEqual(geometry.filters.top);
+
+      if (proofEnabled) {
+        const proofDir = path.join(suite.artifactDir, "settings-layout-audit");
+        await mkdir(proofDir, { recursive: true });
+        await page.screenshot({
+          animations: "disabled",
+          fullPage: true,
+          path: path.join(proofDir, "automations-overview.png"),
+        });
+      }
+    } finally {
+      await context.close();
+    }
+  });
+
   it("aligns every mobile settings page with the topbar content", async () => {
     const context = await suite.browser.newContext({
       colorScheme: "dark",

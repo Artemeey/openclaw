@@ -1,5 +1,5 @@
 import { consume } from "@lit/context";
-import { html, type PropertyValues } from "lit";
+import { html, nothing, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
 import type { AgentsListResult, CronJob } from "../../api/types.ts";
 import { titleForRoute } from "../../app-navigation.ts";
@@ -7,6 +7,8 @@ import { applicationContext, type ApplicationContext } from "../../app/context.t
 import { readGatewayOperatorAccess } from "../../app/operator-access.ts";
 import { renderAgentScopeControl } from "../../components/agent-scope-control.ts";
 import { showConfirmDialog } from "../../components/confirm-dialog.ts";
+import { icon } from "../../components/icons.ts";
+import { renderSettingsPageHeader } from "../../components/settings-ui.ts";
 import { renderSettingsWorkspace } from "../../components/settings-workspace.ts";
 import { t } from "../../i18n/index.ts";
 import { watchAgentScope } from "../../lib/agents/index.ts";
@@ -418,16 +420,30 @@ class CronPage extends OpenClawLightDomElement {
       modelSuggestions: this.cronModelSuggestions,
     });
     const canManage = this.canManageCron;
+    const showCreateAction = canManage && !this.cron.cronEditingJob && !this.cron.cronCreateOpen;
     return html`
-      <section class="content-header">
-        <div>
-          <div class="page-title">${titleForRoute("cron")}</div>
-        </div>
-        ${renderAgentScopeControl({
-          agents: this.agentsList?.agents ?? [],
-          selection: this.context.agentSelection,
-        })}
-      </section>
+      ${renderSettingsPageHeader({
+        title: titleForRoute("cron"),
+        subtitle: t("cron.subtitle"),
+        actions: html`
+          ${renderAgentScopeControl({
+            agents: this.agentsList?.agents ?? [],
+            selection: this.context.agentSelection,
+          })}
+          ${showCreateAction
+            ? html`
+                <button
+                  type="button"
+                  class="btn primary btn--sm cron-new-task"
+                  data-test-id="cron-new-task"
+                  @click=${() => this.openCreate()}
+                >
+                  ${icon("plus")} ${t("cron.list.newTask")}
+                </button>
+              `
+            : nothing}
+        `,
+      })}
       ${renderSettingsWorkspace(
         renderCron({
           basePath: this.context.basePath,

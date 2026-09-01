@@ -485,28 +485,7 @@ function renderListView(props: CronProps) {
     !hasAnyJobsFilters &&
     props.canManage;
   const children = [
-    html`
-      <div class="cron-overview-header">
-        <div class="cron-overview-summary">
-          ${renderCronStats(props)} ${renderAdminRequired(props)}
-        </div>
-        ${props.status && !props.status.enabled
-          ? html`
-              <div class="cron-error-banner" data-test-id="cron-scheduler-banner">
-                <strong>${t("cron.list.schedulerOff")}</strong>
-                ${t("cron.runNotStarted.stopped")}
-              </div>
-            `
-          : nothing}
-        ${props.listError
-          ? html`<div class="cron-error-banner" role="alert">${props.listError}</div>`
-          : nothing}
-        ${props.error
-          ? html`<div class="cron-error-banner" role="alert">${props.error}</div>`
-          : nothing}
-        ${renderToolbar(props, hasAdvancedJobsFilters)}
-      </div>
-    `,
+    html` <div class="cron-overview-header">${renderToolbar(props, hasAdvancedJobsFilters)}</div> `,
     html`
       <div
         id="cron-list-panel"
@@ -546,7 +525,7 @@ function renderListTabs(props: CronProps) {
   });
 }
 
-// Navigation and primary actions stay stable above the task-only filter row.
+// Navigation and overview context stay stable above the task-only filter row.
 function renderToolbar(props: CronProps, hasAdvancedJobsFilters: boolean) {
   return html`
     <div class="cron-toolbar">
@@ -565,20 +544,25 @@ function renderToolbar(props: CronProps, hasAdvancedJobsFilters: boolean) {
           >
             ${icon("refresh")}
           </button>
-          ${props.canManage
-            ? html`
-                <button
-                  type="button"
-                  class="btn primary btn--sm cron-new-task"
-                  data-test-id="cron-new-task"
-                  @click=${() => props.onOpenCreate()}
-                >
-                  ${icon("plus")} ${t("cron.list.newTask")}
-                </button>
-              `
-            : nothing}
         </div>
       </div>
+      <div class="settings-group cron-overview-summary">
+        ${renderCronStats(props)} ${renderAdminRequired(props)}
+      </div>
+      ${props.status && !props.status.enabled
+        ? html`
+            <div class="cron-error-banner" data-test-id="cron-scheduler-banner">
+              <strong>${t("cron.list.schedulerOff")}</strong>
+              ${t("cron.runNotStarted.stopped")}
+            </div>
+          `
+        : nothing}
+      ${props.listError
+        ? html`<div class="cron-error-banner" role="alert">${props.listError}</div>`
+        : nothing}
+      ${props.error
+        ? html`<div class="cron-error-banner" role="alert">${props.error}</div>`
+        : nothing}
       ${props.listTab === "tasks"
         ? html`
             <div class="cron-toolbar__filters">

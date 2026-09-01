@@ -631,7 +631,7 @@ describe("cron view editor", () => {
     const onSelectJob = vi.fn();
     const container = renderView({ canManage, jobs: [job], onSelectJob });
 
-    expect(Boolean(container.querySelector('[data-test-id="cron-new-task"]'))).toBe(canManage);
+    expect(container.querySelector('[data-test-id="cron-new-task"]')).toBeNull();
     expect(Boolean(container.querySelector('[data-test-id="cron-row-run-permission-job"]'))).toBe(
       canManage,
     );

@@ -179,6 +179,24 @@ afterEach(() => {
 });
 
 describe("CronPage editor state sync", () => {
+  it("renders the overview action and explanatory copy in the page header", async () => {
+    const gateway = createGateway(
+      { request: createRequest() } as unknown as GatewayBrowserClient,
+      true,
+    );
+    const page = createPage(createContext(gateway), { render: true });
+
+    await waitForCronPage(() =>
+      expect(page.querySelector('[data-test-id="cron-new-task"]')).not.toBeNull(),
+    );
+    const header = page.querySelector(".content-header");
+    expect(header?.querySelector(".page-subtitle")?.textContent).toContain(
+      "Schedule tasks for OpenClaw to run automatically",
+    );
+    expect(header?.querySelector('[data-test-id="cron-new-task"]')).not.toBeNull();
+    expect(page.querySelector('.cron-toolbar [data-test-id="cron-new-task"]')).toBeNull();
+  });
+
   it("opens a linked job's history after its jobs load and highlights the linked run", async () => {
     const job: CronJob = {
       id: "linked-job",

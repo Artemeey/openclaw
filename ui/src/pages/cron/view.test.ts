@@ -220,12 +220,9 @@ describe("cron view list pane", () => {
     ]);
   });
 
-  it("opens the create panel from the New task button and suggestions", () => {
+  it("opens the create panel from starter suggestions", () => {
     const onOpenCreate = vi.fn();
     const container = renderView({ onOpenCreate });
-
-    getElement(container, '[data-test-id="cron-new-task"]', HTMLButtonElement).click();
-    expect(onOpenCreate).toHaveBeenCalledWith();
 
     expect(container.querySelectorAll(".cron-suggestion")).toHaveLength(6);
     const suggestion = getElement(container, '[data-suggestion="repoPulse"]', HTMLButtonElement);
@@ -382,6 +379,19 @@ describe("cron view list pane", () => {
     expect(unknown.querySelector(".cron-stat__value--danger")).toBeNull();
     const stats = getElement(unknown, ".cron-stats", HTMLDivElement);
     expect(stats.textContent).toContain("n/a");
+  });
+
+  it("orders list navigation, summary card, and task filters", () => {
+    const container = renderView();
+    const navigation = getElement(container, ".cron-toolbar__primary", HTMLDivElement);
+    const summary = getElement(container, ".cron-overview-summary", HTMLDivElement);
+    const filters = getElement(container, ".cron-toolbar__filters", HTMLDivElement);
+
+    expect(summary.classList.contains("settings-group")).toBe(true);
+    expect(navigation.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(
+      0,
+    );
+    expect(summary.compareDocumentPosition(filters) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 
   it("switches between tasks and run history via the list tabs", () => {

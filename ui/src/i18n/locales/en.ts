@@ -6729,6 +6729,8 @@ export const en: TranslationMap = {
     deleteFailed: "The secret was not deleted. Reload the list and try again.",
   },
   cron: {
+    subtitle:
+      "Schedule tasks for OpenClaw to run automatically, from one-time reminders to recurring workflows.",
     adminRequired: "Browsing only. Automation changes require operator.admin access.",
     tabs: {
       filterLabel: "Automation status",
