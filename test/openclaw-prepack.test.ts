@@ -6,11 +6,14 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import * as tar from "tar";
 import { afterEach, describe, expect, it } from "vitest";
+import { restorePrepackArtifacts } from "../scripts/openclaw-postpack.mjs";
 import {
   collectPreparedPrepackErrors,
   collectSourcePackWorkspaceDependencyErrors,
@@ -20,6 +23,7 @@ import {
   resolvePrepackCommandTimeoutMs,
   runPrepackCommand,
 } from "../scripts/openclaw-prepack.ts";
+import { preparePackageDocsMap } from "../scripts/package-docs-map.mjs";
 import { useAutoCleanupTempDirTracker } from "./helpers/temp-dir.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -40,7 +44,7 @@ const standaloneBundledChannelSmokeFiles = [
   "scripts/process-warning-filter.mts",
 ];
 
-function runStandaloneBundledChannelSmoke(entrySource: string) {
+function createBundledChannelSmokeFixture(entrySource: string, prepared = false) {
   const rootDir = tempDirs.make("openclaw-prepack-standalone-smoke-");
   for (const relativePath of standaloneBundledChannelSmokeFiles) {
     const destination = path.join(rootDir, relativePath);
@@ -48,7 +52,7 @@ function runStandaloneBundledChannelSmoke(entrySource: string) {
     copyFileSync(path.join(process.cwd(), relativePath), destination);
   }
 
-  const packageRoot = path.join(rootDir, "package");
+  const packageRoot = prepared ? rootDir : path.join(rootDir, "package");
   const extensionRoot = path.join(packageRoot, "dist", "extensions", "fixture-channel");
   mkdirSync(extensionRoot, { recursive: true });
   writeFileSync(path.join(packageRoot, "package.json"), '{"files":[]}\n');
@@ -60,6 +64,12 @@ function runStandaloneBundledChannelSmoke(entrySource: string) {
     })}\n`,
   );
   writeFileSync(path.join(extensionRoot, "index.js"), entrySource);
+
+  return { rootDir, packageRoot };
+}
+
+function runStandaloneBundledChannelSmoke(entrySource: string) {
+  const { rootDir, packageRoot } = createBundledChannelSmokeFixture(entrySource);
 
   return spawnSync(
     process.execPath,
@@ -101,6 +111,87 @@ describe("standalone bundled channel smoke", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("AssertionError");
   });
+});
+
+describe("prepared prepack ownership", () => {
+  it.each([
+    { invalid: false, incumbent: true },
+    { invalid: true, incumbent: false },
+    { invalid: true, incumbent: true },
+  ])(
+    "does not mutate source when smoke is invalid=$invalid and incumbent=$incumbent",
+    async ({ invalid, incumbent }) => {
+      const { rootDir } = createBundledChannelSmokeFixture(
+        invalid
+          ? "export default [];\n"
+          : 'export default { kind: "bundled-channel-entry", loadChannelPlugin() { return { id: "fixture-channel" }; } };\n',
+        true,
+      );
+      mkdirSync(path.join(rootDir, "node_modules"));
+      symlinkSync(
+        path.dirname(fileURLToPath(import.meta.resolve("tsx/package.json"))),
+        path.join(rootDir, "node_modules/tsx"),
+        "junction",
+      );
+      mkdirSync(path.join(rootDir, "docs"));
+      mkdirSync(path.join(rootDir, "dist/control-ui/assets"), { recursive: true });
+      const sourceFiles = {
+        "package.json":
+          '{"name":"openclaw","version":"2026.8.1","type":"module","files":["dist"]}\n',
+        "CHANGELOG.md": "# Changelog\n\n## 2026.8.1\n- Current release notes with enough detail.\n",
+        "docs/page.md": "# Package docs\n",
+        "dist/index.js": "export {};\n",
+        "dist/control-ui/index.html": "<!doctype html>\n",
+        "dist/control-ui/assets/fixture.js.br": "prepared asset fixture\n",
+        "dist/control-ui/assets/fixture.js.gz": "prepared asset fixture\n",
+      };
+      for (const [name, contents] of Object.entries(sourceFiles)) {
+        writeFileSync(path.join(rootDir, name), contents);
+      }
+      if (incumbent) {
+        await preparePackageDocsMap(rootDir);
+      }
+      const receiptPath = path.join(rootDir, ".artifacts/package-docs-map/receipt.json");
+      const receipt = incumbent ? readFileSync(receiptPath, "utf8") : undefined;
+      const ownerUrl = pathToFileURL(path.resolve("scripts/openclaw-prepack.ts")).href;
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          import.meta.resolve("tsx"),
+          "--input-type=module",
+          "--eval",
+          `import { preparePrepackArtifacts } from ${JSON.stringify(ownerUrl)}; await preparePrepackArtifacts();`,
+        ],
+        {
+          cwd: rootDir,
+          encoding: "utf8",
+          timeout: 30_000,
+          stdio: ["ignore", "pipe", "pipe"],
+          env: {
+            ...process.env,
+            // The package fixture still imports the real owner's workspace source.
+            TSX_TSCONFIG_PATH: path.resolve("tsconfig.json"),
+          },
+        },
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(result.signal).toBeNull();
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(invalid ? "AssertionError" : "PACKAGE_DOCS_MAP_ACTIVE");
+      expect(existsSync(path.join(rootDir, ".openclaw-lifecycle-pending"))).toBe(false);
+      expect(existsSync(path.join(rootDir, "dist/postinstall-inventory.json"))).toBe(false);
+      for (const [name, contents] of Object.entries(sourceFiles)) {
+        expect(readFileSync(path.join(rootDir, name), "utf8")).toBe(contents);
+      }
+      if (incumbent) {
+        expect(readFileSync(receiptPath, "utf8")).toBe(receipt);
+        await restorePrepackArtifacts(rootDir);
+      }
+      expect(existsSync(receiptPath)).toBe(false);
+    },
+  );
 });
 
 describe("collectSourcePackWorkspaceDependencyErrors", () => {
