@@ -206,6 +206,26 @@ describe("prepared model catalog access", () => {
     expect(snapshot.readFullModelCatalog).not.toHaveBeenCalled();
   });
 
+  it("keeps auth-only reads on the current catalog facts", async () => {
+    const snapshot = {
+      ...fullSnapshot,
+      loadFullModelCatalog: vi.fn(),
+      readFullModelCatalog: vi.fn(() => fullSnapshot.modelCatalog),
+    };
+    mocks.getSnapshot.mockReturnValue(snapshot);
+    mocks.prepareSnapshot.mockResolvedValue(snapshot);
+    setPreparedModelFullCatalogAuth(snapshot.modelCatalog, {
+      authStore: fullSnapshot.authStore,
+      authModes: fullSnapshot.authModes,
+    });
+
+    await expect(
+      loadPreparedModelCatalogOwnerSnapshot({ readOnly: true, refreshFullCatalog: false }),
+    ).resolves.toMatchObject({ modelCatalog: fullSnapshot.modelCatalog });
+    expect(mocks.refreshStaleCatalog).not.toHaveBeenCalled();
+    expect(snapshot.readFullModelCatalog).toHaveBeenCalledOnce();
+  });
+
   it("reuses a published full generation for a provider-scoped read-only load", async () => {
     mocks.prepareSnapshot.mockResolvedValue(fullSnapshot);
     mocks.isFullCatalog.mockReturnValue(true);
