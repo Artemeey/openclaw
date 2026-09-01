@@ -470,18 +470,6 @@ export function assertPluginReleaseDependencyFreshness(
   );
 }
 
-export function assertPluginReleaseDependencyFreshnessForTag(
-  plugins: readonly PublishablePluginPackage[],
-  label: string,
-  npmDistTag?: "extended-stable",
-  resolveLatestVersion: NpmLatestVersionResolver = resolveNpmLatestVersion,
-): void {
-  if (npmDistTag === "extended-stable") {
-    return;
-  }
-  assertPluginReleaseDependencyFreshness(plugins, label, resolveLatestVersion);
-}
-
 function isPluginVersionPublished(packageName: string, version: string): boolean {
   try {
     runNpmView([`${packageName}@${version}`, "version"]);
@@ -539,14 +527,7 @@ export function collectPluginReleasePlan(params?: {
   if (explicitPublishSelection) {
     assertPluginReleaseVersionFloors(selectedPublishable, "Plugin NPM release plan");
   }
-  // Extended-stable publishes an intentionally frozen dependency snapshot.
-  // The latest-dependency opt-in still guards moving release lines, but must
-  // not force unrelated runtime upgrades across a frozen support boundary.
-  assertPluginReleaseDependencyFreshnessForTag(
-    selectedPublishable,
-    "Plugin NPM release plan",
-    params?.npmDistTag,
-  );
+  assertPluginReleaseDependencyFreshness(selectedPublishable, "Plugin NPM release plan");
 
   const all = selectedPublishable.map((plugin) =>
     Object.assign({}, plugin, {

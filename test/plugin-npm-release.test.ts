@@ -496,37 +496,6 @@ describe("collectPluginReleaseDependencyFreshnessErrors", () => {
 });
 
 describe("collectPluginReleasePlan", () => {
-  it("preserves frozen dependency pins for extended-stable publication", () => {
-    const repoDir = makeTempRepoRoot(tempDirs, "openclaw-plugin-npm-release-");
-    writeJsonFile(join(repoDir, "package.json"), { version: "2026.7.33" });
-    writePublishablePluginFixture(repoDir, {
-      version: "2026.7.33",
-      publishTo: "npm",
-      dependency: {
-        packageName: "demo-runtime",
-        version: "1.2.3",
-        requireLatest: true,
-      },
-    });
-    childProcessMock.execFileSyncOverride = (() => {
-      throw new Error("not published");
-    }) as ExecFileSync;
-
-    const plan = collectPluginReleasePlan({
-      rootDir: repoDir,
-      selectionMode: "all-publishable",
-      npmDistTag: "extended-stable",
-    });
-
-    expect(plan.candidates).toMatchObject([
-      {
-        packageName: "@openclaw/demo-plugin",
-        publishTag: "extended-stable",
-        requiredLatestDependencies: [{ packageName: "demo-runtime", version: "1.2.3" }],
-      },
-    ]);
-  });
-
   it("fails closed when the published-version lookup times out", () => {
     const repoDir = makeTempRepoRoot(tempDirs, "openclaw-plugin-npm-release-");
     writePublishablePluginFixture(repoDir, {

@@ -130,15 +130,6 @@ describe("cross-OS release checks workflow", () => {
     expect(baselineMetadata.run).toContain("const entry = resolveNpmJsonEntries(payload).at(-1);");
   });
 
-  it("resolves the upgrade baseline from the checked-out workflow tree", () => {
-    const prepare = job(readWorkflow(WORKFLOW_PATH), "prepare");
-    const baseline = step(prepare, "Resolve baseline package spec");
-
-    expect(baseline["working-directory"]).toBeUndefined();
-    expect(baseline.run).toContain("pnpm --dir workflow exec node --import tsx");
-    expect(baseline.run).toContain("scripts/lib/release-upgrade-baseline.mts");
-  });
-
   it("installs trusted workflow dependencies for artifact resolution and upgrade metadata", () => {
     const prepare = job(readWorkflow(WORKFLOW_PATH), "prepare");
     const install = step(prepare, "Install workflow validation dependencies");

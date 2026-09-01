@@ -156,7 +156,7 @@ on:
         default: ""
         type: string
       previous_version:
-        description: Optional baseline version for the upgrade lane (defaults to the newest older stable)
+        description: Optional baseline version for the upgrade lane (defaults to npm latest)
         required: false
         default: ""
         type: string
