@@ -68,7 +68,7 @@ describe("renderAgentScopeControl", () => {
 
     expect(select?.closest("label")).toBeNull();
     expect(container.querySelector(".agent-scope-control__label")).toBeNull();
-    expect(select?.querySelector(".agent-select__menu-title")?.textContent).toBe("Agent scope");
+    expect(select?.querySelector(".agent-select__menu-title")?.textContent).toBe("Agent");
     expect(select?.querySelector(".agent-select__trigger")?.getAttribute("aria-label")).toContain(
       "Agent",
     );
