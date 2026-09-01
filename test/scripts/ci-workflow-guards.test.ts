@@ -50,6 +50,7 @@ const MANTIS_MANUAL_ONLY_WORKFLOWS = [
   ".github/workflows/mantis-web-ui-chat-proof.yml",
   ".github/workflows/mantis-discord-status-reactions.yml",
   ".github/workflows/mantis-discord-thread-attachment.yml",
+  ".github/workflows/mantis-night-clawer-telegram.yml",
 ] as const;
 const TRUFFLEHOG_V3_95_9 = "trufflesecurity/trufflehog@bcfcf73aaf4759d4dadc2783177c245a02792318";
 const MANTIS_GITHUB_APP_CLIENT_ID = "Iv23liPJCozR0uHm6P7G";
@@ -4837,6 +4838,7 @@ server.listen(0, "127.0.0.1", () => {
       ".github/workflows/mantis-discord-status-reactions.yml",
       ".github/workflows/mantis-discord-thread-attachment.yml",
       ".github/workflows/mantis-slack-desktop-smoke.yml",
+      ".github/workflows/mantis-night-clawer-telegram.yml",
       ".github/workflows/qa-live-transports-convex.yml",
     ];
     for (const workflowPath of privateQaWorkflows) {
@@ -6614,6 +6616,103 @@ server.listen(0, "127.0.0.1", () => {
         );
       }
     }
+  });
+
+  it("keeps Night Clawer Telegram proof main-only, brokered, and sanitized", () => {
+    const source = readFileSync(".github/workflows/mantis-night-clawer-telegram.yml", "utf8");
+    const workflow = parse(source);
+    expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"]);
+    expect(workflow.permissions).toEqual({ contents: "read" });
+    expect(workflow.env.NIGHT_CLAWER_REVISION).toBe("8a73dba82340358d57a990d653b834ec6d684641");
+
+    const runJob = workflow.jobs.run;
+    expect(runJob.environment).toBe("qa-live-shared");
+    expect(runJob.needs).toBe("authorize");
+    expect(runJob.permissions).toEqual({ contents: "read" });
+    const steps = runJob.steps as WorkflowStep[];
+    const trust = expectDefined(
+      steps.find((step) => step.name === "Require trusted OpenClaw workflow revision")?.run,
+      "trusted OpenClaw workflow step",
+    );
+    expect(trust).toContain('[[ "$GITHUB_REF" == "refs/heads/main" ]]');
+    expect(trust).toContain('"$WORKFLOW_SHA" == "$GITHUB_SHA"');
+
+    const token = expectDefined(
+      steps.find((step) => step.name === "Create Night Clawer read token"),
+      "Night Clawer token step",
+    );
+    expect(token).toMatchObject({
+      uses: CREATE_GITHUB_APP_TOKEN_V3,
+      with: {
+        owner: "openclaw",
+        repositories: "night-clawer",
+        "permission-contents": "read",
+      },
+    });
+    const checkout = expectDefined(
+      steps.find((step) => step.name === "Checkout trusted Night Clawer harness"),
+      "Night Clawer checkout step",
+    );
+    expect(checkout).toMatchObject({
+      uses: CHECKOUT_V6,
+      with: {
+        repository: "openclaw/night-clawer",
+        ref: "${{ env.NIGHT_CLAWER_REVISION }}",
+        "persist-credentials": false,
+      },
+    });
+
+    const proof = expectDefined(
+      steps.find((step) => step.name === "Run bounded Telegram Test Server proof"),
+      "Night Clawer proof step",
+    );
+    expect(Object.keys(proof.env ?? {}).toSorted()).toEqual([
+      "CONTROLLER_GID",
+      "CONTROLLER_UID",
+      "OPENCLAW_QA_CONVEX_SECRET_CI",
+      "OPENCLAW_QA_CONVEX_SITE_URL",
+    ]);
+    expect(proof.run).toContain("run-night-clawer-telegram-proof.mjs");
+    expect(proof.run).toContain('--controller-gid "$CONTROLLER_GID"');
+    expect(proof.run).toContain('--controller-uid "$CONTROLLER_UID"');
+    expect(proof.run).not.toContain(".night-clawer/suite/proposed-h3/mantis-controller.mjs");
+    expect(proof.run).toContain("$RUNNER_TEMP/night-clawer-telegram-controller-result.json");
+    expect(source).not.toContain("OPENAI_API_KEY");
+    expect(source).not.toContain("pull_request:");
+    expect(source).not.toContain("git/ref/heads/main");
+
+    const identity = expectDefined(
+      steps.find((step) => step.name === "Create isolated Night Clawer controller identity"),
+      "isolated controller identity step",
+    );
+    expect(identity.run).toContain("sudo useradd");
+    expect(identity.run).toContain('controller_uid="$(id -u "$controller_user")"');
+    expect(identity.run).toContain('[[ "$controller_uid" != "$(id -u)"');
+
+    const cleanup = expectDefined(
+      steps.find((step) => step.name === "Remove isolated Night Clawer controller identity"),
+      "isolated controller cleanup step",
+    );
+    expect(cleanup.if).toBe("always()");
+    expect(cleanup.run).toContain('sudo pkill -KILL -U "$CONTROLLER_UID"');
+    expect(cleanup.run).toContain('! pgrep -U "$CONTROLLER_UID"');
+    expect(cleanup.run).toContain('sudo userdel "$CONTROLLER_USER"');
+
+    const project = expectDefined(
+      steps.find((step) => step.name === "Project bounded OpenClaw-owned result"),
+      "Night Clawer projection step",
+    );
+    expect(project.if).toBe("always()");
+    expect(project.run).toContain("project-night-clawer-telegram-result.mts");
+    expect(project.run).toContain("$RUNNER_TEMP/night-clawer-telegram-controller-result.json");
+    expect(project.run).toContain(".artifacts/night-clawer-telegram/results.json");
+
+    const upload = expectDefined(
+      steps.find((step) => step.name === "Upload sanitized Night Clawer evidence"),
+      "Night Clawer upload step",
+    );
+    const uploadInputs = expectDefined(upload.with, "Night Clawer upload inputs");
+    expect(uploadInputs.path).toBe(".artifacts/night-clawer-telegram/results.json");
   });
 
   it("keeps shared Mantis reaction ownership stable", () => {

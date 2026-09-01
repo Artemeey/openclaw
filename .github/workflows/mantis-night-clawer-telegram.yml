@@ -1,0 +1,207 @@
+name: Mantis Night Clawer Telegram
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mantis-night-clawer-telegram
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  NODE_VERSION: "24.19.0"
+  NIGHT_CLAWER_REVISION: 8a73dba82340358d57a990d653b834ec6d684641
+  OPENCLAW_BUILD_PRIVATE_QA: "1"
+
+jobs:
+  authorize:
+    name: Authorize Telegram proof actor
+    runs-on: ubuntu-24.04
+    outputs:
+      authorized: ${{ steps.permission.outputs.authorized }}
+    steps:
+      - name: Require maintainer-level repository access
+        id: permission
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const allowed = new Set(["admin", "maintain", "write"]);
+            const { owner, repo } = context.repo;
+            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner,
+              repo,
+              username: context.actor,
+            });
+            core.setOutput("authorized", allowed.has(data.permission) ? "true" : "false");
+            if (!allowed.has(data.permission)) {
+              core.setFailed(`Mantis Telegram proof requires write access; actor has ${data.permission}.`);
+            }
+
+  run:
+    name: Run Night Clawer Telegram proof
+    needs: authorize
+    if: needs.authorize.outputs.authorized == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    timeout-minutes: 45
+    environment: qa-live-shared
+    permissions:
+      contents: read
+    steps:
+      - name: Require trusted OpenClaw workflow revision
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "openclaw/openclaw" ]]
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ && "$WORKFLOW_SHA" == "$GITHUB_SHA" ]]
+
+      - name: Checkout trusted OpenClaw harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Create Night Clawer read token
+        id: night_clawer_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.MANTIS_GITHUB_APP_ID }}
+          private-key: ${{ secrets.MANTIS_GITHUB_APP_PRIVATE_KEY }}
+          owner: openclaw
+          repositories: night-clawer
+          permission-contents: read
+
+      - name: Checkout trusted Night Clawer harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: openclaw/night-clawer
+          ref: ${{ env.NIGHT_CLAWER_REVISION }}
+          path: .night-clawer
+          token: ${{ steps.night_clawer_token.outputs.token }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify exact trusted sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ "$NIGHT_CLAWER_REVISION" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$(git -C .night-clawer rev-parse HEAD)" == "$NIGHT_CLAWER_REVISION" ]]
+          [[ -z "$(git status --porcelain --untracked-files=no)" ]]
+          [[ -z "$(git -C .night-clawer status --porcelain --untracked-files=no)" ]]
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          cache-mode: restore
+          node-version: ${{ env.NODE_VERSION }}
+          install-bun: "true"
+
+      - name: Build exact OpenClaw QA runtime
+        env:
+          NODE_OPTIONS: --max-old-space-size=8192
+        run: pnpm build qaRuntime
+
+      - name: Create isolated Night Clawer controller identity
+        id: controller_identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          controller_user="ocmantis${GITHUB_RUN_ID}${GITHUB_RUN_ATTEMPT}"
+          runner_gid="$(id -g)"
+          sudo useradd \
+            --system \
+            --no-create-home \
+            --home-dir /nonexistent \
+            --shell /usr/sbin/nologin \
+            --gid "$runner_gid" \
+            "$controller_user"
+          sudo passwd --lock "$controller_user" >/dev/null
+          controller_uid="$(id -u "$controller_user")"
+          controller_gid="$(id -g "$controller_user")"
+          [[ "$controller_uid" != "$(id -u)" && "$controller_gid" == "$runner_gid" ]]
+          [[ "$(id -G "$controller_user")" == "$controller_gid" ]]
+          {
+            echo "gid=$controller_gid"
+            echo "uid=$controller_uid"
+            echo "user=$controller_user"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Run bounded Telegram Test Server proof
+        id: proof
+        env:
+          CONTROLLER_GID: ${{ steps.controller_identity.outputs.gid }}
+          CONTROLLER_UID: ${{ steps.controller_identity.outputs.uid }}
+          OPENCLAW_QA_CONVEX_SECRET_CI: ${{ secrets.OPENCLAW_QA_CONVEX_SECRET_CI }}
+          OPENCLAW_QA_CONVEX_SITE_URL: ${{ secrets.OPENCLAW_QA_CONVEX_SITE_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/night-clawer-telegram-controller-result.json"
+          mkdir -p "$(dirname "$output")"
+          node scripts/mantis/run-night-clawer-telegram-proof.mjs \
+            --controller-gid "$CONTROLLER_GID" \
+            --controller-root "$GITHUB_WORKSPACE/.night-clawer" \
+            --controller-sha "$NIGHT_CLAWER_REVISION" \
+            --controller-uid "$CONTROLLER_UID" \
+            --openclaw-sha "$GITHUB_SHA" \
+            --output "$output"
+
+      - name: Remove isolated Night Clawer controller identity
+        if: always()
+        env:
+          CONTROLLER_UID: ${{ steps.controller_identity.outputs.uid }}
+          CONTROLLER_USER: ${{ steps.controller_identity.outputs.user }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$CONTROLLER_UID" && -n "$CONTROLLER_USER" ]] && id "$CONTROLLER_USER" >/dev/null 2>&1; then
+            sudo pkill -TERM -U "$CONTROLLER_UID" >/dev/null 2>&1 || true
+            sleep 1
+            sudo pkill -KILL -U "$CONTROLLER_UID" >/dev/null 2>&1 || true
+            ! pgrep -U "$CONTROLLER_UID" >/dev/null 2>&1
+            ! pgrep -u "$CONTROLLER_UID" >/dev/null 2>&1
+            sudo userdel "$CONTROLLER_USER"
+          fi
+
+      - name: Project bounded OpenClaw-owned result
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/mantis/project-night-clawer-telegram-result.mts \
+            --input "$RUNNER_TEMP/night-clawer-telegram-controller-result.json" \
+            --night-clawer-sha "$NIGHT_CLAWER_REVISION" \
+            --openclaw-sha "$GITHUB_SHA" \
+            --output "$GITHUB_WORKSPACE/.artifacts/night-clawer-telegram/results.json"
+
+      - name: Summarize sanitized result
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$GITHUB_WORKSPACE/.artifacts/night-clawer-telegram/results.json"
+          if [[ ! -f "$result" ]]; then
+            echo "Night Clawer Telegram proof produced no sanitized result." >>"$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          {
+            echo "## Night Clawer Telegram Test Server proof"
+            jq -r '"- Status: `\(.status)`", (.failure? // empty | "- Failure: `\(.)`"), (.tests[]? | "- `\(.test)`: `\(.verdict)` / `\(.mode)`")' "$result"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Upload sanitized Night Clawer evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: mantis-night-clawer-telegram-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/night-clawer-telegram/results.json
+          retention-days: 14
+          if-no-files-found: error
