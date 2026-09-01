@@ -286,7 +286,7 @@ describe("loadListModelCatalogSnapshot", () => {
   it("opts the unscoped model list into stale catalog refresh", async () => {
     mocks.loadModelCatalogSnapshot.mockResolvedValue({ entries: [], routeVariants: [] });
 
-    await loadListModelCatalogSnapshot(createRowContext({}));
+    await loadListModelCatalogSnapshot(createRowContext({ authIndex }));
 
     expect(mocks.loadModelCatalogSnapshot).toHaveBeenCalledWith(
       expect.objectContaining({ readOnly: true, refreshFullCatalog: true }),
