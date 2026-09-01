@@ -177,8 +177,10 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
   or standalone admission job. The protected `vitest-cache-warm` workflow
   publishes the immutable semantic dependency archive after setup succeeds,
   before build and transform warming. Preflight and downstream Node jobs are
-  restore-only consumers on eligible self-hosted runners; exact misses and
-  hosted/fork/manual paths use the ordinary pnpm-store cache.
+  restore-only consumers on eligible self-hosted runners. Hosted Mac Node jobs
+  also consume exact archives on canonical attempt-1 pushes and same-repo PRs;
+  fork/manual/retry Mac jobs retain the ordinary pnpm-store cache. Exact misses
+  and other hosted paths use the ordinary pnpm-store cache.
 - Hybrid first attempts route `preflight`, `security-fast`, and `ci-gate` to
   the existing 4-vCPU Blacksmith runner after measured hosted queue delays.
   Contributor trust, manual/non-canonical fallbacks, hosted retries, and the
@@ -199,6 +201,11 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
   full-suite plan. Targeted plans retain the full built-artifact
   boundary gate. `main` uses compact integration; manual and release runs use
   full named shards.
+- The combined Node matrix admits compact and plugin descriptors by estimated
+  duration within the same cap. Catch-all, QA and provider configs use the
+  existing 90-file job budget with native Vitest sharding; retain complete
+  config discovery, exclusions and process isolation. Count every appended
+  plugin row, including the five added QA/provider rows, in the burst envelope.
 - `build-artifacts` on `blacksmith-32vcpu-ubuntu-2404`.
 - lower-weight Node/check shards on `blacksmith-4vcpu-ubuntu-2404`.
 - heavy retained Linux/Android shards on `blacksmith-8vcpu-ubuntu-2404`.
