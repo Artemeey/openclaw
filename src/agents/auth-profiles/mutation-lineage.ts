@@ -237,6 +237,7 @@ const testing = {
   },
 };
 if (process.env.VITEST || process.env.NODE_ENV === "test") {
+  // SAFETY: test-only publication; globalThis is written as an open symbol-keyed bag.
   (globalThis as Record<PropertyKey, unknown>)[Symbol.for("openclaw.runtimeAuthSnapshotsTestApi")] =
     testing;
 }
