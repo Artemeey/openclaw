@@ -351,7 +351,6 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
   if (queuedToolsAllow && queuedToolIntersections) {
     attachToolAllowlistIntersection(queuedToolsAllow, queuedToolIntersections);
   }
-  const admittedSessionSettings = opts?.admittedSessionSettings;
   const followupRun = {
     prompt: queuedBody,
     transcriptPrompt: transcriptCommandBody,
@@ -437,14 +436,10 @@ export async function executePreparedReplyRun(state: PreparedReplyRunAdmission) 
       sessionFile: preparedSessionState.sessionFile,
       workspaceDir,
       cwd: normalizeOptionalString(state.sessionEntry?.spawnedCwd),
-      permissionMode: admittedSessionSettings
-        ? admittedSessionSettings.permissionMode
-        : preparedSessionState.sessionEntry?.permissionMode,
+      permissionMode: preparedSessionState.sessionEntry?.permissionMode,
       sessionRoot: normalizeOptionalString(preparedSessionState.sessionEntry?.sessionRoot),
       config: cfg,
-      toolOverrides: admittedSessionSettings
-        ? admittedSessionSettings.toolOverrides
-        : preparedSessionState.sessionEntry?.toolOverrides,
+      toolOverrides: preparedSessionState.sessionEntry?.toolOverrides,
       skillsSnapshot,
       provider,
       model,

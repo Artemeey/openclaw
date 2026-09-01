@@ -27,6 +27,7 @@ import {
   DispatchReplyOperationAbortedError,
   runWithDispatchAbortSignal,
 } from "./dispatch-from-config.abort.js";
+import { createReplyDispatchEvent } from "./dispatch-from-config.events.js";
 import {
   hasExecApprovalPayload,
   requiresDurableToolResultDelivery,
@@ -34,11 +35,6 @@ import {
 import { suppressPendingFinalDelivery } from "./dispatch-from-config.pending-final.js";
 import { extendPreparedDispatchState } from "./dispatch-from-config.phase-state.js";
 import type { PrepareDispatchOperationReadyState } from "./dispatch-from-config.prepare-operation.js";
-import { runReplyDispatchTakeover } from "./dispatch-from-config.reply-dispatch-hook.js";
-import {
-  maybeRefuseRestrictedRuntimeTakeover,
-  runtimeTakeoverHooksAllowed,
-} from "./dispatch-from-config.restricted-runtime.js";
 import { createSessionMetadataChangeNotifier } from "./dispatch-from-config.session-metadata.js";
 import {
   captureDeliveredTranscriptMirror,
@@ -527,10 +523,7 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
   };
 
   // Run before_dispatch hook — let plugins inspect or handle before model dispatch.
-  if (
-    runtimeTakeoverHooksAllowed(params.replyOptions?.admittedSessionSettings) &&
-    hookRunner?.hasHooks("before_dispatch")
-  ) {
+  if (hookRunner?.hasHooks("before_dispatch")) {
     // This outer lookup key is resolved from the routed context; fields inside
     // sessionStoreEntry.entry cannot redirect hook or requester lineage.
     const beforeDispatchSessionKey = sessionStoreEntry.sessionKey ?? sessionKey;
@@ -613,20 +606,65 @@ export async function chooseDispatchRoute(state: PrepareDispatchOperationReadySt
     }
   }
 
-  const restrictedRuntimeRefusal = await maybeRefuseRestrictedRuntimeTakeover({
-    state,
-    sendFinalPayload,
-  });
-  if (restrictedRuntimeRefusal) {
-    return {
-      status: "complete" as const,
-      result: attachSourceReplyDeliveryMode(restrictedRuntimeRefusal),
-    };
-  }
-
-  const replyDispatchTakeover = await runReplyDispatchTakeover(state, shouldSendToolSummaries);
-  if (replyDispatchTakeover) {
-    return replyDispatchTakeover;
+  if (hookRunner?.hasHooks("reply_dispatch", { dispatchKind: state.dispatchKind })) {
+    const replyDispatchResult = await traceReplyPhase("reply.reply_dispatch_hooks", () =>
+      runWithDispatchLifecycleAdmission(
+        async () =>
+          await runWithDispatchAbortSignal(
+            getPreDispatchAbortSignal(),
+            () =>
+              hookRunner.runReplyDispatch(
+                createReplyDispatchEvent({
+                  ctx,
+                  runId: params.replyOptions?.runId,
+                  sessionKey: acpDispatchSessionKey,
+                  toolsAllow: params.replyOptions?.toolsAllow,
+                  images: params.replyOptions?.images,
+                  inboundAudio: state.inboundAudio,
+                  sessionTtsAuto,
+                  ttsChannel: deliveryChannel,
+                  suppressUserDelivery: state.suppressHookUserDelivery,
+                  suppressReplyLifecycle: state.suppressHookReplyLifecycle,
+                  sourceReplyDeliveryMode: state.sourceReplyDeliveryMode,
+                  shouldRouteToOriginating,
+                  originatingChannel: routeReplyChannel,
+                  originatingTo: routeReplyTo,
+                  originatingAccountId: replyContextAccountId,
+                  originatingThreadId: routeReplyThreadId,
+                  originatingChatType: replyRoute.chatType,
+                  shouldSendToolSummaries,
+                  shouldSendFullToolDetails: state.shouldEmitFullVerboseProgress(),
+                  sendPolicy: state.sendPolicy,
+                }),
+                {
+                  cfg,
+                  dispatchKind: state.dispatchKind,
+                  dispatcher: state.dispatchHookDispatcher,
+                  abortSignal: getPreDispatchAbortSignal() ?? params.replyOptions?.abortSignal,
+                  onReplyStart: params.replyOptions?.onReplyStart,
+                  onAgentRunStart: params.replyOptions?.onAgentRunStart,
+                  userTurnTranscriptRecorder: params.replyOptions?.userTurnTranscriptRecorder,
+                  prepareAssistantTranscriptMessage:
+                    params.replyOptions?.prepareAssistantTranscriptMessage,
+                  recordProcessed,
+                  markIdle,
+                },
+              ),
+            trackDispatchLifecycleWork,
+          ),
+      ),
+    );
+    if (replyDispatchResult?.handled) {
+      commitInboundDedupeIfClaimed();
+      completeDispatchReplyOperation();
+      return {
+        status: "complete" as const,
+        result: attachSourceReplyDeliveryMode({
+          queuedFinal: replyDispatchResult.queuedFinal,
+          counts: replyDispatchResult.counts,
+        }),
+      };
+    }
   }
 
   const dispatchAcquisition = await state.ensureDispatchReplyOperation(

@@ -146,7 +146,6 @@ public final class OpenClawChatViewModel {
     var swarmRefreshTask: Task<Void, Never>?
 
     public internal(set) var contextUsageFraction: Double?
-    let composerCapabilityState = OpenClawChatComposerCapabilityState()
     /// True while the visible transcript came from the offline cache and no
     /// live history response has replaced it yet (possibly stale).
     public internal(set) var isShowingCachedTranscript = false
@@ -300,9 +299,6 @@ public final class OpenClawChatViewModel {
     var lastSuccessfulSettingsPatchResultsByTarget: [ModelPatchTarget: OpenClawChatModelPatchResult] = [:]
     var completedModelPatchTargets: Set<ModelPatchTarget> = []
     var inFlightSettingsPatchCountsByTarget: [ModelPatchTarget: Int] = [:]
-    var capabilityPatchFailureRevisionsByTarget: [ModelPatchTarget: UInt64] = [:]
-    var capabilityPatchFailureMessagesByTarget: [ModelPatchTarget: String] = [:]
-    var confirmedCapabilityToolOverridesByTarget: [ModelPatchTarget: ToolOverridesState] = [:]
     private var settingsPatchRevisionsByTarget: [ModelPatchTarget: UInt64] = [:]
     private var settingsPatchWaitersByTarget: [ModelPatchTarget: [CheckedContinuation<Void, Never>]] = [:]
     @ObservationIgnored
@@ -326,7 +322,7 @@ public final class OpenClawChatViewModel {
     var acceptedPreferredThinkingLevelsByTarget: [ModelPatchTarget: String] = [:]
     var acceptedExplicitThinkingPreferencesByTarget: [ModelPatchTarget: Bool] = [:]
     var acceptedThinkingOverrideClearedByTarget: [ModelPatchTarget: Bool] = [:]
-    private(set) var isCompacting = false
+    private var isCompacting = false
     private var lastCompactAt: Date?
     private let compactCooldown: TimeInterval = 60
 
@@ -369,16 +365,6 @@ public final class OpenClawChatViewModel {
 
         var level: String? {
             if case let .value(level) = self { return level }
-            return nil
-        }
-    }
-
-    enum ToolOverridesState {
-        case none
-        case value(OpenClawChatSessionToolOverrides)
-
-        var overrides: OpenClawChatSessionToolOverrides? {
-            if case let .value(overrides) = self { return overrides }
             return nil
         }
     }
@@ -701,8 +687,20 @@ public final class OpenClawChatViewModel {
         startBootstrap()
     }
 
+    public func selectThinkingLevel(_ level: String) {
+        performSelectThinkingLevel(level)
+    }
+
+    public func selectVerboseLevel(_ level: String) {
+        performSelectVerboseLevel(level)
+    }
+
+    public func selectFastMode(_ selectionID: String) {
+        performSelectFastMode(selectionID)
+    }
+
     public func selectModel(_ selectionID: String) {
-        guard self.composerModelMutationAvailable, let request = reserveModelSelection(selectionID) else { return }
+        guard let request = reserveModelSelection(selectionID) else { return }
         enqueueSessionSettingsPatch(requestID: request.id, target: request.target) { [weak self] routeLease in
             guard let self else { return }
             await self.performSelectModel(request, routeLease: routeLease)
@@ -754,6 +752,14 @@ public final class OpenClawChatViewModel {
         }
         return "Default: \(modelLabel(for: defaultModelID))"
     }
+
+    static let baseThinkingLevelOptions: [OpenClawChatThinkingLevelOption] = [
+        OpenClawChatThinkingLevelOption(id: "off", label: "off"),
+        OpenClawChatThinkingLevelOption(id: "minimal", label: "minimal"),
+        OpenClawChatThinkingLevelOption(id: "low", label: "low"),
+        OpenClawChatThinkingLevelOption(id: "medium", label: "medium"),
+        OpenClawChatThinkingLevelOption(id: "high", label: "high"),
+    ]
 }
 
 extension OpenClawChatViewModel {
@@ -1245,7 +1251,6 @@ extension OpenClawChatViewModel {
 
     /// Clears state owned by the current session/agent before a new identity can consume events.
     private func clearSessionOwnedState() {
-        self.invalidateComposerCapabilities()
         self.modelSelectionID = Self.defaultModelSelectionID
         replaceMessages([])
         self.isShowingCachedTranscript = false
@@ -1479,32 +1484,37 @@ extension OpenClawChatViewModel {
         self.inFlightSettingsPatchCountsByTarget[target] = remaining
     }
 
-    func sessionSettingsPatchTarget(
+    /// Internal for the outbox flush, which must honor the same ordering
+    /// behind in-flight settings patches as the live send path.
+    func waitForPendingSessionSettings(
         in sessionKey: String,
-        canonicalSessionKey: String?,
-        agentID: String?,
-        sessionRoutingContract: String?) -> ModelPatchTarget
+        canonicalSessionKey: String? = nil,
+        agentID: String? = nil,
+        sessionRoutingContract: String? = nil) async
     {
+        let target: ModelPatchTarget
         if canonicalSessionKey == nil,
            agentID == nil,
            sessionRoutingContract == nil,
            sessionKey == self.sessionKey
         {
             let session = self.currentSessionSnapshot()
-            return modelPatchTarget(
+            target = modelPatchTarget(
                 sessionKey: session.key,
                 canonicalSessionKey: currentSessionEntry()?.key,
                 agentID: session.deliveryAgentID,
                 sessionRoutingContract: session.sessionRoutingContract)
+        } else {
+            target = modelPatchTarget(
+                sessionKey: sessionKey,
+                canonicalSessionKey: canonicalSessionKey,
+                agentID: agentID,
+                sessionRoutingContract: sessionRoutingContract)
         }
-        return modelPatchTarget(
-            sessionKey: sessionKey,
-            canonicalSessionKey: canonicalSessionKey,
-            agentID: agentID,
-            sessionRoutingContract: sessionRoutingContract)
+        await self.waitForPendingSessionSettings(for: target)
     }
 
-    func waitForPendingSessionSettings(for target: ModelPatchTarget) async {
+    private func waitForPendingSessionSettings(for target: ModelPatchTarget) async {
         guard (self.inFlightSettingsPatchCountsByTarget[target] ?? 0) > 0 else { return }
         await withCheckedContinuation { continuation in
             self.settingsPatchWaitersByTarget[target, default: []].append(continuation)

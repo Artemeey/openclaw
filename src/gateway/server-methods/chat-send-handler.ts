@@ -371,7 +371,6 @@ async function handleChatSendWithOptions(
       target: messageInjectionTarget,
       request: normalizedRequest.value,
       session: preparedSession.value,
-      admittedSessionSettings: admitted.value.admittedSessionSettings,
       turn: preparedUserTurn,
       imageOrder,
       userTurnTranscriptRecorder: userTurnRecorder,

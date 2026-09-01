@@ -25,6 +25,17 @@ public struct GatewayNodeSessionRoute: Sendable, Equatable {
     fileprivate let socketGeneration: UInt64
 }
 
+/// One capability-scoped Canvas URL and the transport trust bound to its route.
+public struct GatewayCanvasHostRoute: Sendable, Equatable {
+    public let url: String
+    public let tlsFingerprintSHA256: String?
+
+    public init(url: String, tlsFingerprintSHA256: String?) {
+        self.url = url
+        self.tlsFingerprintSHA256 = tlsFingerprintSHA256
+    }
+}
+
 /// Owns a server-event stream until its caller is finished or canceled.
 public struct GatewayServerEventSubscription: Sendable {
     public let events: AsyncStream<EventFrame>
@@ -129,7 +140,6 @@ public actor GatewayNodeSession {
     private var workerHello: (protocolVersion: Int, capabilities: [String])?
     private var serverMethods: Set<String>?
     private var serverCapabilities: Set<GatewayServerCapability>?
-    private var operatorScopes: Set<String>?
     private var mainSessionKey: String?
     private var snapshotWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
     private var snapshotReadyWaiters: [CheckedContinuation<Bool, Never>] = []
@@ -710,28 +720,22 @@ public actor GatewayNodeSession {
         _ capability: GatewayServerCapability,
         ifCurrentRoute expectedRoute: GatewayNodeSessionRoute) -> Bool?
     {
-        self.currentRouteValue(self.serverCapabilities, ifCurrentRoute: expectedRoute)?
-            .contains(capability)
+        guard self.isCurrentRoute(expectedRoute),
+              self.channel != nil,
+              let serverCapabilities
+        else { return nil }
+        return serverCapabilities.contains(capability)
     }
 
     public func supportsServerMethod(
         _ method: String,
         ifCurrentRoute expectedRoute: GatewayNodeSessionRoute) -> Bool?
     {
-        self.currentRouteValue(self.serverMethods, ifCurrentRoute: expectedRoute)?
-            .contains(method)
-    }
-
-    public func currentOperatorScopes(ifCurrentRoute route: GatewayNodeSessionRoute) -> Set<String>? {
-        self.currentRouteValue(self.operatorScopes, ifCurrentRoute: route)
-    }
-
-    private func currentRouteValue<T>(
-        _ value: T?,
-        ifCurrentRoute route: GatewayNodeSessionRoute) -> T?
-    {
-        guard self.isCurrentRoute(route), self.channel != nil else { return nil }
-        return value
+        guard self.isCurrentRoute(expectedRoute),
+              self.channel != nil,
+              let serverMethods
+        else { return nil }
+        return serverMethods.contains(method)
     }
 
     public func waitForCurrentMainSessionKey(
@@ -895,7 +899,6 @@ extension GatewayNodeSession {
             self.serverMethods = ok.advertisedServerMethods()
             self.serverCapabilities = Set(
                 GatewayServerCapability.allCases.filter { ok.supportsServerCapability($0) })
-            self.operatorScopes = ok.advertisedOperatorScopes()
             let snapshotMainSessionKey = ok.snapshot.sessiondefaults?["mainSessionKey"]?.value as? String
             let trimmedMainSessionKey = snapshotMainSessionKey?
                 .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) ?? ""
@@ -927,7 +930,6 @@ extension GatewayNodeSession {
         self.workerHello = nil
         self.serverMethods = nil
         self.serverCapabilities = nil
-        self.operatorScopes = nil
         self.mainSessionKey = nil
         self.drainSnapshotWaiters(returning: false)
         self.drainSnapshotReadyWaiters(returning: false)

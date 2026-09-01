@@ -4,7 +4,7 @@ import OpenClawKit
 import Testing
 @testable import OpenClawChatUI
 
-func makeOutboxStore() throws -> (
+private func makeOutboxStore() throws -> (
     store: OpenClawChatSQLiteTranscriptCache,
     databases: OpenClawClientDatabases,
     directory: URL)
@@ -22,7 +22,7 @@ extension OpenClawChatSQLiteTranscriptCache {
         agentID: String? = nil,
         messages: [OpenClawChatMessage]) async
     {
-        await storeCanonicalTranscript(
+        await self.storeCanonicalTranscript(
             sessionKey: sessionKey,
             agentID: agentID,
             messages: messages,
@@ -30,24 +30,13 @@ extension OpenClawChatSQLiteTranscriptCache {
     }
 }
 
-func outboxTestCommand(
-    id: String,
-    text: String,
-    createdAt: Double,
-    sessionKey: String = "main",
-    expectedSessionSettings: OpenClawChatSessionSettingsExpectation? = OpenClawChatSessionSettingsExpectation(
-        permissionMode: nil,
-        toolOverrides: nil)) -> OpenClawChatOutboxCommand
-{
+private func outboxTestCommand(id: String, text: String, createdAt: Double) -> OpenClawChatOutboxCommand {
     OpenClawChatOutboxCommand(
         id: id,
-        sessionKey: sessionKey,
-        deliverySessionKey: "agent:main:\(sessionKey)",
+        sessionKey: "main",
         routingContract: "per-sender|main|main",
-        agentID: "main",
         text: text,
         thinking: "off",
-        expectedSessionSettings: expectedSessionSettings,
         createdAt: createdAt,
         status: .queued,
         retryCount: 0,
@@ -68,7 +57,7 @@ private struct OutboxSendError: Error, LocalizedError {
     }
 }
 
-actor OutboxTransportState {
+private actor OutboxTransportState {
     enum BranchListingBehavior: Sendable {
         case unsupportedTransport
         case legacyAdminScopeRejection
@@ -121,7 +110,6 @@ actor OutboxTransportState {
     var sentAgentIDs: [String?] = []
     var historyRequestAgentIDs: [String?] = []
     var sentThinkingLevels: [String] = []
-    var sentSessionSettings: [OpenClawChatSessionSettingsExpectation?] = []
 
     init(healthy: Bool, sendFails: Bool) {
         self.healthy = healthy
@@ -143,30 +131,25 @@ actor OutboxTransportState {
         agentID: String?,
         message: String,
         idempotencyKey: String,
-        thinking: String,
-        expectedSessionSettings: OpenClawChatSessionSettingsExpectation? = nil)
+        thinking: String)
     {
         self.sentSessionKeys.append(sessionKey)
         self.sentAgentIDs.append(agentID)
         self.sentMessages.append(message)
         self.sentIdempotencyKeys.append(idempotencyKey)
         self.sentThinkingLevels.append(thinking)
-        self.sentSessionSettings.append(expectedSessionSettings)
     }
 }
 
 /// Scripted transport for offline-outbox flows: health is switchable, sends
 /// can be forced to fail, and history synthesizes the durable user rows for
 /// every accepted send (what the gateway would persist).
-final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
+private final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
     let state: OutboxTransportState
     private let sessions: [OpenClawChatSessionEntry]
     private let supportsSlashCommands: Bool
     private let requiresRoutingContract: Bool
     private let routeUnavailableReason: String?
-    private let supportsSessionSettingsCAS: Bool
-    private let composerCapabilityCatalog: OpenClawChatComposerCapabilityCatalog?
-    private let sessionSettingsPatchHook: (@Sendable () async throws -> Void)?
     private let stream: AsyncStream<OpenClawChatTransportEvent>
     private let continuation: AsyncStream<OpenClawChatTransportEvent>.Continuation
 
@@ -176,18 +159,12 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
         sessions: [OpenClawChatSessionEntry] = [],
         supportsSlashCommands: Bool = false,
         requiresRoutingContract: Bool = true,
-        supportsSessionSettingsCAS: Bool = true,
-        composerCapabilityCatalog: OpenClawChatComposerCapabilityCatalog? = nil,
-        sessionSettingsPatchHook: (@Sendable () async throws -> Void)? = nil,
         routeUnavailableReason: String? = nil)
     {
         self.state = OutboxTransportState(healthy: healthy, sendFails: sendFails)
         self.sessions = sessions
         self.supportsSlashCommands = supportsSlashCommands
         self.requiresRoutingContract = requiresRoutingContract
-        self.supportsSessionSettingsCAS = supportsSessionSettingsCAS
-        self.composerCapabilityCatalog = composerCapabilityCatalog
-        self.sessionSettingsPatchHook = sessionSettingsPatchHook
         self.routeUnavailableReason = routeUnavailableReason
         var cont: AsyncStream<OpenClawChatTransportEvent>.Continuation!
         self.stream = AsyncStream { c in cont = c }
@@ -208,35 +185,12 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
     }
 
     func gatewayAdvertisesMethod(_ method: String) async -> Bool? {
-        let advertisedMethods = await state.advertisedMethods
+        let advertisedMethods = await self.state.advertisedMethods
         return advertisedMethods.map { $0.contains(method) }
     }
 
     var supportsSlashCommandCatalog: Bool {
         self.supportsSlashCommands
-    }
-
-    var supportsComposerCapabilities: Bool {
-        self.composerCapabilityCatalog != nil
-    }
-
-    func loadComposerCapabilityCatalog(
-        sessionKey _: String,
-        agentID _: String?) async -> OpenClawChatComposerCapabilityCatalog
-    {
-        self.composerCapabilityCatalog ?? OpenClawChatComposerCapabilityCatalog()
-    }
-
-    func patchSessionSettings(
-        sessionKey: String,
-        agentID _: String?,
-        patch: OpenClawChatSessionSettingsPatch) async throws -> OpenClawChatModelPatchResult?
-    {
-        try await self.sessionSettingsPatchHook?()
-        if let model = patch.model {
-            try await self.setSessionModel(sessionKey: sessionKey, model: model)
-        }
-        return nil
     }
 
     var outboxRequiresSessionRoutingContract: Bool {
@@ -335,7 +289,6 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
             message: message,
             thinking: thinking,
             idempotencyKey: idempotencyKey,
-            expectedSessionSettings: nil,
             expectedRoute: nil)
     }
 
@@ -345,7 +298,6 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
         message: String,
         thinking: String,
         idempotencyKey: String,
-        expectedSessionSettings: OpenClawChatSessionSettingsExpectation?,
         expectedRoute: Int?) async throws -> OpenClawChatSendResponse
     {
         if let expectedRoute, await state.routeGeneration != expectedRoute {
@@ -388,8 +340,7 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
             agentID: agentID,
             message: message,
             idempotencyKey: idempotencyKey,
-            thinking: thinking,
-            expectedSessionSettings: expectedSessionSettings)
+            thinking: thinking)
         if await self.state.sendFailsAfterRecording {
             throw OutboxSendError()
         }
@@ -419,15 +370,13 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
         let routingContract = await state.sessionRoutingContract
         let transport = self
         return .available(OpenClawChatTransportRouteLease(
-            sendTargetedMessageWithSettings: {
-                sessionKey, agentID, expectedSettings, message, thinking, idempotencyKey, _ in
+            sendTargetedMessage: { sessionKey, agentID, message, thinking, idempotencyKey, _ in
                 try await transport.sendMessage(
                     sessionKey: sessionKey,
                     agentID: agentID,
                     message: message,
                     thinking: thinking,
                     idempotencyKey: idempotencyKey,
-                    expectedSessionSettings: expectedSettings,
                     expectedRoute: expectedRoute)
             },
             requestTargetedHistory: { sessionKey, agentID in
@@ -436,8 +385,7 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
                     agentID: agentID,
                     expectedRoute: expectedRoute)
             },
-            sessionRoutingContract: routingContract,
-            supportsSessionSettingsCAS: self.supportsSessionSettingsCAS))
+            sessionRoutingContract: routingContract))
     }
 
     /// Gated model patch: `setSessionModel` blocks until `releaseModelPatch`
@@ -449,8 +397,8 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
         self.modelPatchGate.continuation.yield(())
     }
 
-    func modelPatchHasStarted() async -> Bool {
-        await self.modelPatchStarted.opened()
+    func waitUntilModelPatchStarted() async {
+        await self.modelPatchStarted.wait()
     }
 
     func setSessionModel(sessionKey _: String, model _: String?) async throws {
@@ -483,11 +431,9 @@ final class OutboxTestTransport: @unchecked Sendable, OpenClawChatTransport {
     }
 }
 
-func outboxSessionEntry(
+private func outboxSessionEntry(
     key: String,
-    thinkingLevels: [String],
-    sessionID: String? = nil,
-    permissionMode: OpenClawChatPermissionMode? = nil) -> OpenClawChatSessionEntry
+    thinkingLevels: [String]) -> OpenClawChatSessionEntry
 {
     OpenClawChatSessionEntry(
         key: key,
@@ -498,7 +444,7 @@ func outboxSessionEntry(
         room: nil,
         space: nil,
         updatedAt: nil,
-        sessionId: sessionID,
+        sessionId: nil,
         systemSent: nil,
         abortedLastRun: nil,
         thinkingLevel: nil,
@@ -509,11 +455,10 @@ func outboxSessionEntry(
         modelProvider: nil,
         model: nil,
         contextTokens: nil,
-        thinkingLevels: thinkingLevels.map { OpenClawChatThinkingLevelOption(id: $0, label: $0) },
-        permissionMode: permissionMode)
+        thinkingLevels: thinkingLevels.map { OpenClawChatThinkingLevelOption(id: $0, label: $0) })
 }
 
-func makeOutboxViewModel(
+private func makeOutboxViewModel(
     transport: OutboxTestTransport,
     outbox: any OpenClawChatCommandOutbox,
     transcriptCache: (any OpenClawChatTranscriptCache)? = nil,
@@ -529,10 +474,7 @@ func makeOutboxViewModel(
             activeAgentId: activeAgentID,
             sessionRoutingContract: sessionRoutingContract,
             transcriptCache: transcriptCache,
-            outbox: outbox,
-            modelPickerStore: ChatModelPickerStore(
-                defaults: UserDefaults(
-                    suiteName: "ChatViewModelOutboxTests.\(UUID().uuidString)") ?? .standard))
+            outbox: outbox)
         vm.outboxRetryDelaysMs = retryDelaysMs
         return vm
     }
@@ -553,7 +495,7 @@ private func sendWhileOffline(_ vm: OpenClawChatViewModel, text: String) async t
 }
 
 /// Protocol delegation plus switches makes race windows deterministic without copying the store contract.
-actor ScriptedOutbox: OpenClawChatCommandOutbox {
+private actor ScriptedOutbox: OpenClawChatCommandOutbox {
     enum Forwarding { case full, minimal, holdingCancellation }
 
     private nonisolated let base: OpenClawChatSQLiteTranscriptCache
@@ -562,7 +504,6 @@ actor ScriptedOutbox: OpenClawChatCommandOutbox {
     private var enqueueRelease: DeleteGate?
     private var recoveryAvailable = true
     private var terminalWritesAvailable = true
-    private var parkingAvailable = true
     private var captured = DeleteGate()
     private var snapshotRelease = DeleteGate()
     private var shouldHoldNextLoad = false
@@ -590,10 +531,6 @@ actor ScriptedOutbox: OpenClawChatCommandOutbox {
 
     func setTerminalWritesAvailable(_ available: Bool) {
         self.terminalWritesAvailable = available
-    }
-
-    func setParkingAvailable(_ available: Bool) {
-        self.parkingAvailable = available
     }
 
     func waitUntilRecoveryAttempted() async {
@@ -645,14 +582,14 @@ actor ScriptedOutbox: OpenClawChatCommandOutbox {
 
     func loadCommands() async -> [OpenClawChatOutboxCommand] {
         await self.delayLoad()
-        let commands = await base.loadCommands()
+        let commands = await self.base.loadCommands()
         await self.finishHeldLoad()
         return commands
     }
 
     func loadCommandsIfAvailable() async -> [OpenClawChatOutboxCommand]? {
         await self.delayLoad()
-        guard let commands = await base.loadCommandsIfAvailable() else { return nil }
+        guard let commands = await self.base.loadCommandsIfAvailable() else { return nil }
         await self.finishHeldLoad()
         return commands
     }
@@ -711,35 +648,8 @@ actor ScriptedOutbox: OpenClawChatCommandOutbox {
             lastError: lastError)
     }
 
-    func parkQueuedCommands(
-        in scope: OpenClawChatOutboxScope,
-        lastError: String) async -> Bool
-    {
-        guard self.parkingAvailable else { return false }
-        return await self.base.parkQueuedCommands(in: scope, lastError: lastError)
-    }
-
-    func markCommandRetriedIfPresent(
-        id: String,
-        expectation: OpenClawChatOutboxRetryExpectation,
-        agentID: String?,
-        deliverySessionKey: String,
-        routingContract: String,
-        expectedSessionSettings: OpenClawChatSessionSettingsExpectation,
-        replacementID: String?) async -> OpenClawChatOutboxUpdateResult
-    {
-        await self.base.markCommandRetriedIfPresent(
-            id: id,
-            expectation: expectation,
-            agentID: agentID,
-            deliverySessionKey: deliverySessionKey,
-            routingContract: routingContract,
-            expectedSessionSettings: expectedSessionSettings,
-            replacementID: replacementID)
-    }
-
     func cancelCommand(id: String) async -> OpenClawChatOutboxUpdateResult {
-        let result = await base.cancelCommand(id: id)
+        let result = await self.base.cancelCommand(id: id)
         if self.forwarding == .holdingCancellation {
             await self.canceled.open()
             await self.cancellationRelease.wait()
@@ -825,9 +735,6 @@ struct ChatViewModelOutboxTests {
         #expect(commands.map(\.status) == [.queued])
         #expect(commands.map(\.sessionKey) == ["main"])
         #expect(commands.map(\.deliverySessionKey) == ["agent:main:main"])
-        #expect(commands.map(\.expectedSessionSettings) == [
-            OpenClawChatSessionSettingsExpectation(permissionMode: nil, toolOverrides: nil),
-        ])
 
         // The visible row carries the queued state and the draft was cleared.
         #expect(await MainActor.run { vm.input.isEmpty })
@@ -1156,7 +1063,6 @@ struct ChatViewModelOutboxTests {
             agentID: "alpha",
             text: "use canonical Luna metadata",
             thinking: "ultra",
-            expectedSessionSettings: OpenClawChatSessionSettingsExpectation(permissionMode: nil, toolOverrides: nil),
             createdAt: Date().timeIntervalSince1970,
             status: .queued,
             retryCount: 0,
@@ -1316,7 +1222,6 @@ struct ChatViewModelOutboxTests {
             agentID: "agent-a",
             text: "review old failure",
             thinking: "off",
-            expectedSessionSettings: OpenClawChatSessionSettingsExpectation(permissionMode: nil, toolOverrides: nil),
             createdAt: Date().timeIntervalSince1970,
             status: .failed,
             retryCount: 1,
@@ -1347,7 +1252,6 @@ struct ChatViewModelOutboxTests {
             sessionKey: "global",
             text: "choose my owner",
             thinking: "off",
-            expectedSessionSettings: OpenClawChatSessionSettingsExpectation(permissionMode: nil, toolOverrides: nil),
             createdAt: Date().timeIntervalSince1970,
             status: .failed,
             retryCount: 0,
@@ -1711,7 +1615,6 @@ struct ChatViewModelOutboxTests {
             routingContract: "per-sender|main|main",
             text: "do not skip me",
             thinking: "off",
-            expectedSessionSettings: OpenClawChatSessionSettingsExpectation(permissionMode: nil, toolOverrides: nil),
             createdAt: Date().timeIntervalSince1970,
             status: .queued,
             retryCount: OpenClawChatViewModel.maxOutboxSendAttempts - 1,
@@ -1808,8 +1711,6 @@ struct ChatViewModelOutboxTests {
         #expect(preserved.lastError == OpenClawChatSQLiteTranscriptCache.outboxUnconfirmedError)
         #expect(preserved.retryCount == 0)
         #expect(preserved.text == "stale health send")
-        #expect(preserved.expectedSessionSettings ==
-            OpenClawChatSessionSettingsExpectation(permissionMode: nil, toolOverrides: nil))
         #expect(await userTexts(vm) == ["stale health send"])
         let bubbleKey = await MainActor.run {
             vm.messages.first { $0.role == "user" }?.idempotencyKey
@@ -1834,9 +1735,6 @@ struct ChatViewModelOutboxTests {
             await store.loadCommands().isEmpty
         }
         #expect(await transport.state.sentIdempotencyKeys == [preserved.id])
-        #expect(await transport.state.sentSessionSettings == [
-            OpenClawChatSessionSettingsExpectation(permissionMode: nil, toolOverrides: nil),
-        ])
     }
 
     @Test func `lost queued send ack reconciles history without replay`() async throws {
@@ -1872,9 +1770,6 @@ struct ChatViewModelOutboxTests {
                 sessionKey: "main",
                 text: "old message",
                 thinking: "off",
-                expectedSessionSettings: OpenClawChatSessionSettingsExpectation(
-                    permissionMode: nil,
-                    toolOverrides: nil),
                 createdAt: staleCreatedAt,
                 status: .queued,
                 retryCount: 0,
@@ -1907,9 +1802,6 @@ struct ChatViewModelOutboxTests {
         try await waitUntil("expired-then-retried command drained") {
             await store.loadCommands().isEmpty
         }
-        try await waitUntil("expired-then-retried bubble clears") {
-            await MainActor.run { vm.outboxState(for: messageID) == nil }
-        }
         #expect(await transport.state.sentMessages == ["old message"])
     }
 
@@ -1924,9 +1816,6 @@ struct ChatViewModelOutboxTests {
                 routingContract: "per-sender|main|main",
                 text: "think hard",
                 thinking: "high",
-                expectedSessionSettings: OpenClawChatSessionSettingsExpectation(
-                    permissionMode: nil,
-                    toolOverrides: nil),
                 createdAt: now,
                 status: .queued,
                 retryCount: 0,
@@ -1938,9 +1827,6 @@ struct ChatViewModelOutboxTests {
                 routingContract: "per-sender|main|main",
                 text: "no thinking",
                 thinking: "medium",
-                expectedSessionSettings: OpenClawChatSessionSettingsExpectation(
-                    permissionMode: nil,
-                    toolOverrides: nil),
                 createdAt: now + 1,
                 status: .queued,
                 retryCount: 0,
@@ -1979,9 +1865,6 @@ struct ChatViewModelOutboxTests {
                 routingContract: "per-sender|main|main",
                 text: "sent from elsewhere",
                 thinking: "off",
-                expectedSessionSettings: OpenClawChatSessionSettingsExpectation(
-                    permissionMode: nil,
-                    toolOverrides: nil),
                 createdAt: Date().timeIntervalSince1970,
                 status: .queued,
                 retryCount: 0,
@@ -2013,7 +1896,6 @@ struct ChatViewModelOutboxTests {
             agentID: "main",
             text: "canonical alias",
             thinking: "off",
-            expectedSessionSettings: OpenClawChatSessionSettingsExpectation(permissionMode: nil, toolOverrides: nil),
             createdAt: Date().timeIntervalSince1970,
             status: .queued,
             retryCount: 0,
@@ -2064,9 +1946,6 @@ struct ChatViewModelOutboxTests {
                     sessionKey: "other",
                     text: "m\(index)",
                     thinking: "off",
-                    expectedSessionSettings: OpenClawChatSessionSettingsExpectation(
-                        permissionMode: nil,
-                        toolOverrides: nil),
                     createdAt: Date().timeIntervalSince1970,
                     status: .queued,
                     retryCount: 0,
@@ -2288,7 +2167,7 @@ struct ChatViewModelOutboxTests {
     }
 }
 
-actor DeleteGate {
+private actor DeleteGate {
     private var isOpen = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
@@ -2305,10 +2184,6 @@ actor DeleteGate {
             return
         }
         await withCheckedContinuation { self.waiters.append($0) }
-    }
-
-    func opened() -> Bool {
-        self.isOpen
     }
 }
 
@@ -2426,7 +2301,6 @@ extension ChatViewModelOutboxTests {
             routingContract: "per-sender|main|main",
             text: "queued by the previous launch",
             thinking: "off",
-            expectedSessionSettings: OpenClawChatSessionSettingsExpectation(permissionMode: nil, toolOverrides: nil),
             createdAt: Date().timeIntervalSince1970 - 60,
             status: .queued,
             retryCount: 0,
@@ -2473,7 +2347,6 @@ extension ChatViewModelOutboxTests {
             routingContract: "per-sender|main|main",
             text: "backlog in second session",
             thinking: "off",
-            expectedSessionSettings: OpenClawChatSessionSettingsExpectation(permissionMode: nil, toolOverrides: nil),
             createdAt: Date().timeIntervalSince1970 - 60,
             status: .queued,
             retryCount: 0,
@@ -2530,9 +2403,7 @@ extension ChatViewModelOutboxTests {
         // must honor the same ordering as live sends and hold until the
         // patch resolves, or the run would start on the stale model.
         await MainActor.run { vm.selectModel("anthropic/claude-test") }
-        try await waitUntil("model patch starts before outbox flush") {
-            await transport.modelPatchHasStarted()
-        }
+        await transport.waitUntilModelPatchStarted()
         await transport.goOnline()
         try await Task.sleep(nanoseconds: 100_000_000)
         #expect(await transport.state.sentMessages.isEmpty)
@@ -2556,9 +2427,7 @@ extension ChatViewModelOutboxTests {
             vm.input = "enqueue after model patch"
             vm.send()
         }
-        try await waitUntil("model patch starts before offline enqueue") {
-            await transport.modelPatchHasStarted()
-        }
+        await transport.waitUntilModelPatchStarted()
         try await Task.sleep(for: .milliseconds(50))
         #expect(await store.loadCommands().isEmpty)
 

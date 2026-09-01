@@ -4,8 +4,7 @@ import SwiftUI
 @MainActor
 struct ChatCameraFlipButton: View {
     let control: OpenClawChatTalkControl
-    let controlHeight: CGFloat
-    let visualSize: CGFloat
+    let size: CGFloat
 
     static func isAvailable(for control: OpenClawChatTalkControl) -> Bool {
         control.isEnabled && control.cameraFacing != nil && control.flipCamera != nil
@@ -18,12 +17,11 @@ struct ChatCameraFlipButton: View {
             Image(systemName: "arrow.triangle.2.circlepath.camera")
                 .font(OpenClawChatTypography.body(size: 14, weight: .semibold, relativeTo: .subheadline))
                 .foregroundStyle(.primary)
-                .frame(width: self.visualSize, height: self.visualSize)
+                .frame(width: self.size, height: self.size)
                 .background {
                     Circle()
                         .fill(OpenClawChatTheme.accent.opacity(0.12))
                 }
-                .frame(width: self.controlHeight, height: self.controlHeight)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

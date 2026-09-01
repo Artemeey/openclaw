@@ -549,24 +549,20 @@ struct MacGatewayChatTransport: OpenClawChatTransport {
                 reason: OpenClawChatTransportUpgradeMessage.routingContract,
                 allowsLiveSend: true)
         }
-        let supportsSettingsCAS = await connection.supportsServerCapability(
-            .sessionSettingsCAS,
-            ifCurrentRoute: route) == true
         guard let routingIdentity = try? await connection.sessionRoutingIdentity(
             ifCurrentRoute: route)
         else { return .unavailable(reason: nil) }
         let routingContract = routingIdentity.contract
         return .available(OpenClawChatTransportRouteLease(
-            sendTargetedMessageWithSettings: { sessionKey, agentID, settings, message, thinking, id, attachments in
+            sendTargetedMessage: { sessionKey, agentID, message, thinking, idempotencyKey, attachments in
                 try await self.requireCurrentOutboxGateway()
                 return try await self.connection.chatSend(
                     sessionKey: sessionKey,
                     agentID: agentID,
                     expectedSessionRoutingContract: routingContract,
-                    expectedSessionSettings: settings,
                     message: message,
                     thinking: thinking,
-                    idempotencyKey: id,
+                    idempotencyKey: idempotencyKey,
                     attachments: attachments,
                     ifCurrentRoute: route,
                     distinguishPreDispatchRouteChange: true)
@@ -578,8 +574,7 @@ struct MacGatewayChatTransport: OpenClawChatTransport {
                     agentID: agentID,
                     ifCurrentRoute: route)
             },
-            sessionRoutingContract: routingContract,
-            supportsSessionSettingsCAS: supportsSettingsCAS))
+            sessionRoutingContract: routingContract))
     }
 
     func synthesizeSpeech(text: String) async throws -> OpenClawChatSpeechClip {

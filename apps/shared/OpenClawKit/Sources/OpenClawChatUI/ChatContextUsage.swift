@@ -199,22 +199,6 @@ struct ChatMessageUsagePresentation: Equatable {
     }
 }
 
-enum ChatContextUsageFormatter {
-    static func tokens(_ value: Int) -> String {
-        if value >= 1_000_000 {
-            return String(format: "%.1fM", Double(value) / 1_000_000)
-        }
-        if value >= 1000 {
-            return String(format: "%.1fk", Double(value) / 1000)
-        }
-        return "\(value)"
-    }
-
-    static func cost(_ value: Double) -> String {
-        String(format: "$%.2f", value)
-    }
-}
-
 #if os(macOS)
 /// Compact token ring for the window toolbar, mirroring the web UI's context
 /// gauge: ring fill and tint track pressure, the menu carries the details.
@@ -264,4 +248,19 @@ struct ChatContextUsageIndicator: View {
     }
 }
 
+enum ChatContextUsageFormatter {
+    static func tokens(_ value: Int) -> String {
+        if value >= 1_000_000 {
+            return String(format: "%.1fM", Double(value) / 1_000_000)
+        }
+        if value >= 1000 {
+            return String(format: "%.1fk", Double(value) / 1000)
+        }
+        return "\(value)"
+    }
+
+    static func cost(_ value: Double) -> String {
+        String(format: "$%.2f", value)
+    }
+}
 #endif
