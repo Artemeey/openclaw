@@ -15,7 +15,7 @@ import {
   fetchWithSsrFGuard,
   withTrustedEnvProxyGuardedFetchMode,
 } from "../infra/net/fetch-guard.js";
-import { hasEnvHttpProxyConfigured } from "../infra/net/proxy-env.js";
+import { shouldUseEnvHttpProxyForUrl } from "../infra/net/proxy-env.js";
 import { ssrfPolicyFromHttpBaseUrlAllowedHostname, type SsrFPolicy } from "../infra/net/ssrf.js";
 import type {
   EmbeddingInput,
@@ -294,7 +294,6 @@ async function postEmbeddingRequest(params: {
       ? await client.acquireLocalService(client.localServiceTarget, params.signal)
       : undefined;
   try {
-    const endpointProtocol = new URL(client.endpointUrl).protocol === "http:" ? "http" : "https";
     const request = {
       url: client.endpointUrl,
       init: {
@@ -307,7 +306,7 @@ async function postEmbeddingRequest(params: {
       auditContext: "embedding-provider:openai-compatible",
     };
     const { response, release } = await fetchWithSsrFGuard(
-      hasEnvHttpProxyConfigured(endpointProtocol)
+      shouldUseEnvHttpProxyForUrl(client.endpointUrl)
         ? withTrustedEnvProxyGuardedFetchMode(request)
         : request,
     );
