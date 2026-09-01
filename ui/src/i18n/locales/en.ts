@@ -525,7 +525,6 @@ export const en: TranslationMap = {
       blockedTitle: "Update blocked",
       blockedSummary: "The selected revision could not be applied to this checkout.",
       blockedWaiting: "Blocked · waiting for active work · {target}",
-      waitingForIdle: "Waiting for active work",
     },
     dialog: {
       installing: "Installing the update on the Gateway. It restarts once the install finishes.",
@@ -599,10 +598,6 @@ export const en: TranslationMap = {
       "Update installed. A gateway restart is already in progress; status will refresh after it reconnects.",
     error: "Update error: {error}",
     status: "Update {status}: {reason}. {guidance}",
-    verificationFailed:
-      "Update installed but running version did not change — restart may have been blocked.",
-    verificationFailedWithVersions:
-      "Update installed but running version did not change — restart may have been blocked. Expected v{expectedVersion}, running v{actualVersion}.",
     verificationFailedWithIdentity:
       "Update finished, but the running install does not match the expected revision. Expected {expected}, running {actual}.",
     handoffTimeout:
