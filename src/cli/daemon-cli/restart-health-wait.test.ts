@@ -80,6 +80,11 @@ describe("restart health", () => {
   });
 
   it("waits through a healthy long-running startup migration", async () => {
+    probeGateway.mockResolvedValue({
+      ok: true,
+      close: null,
+      server: { version: "2026.4.24", connId: "post-migration" },
+    });
     let inspections = 0;
     inspectPortUsage.mockImplementation(async () => {
       inspections += 1;
@@ -117,6 +122,11 @@ describe("restart health", () => {
   });
 
   it("keeps the readiness window after an observed migration ends near the standard deadline", async () => {
+    probeGateway.mockResolvedValue({
+      ok: true,
+      close: null,
+      server: { version: "2026.4.24", connId: "post-migration" },
+    });
     let inspections = 0;
     inspectPortUsage.mockImplementation(async () => {
       inspections += 1;

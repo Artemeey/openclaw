@@ -109,6 +109,13 @@ function applyActivatedPluginErrors(snapshot: GatewayRestartSnapshot): GatewayRe
   return { ...snapshot, healthy: false };
 }
 
+function applyUnavailablePlugins(snapshot: GatewayRestartSnapshot): GatewayRestartSnapshot {
+  if (!snapshot.unavailablePlugins?.length) {
+    return snapshot;
+  }
+  return { ...snapshot, healthy: false };
+}
+
 function applyChannelProbeErrors(snapshot: GatewayRestartSnapshot): GatewayRestartSnapshot {
   if (!snapshot.channelProbeErrors?.length) {
     return snapshot;
@@ -125,6 +132,7 @@ export async function inspectGatewayRestart(params: {
   includeUnknownListenersAsStale?: boolean;
   probeAuth?: GatewayRestartProbeAuth;
   probeHosts?: readonly string[];
+  includePluginHealth?: boolean;
 }): Promise<GatewayRestartSnapshot> {
   const env = params.env ?? process.env;
   const probeHosts =
@@ -135,10 +143,12 @@ export async function inspectGatewayRestart(params: {
     }));
   const expectedVersion = normalizeOptionalString(params.expectedVersion);
   const expectedBuildId = normalizeOptionalString(params.expectedBuildId);
-  const requiresGatewayProbe = Boolean(expectedVersion || expectedBuildId);
+  const requiresIdentityProbe = Boolean(expectedVersion || expectedBuildId);
+  const requiresGatewayProbe = requiresIdentityProbe || params.includePluginHealth === true;
   let reachability: GatewayReachability | null = null;
   let probeError: string | undefined;
   let activatedPluginErrors: PluginHealthErrorSummary[] = [];
+  let unavailablePlugins: GatewayReachability["unavailablePlugins"] = [];
   let channelProbeErrors: Array<{ id: string; error: string }> = [];
   const loadReachability = async () => {
     if (!reachability) {
@@ -150,6 +160,7 @@ export async function inspectGatewayRestart(params: {
       });
       probeError = reachability.probeError;
       activatedPluginErrors = reachability.activatedPluginErrors;
+      unavailablePlugins = reachability.unavailablePlugins;
       channelProbeErrors = reachability.channelProbeErrors;
     }
     return reachability;
@@ -179,7 +190,7 @@ export async function inspectGatewayRestart(params: {
   if (portUsage.status === "busy" && runtime.status !== "running") {
     const reachable = await loadReachability();
     if (reachable.reachable) {
-      return applyChannelProbeErrors(
+      const snapshot = applyUnavailablePlugins(
         applyActivatedPluginErrors(
           applyExpectedGatewayIdentity(
             {
@@ -192,6 +203,9 @@ export async function inspectGatewayRestart(params: {
               ...(reachable.activatedPluginErrors.length > 0
                 ? { activatedPluginErrors: reachable.activatedPluginErrors }
                 : {}),
+              ...(reachable.unavailablePlugins.length > 0
+                ? { unavailablePlugins: reachable.unavailablePlugins }
+                : {}),
               ...(reachable.channelProbeErrors.length > 0
                 ? { channelProbeErrors: reachable.channelProbeErrors }
                 : {}),
@@ -201,6 +215,7 @@ export async function inspectGatewayRestart(params: {
           ),
         ),
       );
+      return requiresIdentityProbe ? applyChannelProbeErrors(snapshot) : snapshot;
     }
   }
 
@@ -240,7 +255,10 @@ export async function inspectGatewayRestart(params: {
     if (reachable.activatedPluginErrors.length > 0) {
       healthy = false;
     }
-    if (reachable.channelProbeErrors.length > 0) {
+    if (reachable.unavailablePlugins.length > 0) {
+      healthy = false;
+    }
+    if (requiresIdentityProbe && reachable.channelProbeErrors.length > 0) {
       healthy = false;
     }
   }
@@ -270,7 +288,7 @@ export async function inspectGatewayRestart(params: {
     ]),
   );
 
-  return applyChannelProbeErrors(
+  const snapshot = applyUnavailablePlugins(
     applyActivatedPluginErrors(
       applyExpectedGatewayIdentity(
         {
@@ -282,6 +300,7 @@ export async function inspectGatewayRestart(params: {
           ...(gatewayBuildId !== undefined ? { gatewayBuildId } : {}),
           ...(probeError ? { probeError } : {}),
           ...(activatedPluginErrors.length ? { activatedPluginErrors } : {}),
+          ...(unavailablePlugins.length ? { unavailablePlugins } : {}),
           ...(channelProbeErrors.length ? { channelProbeErrors } : {}),
         },
         expectedVersion,
@@ -289,6 +308,7 @@ export async function inspectGatewayRestart(params: {
       ),
     ),
   );
+  return requiresIdentityProbe ? applyChannelProbeErrors(snapshot) : snapshot;
 }
 
 function shouldEarlyExitStoppedFree(
@@ -330,6 +350,7 @@ export async function waitForGatewayHealthyRestart(params: {
   supervisorKeepsAlive?: boolean;
   isStartupMigrationActive?: typeof hasActiveStartupMigrationLease;
   probeHosts?: readonly string[];
+  includePluginHealth?: boolean;
 }): Promise<GatewayRestartSnapshot> {
   const startedAtMs = performance.now();
   const attempts = params.attempts ?? DEFAULT_RESTART_HEALTH_ATTEMPTS;
@@ -350,6 +371,7 @@ export async function waitForGatewayHealthyRestart(params: {
     expectedVersion: params.expectedVersion,
     expectedBuildId: params.expectedBuildId,
     includeUnknownListenersAsStale: params.includeUnknownListenersAsStale,
+    includePluginHealth: params.includePluginHealth ?? true,
     probeAuth,
     probeHosts,
   });
@@ -377,7 +399,10 @@ export async function waitForGatewayHealthyRestart(params: {
     if (snapshot.activatedPluginErrors?.length) {
       return withWaitContext(snapshot, "plugin-errors", elapsedMs);
     }
-    if (snapshot.channelProbeErrors?.length) {
+    if (snapshot.unavailablePlugins?.length) {
+      return withWaitContext(snapshot, "plugin-unavailable", elapsedMs);
+    }
+    if ((params.expectedVersion || params.expectedBuildId) && snapshot.channelProbeErrors?.length) {
       return withWaitContext(snapshot, "channel-errors", elapsedMs);
     }
     if (snapshot.versionMismatch) {
@@ -442,6 +467,7 @@ export async function waitForGatewayHealthyRestart(params: {
       expectedVersion: params.expectedVersion,
       expectedBuildId: params.expectedBuildId,
       includeUnknownListenersAsStale: params.includeUnknownListenersAsStale,
+      includePluginHealth: params.includePluginHealth ?? true,
       probeAuth,
       probeHosts,
     });

@@ -841,12 +841,14 @@ describe("runServiceRestart token drift", () => {
   );
 
   it("audits a service start that actually mutates the gateway", async () => {
+    const postStartCheck = vi.fn(async () => {});
     service.start.mockImplementationOnce(async (args?: GatewayServiceControlArgs) => {
       args?.onMutation?.({ mode: "kickstart" });
     });
 
-    await runServiceStart(createServiceRunArgs());
+    await runServiceStart({ ...createServiceRunArgs(), postStartCheck });
 
+    expect(postStartCheck).toHaveBeenCalledTimes(1);
     expect(appendGatewayLifecycleAudit).toHaveBeenCalledWith({
       action: "start",
       source: "cli",

@@ -58,6 +58,8 @@ type RestartPostCheckContext = {
   fail: (message: string, hints?: string[]) => void;
 };
 
+type StartPostCheckContext = RestartPostCheckContext;
+
 type ServiceRecoveryResult<TResult extends "started" | "stopped" | "restarted"> = {
   result: TResult;
   message?: string;
@@ -210,6 +212,7 @@ export async function runServiceStart(params: {
   repairLoadedService?: (
     ctx: ServiceStartRepairContext,
   ) => Promise<ServiceRecoveryResult<"started"> | null>;
+  postStartCheck?: (ctx: StartPostCheckContext) => Promise<void>;
   expectedPort?: number;
 }) {
   const json = Boolean(params.opts?.json);
@@ -243,6 +246,7 @@ export async function runServiceStart(params: {
     try {
       const handled = await params.onNotLoaded?.({ json, stdout, warn, fail });
       if (handled) {
+        await params.postStartCheck?.({ json, stdout, warnings, warn, fail });
         emit({
           ok: true,
           result: handled.result,
@@ -284,6 +288,7 @@ export async function runServiceStart(params: {
       return;
     }
     if (startResult.outcome === "already-running") {
+      await params.postStartCheck?.({ json, stdout, warnings, warn, fail });
       if (startResult.issues.length > 0) {
         // Only services with a repair callback can rebuild their definition during restart.
         const repairAction = params.repairLoadedService ? "restart" : "install --force";
@@ -316,6 +321,7 @@ export async function runServiceStart(params: {
           issues: startResult.issues,
         });
         if (handled) {
+          await params.postStartCheck?.({ json, stdout, warnings, warn, fail });
           appendServiceLifecycleRepairAudit({
             serviceNoun: params.serviceNoun,
             action: "start",
@@ -345,6 +351,7 @@ export async function runServiceStart(params: {
       return;
     }
     const serviceLoaded = startResult.state.loadState.status === "loaded";
+    await params.postStartCheck?.({ json, stdout, warnings, warn, fail });
     emit({
       ok: true,
       result: "started",
