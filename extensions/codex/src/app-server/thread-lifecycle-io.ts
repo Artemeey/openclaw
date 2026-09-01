@@ -59,6 +59,8 @@ import {
 } from "./thread-requests.js";
 import { resumeCodexAppServerThread } from "./thread-resume.js";
 
+const CODEX_APPS_MCP_SERVER_NAME = "codex_apps";
+
 type ResumeThreadContext = CodexThreadRequestContext & {
   binding: CodexAppServerThreadBinding;
   clearCurrentBinding: (operation: string) => Promise<void>;
@@ -235,11 +237,12 @@ export async function resumeExistingCodexThread(
       checkingLoadedPluginThreadConfig = false;
       throw new Error("Codex thread app policy changed; a fresh thread configuration is required");
     }
+    const provisionalAppIds =
+      loadedPluginThreadConfig?.provisionalAppIds ?? pluginThreadConfig?.provisionalAppIds ?? [];
     await attestCodexPluginThreadApps({
       client: params.client,
       threadId: response.thread.id,
-      appIds:
-        loadedPluginThreadConfig?.provisionalAppIds ?? pluginThreadConfig?.provisionalAppIds ?? [],
+      appIds: provisionalAppIds,
       signal: params.signal,
     });
     checkingLoadedPluginThreadConfig = false;
@@ -255,6 +258,7 @@ export async function resumeExistingCodexThread(
             response.thread.id,
             resumeParams.config,
             params.signal,
+            provisionalAppIds.length > 0 ? [CODEX_APPS_MCP_SERVER_NAME] : [],
           ),
         );
       } catch (error) {
@@ -557,6 +561,7 @@ export async function startFreshCodexThread(
           response.thread.id,
           startParams.config,
           params.signal,
+          provisionalAppIds?.length ? [CODEX_APPS_MCP_SERVER_NAME] : [],
         ),
       );
     } catch (error) {
