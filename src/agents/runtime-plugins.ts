@@ -21,6 +21,8 @@ import {
   getPluginRuntimeGatewayRequestScope,
   withPluginRuntimeRegistryScope,
 } from "../plugins/runtime/gateway-request-scope.js";
+import { setPluginRuntimeLoadContext } from "../plugins/runtime/load-context.js";
+import { resolvePluginRuntimeLoadContext } from "../plugins/runtime/load-context.resolve.js";
 import { adoptRuntimeWidgetPresenterRegistrations } from "../plugins/widget-presenters.js";
 import { resolveUserPath } from "../utils.js";
 import {
@@ -180,5 +182,19 @@ export async function withAgentPluginRegistry<T>(params: {
           }).config,
         )
       : pluginRegistry;
+  // Direct hosts own this prepared registry, so turn guards read its exact policy generation.
+  // Disabled plugins carry empty manifest facts instead of reopening discovery for diagnostics.
+  setPluginRuntimeLoadContext(
+    scopedRegistry,
+    resolvePluginRuntimeLoadContext({
+      config: params.config,
+      activationSourceConfig: params.config,
+      env: process.env,
+      workspaceDir: params.workspaceDir,
+      ...(metadataSnapshot
+        ? { metadataSnapshot }
+        : { manifestRegistry: { plugins: [], diagnostics: [] } }),
+    }),
+  );
   return await withPluginRuntimeRegistryScope(scopedRegistry, params.run);
 }
