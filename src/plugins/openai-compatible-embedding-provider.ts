@@ -11,7 +11,11 @@ import type {
 import type { ModelProviderLocalServiceConfig } from "../config/types.models.js";
 import { normalizeResolvedSecretInputString } from "../config/types.secrets.js";
 import { readResponseTextPrefix } from "../infra/http-body.js";
-import { fetchWithSsrFGuard } from "../infra/net/fetch-guard.js";
+import {
+  fetchWithSsrFGuard,
+  withTrustedEnvProxyGuardedFetchMode,
+} from "../infra/net/fetch-guard.js";
+import { hasProxyEnvConfigured } from "../infra/net/proxy-env.js";
 import { ssrfPolicyFromHttpBaseUrlAllowedHostname, type SsrFPolicy } from "../infra/net/ssrf.js";
 import type {
   EmbeddingInput,
@@ -290,7 +294,7 @@ async function postEmbeddingRequest(params: {
       ? await client.acquireLocalService(client.localServiceTarget, params.signal)
       : undefined;
   try {
-    const { response, release } = await fetchWithSsrFGuard({
+    const request = {
       url: client.endpointUrl,
       init: {
         method: "POST",
@@ -300,7 +304,10 @@ async function postEmbeddingRequest(params: {
       signal: params.signal,
       policy: client.ssrfPolicy,
       auditContext: "embedding-provider:openai-compatible",
-    });
+    };
+    const { response, release } = await fetchWithSsrFGuard(
+      hasProxyEnvConfigured() ? withTrustedEnvProxyGuardedFetchMode(request) : request,
+    );
     try {
       if (!response.ok) {
         throw await createEmbeddingHttpError(response);

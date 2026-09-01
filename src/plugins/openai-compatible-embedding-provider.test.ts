@@ -8,6 +8,15 @@ import type { EmbeddingProviderCreateOptions } from "./embedding-providers.js";
 import { getRegisteredEmbeddingProvider } from "./embedding-providers.js";
 import { openAICompatibleEmbeddingProviderAdapter } from "./openai-compatible-embedding-provider.js";
 
+const fetchWithSsrFGuardMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../infra/net/fetch-guard.js", async () => {
+  const actual = await vi.importActual<typeof import("../infra/net/fetch-guard.js")>(
+    "../infra/net/fetch-guard.js",
+  );
+  return { ...actual, fetchWithSsrFGuard: fetchWithSsrFGuardMock };
+});
+
 async function createOpenAICompatibleEmbeddingProvider(options: EmbeddingProviderCreateOptions) {
   const result = await openAICompatibleEmbeddingProviderAdapter.create(options);
   if (!result.provider) {
@@ -285,9 +294,38 @@ async function startOversizedSuccessEmbeddingServer(): Promise<OversizedStreamSe
 afterEach(async () => {
   const pending = servers.splice(0);
   await Promise.all(pending.map((server) => server.close()));
+  fetchWithSsrFGuardMock.mockReset();
 });
 
 describe("openai-compatible generic embedding provider", () => {
+  it("uses the trusted environment proxy mode when a proxy is configured", async () => {
+    const previousHttpProxy = process.env.HTTP_PROXY;
+    process.env.HTTP_PROXY = "http://proxy.example.test:8080";
+    fetchWithSsrFGuardMock.mockResolvedValue({
+      response: new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+      release: vi.fn(),
+    });
+
+    try {
+      const result = await openAICompatibleEmbeddingProviderAdapter.create(
+        createOptions({
+          remote: { baseUrl: "https://embeddings.example.test/v1" },
+        }),
+      );
+      await result.provider?.embed("hello");
+
+      expect(fetchWithSsrFGuardMock).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: "trusted_env_proxy" }),
+      );
+    } finally {
+      if (previousHttpProxy === undefined) delete process.env.HTTP_PROXY;
+      else process.env.HTTP_PROXY = previousHttpProxy;
+    }
+  });
+
   it("is registered as a core generic embedding provider", () => {
     expect(getRegisteredEmbeddingProvider("openai-compatible")).toMatchObject({
       adapter: openAICompatibleEmbeddingProviderAdapter,
