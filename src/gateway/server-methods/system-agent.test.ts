@@ -989,11 +989,16 @@ describe("openclaw.chat", () => {
     expect(resolveOperatorApproval).not.toHaveBeenCalled();
     expect(handle).toHaveBeenNthCalledWith(1, "Restart Gateway.");
 
-    await callChat(context, {
-      sessionId: "delegate-1",
-      message: "yes",
-      delegation: { agentId: "main", sessionKey: "agent:main:main" },
-    });
+    // The follow-up chat rides the same live run authority the delegate tool carries.
+    await withGatewayToolCallerIdentity(
+      { agentId: "main", sessionKey: "agent:main:main", operationalRunInstance },
+      () =>
+        callChat(context, {
+          sessionId: "delegate-1",
+          message: "yes",
+          delegation: { agentId: "main", sessionKey: "agent:main:main" },
+        }),
+    );
     expect(resolveOperatorApproval).not.toHaveBeenCalled();
 
     manager.resolve(proposalId!, "allow-once", "operator-ui");
