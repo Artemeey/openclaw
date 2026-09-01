@@ -142,7 +142,7 @@ describe("system-agent chat input", () => {
     });
   });
 
-  it("omits the delegated approval link when the Control UI is disabled", () => {
+  it("omits the delegated approval link when the Control UI is disabled", async () => {
     const manager = new ExecApprovalManager<SystemAgentApprovalRequestPayload>({
       approvalKind: "system-agent",
       resolveAllowedDecisions: (request) => request.allowedDecisions,
@@ -159,7 +159,7 @@ describe("system-agent chat input", () => {
       60_000,
       "system-agent:disabled-ui",
     );
-    manager.register(record, 60_000);
+    await manager.register(record, 60_000);
 
     expect(
       buildDelegatedApprovalPendingReply({
