@@ -782,6 +782,12 @@ textarea.settings-input {
     padding-inline: var(--space-3);
   }
 
+  .shell:not(.shell--settings)
+    main.content:has(.settings-page):not(:has(.plugins-hub-header))
+    .content-header {
+    padding-inline: var(--space-3);
+  }
+
   .shell--settings .content:not(.content--custodian),
   .content:has(.plugins-hub-header) {
     --content-inline-padding: var(--space-3);

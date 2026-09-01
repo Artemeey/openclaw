@@ -1243,6 +1243,19 @@
   }
 }
 
+@media (max-width: 640px) {
+  main.content:has(.cron-page) .content-header {
+    align-items: stretch;
+    flex-direction: column;
+    max-height: none;
+    overflow: visible;
+  }
+
+  main.content:has(.cron-page) .content-header .page-header-actions {
+    align-self: flex-end;
+  }
+}
+
 @media (max-width: 560px) {
   .cron-stats {
     flex-wrap: wrap;
