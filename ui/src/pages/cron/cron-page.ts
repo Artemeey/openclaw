@@ -1,13 +1,12 @@
 import { consume } from "@lit/context";
-import { html, nothing, type PropertyValues } from "lit";
+import { html, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
 import type { AgentsListResult, CronJob } from "../../api/types.ts";
-import { titleForRoute } from "../../app-navigation.ts";
+import { subtitleForRoute, titleForRoute } from "../../app-navigation.ts";
 import { applicationContext, type ApplicationContext } from "../../app/context.ts";
 import { readGatewayOperatorAccess } from "../../app/operator-access.ts";
 import { renderAgentScopeControl } from "../../components/agent-scope-control.ts";
 import { showConfirmDialog } from "../../components/confirm-dialog.ts";
-import { icon } from "../../components/icons.ts";
 import { renderSettingsPageHeader } from "../../components/settings-ui.ts";
 import { renderSettingsWorkspace } from "../../components/settings-workspace.ts";
 import { t } from "../../i18n/index.ts";
@@ -416,49 +415,14 @@ class CronPage extends OpenClawLightDomElement {
       modelSuggestions: this.cronModelSuggestions,
     });
     const canManage = this.canManageCron;
-    const showOverviewActions = !this.cron.cronEditingJob && !this.cron.cronCreateOpen;
-    const showCreateAction = canManage && showOverviewActions;
     return html`
       ${renderSettingsPageHeader({
         title: titleForRoute("cron"),
-        subtitle: t("cron.subtitle"),
-        actions: html`
-          ${renderAgentScopeControl({
-            agents: this.agentsList?.agents ?? [],
-            selection: this.context.agentSelection,
-          })}
-          ${showOverviewActions
-            ? html`
-                <button
-                  type="button"
-                  class="btn btn--sm btn--ghost cron-refresh ${this.cron.cronLoading
-                    ? "cron-refresh--loading"
-                    : ""}"
-                  data-test-id="cron-refresh"
-                  ?disabled=${this.cron.cronLoading}
-                  title=${this.cron.cronLoading
-                    ? t("cron.list.refreshing")
-                    : t("cron.list.refresh")}
-                  aria-label=${t("cron.list.refresh")}
-                  @click=${() => void this.refreshCron({ tableFilters: true })}
-                >
-                  ${icon("refresh")}
-                </button>
-              `
-            : nothing}
-          ${showCreateAction
-            ? html`
-                <button
-                  type="button"
-                  class="btn primary btn--sm cron-new-task"
-                  data-test-id="cron-new-task"
-                  @click=${() => this.openCreate()}
-                >
-                  ${icon("plus")} ${t("cron.list.newTask")}
-                </button>
-              `
-            : nothing}
-        `,
+        subtitle: subtitleForRoute("cron"),
+        actions: renderAgentScopeControl({
+          agents: this.agentsList?.agents ?? [],
+          selection: this.context.agentSelection,
+        }),
       })}
       ${renderSettingsWorkspace(
         renderCron({
@@ -516,6 +480,7 @@ class CronPage extends OpenClawLightDomElement {
             this.detailTab = tab;
           },
           onFormChange: (patch) => this.patchForm(patch),
+          onRefresh: () => void this.refreshCron({ tableFilters: true }),
           onSubmit: () => this.submitForm(),
           onSubmitRunNow: () => this.submitForm({ runNow: true }),
           onSelectJob: (job) => this.selectJob(job),

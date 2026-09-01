@@ -73,6 +73,7 @@ function createCronViewProps(overrides: Partial<CronProps> = {}): CronProps {
     onListTabChange: () => undefined,
     onDetailTabChange: () => undefined,
     onFormChange: () => undefined,
+    onRefresh: () => undefined,
     onSubmit: () => undefined,
     onSubmitRunNow: () => undefined,
     onSelectJob: () => undefined,

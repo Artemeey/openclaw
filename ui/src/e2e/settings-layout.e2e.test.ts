@@ -116,187 +116,104 @@ const responsiveViewports = [
   { width: 1440, height: 900 },
 ] as const;
 
+const standaloneHeaderCases = [
+  { route: "cron", subtitle: "Scheduled tasks and recurring agent runs." },
+  { route: "tasks", subtitle: "Background tasks: subagents, automation runs, CLI." },
+  { route: "usage", subtitle: "API usage and costs." },
+  {
+    route: "memory-import",
+    subtitle: "Bring Codex and Claude Code memory into an agent workspace.",
+  },
+] as const satisfies ReadonlyArray<{ route: RouteId; subtitle: string }>;
+
+function createCronLayoutMethodResponses() {
+  const jobs = [
+    {
+      id: "healthy",
+      configRevision: "healthy-revision",
+      name: "Healthy automation",
+      enabled: true,
+      createdAtMs: 0,
+      updatedAtMs: 0,
+      schedule: { kind: "every", everyMs: 60_000 },
+      sessionTarget: "main",
+      wakeMode: "next-heartbeat",
+      payload: { kind: "systemEvent", text: "healthy" },
+      state: { lastRunStatus: "ok" },
+    },
+    {
+      id: "failing",
+      configRevision: "failing-revision",
+      name: "Failing automation",
+      enabled: true,
+      createdAtMs: 0,
+      updatedAtMs: 0,
+      schedule: { kind: "every", everyMs: 60_000 },
+      sessionTarget: "main",
+      wakeMode: "next-heartbeat",
+      payload: { kind: "systemEvent", text: "failing" },
+      state: { lastRunStatus: "error" },
+    },
+  ];
+  return {
+    "cron.list": {
+      jobs,
+      snapshotRevision: "settings-layout",
+      total: jobs.length,
+      offset: 0,
+      limit: 50,
+      hasMore: false,
+      nextOffset: null,
+    },
+    "cron.runs": {
+      entries: [],
+      total: 0,
+      offset: 0,
+      limit: 50,
+      hasMore: false,
+      nextOffset: null,
+    },
+    "cron.status": { enabled: true, jobs: jobs.length, nextWakeAtMs: null },
+  };
+}
+
 suite.define(() => {
-  it("keeps the Automations overview on one aligned page grid", async () => {
+  it("aligns settings-style workspace headers with their content columns", async () => {
     const context = await suite.browser.newContext({
       colorScheme: "dark",
       locale: "en-US",
       serviceWorkers: "block",
-      viewport: { height: 908, width: 874 },
+      viewport: { height: 900, width: 1440 },
     });
     const page = await context.newPage();
     await installMockGateway(page, {
-      methodResponses: {
-        "agents.list": {
-          agents: [
-            { id: "main", identity: { name: "Molty" }, name: "Molty" },
-            { id: "writer", identity: { name: "Writer" }, name: "Writer" },
-          ],
-          defaultId: "main",
-          mainKey: "main",
-          scope: "agent",
-        },
-        "cron.list": {
-          hasMore: false,
-          jobs: [
-            {
-              configRevision: "automations-layout-job",
-              createdAtMs: 0,
-              enabled: true,
-              id: "daily-digest",
-              name: "Daily digest",
-              payload: { kind: "systemEvent", text: "Prepare the daily digest" },
-              schedule: { everyMs: 86_400_000, kind: "every" },
-              sessionTarget: "main",
-              state: { nextRunAtMs: Date.parse("2026-09-01T16:00:00.000Z") },
-              updatedAtMs: 0,
-              wakeMode: "next-heartbeat",
-            },
-          ],
-          limit: 50,
-          nextOffset: null,
-          offset: 0,
-          snapshotRevision: "automations-layout",
-          total: 1,
-        },
-        "cron.runs": { entries: [], hasMore: false, limit: 50, offset: 0, total: 0 },
-        "cron.status": {
-          enabled: true,
-          jobs: 1,
-          nextWakeAtMs: Date.parse("2026-09-01T16:00:00.000Z"),
-          triggersEnabled: true,
-        },
-      },
+      methodResponses: createCronLayoutMethodResponses(),
     });
 
     try {
-      const pathname = pathForRoute("cron");
-      await page.goto(new URL(pathname, suite.server.baseUrl).toString());
-      await waitForControlUiRoute(page, { pathname, routeId: "cron" });
+      for (const { route, subtitle } of standaloneHeaderCases) {
+        const pathname = pathForRoute(route);
+        await page.goto(new URL(pathname, suite.server.baseUrl).toString());
+        await waitForControlUiRoute(page, { pathname, routeId: route });
 
-      const title = page.locator(".content-header .page-title");
-      const subtitle = page.locator(".content-header .page-subtitle");
-      const refreshAction = page.locator('.content-header [data-test-id="cron-refresh"]');
-      const createAction = page.locator('.content-header [data-test-id="cron-new-task"]');
-      const tabs = page.locator(".cron-toolbar__primary");
-      const filters = page.locator(".cron-toolbar__filters");
-      await Promise.all([
-        title.waitFor(),
-        subtitle.waitFor(),
-        refreshAction.waitFor(),
-        createAction.waitFor(),
-        tabs.waitFor(),
-        filters.waitFor(),
-      ]);
-
-      expect(await subtitle.textContent()).toContain(
-        "Schedule tasks for OpenClaw to run automatically",
-      );
-      expect(await page.locator(".cron-overview-summary").count()).toBe(0);
-      expect(await page.locator(".agent-scope-control__label").count()).toBe(0);
-      expect(await page.locator(".agent-select__menu-title").textContent()).toBe("Agent");
-      expect(await page.locator('.cron-toolbar [data-test-id="cron-refresh"]').count()).toBe(0);
-      expect(await page.locator('.cron-toolbar [data-test-id="cron-new-task"]').count()).toBe(0);
-      const geometry = await page.evaluate(() => {
-        const box = (selector: string) => {
-          const element = document.querySelector<HTMLElement>(selector);
-          if (!element) {
-            throw new Error(`Automations layout is missing ${selector}`);
-          }
-          const rect = element.getBoundingClientRect();
-          return {
-            bottom: Math.round(rect.bottom),
-            left: Math.round(rect.left),
-            right: Math.round(rect.right),
-            top: Math.round(rect.top),
-          };
-        };
-        return {
-          create: box('.content-header [data-test-id="cron-new-task"]'),
-          filters: box(".cron-toolbar__filters"),
-          refresh: box('.content-header [data-test-id="cron-refresh"]'),
-          tabs: box(".cron-toolbar__primary"),
-          title: box(".content-header .page-title"),
-        };
-      });
-      expect(geometry.title.left).toBe(geometry.tabs.left);
-      expect(geometry.filters.left).toBe(geometry.tabs.left);
-      expect(geometry.tabs.bottom).toBeLessThanOrEqual(geometry.filters.top);
-      expect(geometry.refresh.right).toBeLessThanOrEqual(geometry.create.left);
-      expect(Math.abs(geometry.refresh.top - geometry.create.top)).toBeLessThanOrEqual(8);
-
-      if (proofEnabled) {
-        const proofDir = path.join(suite.artifactDir, "settings-layout-audit");
-        await mkdir(proofDir, { recursive: true });
-        await page.screenshot({
-          animations: "disabled",
-          fullPage: true,
-          path: path.join(proofDir, "automations-overview.png"),
-        });
-      }
-
-      await page.setViewportSize({ height: 844, width: 390 });
-      await expect
-        .poll(() =>
-          page.evaluate(() => {
-            const mobileTitle = document.querySelector<HTMLElement>(".content-header .page-title");
-            const mobileTabs = document.querySelector<HTMLElement>(".cron-toolbar__primary");
-            if (!mobileTitle || !mobileTabs) {
-              return null;
-            }
-            return Math.round(
-              mobileTitle.getBoundingClientRect().left - mobileTabs.getBoundingClientRect().left,
-            );
-          }),
-        )
-        .toBe(0);
-      const mobileGeometry = await page.evaluate(() => {
-        const box = (selector: string) => {
-          const element = document.querySelector<HTMLElement>(selector);
-          if (!element) {
-            throw new Error(`Mobile Automations layout is missing ${selector}`);
-          }
-          const rect = element.getBoundingClientRect();
-          return {
-            bottom: Math.round(rect.bottom),
-            left: Math.round(rect.left),
-            top: Math.round(rect.top),
-          };
-        };
-        const header = document.querySelector<HTMLElement>(".content-header");
-        if (!header) {
-          throw new Error("Mobile Automations layout is missing its header");
-        }
-        return {
-          actions: box(".content-header .page-header-actions"),
-          create: box('.content-header [data-test-id="cron-new-task"]'),
-          header: box(".content-header"),
-          headerClientHeight: header.clientHeight,
-          headerScrollHeight: header.scrollHeight,
-          refresh: box('.content-header [data-test-id="cron-refresh"]'),
-          subtitle: box(".content-header .page-subtitle"),
-          tabs: box(".cron-toolbar__primary"),
-          title: box(".content-header .page-title"),
-        };
-      });
-      expect(mobileGeometry.title.left).toBe(mobileGeometry.tabs.left);
-      expect(mobileGeometry.actions.top).toBeGreaterThanOrEqual(mobileGeometry.subtitle.bottom);
-      expect(mobileGeometry.refresh.left).toBeLessThan(mobileGeometry.create.left);
-      expect(Math.abs(mobileGeometry.refresh.top - mobileGeometry.create.top)).toBeLessThanOrEqual(
-        8,
-      );
-      expect(mobileGeometry.header.bottom).toBeGreaterThanOrEqual(mobileGeometry.actions.bottom);
-      expect(mobileGeometry.headerScrollHeight).toBeLessThanOrEqual(
-        mobileGeometry.headerClientHeight,
-      );
-
-      if (proofEnabled) {
-        const proofDir = path.join(suite.artifactDir, "settings-layout-audit");
-        await page.screenshot({
-          animations: "disabled",
-          fullPage: true,
-          path: path.join(proofDir, "automations-overview-mobile.png"),
-        });
+        const header = page.locator(".content-header--settings").last();
+        const content = page.locator(".settings-page").last();
+        await Promise.all([header.waitFor(), content.waitFor()]);
+        await expect.poll(() => header.locator(".page-subtitle").textContent()).toContain(subtitle);
+        await expect
+          .poll(async () => {
+            const [headerBox, contentBox] = await Promise.all([
+              header.boundingBox(),
+              content.boundingBox(),
+            ]);
+            return headerBox && contentBox
+              ? {
+                  left: Math.round(headerBox.x - contentBox.x),
+                  width: Math.round(headerBox.width - contentBox.width),
+                }
+              : null;
+          })
+          .toEqual({ left: 0, width: 0 });
       }
     } finally {
       await context.close();
@@ -345,37 +262,13 @@ suite.define(() => {
         await page.goto(new URL(pathname, suite.server.baseUrl).toString());
         await waitForControlUiRoute(page, { pathname, routeId: route });
         const settingsPage = page.locator(".settings-page").last();
-        const pageTitle = page.locator(".content-header .page-title").last();
         await settingsPage.waitFor({ state: "attached" });
-        await pageTitle.waitFor({ state: "attached" });
         expect(
           await settingsPage.evaluate((element) =>
             Math.round(Number.parseFloat(getComputedStyle(element).paddingLeft)),
           ),
           `${route} mobile page-owned inset`,
         ).toBe(12);
-        await expect
-          .poll(
-            () =>
-              page.evaluate(() => {
-                const titles = document.querySelectorAll<HTMLElement>(
-                  ".content-header .page-title",
-                );
-                const pages = document.querySelectorAll<HTMLElement>(".settings-page");
-                const title = titles.item(titles.length - 1);
-                const settingsPageElement = pages.item(pages.length - 1);
-                if (!title || !settingsPageElement) {
-                  return null;
-                }
-                const pageBox = settingsPageElement.getBoundingClientRect();
-                const pagePadding = Number.parseFloat(
-                  getComputedStyle(settingsPageElement).paddingLeft,
-                );
-                return Math.round(title.getBoundingClientRect().left - pageBox.left - pagePadding);
-              }),
-            { message: `${route} mobile title-to-page alignment` },
-          )
-          .toBe(0);
       }
 
       for (const { route, contentSelector } of mobileGeometryCases) {
@@ -497,6 +390,87 @@ suite.define(() => {
         ),
       }));
       expect(desktopInsets).toEqual({ configPadding: 22, headerPadding: 16, pagePadding: 16 });
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("keeps Automations search above one tab-and-action row", async () => {
+    const context = await suite.browser.newContext({
+      colorScheme: "dark",
+      locale: "en-US",
+      serviceWorkers: "block",
+      viewport: { height: 844, width: 390 },
+    });
+    const page = await context.newPage();
+    await installMockGateway(page, {
+      methodResponses: createCronLayoutMethodResponses(),
+    });
+
+    try {
+      for (const viewport of responsiveViewports) {
+        await page.setViewportSize(viewport);
+        await page.goto(`${suite.server.baseUrl}automations`);
+        await waitForControlUiRoute(page, { pathname: "/automations", routeId: "cron" });
+
+        await expect
+          .poll(() =>
+            page.evaluate(() => {
+              const primary = document.querySelector<HTMLElement>(".cron-toolbar__primary");
+              const filters = document.querySelector<HTMLElement>(".cron-toolbar__filters");
+              const actions = document.querySelector<HTMLElement>(".cron-toolbar__actions");
+              const table = document.querySelector<HTMLElement>(".cron-table");
+              const tabGroup = document.querySelector<HTMLElement>(".cron-list-hub-tabs");
+              if (!primary || !filters || !actions || !table || !tabGroup) {
+                return null;
+              }
+              const primaryBox = primary.getBoundingClientRect();
+              const filtersBox = filters.getBoundingClientRect();
+              const actionsBox = actions.getBoundingClientRect();
+              const tableBox = table.getBoundingClientRect();
+              const tabBox = tabGroup.getBoundingClientRect();
+              return {
+                actionsAboveTable: actionsBox.bottom <= tableBox.top,
+                actionsRightAligned: Math.abs(tableBox.right - actionsBox.right) <= 1,
+                actionsInlineWithTabs:
+                  Math.abs(
+                    actionsBox.top + actionsBox.height / 2 - (tabBox.top + tabBox.height / 2),
+                  ) <= 1,
+                filtersAbovePrimary: filtersBox.bottom <= primaryBox.top,
+                primaryContainsActions: primary.contains(actions),
+              };
+            }),
+          )
+          .toEqual({
+            actionsAboveTable: true,
+            actionsInlineWithTabs: true,
+            actionsRightAligned: true,
+            filtersAbovePrimary: true,
+            primaryContainsActions: true,
+          });
+
+        expect(
+          (await page.locator(".cron-list-hub-tabs wa-tab").allTextContents()).map((label) =>
+            label.trim(),
+          ),
+        ).toEqual(["All", "Active", "Paused", "Run history"]);
+        expect(await page.locator(".cron-toolbar__filters wa-radio-group").count()).toBe(0);
+        expect(await page.locator(".cron-stats").count()).toBe(0);
+        expect(await page.locator(".cron-table__name-text").allTextContents()).toEqual([
+          "Failing automation",
+          "Healthy automation",
+        ]);
+
+        if (proofEnabled) {
+          const proofDir = path.join(suite.artifactDir, "settings-layout-audit");
+          await mkdir(proofDir, { recursive: true });
+          await page.screenshot({
+            animations: "disabled",
+            fullPage: true,
+            path: path.join(proofDir, `automations-toolbar-${viewport.width}.png`),
+          });
+        }
+      }
     } finally {
       await context.close();
     }

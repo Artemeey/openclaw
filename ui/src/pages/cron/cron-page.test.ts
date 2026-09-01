@@ -178,43 +178,33 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("CronPage editor state sync", () => {
-  it("renders the overview action and explanatory copy in the page header", async () => {
+describe("CronPage header", () => {
+  it("uses the shared settings header with concise context and scope actions", async () => {
     const gateway = createGateway(
       { request: createRequest() } as unknown as GatewayBrowserClient,
-      true,
+      false,
     );
-    const page = createPage(createContext(gateway), { render: true });
+    const context = createContext(gateway);
+    context.agents.state.agentsList = {
+      defaultId: "main",
+      mainKey: "main",
+      scope: "global",
+      agents: [{ id: "main" }, { id: "research" }],
+    };
+    const page = createPage(context, { render: true });
 
-    await waitForCronPage(() =>
-      expect(page.querySelector('[data-test-id="cron-new-task"]')).not.toBeNull(),
+    await page.updateComplete;
+
+    expect(page.querySelector(".page-title")?.textContent).toBe("Automations");
+    expect(page.querySelector(".content-header--settings")).not.toBeNull();
+    expect(page.querySelector(".page-subtitle")?.textContent).toBe(
+      "Scheduled tasks and recurring agent runs.",
     );
-    const header = page.querySelector(".content-header");
-    expect(header?.querySelector(".page-subtitle")?.textContent).toContain(
-      "Schedule tasks for OpenClaw to run automatically",
-    );
-    expect(header?.querySelector('[data-test-id="cron-refresh"]')).not.toBeNull();
-    expect(header?.querySelector('[data-test-id="cron-new-task"]')).not.toBeNull();
-    expect(page.querySelector(".cron-overview-summary")).toBeNull();
-    expect(page.querySelector('.cron-toolbar [data-test-id="cron-refresh"]')).toBeNull();
-    expect(page.querySelector('.cron-toolbar [data-test-id="cron-new-task"]')).toBeNull();
+    expect(page.querySelector(".page-header-actions .agent-scope-control")).not.toBeNull();
   });
+});
 
-  it("refreshes the overview from the header action", async () => {
-    const request = createRequest();
-    const gateway = createGateway({ request } as unknown as GatewayBrowserClient, true);
-    const page = createPage(createContext(gateway), { render: true });
-
-    await waitForCronPage(() =>
-      expect(page.querySelector('[data-test-id="cron-refresh"]')).not.toBeNull(),
-    );
-    request.mockClear();
-    (page.querySelector('[data-test-id="cron-refresh"]') as HTMLButtonElement).click();
-
-    await waitForCronPage(() => expect(request).toHaveBeenCalledWith("cron.status", {}));
-    expect(page.querySelector('.cron-toolbar [data-test-id="cron-refresh"]')).toBeNull();
-  });
-
+describe("CronPage editor state sync", () => {
   it("opens a linked job's history after its jobs load and highlights the linked run", async () => {
     const job: CronJob = {
       id: "linked-job",
@@ -565,7 +555,7 @@ describe("CronPage editor state sync", () => {
     });
   });
 
-  it("scopes list, stats, and run history requests to the selected agent", async () => {
+  it("scopes list and run history requests to the selected agent", async () => {
     const request = createRequest();
     const gateway = createGateway({ request } as unknown as GatewayBrowserClient, true);
     createPage(createContext(gateway, "writer"));

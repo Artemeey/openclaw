@@ -32,6 +32,7 @@ import {
   isMissingOperatorReadScopeError,
 } from "../gateway-errors.ts";
 import { parseCronEveryMs } from "./decimal.ts";
+
 export { loadCronScopeStats } from "./scope.ts";
 
 const CRON_CHANNEL_LAST = "last";
@@ -1367,7 +1368,7 @@ export async function addCronJob(state: CronState): Promise<CronSaveResult> {
   return result;
 }
 
-// Every mutation reloads the table and scheduler status together.
+// Mutations reload the list and scheduler status so both canonical views stay current.
 async function reloadCronJobsSnapshot(state: CronState) {
   await loadCronJobsPage(state, { tableFilters: true });
   await loadCronStatus(state);

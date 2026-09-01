@@ -5290,9 +5290,12 @@ export const en: TranslationMap = {
     togglePasswordVisibility: "Toggle password visibility",
     failure: {
       rawError: "Raw error",
-      docsAuth: "Control UI auth docs",
-      docsPairing: "Device pairing docs",
-      docsInsecure: "Insecure HTTP docs",
+      profileUnavailable: {
+        title: "Profile verification unavailable",
+        stepRetry: "Retry shortly.",
+        stepAdmin:
+          "If this continues, ask a Gateway administrator to check the identity provider and GitHub API credential.",
+      },
       authRequired: {
         title: "Auth required",
         summary:
@@ -6066,6 +6069,9 @@ export const en: TranslationMap = {
       searchModels: "Search models",
       noMatchingModels: "No models match your search",
       onlyForSession: "Only for this session",
+      selectionTargetSession: "Selection target: This session only",
+      selectionTargetAgent: "Selection target: This agent's default",
+      selectionTargetGlobal: "Selection target: Global default",
       useDefaultModel: "Use default ({model})",
       defaultWithModel: "Default ({model})",
       defaultWithLevel: "Default ({level})",
@@ -6729,8 +6735,6 @@ export const en: TranslationMap = {
     deleteFailed: "The secret was not deleted. Reload the list and try again.",
   },
   cron: {
-    subtitle:
-      "Schedule tasks for OpenClaw to run automatically, from one-time reminders to recurring workflows.",
     adminRequired: "Browsing only. Automation changes require operator.admin access.",
     tabs: {
       filterLabel: "Automation status",

@@ -1,6 +1,6 @@
 /* ── Automations (cron) page ─────────────────────────────────────────────────
  * Structure comes from the settings design language (settings.css); this file
- * only keeps the cron-specific escape hatches: the jobs table grid,
+ * only keeps the cron-specific escape hatches: the jobs table grid, stat grid,
  * run-history entries, and the details-based popover menus.
  */
 
@@ -33,7 +33,7 @@
   align-items: center;
   gap: var(--space-1);
   min-width: 0;
-  margin-left: auto;
+  align-self: flex-end;
   color: var(--muted);
   font-size: var(--control-ui-text-xs);
 }
@@ -71,7 +71,16 @@
 }
 
 .cron-toolbar__primary {
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  flex-wrap: nowrap;
+  margin-block: var(--space-2);
+}
+
+/* Toolbar buttons share the settings control height with the adjacent
+   segmented switches, search input, and filter selects. */
+.cron-toolbar .btn {
+  height: var(--settings-control-height);
+  padding-block: 0;
+  box-sizing: border-box;
 }
 
 .cron-search-box {
@@ -110,6 +119,14 @@
   outline: none;
   border-color: color-mix(in srgb, var(--accent) 46%, var(--border));
   background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+}
+
+.cron-toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
 .cron-new-task {
@@ -1156,34 +1173,9 @@
   }
 }
 
-@media (max-width: 640px) {
-  main.content:has(.cron-page) .content-header {
-    align-items: stretch;
-    flex-direction: column;
-    max-height: none;
-    overflow: visible;
-  }
-
-  main.content:has(.cron-page) .content-header .page-header-actions {
-    align-self: flex-end;
-  }
-}
-
 @media (max-width: 560px) {
   .cron-admin-note {
-    margin-left: 0;
-  }
-
-  .cron-toolbar__filters {
-    flex-wrap: wrap;
-  }
-
-  .cron-search-box {
-    flex-basis: 100%;
-  }
-
-  .cron-filter-popover__trigger {
-    margin-left: auto;
+    align-self: flex-start;
   }
 
   .cron-new-task {
