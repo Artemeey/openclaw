@@ -85,18 +85,25 @@ describe("prepared model runtime reload auth adoption", () => {
     }).then(() => {
       requestReadSettled = true;
     });
+    mocks.runPreparedModelCatalogWorker.mockImplementation(() => liveBuild.promise);
     for (let i = 0; i < 5; i += 1) {
       await Promise.resolve();
     }
-    expect(requestReadSettled).toBe(true);
-    expect(mocks.runPreparedModelCatalogWorker).not.toHaveBeenCalled();
-    await requestRead;
+    try {
+      expect(requestReadSettled).toBe(true);
+      expect(mocks.runPreparedModelCatalogWorker).not.toHaveBeenCalled();
+    } finally {
+      liveBuild.resolve({ entries: [model], routeVariants: [model] });
+      await requestRead;
+    }
 
-    mocks.runPreparedModelCatalogWorker.mockImplementation(() => liveBuild.promise);
-    const explicitRefresh = refreshStalePreparedModelRuntimeCatalog(published);
-    await vi.waitFor(() => expect(mocks.runPreparedModelCatalogWorker).toHaveBeenCalledOnce());
-    liveBuild.resolve({ entries: [model], routeVariants: [model] });
-    await expect(explicitRefresh).resolves.toMatchObject({ entries: [model] });
+    mocks.runPreparedModelCatalogWorker.mockResolvedValue({
+      entries: [model],
+      routeVariants: [model],
+    });
+    await expect(refreshStalePreparedModelRuntimeCatalog(published)).resolves.toMatchObject({
+      entries: [model],
+    });
     expect(mocks.runPreparedModelCatalogWorker).toHaveBeenCalledOnce();
     await expect(refreshStalePreparedModelRuntimeCatalog(published)).resolves.toBeUndefined();
   });
