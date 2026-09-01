@@ -294,6 +294,7 @@ async function postEmbeddingRequest(params: {
       ? await client.acquireLocalService(client.localServiceTarget, params.signal)
       : undefined;
   try {
+    const endpointProtocol = new URL(client.endpointUrl).protocol === "http:" ? "http" : "https";
     const request = {
       url: client.endpointUrl,
       init: {
@@ -306,7 +307,9 @@ async function postEmbeddingRequest(params: {
       auditContext: "embedding-provider:openai-compatible",
     };
     const { response, release } = await fetchWithSsrFGuard(
-      hasEnvHttpProxyConfigured() ? withTrustedEnvProxyGuardedFetchMode(request) : request,
+      hasEnvHttpProxyConfigured(endpointProtocol)
+        ? withTrustedEnvProxyGuardedFetchMode(request)
+        : request,
     );
     try {
       if (!response.ok) {
