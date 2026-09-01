@@ -20,6 +20,7 @@ import {
   type LegacyConfigRule,
 } from "../../../config/legacy.shared.js";
 import { isBlockedObjectKey } from "../../../infra/prototype-keys.js";
+import { visitAgentConfigScopes } from "./legacy-config-migrations.runtime.tier-eval.js";
 import {
   modelEntryWithRuntimePolicy,
   selectedCanonicalModelRefsForRuntimePolicy,
@@ -45,61 +46,50 @@ const MEMORY_SEARCH_RULE: LegacyConfigRule = {
     'top-level memorySearch was moved; use memory.search instead. Run "openclaw doctor --fix".',
 };
 
+function agentMemorySearchRules(
+  message: string,
+  predicate: (agent: Record<string, unknown>) => boolean,
+): LegacyConfigRule[] {
+  return ["list", "entries"].map((roster) => ({
+    path: ["agents", roster],
+    message: `agents.${roster === "list" ? "list[]" : "entries.*"}.${message} Run "openclaw doctor --fix".`,
+    match: (value) =>
+      someAgentList(roster === "list" ? value : Object.values(getRecord(value) ?? {}), predicate),
+  }));
+}
+
 const AGENT_MEMORY_SEARCH_OWNER_RULES: LegacyConfigRule[] = [
   {
     path: ["agents", "defaults", "memorySearch"],
     message: 'agents.defaults.memorySearch moved to memory.search. Run "openclaw doctor --fix".',
   },
-  {
-    path: ["agents", "list"],
-    message:
-      'agents.list[].memorySearch moved to agents.list[].memory.search. Run "openclaw doctor --fix".',
-    match: (value) => someAgentList(value, (agent) => agent.memorySearch !== undefined),
-  },
+  ...agentMemorySearchRules(
+    "memorySearch moved to memory.search on the same agent.",
+    (agent) => agent.memorySearch !== undefined,
+  ),
 ];
 
 const LEGACY_MEMORY_SEARCH_AUTO_PROVIDER_RULES: LegacyConfigRule[] = [
-  {
-    path: ["memorySearch", "provider"],
-    message:
-      'memorySearch.provider = "auto" is legacy; use "openai" explicitly. Run "openclaw doctor --fix".',
+  ...["memorySearch", "memory.search"].map((owner) => ({
+    path: [...owner.split("."), "provider"],
+    message: `${owner}.provider = "auto" is legacy; use "openai" explicitly. Run "openclaw doctor --fix".`,
     match: isLegacyMemorySearchAutoProvider,
-  },
-  {
-    path: ["memory", "search", "provider"],
-    message:
-      'memory.search.provider = "auto" is legacy; use "openai" explicitly. Run "openclaw doctor --fix".',
-    match: isLegacyMemorySearchAutoProvider,
-  },
-  {
-    path: ["agents", "list"],
-    message:
-      'agents.list[].memorySearch.provider = "auto" is legacy; use "openai" explicitly. Run "openclaw doctor --fix".',
-    match: (value) =>
-      someAgentList(value, (agent) =>
-        isLegacyMemorySearchAutoProvider(getAgentMemorySearchRecord(agent)?.provider),
-      ),
-  },
+  })),
+  ...agentMemorySearchRules(
+    'memorySearch.provider "auto" is legacy; use "openai" explicitly.',
+    (agent) => isLegacyMemorySearchAutoProvider(getAgentMemorySearchRecord(agent)?.provider),
+  ),
 ];
 
 const LEGACY_MEMORY_SEARCH_STORE_PATH_RULES: LegacyConfigRule[] = [
-  {
-    path: ["memorySearch", "store", "path"],
-    message:
-      'memorySearch.store.path is legacy; memory indexes now live in each agent database. Run "openclaw doctor --fix".',
-  },
-  {
-    path: ["memory", "search", "store", "path"],
-    message:
-      'memory.search.store.path is legacy; memory indexes now live in each agent database. Run "openclaw doctor --fix".',
-  },
-  {
-    path: ["agents", "list"],
-    message:
-      'agents.list[].memorySearch.store.path is legacy; memory indexes now live in each agent database. Run "openclaw doctor --fix".',
-    match: (value) =>
-      someAgentList(value, (agent) => hasMemorySearchStorePath(getAgentMemorySearchRecord(agent))),
-  },
+  ...["memorySearch", "memory.search"].map((owner) => ({
+    path: [...owner.split("."), "store", "path"],
+    message: `${owner}.store.path is legacy; memory indexes now live in each agent database. Run "openclaw doctor --fix".`,
+  })),
+  ...agentMemorySearchRules(
+    "memorySearch.store.path is legacy; memory indexes now live in each agent database.",
+    (agent) => hasMemorySearchStorePath(getAgentMemorySearchRecord(agent)),
+  ),
 ];
 
 const LEGACY_MEMORY_SEARCH_FLAT_KEY_RULES: LegacyConfigRule[] = [
@@ -109,15 +99,10 @@ const LEGACY_MEMORY_SEARCH_FLAT_KEY_RULES: LegacyConfigRule[] = [
       'memory.search uses legacy flat chunkSize, chunkOverlap, or maxResults fields. Run "openclaw doctor --fix".',
     match: hasLegacyMemorySearchFlatKeys,
   },
-  {
-    path: ["agents", "list"],
-    message:
-      'agents.list[].memorySearch uses legacy flat chunkSize, chunkOverlap, or maxResults fields. Run "openclaw doctor --fix".',
-    match: (value) =>
-      someAgentList(value, (agent) =>
-        hasLegacyMemorySearchFlatKeys(getAgentMemorySearchRecord(agent)),
-      ),
-  },
+  ...agentMemorySearchRules(
+    "memorySearch uses legacy flat chunkSize, chunkOverlap, or maxResults fields.",
+    (agent) => hasLegacyMemorySearchFlatKeys(getAgentMemorySearchRecord(agent)),
+  ),
 ];
 
 function hasLegacyMemorySearchFlatKeys(value: unknown): boolean {
@@ -528,20 +513,15 @@ function migrateCanonicalMemorySearches(
     pathLabel: string,
     changes: string[],
   ) => void,
-  agentPathStyle: "dot" | "brackets" = "dot",
 ): void {
   migrateMemorySearch(getRecord(getRecord(raw.memory)?.search), "memory.search", changes);
-  const agents = getRecord(raw.agents);
-  if (!Array.isArray(agents?.list)) {
-    return;
-  }
-  for (const [index, agent] of agents.list.entries()) {
-    const pathLabel =
-      agentPathStyle === "brackets"
-        ? `agents.list[${index}].memory.search`
-        : `agents.list.${index}.memory.search`;
-    migrateMemorySearch(getRecord(getRecord(getRecord(agent)?.memory)?.search), pathLabel, changes);
-  }
+  visitAgentConfigScopes(raw, (agent, pathLabel) => {
+    migrateMemorySearch(
+      getRecord(getRecord(agent.memory)?.search),
+      `${pathLabel}.memory.search`,
+      changes,
+    );
+  });
 }
 
 function migrateLegacySandboxPerSession(
@@ -1445,14 +1425,11 @@ export const LEGACY_CONFIG_MIGRATIONS_RUNTIME_AGENTS: LegacyConfigMigrationSpec[
         );
       }
 
-      if (!Array.isArray(agents?.list)) {
-        return;
-      }
-      for (const [index, rawAgent] of agents.list.entries()) {
-        const agent = getRecord(rawAgent);
-        const legacy = getRecord(agent?.memorySearch);
-        if (!agent || !legacy) {
-          continue;
+      // Snapshots already convert valid lists to entries; migrate both roster shapes.
+      visitAgentConfigScopes(raw, (agent, pathLabel) => {
+        const legacy = getRecord(agent.memorySearch);
+        if (!legacy) {
+          return;
         }
         const agentMemory = ensureRecord(agent, "memory");
         const existing = getRecord(agentMemory.search);
@@ -1462,10 +1439,10 @@ export const LEGACY_CONFIG_MIGRATIONS_RUNTIME_AGENTS: LegacyConfigMigrationSpec[
         delete agent.memorySearch;
         changes.push(
           existing
-            ? `Merged agents.list.${index}.memorySearch → agents.list.${index}.memory.search (kept explicit memory.search values).`
-            : `Moved agents.list.${index}.memorySearch → agents.list.${index}.memory.search.`,
+            ? `Merged ${pathLabel}.memorySearch → ${pathLabel}.memory.search (kept explicit memory.search values).`
+            : `Moved ${pathLabel}.memorySearch → ${pathLabel}.memory.search.`,
         );
-      }
+      });
     },
   }),
   defineLegacyConfigMigration({
@@ -1487,7 +1464,7 @@ export const LEGACY_CONFIG_MIGRATIONS_RUNTIME_AGENTS: LegacyConfigMigrationSpec[
     describe: "Remove legacy memory search sidecar index paths",
     legacyRules: LEGACY_MEMORY_SEARCH_STORE_PATH_RULES,
     apply: (raw, changes) =>
-      migrateCanonicalMemorySearches(raw, changes, removeLegacyMemorySearchStorePath, "brackets"),
+      migrateCanonicalMemorySearches(raw, changes, removeLegacyMemorySearchStorePath),
   }),
   defineLegacyConfigMigration({
     id: "session.typingMode->agents.defaults.typingMode",

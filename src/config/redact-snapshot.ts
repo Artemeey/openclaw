@@ -325,18 +325,19 @@ export function redactConfigSnapshot(
   snapshot: ConfigFileSnapshot,
   uiHints?: ConfigUiHints,
 ): ConfigFileSnapshot {
+  // Internal migration inputs can contain resolved secrets; never expose them in public snapshots.
+  const {
+    sourceConfigBeforeMigrations: _sourceConfigBeforeMigrations,
+    pluginMetadataSnapshot: _pluginMetadataSnapshot,
+    ...publicSnapshot
+  } = snapshot as typeof snapshot & { pluginMetadataSnapshot?: unknown };
+
   if (!snapshot.valid) {
-    // This is bad. We could try to redact the raw string using known key names,
-    // but then we would not be able to restore them, and would trash the user's
-    // credentials. Less than ideal---we should never delete important data.
-    // On the other hand, we cannot hand out "raw" if we're not sure we have
-    // properly redacted all sensitive data. Handing out a partially or, worse,
-    // unredacted config string would be bad.
-    // Therefore, the only safe route is to reject handling out broken configs.
+    // Invalid configs cannot be safely redacted and restored, so withhold their contents.
     const redactedConfig = {} as ConfigFileSnapshot["config"];
     const redactedResolved = {} as ConfigFileSnapshot["resolved"];
     return {
-      ...snapshot,
+      ...publicSnapshot,
       sourceConfig: redactedResolved,
       runtimeConfig: redactedConfig,
       config: redactedConfig,
@@ -366,11 +367,6 @@ export function redactConfigSnapshot(
   }
   // Also redact the resolved config (contains values after ${ENV} substitution)
   const redactedResolved = redactConfigObject(snapshot.resolved, uiHints);
-  const { pluginMetadataSnapshot: _pluginMetadataSnapshot, ...publicSnapshot } =
-    snapshot as typeof snapshot & {
-      pluginMetadataSnapshot?: unknown;
-    };
-
   return {
     ...publicSnapshot,
     sourceConfig: redactedResolved,

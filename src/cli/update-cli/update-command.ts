@@ -224,11 +224,10 @@ async function updateCommandInternal(
     defaultRuntime.log(theme.muted("Checking for updates..."));
   }
   const installKind = await resolveUpdateInstallKind(root);
-  let updateInstallKind = installKind;
   const refuseUpdate = (reason: string, message?: string) =>
     reportPreMutationUpdateFailure({
       root,
-      installKind: updateInstallKind,
+      installKind,
       reason,
       message,
       opts,
@@ -286,7 +285,7 @@ async function updateCommandInternal(
     (requestedChannel === "dev" || (channel === "dev" && explicitTag === null));
   const switchToPackage =
     requestedChannel !== null && requestedChannel !== "dev" && installKind === "git";
-  updateInstallKind = switchToGit ? "git" : switchToPackage ? "package" : installKind;
+  const updateInstallKind = switchToGit ? "git" : switchToPackage ? "package" : installKind;
   if (channel === "dev" && requestedChannel !== "dev") {
     const resolvedDevTarget = readDevUpdateTargetOrExit();
     if (!resolvedDevTarget.ok) {

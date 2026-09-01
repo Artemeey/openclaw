@@ -1201,10 +1201,10 @@ describe("legacy memory search config migrate", () => {
     expect(res.config?.agents?.list?.[1]?.memory?.search?.provider).toBe("openai-compatible");
     expect(res.changes).toEqual([
       "Moved legacy memorySearch defaults → memory.search.",
-      "Moved agents.list.0.memorySearch → agents.list.0.memory.search.",
-      "Moved agents.list.1.memorySearch → agents.list.1.memory.search.",
+      "Moved agents.list[0].memorySearch → agents.list[0].memory.search.",
+      "Moved agents.list[1].memorySearch → agents.list[1].memory.search.",
       'Moved memory.search.provider from legacy "auto" to "openai".',
-      'Moved agents.list.0.memory.search.provider from legacy "auto" to "openai".',
+      'Moved agents.list[0].memory.search.provider from legacy "auto" to "openai".',
     ]);
   });
 });

@@ -1130,7 +1130,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
     );
   });
 
-  it("uses an explicit ClawHub install spec before npm", async () => {
+  it("preserves ClawHub-only install metadata and review notices", async () => {
     const cfg = {
       security: { installPolicy: { enabled: true } },
       channels: {
@@ -1174,8 +1174,6 @@ describe("repairMissingConfiguredPluginInstalls", () => {
         meta: { label: "Matrix" },
         install: {
           clawhubSpec: "clawhub:@openclaw/plugin-matrix@stable",
-          npmSpec: "@openclaw/plugin-matrix@1.2.3",
-          expectedIntegrity: "sha512-test",
         },
       },
     ]);
@@ -1304,12 +1302,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
     expect(result.warnings).toStrictEqual([]);
   });
 
-  it("falls back to npm when an OpenClaw channel plugin artifact is unavailable on ClawHub", async () => {
-    mocks.installPluginFromClawHub.mockResolvedValueOnce({
-      ok: false,
-      code: "artifact_unavailable",
-      error: "ClawHub artifact download is not available yet.",
-    });
+  it("uses npm first even when ClawHub metadata is also declared", async () => {
     mocks.listChannelPluginCatalogEntries.mockReturnValue([
       {
         id: "matrix",
@@ -1338,13 +1331,13 @@ describe("repairMissingConfiguredPluginInstalls", () => {
       trustedSourceLinkedOfficialInstall: true,
     });
     expect(result.changes).toEqual([
-      'ClawHub clawhub:@openclaw/plugin-matrix@stable unavailable for "matrix"; falling back to npm @openclaw/plugin-matrix@1.2.3.',
       'Installed missing configured plugin "matrix" from @openclaw/plugin-matrix@1.2.3.',
     ]);
     expect(result.warnings).toStrictEqual([]);
+    expect(mocks.installPluginFromClawHub).not.toHaveBeenCalled();
   });
 
-  it("does not fall back from ClawHub to non-OpenClaw npm packages", async () => {
+  it("does not invent npm identity for a ClawHub-only plugin", async () => {
     mocks.installPluginFromClawHub.mockResolvedValueOnce({
       ok: false,
       code: "artifact_download_unavailable",
@@ -1357,7 +1350,6 @@ describe("repairMissingConfiguredPluginInstalls", () => {
         meta: { label: "Matrix" },
         install: {
           clawhubSpec: "clawhub:@openclaw/plugin-matrix@stable",
-          npmSpec: "@someone-else/plugin-matrix@1.2.3",
         },
       },
     ]);
@@ -2152,7 +2144,6 @@ describe("repairMissingConfiguredPluginInstalls", () => {
         meta: { label: "WhatsApp" },
         install: {
           clawhubSpec: "clawhub:@openclaw/whatsapp",
-          npmSpec: "@openclaw/whatsapp",
         },
       },
     ]);
@@ -2811,15 +2802,17 @@ describe("repairMissingConfiguredPluginInstalls", () => {
       intent: "floating",
       priorSpec: "@openclaw/codex",
       expectedSpec: "@openclaw/codex",
+      expectedIntegrity: undefined,
     },
     {
       intent: "exact",
       priorSpec: "@openclaw/codex@2026.5.6",
       expectedSpec: `@openclaw/codex@${VERSION}`,
+      expectedIntegrity: "sha512-new-codex",
     },
   ])(
     "preserves $intent npm selector intent when refreshing a stale Codex runtime plugin",
-    async ({ priorSpec, expectedSpec }) => {
+    async ({ priorSpec, expectedSpec, expectedIntegrity }) => {
       const installDir = tempDirs.make("openclaw-plugin-stub-repair-");
       fs.writeFileSync(
         path.join(installDir, "package.json"),
@@ -2875,6 +2868,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
           install: {
             npmSpec: "@openclaw/codex",
             defaultChoice: "npm",
+            expectedIntegrity,
           },
         },
       ]);
@@ -2899,7 +2893,16 @@ describe("repairMissingConfiguredPluginInstalls", () => {
         expectedPluginId: "codex",
         trustedSourceLinkedOfficialInstall: true,
         mode: "update",
+        expectedIntegrity,
       });
+      expect(prepareManagedPluginArtifactConsentHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: "npm",
+          spec: expectedCodexInstallSpec(),
+          expectedIntegrity,
+        }),
+      );
+      expect(mocks.installPluginFromClawHub).not.toHaveBeenCalled();
       expect(result.changes).toEqual([
         `Refreshed stale configured plugin "codex" from ${expectedCodexInstallSpec()}.`,
       ]);
@@ -2911,6 +2914,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
         resolvedName: "@openclaw/codex",
         resolvedVersion: VERSION,
         resolvedSpec: `@openclaw/codex@${VERSION}`,
+        integrity: "sha512-new-codex",
       });
     },
   );
@@ -3976,7 +3980,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
       name: "replaces a configured official web search plugin when its installed package is source-only",
       pluginId: "brave",
       npmSpec: "@openclaw/brave-plugin",
-      priorSpec: "clawhub:@openclaw/brave-plugin@2026.5.1-beta.1",
+      priorSpec: "@openclaw/brave-plugin@2026.5.1-beta.1",
       targetDir: "/tmp/openclaw-plugins/brave",
       cfg: { tools: { web: { search: { provider: "brave" } } } } satisfies OpenClawConfig,
       catalogKind: "provider" as const,
@@ -3985,7 +3989,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
       name: "replaces a configured official channel plugin when only its channel is configured",
       pluginId: "slack",
       npmSpec: "@openclaw/slack",
-      priorSpec: "clawhub:@openclaw/slack@2026.5.12-beta.1",
+      priorSpec: "@openclaw/slack@2026.5.12-beta.1",
       targetDir: "/tmp/openclaw-npm/node_modules/@openclaw/slack",
       cfg: { channels: { slack: { enabled: true, botToken: "xoxb-test" } } },
       catalogKind: "channel" as const,
@@ -3997,7 +4001,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
     fs.mkdirSync(installDir, { recursive: true });
     fs.writeFileSync(path.join(installDir, "package.json"), JSON.stringify({ name: pluginId }));
     const records = installedRecords(pluginId, {
-      source: "clawhub",
+      source: "npm",
       spec: priorSpec,
       installPath: installDir,
       clawhubPackage: npmSpec,
@@ -4035,7 +4039,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
     expect(mocks.updateNpmInstalledPlugins).not.toHaveBeenCalled();
     expect(fs.existsSync(installDir)).toBe(false);
     expectRecordFields(mockCallArg(mocks.installPluginFromNpmSpec), {
-      spec: expectedNpmInstallSpec(npmSpec),
+      spec: priorSpec,
       expectedPluginId: pluginId,
       trustedSourceLinkedOfficialInstall: true,
       mode: "update",
@@ -4045,14 +4049,12 @@ describe("repairMissingConfiguredPluginInstalls", () => {
     ) as Record<string, unknown>;
     expectRecordFields(persistedRecords[pluginId], {
       source: "npm",
-      spec: npmSpec,
+      spec: priorSpec,
       installPath: targetDir,
       version: "2026.5.12",
     });
     expect(result).toEqual({
-      changes: [
-        `Installed missing configured plugin "${pluginId}" from ${expectedNpmInstallSpec(npmSpec)}.`,
-      ],
+      changes: [`Installed missing configured plugin "${pluginId}" from ${priorSpec}.`],
       warnings: [],
       repairedPluginIds: [pluginId],
       pluginInventoryChanged: true,
@@ -4064,8 +4066,8 @@ describe("repairMissingConfiguredPluginInstalls", () => {
     const installDir = tempDirs.make("openclaw-plugin-stub-repair-");
     fs.writeFileSync(path.join(installDir, "package.json"), JSON.stringify({ name: "brave" }));
     mockBrokenBraveInstall(installDir, {
-      source: "clawhub",
-      spec: "clawhub:@openclaw/brave-plugin@2026.5.1-beta.1",
+      source: "npm",
+      spec: "@openclaw/brave-plugin@2026.5.1-beta.1",
       clawhubPackage: "@openclaw/brave-plugin",
       clawhubChannel: "official",
       clawhubUrl: "https://clawhub.ai",
@@ -4099,8 +4101,8 @@ describe("repairMissingConfiguredPluginInstalls", () => {
     fs.mkdirSync(installDir, { recursive: true });
     fs.writeFileSync(path.join(installDir, "package.json"), JSON.stringify({ name: "brave" }));
     const records = mockBrokenBraveInstall(installDir, {
-      source: "clawhub",
-      spec: "clawhub:@openclaw/brave-plugin@2026.5.1-beta.1",
+      source: "npm",
+      spec: "@openclaw/brave-plugin@2026.5.1-beta.1",
       clawhubPackage: "@openclaw/brave-plugin",
       clawhubChannel: "official",
       clawhubUrl: "https://clawhub.ai",
@@ -4125,7 +4127,7 @@ describe("repairMissingConfiguredPluginInstalls", () => {
     expect(result).toEqual({
       changes: [],
       warnings: [
-        `Failed to install missing configured plugin "brave" from ${expectedNpmInstallSpec("@openclaw/brave-plugin")}: network unavailable`,
+        `Failed to install missing configured plugin "brave" from @openclaw/brave-plugin@2026.5.1-beta.1: network unavailable`,
       ],
       failedPluginIds: ["brave"],
       records,

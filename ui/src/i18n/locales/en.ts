@@ -530,6 +530,8 @@ export const en: TranslationMap = {
     dialog: {
       installing: "Installing the update on the Gateway. It restarts once the install finishes.",
       restarting: "The Gateway is restarting. This page disconnects and reconnects on its own.",
+      disconnected:
+        "Disconnected from the Gateway. This page will try to reconnect. If it stays disconnected, run `openclaw gateway status --deep` on the Gateway host and inspect the update diagnostics before restarting.",
       notStarted:
         "The update request went unanswered. Try again, or run `openclaw update` in the terminal.",
     },

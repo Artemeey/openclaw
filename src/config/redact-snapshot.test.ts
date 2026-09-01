@@ -50,13 +50,20 @@ function expectGatewayAuthFieldValue(
 }
 
 describe("redactConfigSnapshot", () => {
-  it("does not expose internal plugin metadata snapshot fields", () => {
+  it.each([true, false])("omits private snapshot fields when valid=%s", (valid) => {
+    const token = "synthetic-canonical-token-canary";
+    const preMigrationToken = "synthetic-pre-migration-token-canary";
     const snapshot = {
       ...makeSnapshot({
+        gateway: { auth: { token } },
         plugins: {
           allow: ["demo"],
         },
       }),
+      valid,
+      sourceConfigBeforeMigrations: makeSnapshot({
+        gateway: { auth: { token: preMigrationToken } },
+      }).sourceConfig,
       pluginMetadataSnapshot: {
         manifestRegistry: {
           plugins: [
@@ -70,10 +77,23 @@ describe("redactConfigSnapshot", () => {
         },
       },
     };
+    const original = structuredClone(snapshot);
 
     const result = redactConfigSnapshot(snapshot);
+    const serialized = JSON.stringify(result);
 
+    expect(serialized).not.toContain(preMigrationToken);
+    expect(serialized).not.toContain(token);
+    expect(serialized).not.toContain("/private/plugin/root");
+    expect("sourceConfigBeforeMigrations" in result).toBe(false);
     expect("pluginMetadataSnapshot" in result).toBe(false);
+    expect(result).toMatchObject({ path: snapshot.path, hash: "abc123", exists: true, valid });
+    const expectedConfig = valid
+      ? { gateway: { auth: { token: REDACTED_SENTINEL } }, plugins: { allow: ["demo"] } }
+      : {};
+    expect(result.config).toEqual(expectedConfig);
+    expect(result.sourceConfig).toEqual(expectedConfig);
+    expect(snapshot).toEqual(original);
   });
 
   it("redacts common secret field patterns across config sections", () => {

@@ -872,7 +872,7 @@ childProcess.spawnSync = function(command, args, options) {
         commandArgv: [
           process.execPath,
           "-e",
-          `require("node:fs").writeFileSync(${JSON.stringify(thirdStartedPath)},"started")`,
+          `require("node:fs").writeFileSync(${JSON.stringify(thirdStartedPath)},"started");process.stdout.write(JSON.stringify({status:"ok",root:${JSON.stringify(baseParams.updateLeaseKey)}}))`,
         ],
       });
 
@@ -962,7 +962,7 @@ childProcess.spawnSync = function(command, args, options) {
         commandArgv: [
           process.execPath,
           "-e",
-          `const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(firstStartedPath)},"started");const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(releaseFirstPath)})){clearInterval(timer);process.exit(0)}},10);`,
+          `const fs=require("node:fs");fs.writeFileSync(${JSON.stringify(firstStartedPath)},"started");const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(releaseFirstPath)})){clearInterval(timer);process.stdout.write(JSON.stringify({status:"ok",root:${JSON.stringify(baseParams.updateLeaseKey)}}));process.exit(0)}},10);`,
         ],
       });
       const secondParamsPath = await writeConcurrentHandoffParams({
@@ -984,7 +984,7 @@ childProcess.spawnSync = function(command, args, options) {
         commandArgv: [
           process.execPath,
           "-e",
-          `require("node:fs").writeFileSync(${JSON.stringify(thirdStartedPath)},"started")`,
+          `require("node:fs").writeFileSync(${JSON.stringify(thirdStartedPath)},"started");process.stdout.write(JSON.stringify({status:"ok",root:${JSON.stringify(baseParams.updateLeaseKey)}}))`,
         ],
       });
 

@@ -390,7 +390,7 @@ describe("managed service update handoff state ownership and sentinel persistenc
       },
     });
 
-    expect(result).toEqual({ code: 1, signal: null });
+    expect(result).toEqual({ code: 7, signal: null });
     await expect(fs.readFile(logPath, "utf8")).resolves.toContain(
       "managed update command exited code=7",
     );
@@ -489,7 +489,7 @@ describe("managed service update handoff state ownership and sentinel persistenc
     if (!helperResult) {
       throw new Error("expected the detached helper to return a result");
     }
-    expect(helperResult.result).toEqual({ code: 1, signal: null });
+    expect(helperResult.result).toEqual({ code: 7, signal: null });
     const databasePath = resolveOpenClawStateSqlitePath(helperResult.env);
     const sqlite = await import("node:sqlite");
     const verifyDb = new sqlite.DatabaseSync(databasePath, { readOnly: true });
