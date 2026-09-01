@@ -104,7 +104,8 @@ describe.skipIf(process.platform === "win32")("Swift build-cache input metadata"
     const inode = statSync(source, { bigint: true }).ino;
     for (const relative of unchanged) {
       const file = path.join(root, relative);
-      writeFileSync(`${file}.replacement`, readFileSync(file));
+      const mode = statSync(file).mode & 0o7777;
+      writeFileSync(`${file}.replacement`, readFileSync(file), { mode });
       renameSync(`${file}.replacement`, file);
     }
     expect(statSync(source, { bigint: true }).ino).not.toBe(inode);
