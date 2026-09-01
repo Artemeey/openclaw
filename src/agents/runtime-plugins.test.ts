@@ -539,7 +539,17 @@ describe("agent runtime plugin registries", () => {
     {
       name: "globally disabled plugins",
       config: { plugins: { enabled: false } } satisfies OpenClawConfig,
+      runtime: "codex",
+      expectedOwner: 'Owner plugin "codex" is not activatable',
       expectedReason: "plugins disabled",
+      expectedMetadataLoads: 0,
+    },
+    {
+      name: "globally disabled plugins with an unknown owner",
+      config: { plugins: { enabled: false } } satisfies OpenClawConfig,
+      runtime: "custom-harness",
+      expectedOwner: "no plugin can register agent harness",
+      expectedReason: "Plugins are disabled",
       expectedMetadataLoads: 0,
     },
     {
@@ -547,12 +557,14 @@ describe("agent runtime plugin registries", () => {
       config: {
         plugins: { allow: ["openai", "memory-core"] },
       } satisfies OpenClawConfig,
+      runtime: "codex",
+      expectedOwner: 'Owner plugin "codex" is not activatable',
       expectedReason: "not in allowlist",
       expectedMetadataLoads: 1,
     },
   ])(
     "reports exact policy facts for direct hosts with $name",
-    async ({ config, expectedReason, expectedMetadataLoads }) => {
+    async ({ config, runtime, expectedOwner, expectedReason, expectedMetadataLoads }) => {
       const pluginRegistry = createEmptyPluginRegistry();
       hoisted.loadPluginRegistryHandle.mockReturnValue(pluginRegistry);
       if (config.plugins.enabled !== false) {
@@ -580,7 +592,7 @@ describe("agent runtime plugin registries", () => {
             provider: "openai",
             modelId: "gpt-5.5",
             config,
-            agentHarnessRuntimeOverride: "codex",
+            agentHarnessRuntimeOverride: runtime,
             workspaceDir: "/tmp/workspace",
             pluginRegistry: getPluginRuntimeGatewayRequestScope()?.pluginRegistry,
           });
@@ -588,9 +600,9 @@ describe("agent runtime plugin registries", () => {
       }).catch((cause: unknown) => cause);
 
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toContain(
-        `Owner plugin "codex" is not activatable (${expectedReason})`,
-      );
+      expect((error as Error).message).toContain(expectedOwner);
+      expect((error as Error).message).toContain(expectedReason);
+      expect((error as Error).message).toContain("reason=owner-plugin-not-activatable");
       expect((error as Error).message).not.toContain("absent from this prepared plugin generation");
       expect(hoisted.loadPluginMetadataSnapshot).toHaveBeenCalledTimes(expectedMetadataLoads);
     },
