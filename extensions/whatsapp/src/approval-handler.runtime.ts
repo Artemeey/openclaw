@@ -60,7 +60,7 @@ export const whatsappApprovalNativeRuntime = createChannelApprovalNativeRuntimeA
   true,
   WhatsAppFinalPayload
 >({
-  eventKinds: ["exec", "plugin"],
+  eventKinds: ["exec", "plugin", "system-agent"],
   availability: {
     isConfigured: ({ context }) => Boolean(context),
     shouldHandle: ({ context }) => Boolean(context),

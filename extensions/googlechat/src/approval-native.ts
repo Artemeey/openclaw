@@ -236,7 +236,7 @@ export const googleChatApprovalCapability: ChannelApprovalCapability =
     resolveOriginTarget: resolveGoogleChatOriginTarget,
     resolveApproverDmTargets: resolveGoogleChatApproverDmTargets,
     nativeRuntime: createLazyChannelApprovalNativeRuntimeAdapter({
-      eventKinds: ["exec", "plugin"],
+      eventKinds: ["exec", "plugin", "system-agent"],
       isConfigured: ({ cfg, accountId }) =>
         isGoogleChatNativeApprovalClientEnabled({ cfg, accountId }),
       shouldHandle: ({ cfg, accountId, approvalKind, request }) =>

@@ -193,7 +193,8 @@ type SlackApprovalRenderInput =
 function buildSlackApprovalPayload(input: SlackApprovalRenderInput): SlackPendingDelivery {
   const { phase, view } = input;
   const isPlugin = view.approvalKind === "plugin";
-  const approvalName = isPlugin ? "Plugin" : "Exec";
+  const isSystemAgent = view.approvalKind === "system-agent";
+  const approvalName = isPlugin ? "Plugin" : isSystemAgent ? "OpenClaw change" : "Exec";
   let heading: string;
   let description: string;
   if (phase === "pending") {
@@ -201,7 +202,9 @@ function buildSlackApprovalPayload(input: SlackApprovalRenderInput): SlackPendin
     description =
       view.approvalKind === "plugin"
         ? resolveSlackPluginDescription(view)
-        : "A command needs your approval.";
+        : isSystemAgent
+          ? "An OpenClaw change needs your approval."
+          : "A command needs your approval.";
   } else if (phase === "resolved") {
     heading = `*${approvalName} approval: ${resolveSlackApprovalDecisionLabel(view.decision)}*`;
     const resolvedBy = formatSlackApprover(view.resolvedBy);
@@ -212,7 +215,7 @@ function buildSlackApprovalPayload(input: SlackApprovalRenderInput): SlackPendin
   }
 
   const metadata = isPlugin ? buildSlackPluginMetadata(view) : view.metadata;
-  const bodyLabel = isPlugin ? "*Request*" : "*Command*";
+  const bodyLabel = isPlugin ? "*Request*" : isSystemAgent ? "*Change*" : "*Command*";
   const bodyText = isPlugin ? view.title : buildSlackCodeBlock(view.commandText);
   const includeMetadata = isPlugin || phase === "pending";
   const text = [
@@ -242,7 +245,7 @@ function buildSlackApprovalPayload(input: SlackApprovalRenderInput): SlackPendin
             type: "section" as const,
             text: {
               type: "mrkdwn" as const,
-              text: `*Command*\n${buildSlackCodeBlock(truncateSlackMrkdwn(view.commandText, 2600))}`,
+              text: `${bodyLabel}\n${buildSlackCodeBlock(truncateSlackMrkdwn(view.commandText, 2600))}`,
             },
           },
           ...(phase === "pending" ? buildSlackMetadataContextBlocks(view.metadata) : []),
@@ -285,7 +288,7 @@ export const slackApprovalNativeRuntime = createChannelApprovalNativeRuntimeAdap
   never,
   SlackPendingDelivery
 >({
-  eventKinds: ["exec", "plugin"],
+  eventKinds: ["exec", "plugin", "system-agent"],
   availability: {
     isConfigured: (params) => {
       const resolved = resolveHandlerContext(params);

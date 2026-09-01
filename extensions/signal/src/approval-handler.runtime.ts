@@ -95,7 +95,7 @@ export const signalApprovalNativeRuntime = createChannelApprovalNativeRuntimeAda
   true,
   SignalFinalPayload
 >({
-  eventKinds: ["exec", "plugin"],
+  eventKinds: ["exec", "plugin", "system-agent"],
   availability: {
     isConfigured: ({ context }) => Boolean(context),
     shouldHandle: ({ context }) => Boolean(context),

@@ -119,7 +119,7 @@ const resolveMSTeamsOriginTarget = createChannelNativeOriginTargetResolver({
 });
 
 const msTeamsLazyApprovalNativeRuntime = createLazyChannelApprovalNativeRuntimeAdapter({
-  eventKinds: ["exec", "plugin"],
+  eventKinds: ["exec", "plugin", "system-agent"],
   isConfigured: ({ cfg, accountId }) => isMSTeamsNativeApprovalClientEnabled({ cfg, accountId }),
   shouldHandle: ({ cfg, accountId, approvalKind, request }) =>
     shouldHandleMSTeamsNativeApprovalRequest({ cfg, accountId, approvalKind, request }),

@@ -223,6 +223,14 @@ type ChannelApprovalNativeObserveAdapterForView<
       entry: TPendingEntry;
     },
   ) => void;
+  /** Runs after every terminal entry for one approval has been finalized. */
+  onFinalized?: (
+    params: ChannelApprovalCapabilityHandlerContext & {
+      request: ApprovalRequest;
+      approvalKind: ChannelApprovalKind;
+      phase: "resolved" | "expired";
+    },
+  ) => void;
 };
 
 /** Optional observer hooks for delivery errors, duplicates, and successful deliveries. */

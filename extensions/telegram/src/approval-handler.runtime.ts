@@ -41,6 +41,8 @@ import {
 import { normalizeTelegramChatId, parseTelegramTarget } from "./targets.js";
 
 const log = createSubsystemLogger("telegram/approvals");
+// Retain one origin notice across all terminal entries for an approval.
+// The finalization observer releases it after fan-out; without this lifecycle bound, ids leak.
 const terminalizedSystemAgentApprovals = new Set<string>();
 
 type ApprovalRequest = ExecApprovalRequest | PluginApprovalRequest | SystemAgentApprovalRequest;
@@ -308,6 +310,11 @@ export const telegramApprovalNativeRuntime = createChannelApprovalNativeRuntimeA
   observe: {
     onDeliveryError: ({ error, request }) => {
       log.error(`telegram approvals: failed to send request ${request.id}: ${String(error)}`);
+    },
+    onFinalized: ({ request, approvalKind }) => {
+      if (approvalKind === "system-agent") {
+        terminalizedSystemAgentApprovals.delete(request.id);
+      }
     },
   },
 });

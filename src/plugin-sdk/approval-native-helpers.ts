@@ -766,6 +766,10 @@ export function createNativeApprovalChannelRouteGates<TTarget extends NativeAppr
     canApprovalPotentiallyRouteToChannel({
       ...input,
       approvalKind: "plugin",
+    }) ||
+    canApprovalPotentiallyRouteToChannel({
+      ...input,
+      approvalKind: "system-agent",
     });
 
   const isSessionApprovalEligible = (input: {

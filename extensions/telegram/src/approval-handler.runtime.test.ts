@@ -9,6 +9,10 @@ type TelegramPayload = {
 };
 
 describe("telegramApprovalNativeRuntime", () => {
+  it("subscribes to system-agent approval events", () => {
+    expect(telegramApprovalNativeRuntime.eventKinds).toContain("system-agent");
+  });
+
   it("distinguishes a typed click winner from a losing surface", () => {
     const approval = {
       id: "req-1",
@@ -418,7 +422,7 @@ describe("telegramApprovalNativeRuntime", () => {
     });
   });
 
-  it("sends terminal system-agent results back to a Telegram origin when the card is elsewhere", async () => {
+  it("sends one terminal origin result and releases its dedupe entry after finalization", async () => {
     const editMessage = vi.fn().mockResolvedValue({ ok: true });
     const sendMessage = vi.fn().mockResolvedValue({ ok: true });
     const request = {
@@ -459,6 +463,39 @@ describe("telegramApprovalNativeRuntime", () => {
         textMode: "html",
       },
     );
+
+    await telegramApprovalNativeRuntime.transport.updateEntry?.({
+      cfg: {} as never,
+      accountId: "default",
+      context: { token: "tg-token", deps: { editMessage, sendMessage } },
+      entry: { chatId: "9012", messageId: "m2" },
+      request,
+      approvalKind: "system-agent",
+      payload: { text: "✅ OpenClaw change approved and applied: restart the Gateway" },
+      phase: "resolved",
+    });
+    expect(sendMessage).toHaveBeenCalledOnce();
+
+    telegramApprovalNativeRuntime.observe?.onFinalized?.({
+      cfg: {} as never,
+      accountId: "default",
+      context: { token: "tg-token" },
+      request,
+      approvalKind: "system-agent",
+      phase: "resolved",
+    });
+
+    await telegramApprovalNativeRuntime.transport.updateEntry?.({
+      cfg: {} as never,
+      accountId: "default",
+      context: { token: "tg-token", deps: { editMessage, sendMessage } },
+      entry: { chatId: "9013", messageId: "m3" },
+      request,
+      approvalKind: "system-agent",
+      payload: { text: "✅ OpenClaw change approved and applied: restart the Gateway" },
+      phase: "resolved",
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 
   it("passes topic thread ids to typing and message delivery", async () => {

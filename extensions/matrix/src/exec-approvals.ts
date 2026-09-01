@@ -147,7 +147,7 @@ export function isMatrixApprovalClientEnabled(params: {
   accountId?: string | null;
   approvalKind: ChannelApprovalKind;
 }): boolean {
-  if (params.approvalKind === "exec") {
+  if (params.approvalKind === "exec" || params.approvalKind === "system-agent") {
     return isMatrixExecApprovalClientEnabled(params);
   }
   const config = resolveMatrixExecApprovalConfig(params);
@@ -169,6 +169,10 @@ export function isMatrixAnyApprovalClientEnabled(params: {
     isMatrixApprovalClientEnabled({
       ...params,
       approvalKind: "plugin",
+    }) ||
+    isMatrixApprovalClientEnabled({
+      ...params,
+      approvalKind: "system-agent",
     })
   );
 }
@@ -179,7 +183,11 @@ export function shouldHandleMatrixApprovalRequest(params: {
   approvalKind: ChannelApprovalKind;
   request: ApprovalRequest;
 }): boolean {
-  if (params.approvalKind !== "exec" && params.approvalKind !== "plugin") {
+  if (
+    params.approvalKind !== "exec" &&
+    params.approvalKind !== "plugin" &&
+    params.approvalKind !== "system-agent"
+  ) {
     return false;
   }
   if (

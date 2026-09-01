@@ -36,6 +36,12 @@ function buildCardHeading(title: string, subtitle: string): MSTeamsApprovalBodyI
 function buildApprovalSubject(
   view: PendingApprovalView | ResolvedApprovalView | ExpiredApprovalView,
 ): MSTeamsApprovalBodyItem[] {
+  if (view.approvalKind === "system-agent") {
+    return [
+      { type: "TextBlock", text: "Change", weight: "Bolder", wrap: true },
+      { type: "TextBlock", text: view.operationSummary, wrap: true },
+    ];
+  }
   if (view.approvalKind === "exec") {
     return [
       { type: "TextBlock", text: "Command", weight: "Bolder", wrap: true },
@@ -92,7 +98,12 @@ export function buildMSTeamsPendingApprovalCard(params: {
   nowMs: number;
 }): MSTeamsPendingApprovalCard {
   const { view, nowMs } = params;
-  const kindLabel = view.approvalKind === "plugin" ? "Plugin" : "Exec";
+  const kindLabel =
+    view.approvalKind === "plugin"
+      ? "Plugin"
+      : view.approvalKind === "system-agent"
+        ? "OpenClaw Change"
+        : "Exec";
   const actionTokens: MSTeamsApprovalActionToken[] = [];
   const actions = view.actions.map(({ decision, label }) => {
     const token = createMSTeamsApprovalToken();
@@ -122,7 +133,12 @@ export function buildMSTeamsPendingApprovalCard(params: {
 export function buildMSTeamsResolvedApprovalCard(
   view: ResolvedApprovalView,
 ): Record<string, unknown> {
-  const kindLabel = view.approvalKind === "plugin" ? "Plugin" : "Exec";
+  const kindLabel =
+    view.approvalKind === "plugin"
+      ? "Plugin"
+      : view.approvalKind === "system-agent"
+        ? "OpenClaw Change"
+        : "Exec";
   const resolvedBy = normalizeOptionalString(view.resolvedBy);
   return buildAdaptiveCard([
     ...buildCardHeading(
@@ -137,7 +153,12 @@ export function buildMSTeamsResolvedApprovalCard(
 export function buildMSTeamsExpiredApprovalCard(
   view: ExpiredApprovalView,
 ): Record<string, unknown> {
-  const kindLabel = view.approvalKind === "plugin" ? "Plugin" : "Exec";
+  const kindLabel =
+    view.approvalKind === "plugin"
+      ? "Plugin"
+      : view.approvalKind === "system-agent"
+        ? "OpenClaw Change"
+        : "Exec";
   return buildAdaptiveCard([
     ...buildCardHeading(
       `${kindLabel} Approval Expired`,

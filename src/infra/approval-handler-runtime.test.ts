@@ -183,6 +183,7 @@ describe("createChannelApprovalHandlerFromCapability", () => {
   it("normalizes and cleans up system-agent entries through the shared lifecycle", async () => {
     const shouldHandle = vi.fn().mockReturnValue(true);
     const unbindPending = vi.fn();
+    const onFinalized = vi.fn();
     const buildResolvedResult = vi.fn().mockResolvedValue({ kind: "leave" });
     const runtime = await createTestApprovalHandler(
       makeNativeApprovalCapability({
@@ -190,6 +191,7 @@ describe("createChannelApprovalHandlerFromCapability", () => {
         shouldHandle,
         buildResolvedResult,
         unbindPending,
+        onFinalized,
       }),
     );
     const approvalRuntime = expectApprovalRuntime(runtime);
@@ -221,6 +223,9 @@ describe("createChannelApprovalHandlerFromCapability", () => {
       expect.objectContaining({ approvalKind: "system-agent" }),
     );
     expect(buildResolvedResult).toHaveBeenCalledOnce();
+    expect(onFinalized).toHaveBeenCalledWith(
+      expect.objectContaining({ approvalKind: "system-agent", phase: "resolved" }),
+    );
   });
 
   it("honors the shipped approval kind override through the capability runtime", async () => {

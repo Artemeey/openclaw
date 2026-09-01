@@ -156,7 +156,7 @@ function resolveSuppressionAccountId(params: {
 const resolveMatrixOriginTarget = createChannelNativeOriginTargetResolver({
   channel: "matrix",
   shouldHandleRequest: ({ cfg, accountId, approvalKind, request }) => {
-    if (approvalKind !== "exec" && approvalKind !== "plugin") {
+    if (approvalKind !== "exec" && approvalKind !== "plugin" && approvalKind !== "system-agent") {
       return false;
     }
     return shouldHandleMatrixApprovalRequest({
@@ -241,7 +241,7 @@ const matrixNativeApprovalCapability = createApproverRestrictedNativeApprovalCap
   resolveApproverDmTargets: resolveMatrixApproverDmTargets,
   notifyOriginWhenDmOnly: true,
   nativeRuntime: createLazyChannelApprovalNativeRuntimeAdapter({
-    eventKinds: ["exec", "plugin"],
+    eventKinds: ["exec", "plugin", "system-agent"],
     isConfigured: ({ cfg, accountId }) =>
       isMatrixAnyApprovalClientEnabled({
         cfg,

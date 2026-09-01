@@ -306,6 +306,14 @@ export function createChannelApprovalNativeRuntimeAdapter<
                   onDelivered: (params) => spec.observe?.onDelivered?.(params as never),
                 }
               : {}),
+            ...(spec.observe.onFinalized
+              ? {
+                  onFinalized: (params) => {
+                    // SAFETY: The factory preserves the request and lifecycle types for this adapter.
+                    return spec.observe?.onFinalized?.(params as never);
+                  },
+                }
+              : {}),
           },
         }
       : {}),
@@ -688,6 +696,12 @@ export async function createChannelApprovalHandlerFromCapability(params: {
             });
           },
         });
+        nativeRuntime.observe?.onFinalized?.({
+          ...baseContext,
+          request,
+          approvalKind,
+          phase: "resolved",
+        });
       },
       finalizeExpired: async ({ request, entries }) => {
         const expiredEntries = consumeActiveWrappedEntries(activeEntries, request.id, entries);
@@ -724,6 +738,12 @@ export async function createChannelApprovalHandlerFromCapability(params: {
               phase: "expired",
             });
           },
+        });
+        nativeRuntime.observe?.onFinalized?.({
+          ...baseContext,
+          request,
+          approvalKind,
+          phase: "expired",
         });
       },
       onStopped: async () => {

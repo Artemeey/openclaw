@@ -50,7 +50,9 @@ export function queueDelegatedApproval(params: {
     turnSourceAccountId?: string;
     turnSourceThreadId?: string | number;
   };
-  proposal: NonNullable<ReturnType<SystemAgentChatSession["engine"]["getPendingOperatorProposal"]>>;
+  proposal: NonNullable<
+    ReturnType<GatewaySystemAgentSession["engine"]["getPendingOperatorProposal"]>
+  >;
 }): string {
   const manager = params.context.systemAgentApprovalManager;
   if (!manager) {
@@ -69,7 +71,7 @@ export function queueDelegatedApproval(params: {
     ? { kind: "worker", ...approvalAuthority, turnClaim: callerIdentity.workerTurnClaim }
     : { kind: "local", ...approvalAuthority };
   const pendingApproval = params.session.pendingApproval;
-  if (pendingApproval?.proposalHash === params.proposal.hash) {
+  if (pendingApproval && pendingApproval.proposalHash === params.proposal.hash) {
     const closed = manager.forceDenyIfDelegatedAuthorityClosed(pendingApproval.id);
     const existing = manager.getSnapshot(pendingApproval.id);
     if (!closed && existing) {
@@ -156,12 +158,12 @@ export function queueDelegatedApproval(params: {
 }
 
 const systemAgentSessionQueues = new WeakMap<
-  Map<string, SystemAgentChatSession>,
+  Map<string, GatewaySystemAgentSession>,
   KeyedAsyncQueue
 >();
 
 export function getSystemAgentSessionQueue(
-  sessions: Map<string, SystemAgentChatSession>,
+  sessions: Map<string, GatewaySystemAgentSession>,
 ): KeyedAsyncQueue {
   let queue = systemAgentSessionQueues.get(sessions);
   if (!queue) {

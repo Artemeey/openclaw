@@ -487,7 +487,7 @@ export const imessageApprovalNativeRuntime = createChannelApprovalNativeRuntimeA
   true,
   IMessageFinalPayload
 >({
-  eventKinds: ["exec", "plugin"],
+  eventKinds: ["exec", "plugin", "system-agent"],
   availability: {
     isConfigured: ({ context }) => Boolean(context),
     shouldHandle: ({ context }) => Boolean(context),
