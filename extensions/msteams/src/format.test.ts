@@ -120,6 +120,11 @@ describe("formatMSTeamsMarkdown", () => {
       after: "``a \\` b``",
     },
     {
+      name: "preserves inline code semantics while normalizing boundary spaces",
+      before: "`  foo  `",
+      after: "`  foo  `",
+    },
+    {
       name: "serializes link destinations with angle brackets",
       before: "[x](https://host/a)",
       after: "[x](<https://host/a>)",
@@ -143,7 +148,6 @@ describe("formatMSTeamsMarkdown", () => {
   }
 
   it.each([
-    ["`  foo  `", "<code> foo </code>"],
     ["`foo `", "<code>foo </code>"],
     ["` `", "<code> </code>"],
     ["before `  foo  ` after", "before <code> foo </code> after"],
