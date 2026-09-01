@@ -147,23 +147,29 @@ export function loadAgentRuntimePluginRegistryHandle(
 /** Binds a scoped plugin generation when a direct host has no Gateway owner. */
 export async function withAgentPluginRegistry<T>(params: {
   config: OpenClawConfig;
+  env?: NodeJS.ProcessEnv;
+  selections?: readonly AgentHarnessPluginSelection[];
   workspaceDir: string;
-  run: () => Promise<T>;
+  run: (pluginRegistry: PluginRegistry) => Promise<T>;
 }): Promise<T> {
-  if (getPluginRuntimeGatewayRequestScope()?.pluginRegistry) {
-    return await params.run();
+  const requestPluginRegistry = getPluginRuntimeGatewayRequestScope()?.pluginRegistry;
+  if (requestPluginRegistry && params.selections === undefined) {
+    return await params.run(requestPluginRegistry);
   }
+  const env = params.env ?? process.env;
   const metadataSnapshot = normalizePluginsConfig(params.config.plugins).enabled
     ? loadPluginMetadataSnapshot({
         config: params.config,
-        env: process.env,
+        env,
         workspaceDir: params.workspaceDir,
       })
     : undefined;
   const pluginRegistry = loadAgentRuntimePluginRegistryHandle({
     basePluginIds: [],
     config: params.config,
+    env,
     ...(metadataSnapshot ? { metadataSnapshot } : {}),
+    ...(params.selections ? { selections: params.selections } : {}),
     workspaceDir: params.workspaceDir,
   });
   const activeRegistry = getActivePluginRegistry();
@@ -176,7 +182,7 @@ export async function withAgentPluginRegistry<T>(params: {
           activeRegistry,
           applyPluginAutoEnable({
             config: params.config,
-            env: process.env,
+            env,
             discovery: metadataSnapshot.discovery,
             manifestRegistry: metadataSnapshot.manifestRegistry,
           }).config,
@@ -189,12 +195,12 @@ export async function withAgentPluginRegistry<T>(params: {
     resolvePluginRuntimeLoadContext({
       config: params.config,
       activationSourceConfig: params.config,
-      env: process.env,
+      env,
       workspaceDir: params.workspaceDir,
       ...(metadataSnapshot
         ? { metadataSnapshot }
         : { manifestRegistry: { plugins: [], diagnostics: [] } }),
     }),
   );
-  return await withPluginRuntimeRegistryScope(scopedRegistry, params.run);
+  return await withPluginRuntimeRegistryScope(scopedRegistry, () => params.run(scopedRegistry));
 }
