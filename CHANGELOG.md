@@ -34,6 +34,7 @@ Docs: https://docs.openclaw.ai
 
 ### Fixes
 
+- **Progress narration:** cancel utility-model requests when a turn ends or is replaced, and prevent stopped turns from starting late requests.
 - **Doctor memory:** keep Matrix migration codecs separate from the live client and avoid loading the ACP runtime when no legacy session records need inspection.
 - **Agent prompts:** keep model-identity guidance conditional so ordinary requests are not mistaken for questions about the current model.
 
