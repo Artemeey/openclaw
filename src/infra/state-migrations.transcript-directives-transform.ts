@@ -26,7 +26,7 @@ function stripLegacyReactionDirectives(message: Record<string, unknown>): void {
   }
 }
 
-export function transformHistoricalTranscriptEvent(event: TranscriptEvent): {
+function transformHistoricalTranscriptEvent(event: TranscriptEvent): {
   changed: boolean;
   event: TranscriptEvent;
 } {
@@ -43,4 +43,14 @@ export function transformHistoricalTranscriptEvent(event: TranscriptEvent): {
   stripLegacyReactionDirectives(event.message);
   applyAssistantDeliveryDirectives(event.message);
   return { changed: JSON.stringify(event.message) !== before, event };
+}
+
+export function transformHistoricalTranscriptEventJson(raw: string, owner: string) {
+  let event: TranscriptEvent;
+  try {
+    event = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`${owner} contains invalid transcript JSON`, { cause: error });
+  }
+  return transformHistoricalTranscriptEvent(event);
 }

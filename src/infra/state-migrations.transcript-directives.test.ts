@@ -133,8 +133,8 @@ function readMigrationCursor(databasePath: string): unknown {
       .prepare(
         "SELECT app_version FROM schema_meta WHERE meta_key = 'historical-transcript-directives-v1'",
       )
-      .get() as { app_version: string };
-    return JSON.parse(row.app_version);
+      .get() as { app_version: string } | undefined;
+    return row ? JSON.parse(row.app_version) : undefined;
   } finally {
     database.close();
   }
@@ -653,6 +653,53 @@ describe("historical transcript directive migration", () => {
     } finally {
       database.close();
     }
+  });
+
+  it("reports a malformed active row without changing its source or cursor", async () => {
+    const env = { OPENCLAW_STATE_DIR: makeTempDir(tempDirs, "directive-invalid-row-") };
+    const opened = openOpenClawAgentDatabase({ agentId: "main", env });
+    const raw = '{"marker":"[[';
+    insertSession(opened.db, { events: [{ timestamp: 1 }], generation: "g", sessionId: "s" });
+    opened.db.prepare("UPDATE transcript_events SET event_json=? WHERE session_id='s'").run(raw);
+    closeOpenClawAgentDatabasesForTest();
+    expect((await migrateHistoricalTranscriptDirectives({ env })).warnings[0]).toContain(
+      `${opened.path}:s:0 contains invalid transcript JSON`,
+    );
+    expect(readEventJson(opened.path, "s", 0)).toBe(raw);
+    expect(readMigrationCursor(opened.path)).toBeUndefined();
+  });
+
+  it("reports a malformed archive line without changing durable archive state", async () => {
+    const env = { OPENCLAW_STATE_DIR: makeTempDir(tempDirs, "directive-invalid-archive-") };
+    const opened = openOpenClawAgentDatabase({ agentId: "main", env });
+    const bytes = Buffer.from('{"marker":"[[\n', "utf8");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    opened.db.exec(
+      `INSERT INTO session_transcript_archives(session_id,generation,session_key,reason,encoding,archive_blob,archive_sha256,archive_name,created_at,published_at)
+       VALUES('a','g','agent:main:a','deleted','identity',X'${bytes.toString("hex")}','${sha256}','a',1,2);
+       INSERT INTO schema_meta(meta_key,role,schema_version,agent_id,app_version,created_at,updated_at)
+       VALUES('historical-transcript-directives-v1','agent',1,'main','{"generation":"","phase":"archives","sessionId":""}',1,1);`,
+    );
+    closeOpenClawAgentDatabasesForTest();
+
+    expect((await migrateHistoricalTranscriptDirectives({ env })).warnings[0]).toContain(
+      "a:g:1 contains invalid transcript JSON",
+    );
+    const database = openNodeSqliteDatabase(opened.path, { readOnly: true });
+    const row = database
+      .prepare(
+        "SELECT hex(archive_blob) blob,archive_sha256,encoding,published_at FROM session_transcript_archives",
+      )
+      .get();
+    database.close();
+    expect(row).toEqual({
+      blob: bytes.toString("hex").toUpperCase(),
+      archive_sha256: sha256,
+      encoding: "identity",
+      published_at: 2,
+    });
+    const cursor = readMigrationCursor(opened.path);
+    expect(cursor).toEqual({ generation: "", phase: "archives", sessionId: "" });
   });
 
   it("leaves canonical archives and their active writer untouched", async () => {
