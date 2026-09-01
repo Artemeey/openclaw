@@ -12,6 +12,7 @@ import type { PluginMetadataSnapshotScopeRunner } from "../plugins/current-plugi
 import {
   resolvePluginVersionDriftUpdateCommand,
   type PluginVersionDriftReport,
+  type PluginVersionRestartReadiness,
 } from "../plugins/plugin-version-drift.js";
 import {
   buildPluginCompatibilityWarnings,
@@ -22,7 +23,7 @@ import { loadTaskRegistryStateFromSqliteReadOnly } from "../tasks/task-registry.
 import type { TaskRecord } from "../tasks/task-registry.types.js";
 
 type NoteWorkspaceStatusOptions = {
-  pluginVersionDrift?: PluginVersionDriftReport;
+  pluginVersionReadiness?: PluginVersionRestartReadiness;
   runWithPluginMetadataSnapshot?: PluginMetadataSnapshotScopeRunner;
 };
 
@@ -98,6 +99,7 @@ function noteFlowRecoveryHints() {
 
 function pluginVersionDriftToHealthFindings(
   drift: PluginVersionDriftReport | undefined,
+  runningGatewayVersion?: string,
 ): HealthFinding[] {
   if (!drift || drift.drifts.length === 0) {
     return [];
@@ -112,7 +114,7 @@ function pluginVersionDriftToHealthFindings(
     return {
       checkId: WORKSPACE_STATUS_CHECK_ID,
       severity: "warning",
-      message: `Plugin ${entry.pluginId} is ${entry.installedVersion}, but the Gateway is ${drift.gatewayVersion}.${updateCommand ? "" : ` Repair target resolution failed: ${targetError}.`}`,
+      message: `Plugin ${entry.pluginId} is ${entry.installedVersion}, but a Gateway restart will load OpenClaw ${drift.gatewayVersion}.${runningGatewayVersion ? ` The running Gateway is ${runningGatewayVersion}.` : ""}${updateCommand ? "" : ` Repair target resolution failed: ${targetError}.`}`,
       path: `plugins.entries.${entry.pluginId}`,
       target: entry.pluginId,
       requirement: "plugin-version-drift",
@@ -121,6 +123,28 @@ function pluginVersionDriftToHealthFindings(
         : `No install command generated; retry openclaw doctor after checking registry availability (${targetError}).`,
     };
   });
+}
+
+function pluginVersionReadinessToHealthFindings(
+  readiness: PluginVersionRestartReadiness | undefined,
+): HealthFinding[] {
+  if (!readiness) {
+    return [];
+  }
+  if (readiness.status === "resolved") {
+    return pluginVersionDriftToHealthFindings(readiness.report, readiness.runningGatewayVersion);
+  }
+  return [
+    {
+      checkId: WORKSPACE_STATUS_CHECK_ID,
+      severity: "warning",
+      message: `Could not check plugin restart readiness: ${readiness.reason}`,
+      path: "plugins",
+      requirement: "plugin-version-restart-readiness",
+      fixHint:
+        "Repair the Gateway service installation, then rerun openclaw doctor before restarting.",
+    },
+  ];
 }
 
 function pluginCompatibilityWarningToHealthFinding(message: string): HealthFinding {
@@ -202,14 +226,28 @@ export function collectWorkspaceStatusHealthFindings(
   }
 
   return [
-    ...pluginVersionDriftToHealthFindings(options.pluginVersionDrift),
+    ...pluginVersionReadinessToHealthFindings(options.pluginVersionReadiness),
     ...workspaceFindings,
     ...collectTaskFlowRecoveryFindings().map(taskFlowRecoveryToHealthFinding),
   ];
 }
 
-function notePluginVersionDrift(drift: PluginVersionDriftReport | undefined) {
-  if (!drift || drift.drifts.length === 0) {
+function notePluginVersionReadiness(readiness: PluginVersionRestartReadiness | undefined) {
+  if (!readiness) {
+    return;
+  }
+  if (readiness.status === "unresolved") {
+    const running = readiness.runningGatewayVersion
+      ? `\nRunning Gateway: OpenClaw ${readiness.runningGatewayVersion}`
+      : "";
+    note(
+      `${readiness.reason}${running}\nRepair the Gateway service installation, then rerun openclaw doctor before restarting.`,
+      "Plugin restart readiness",
+    );
+    return;
+  }
+  const drift = readiness.report;
+  if (drift.drifts.length === 0) {
     return;
   }
   const singleDrift = drift.drifts.length === 1 ? drift.drifts[0] : undefined;
@@ -223,9 +261,12 @@ function notePluginVersionDrift(drift: PluginVersionDriftReport | undefined) {
     .map((command) => formatCliCommand(command));
   const unresolvedRepairs = repairs.filter(({ command }) => !command);
   const lines = [
+    ...(readiness.runningGatewayVersion
+      ? [`Running Gateway: OpenClaw ${readiness.runningGatewayVersion}`]
+      : []),
     `${drift.drifts.length} active official plugin${
       drift.drifts.length === 1 ? "" : "s"
-    } not on OpenClaw ${drift.gatewayVersion}`,
+    } not on post-restart OpenClaw ${drift.gatewayVersion}`,
     ...drift.drifts.map((entry) => {
       const sourceLabel = entry.source === "clawhub" ? "clawhub" : "npm";
       return `- ${entry.pluginId}: ${entry.installedVersion} (${sourceLabel}) -> expected ${drift.gatewayVersion}`;
@@ -250,7 +291,10 @@ function notePluginVersionDrift(drift: PluginVersionDriftReport | undefined) {
           ].join("\n")
         : null,
   ];
-  note(lines.filter((line): line is string => Boolean(line)).join("\n"), "Plugin version drift");
+  note(
+    lines.filter((line): line is string => Boolean(line)).join("\n"),
+    "Plugin restart readiness",
+  );
 }
 
 /** Emits plugin and TaskFlow recovery problem notes for doctor. */
@@ -305,7 +349,7 @@ export function noteWorkspaceStatus(cfg: OpenClawConfig, options: NoteWorkspaceS
       noteForWorkspace();
     }
   }
-  notePluginVersionDrift(options.pluginVersionDrift);
+  notePluginVersionReadiness(options.pluginVersionReadiness);
   noteFlowRecoveryHints();
 
   return {
