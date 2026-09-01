@@ -8,6 +8,11 @@ on:
         required: true
         default: main
         type: string
+      target_context_ref:
+        description: Optional canonical release branch or tag context for an exact-SHA target
+        required: false
+        default: ""
+        type: string
       workflow_ref:
         description: Optional openclaw/openclaw ref that provides the reusable workflow harness
         required: false
@@ -126,6 +131,11 @@ on:
       ref:
         description: Public OpenClaw ref to validate (tag, branch, or full commit SHA)
         required: true
+        type: string
+      target_context_ref:
+        description: Optional canonical release branch or tag context for an exact-SHA target
+        required: false
+        default: ""
         type: string
       workflow_ref:
         description: Optional openclaw/openclaw ref that provides the reusable workflow harness
@@ -668,18 +678,27 @@ jobs:
       - name: Resolve baseline package spec
         if: ${{ inputs.mode != 'fresh' }}
         id: baseline
-        working-directory: workflow
         env:
-          CANDIDATE_JSON: ${{ runner.temp }}/openclaw-cross-os-release-checks/prepare/candidate.json
           INPUT_PREVIOUS_VERSION: ${{ inputs.previous_version }}
+          INPUT_TARGET_CONTEXT_REF: ${{ inputs.target_context_ref }}
+          CANDIDATE_JSON: ${{ runner.temp }}/openclaw-cross-os-release-checks/prepare/candidate.json
         run: |
           set -euo pipefail
-          if [[ -n "${INPUT_PREVIOUS_VERSION}" ]]; then
-            echo "value=openclaw@${INPUT_PREVIOUS_VERSION}" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [[ "$INPUT_TARGET_CONTEXT_REF" == "extended-stable/"* ||
+                "$INPUT_TARGET_CONTEXT_REF" == "refs/heads/extended-stable/"* ]]; then
+            PUBLISHED_VERSIONS="$RUNNER_TEMP/openclaw-published-versions.json"
+            npm view openclaw versions --json > "$PUBLISHED_VERSIONS"
+            BASELINE_SPEC="$(pnpm --dir workflow exec node --import tsx scripts/lib/release-upgrade-baseline.mts \
+              --candidate-version "$(jq -er '.candidateVersion' "$CANDIDATE_JSON")" \
+              --target-context-ref "$INPUT_TARGET_CONTEXT_REF" \
+              --previous-version "$INPUT_PREVIOUS_VERSION" \
+              --versions-json "$PUBLISHED_VERSIONS")"
+          elif [[ -n "${INPUT_PREVIOUS_VERSION}" ]]; then
+            BASELINE_SPEC="openclaw@${INPUT_PREVIOUS_VERSION}"
+          else
+            BASELINE_VERSION="$(npm view openclaw@latest version)"
+            BASELINE_SPEC="openclaw@${BASELINE_VERSION}"
           fi
-          CANDIDATE_VERSION="$(node -p 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).candidateVersion' "$CANDIDATE_JSON")"
-          BASELINE_SPEC="$(node --import ./scripts/tsx.mjs scripts/lib/release-upgrade-baseline.mts --candidate-version "$CANDIDATE_VERSION")"
           echo "value=${BASELINE_SPEC}" >> "$GITHUB_OUTPUT"
 
       - name: Pack baseline artifact
