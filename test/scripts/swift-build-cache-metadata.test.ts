@@ -106,6 +106,8 @@ describe.skipIf(process.platform === "win32")("Swift build-cache input metadata"
       const file = path.join(root, relative);
       const mode = statSync(file).mode & 0o7777;
       writeFileSync(`${file}.replacement`, readFileSync(file), { mode });
+      // File creation applies umask even when mode is explicit.
+      chmodSync(`${file}.replacement`, mode);
       renameSync(`${file}.replacement`, file);
     }
     expect(statSync(source, { bigint: true }).ino).not.toBe(inode);
