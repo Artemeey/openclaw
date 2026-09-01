@@ -85,7 +85,9 @@ export const sessionCompanionHandlers: GatewayRequestHandlers = {
       });
       respond(true, result);
     } catch (error) {
-      const staleInstall = classifyGatewayStaleInstall(error);
+      const staleInstall = classifyGatewayStaleInstall(
+        error instanceof SessionCompanionAskError ? error.cause : error,
+      );
       if (staleInstall) {
         respond(false, undefined, staleInstall.error);
         return;

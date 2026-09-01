@@ -21,7 +21,6 @@ import {
 } from "./session-companion-state.js";
 import type { SessionObserverCompanionSnapshot } from "./session-observer-contract.js";
 import { sessionObserverScopeKey } from "./session-observer-model.js";
-import { classifyGatewayStaleInstall } from "./stale-install.js";
 
 const companionLog = createSubsystemLogger("gateway/session-companion");
 
@@ -97,8 +96,9 @@ export class SessionCompanionAskError extends Error {
     readonly reason: SessionCompanionAskErrorReason,
     message: string,
     readonly retryAfterMs?: number,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "SessionCompanionAskError";
   }
 }
@@ -588,9 +588,6 @@ export function createSessionCompanionAskRuntime(params: SessionCompanionAskRunt
       thread.lastUsedAt = ts;
       return { answer, ts };
     } catch (error) {
-      if (classifyGatewayStaleInstall(error)) {
-        throw error;
-      }
       if (error instanceof SessionCompanionAskError) {
         throw error;
       }
@@ -609,6 +606,8 @@ export function createSessionCompanionAskRuntime(params: SessionCompanionAskRunt
           : activeAsk.cancellation === "explicit-reset"
             ? "The Side chat request was cancelled."
             : "Side chat could not answer right now.",
+        undefined,
+        { cause: error },
       );
     } finally {
       clearTimeoutFn(timeout);

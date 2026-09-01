@@ -6141,7 +6141,8 @@ export const en: TranslationMap = {
       askMissing: "This session is no longer available.",
       askModelUnavailable: "No utility model is configured for this session.",
       askRateLimited: "Side chat reached its question limit. Try again shortly.",
-      askStaleInstall: "The Gateway changed while it was running. Restart it, then try again.",
+      askStaleInstall:
+        "The Gateway changed while it was running. Run {restartCommand}, then try again.",
       askUnavailable: "Side chat cannot answer right now.",
       askRetry: "Retry",
       asOf: "as of {time}",

@@ -14,6 +14,7 @@ function missingFileError(filePath: string): Error {
   return Object.assign(new Error(`ENOENT: no such file or directory, open '${filePath}'`), {
     code: "ENOENT",
     path: filePath,
+    syscall: "open",
   });
 }
 
@@ -87,6 +88,25 @@ describe("gateway stale install errors", () => {
       "missing.js",
     );
     const error = moduleNotFoundError(outsideInstall);
+    const respond = vi.fn();
+
+    await expect(dispatchThrowingHandler(error, respond)).rejects.toBe(error);
+    expect(respond).not.toHaveBeenCalled();
+  });
+
+  it("does not rewrite unrelated file operations inside the OpenClaw install", async () => {
+    const missingChunk = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "missing-statted-chunk.js",
+    );
+    const error = Object.assign(
+      new Error(`ENOENT: no such file or directory, stat '${missingChunk}'`),
+      {
+        code: "ENOENT",
+        path: missingChunk,
+        syscall: "stat",
+      },
+    );
     const respond = vi.fn();
 
     await expect(dispatchThrowingHandler(error, respond)).rejects.toBe(error);

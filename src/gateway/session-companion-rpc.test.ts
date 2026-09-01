@@ -154,6 +154,7 @@ describe("session companion RPC", () => {
       throw Object.assign(new Error(`ENOENT: no such file or directory, open '${missingChunk}'`), {
         code: "ENOENT",
         path: missingChunk,
+        syscall: "open",
       });
     });
     const respond = await invoke(

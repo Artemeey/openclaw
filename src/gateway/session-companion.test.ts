@@ -656,7 +656,7 @@ describe("session companion asks", () => {
     harness.service.dispose();
   });
 
-  it("preserves a stale-install failure for the Gateway recovery boundary", async () => {
+  it("preserves a stale-install cause for the Gateway recovery boundary", async () => {
     vi.useFakeTimers();
     const missingChunk = path.join(
       path.dirname(fileURLToPath(import.meta.url)),
@@ -667,6 +667,7 @@ describe("session companion asks", () => {
       {
         code: "ENOENT",
         path: missingChunk,
+        syscall: "open",
       },
     );
     const harness = createHarness({
@@ -682,7 +683,7 @@ describe("session companion asks", () => {
         question: "Why did the companion stop?",
         connId: "conn-1",
       }),
-    ).rejects.toBe(error);
+    ).rejects.toMatchObject({ cause: error, reason: "unavailable" });
     harness.service.dispose();
   });
 

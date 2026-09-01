@@ -1,3 +1,5 @@
+import { GatewayErrorDetailCodes } from "@openclaw/gateway-protocol";
+import { asNullableRecord as asRecord } from "@openclaw/normalization-core/record-coerce";
 import type {
   SessionCompanionExchange,
   SessionsCompanionAskResult,
@@ -6,8 +8,6 @@ import type {
 } from "../../../../packages/gateway-protocol/src/schema/sessions.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 
-const COMPANION_BUSY_DETAIL_CODE = "SESSION_COMPANION_BUSY";
-const STALE_INSTALL_DETAIL_CODE = "STALE_INSTALL";
 const MAX_COMPANION_EXCHANGES = 24;
 const COMPANION_ASK_TIMEOUT_MS = 70_000;
 
@@ -26,6 +26,7 @@ export type ChatSessionCompanionThread = {
     | "unavailable"
     | null;
   retryable?: boolean;
+  restartCommand?: string;
   draft: string;
 };
 
@@ -38,34 +39,12 @@ function exchangeKey(exchange: SessionCompanionExchange): string {
   return JSON.stringify([exchange.question, exchange.answer, exchange.ts]);
 }
 
-function errorDetailCode(error: unknown): string | null {
-  if (!error || typeof error !== "object") {
-    return null;
-  }
-  const details = (error as { details?: unknown }).details;
-  if (!details || typeof details !== "object") {
-    return null;
-  }
-  const code = (details as { code?: unknown }).code;
-  return typeof code === "string" ? code : null;
-}
-
-function errorDetailReason(error: unknown): string | null {
-  if (!error || typeof error !== "object") {
-    return null;
-  }
-  const details = (error as { details?: unknown }).details;
-  if (!details || typeof details !== "object") {
-    return null;
-  }
-  const reason = (details as { reason?: unknown }).reason;
-  return typeof reason === "string" ? reason : null;
+function errorDetails(error: unknown): Record<string, unknown> | null {
+  return asRecord(asRecord(error)?.details);
 }
 
 function errorIsRetryable(error: unknown): boolean {
-  return Boolean(
-    error && typeof error === "object" && (error as { retryable?: unknown }).retryable,
-  );
+  return Boolean(asRecord(error)?.retryable);
 }
 
 function createThread(): MutableCompanionThread {
@@ -77,6 +56,7 @@ function createThread(): MutableCompanionThread {
     failedQuestionKnownExchanges: null,
     hint: null,
     retryable: false,
+    restartCommand: undefined,
     draft: "",
     revision: 0,
   };
@@ -146,6 +126,7 @@ export class ChatSessionCompanionThreads {
         thread.failedQuestionKnownExchanges = null;
         thread.hint = null;
         thread.retryable = false;
+        thread.restartCommand = undefined;
       }
       thread.revision += 1;
       this.notify();
@@ -182,6 +163,7 @@ export class ChatSessionCompanionThreads {
     thread.failedQuestionKnownExchanges = null;
     thread.hint = null;
     thread.retryable = false;
+    thread.restartCommand = undefined;
     thread.draft = "";
     thread.revision += 1;
     const token = Symbol(key);
@@ -204,12 +186,19 @@ export class ChatSessionCompanionThreads {
       }
       thread.failedQuestion = normalized;
       thread.failedQuestionKnownExchanges = knownExchanges;
-      const detailCode = errorDetailCode(error);
-      const reason = errorDetailReason(error);
+      const details = errorDetails(error);
+      const detailCode = typeof details?.code === "string" ? details.code : null;
+      const reason = typeof details?.reason === "string" ? details.reason : null;
+      const restartCommand =
+        detailCode === GatewayErrorDetailCodes.STALE_INSTALL &&
+        typeof details?.restartCommand === "string" &&
+        details.restartCommand.trim()
+          ? details.restartCommand
+          : null;
       thread.hint =
-        detailCode === COMPANION_BUSY_DETAIL_CODE
+        detailCode === GatewayErrorDetailCodes.SESSION_COMPANION_BUSY
           ? "busy"
-          : detailCode === STALE_INSTALL_DETAIL_CODE
+          : restartCommand
             ? "stale-install"
             : reason === "context-unavailable"
               ? "history-unavailable"
@@ -221,7 +210,9 @@ export class ChatSessionCompanionThreads {
                     ? "model-unavailable"
                     : "unavailable";
       thread.retryable =
-        detailCode !== STALE_INSTALL_DETAIL_CODE && (errorIsRetryable(error) || reason === null);
+        detailCode !== GatewayErrorDetailCodes.STALE_INSTALL &&
+        (errorIsRetryable(error) || reason === null);
+      thread.restartCommand = restartCommand ?? undefined;
     } finally {
       if (this.submissionTokens.get(key) === token) {
         this.submissionTokens.delete(key);

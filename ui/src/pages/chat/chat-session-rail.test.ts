@@ -1,5 +1,6 @@
 /* @vitest-environment jsdom */
 
+import { GatewayErrorDetailCodes } from "@openclaw/gateway-protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionObserverDigest } from "../../../../packages/gateway-protocol/src/schema/sessions.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
@@ -274,7 +275,7 @@ describe("ChatSessionCompanionThreads", () => {
     const threads = new ChatSessionCompanionThreads();
     await threads.submit("one", "Is it stuck?", async () => {
       throw Object.assign(new Error("busy"), {
-        details: { code: "SESSION_COMPANION_BUSY" },
+        details: { code: GatewayErrorDetailCodes.SESSION_COMPANION_BUSY },
         retryable: true,
       });
     });
@@ -290,7 +291,10 @@ describe("ChatSessionCompanionThreads", () => {
     const threads = new ChatSessionCompanionThreads();
     await threads.submit("one", "What changed?", async () => {
       throw Object.assign(new Error("stale install"), {
-        details: { code: "STALE_INSTALL" },
+        details: {
+          code: GatewayErrorDetailCodes.STALE_INSTALL,
+          restartCommand: "openclaw --profile sd1 gateway restart",
+        },
         retryable: false,
       });
     });
@@ -299,6 +303,7 @@ describe("ChatSessionCompanionThreads", () => {
       failedQuestion: "What changed?",
       hint: "stale-install",
       retryable: false,
+      restartCommand: "openclaw --profile sd1 gateway restart",
     });
   });
 
@@ -557,6 +562,26 @@ describe("ChatSessionRailElement", () => {
     expect(element.textContent).toContain("Couldn't load this session's history.");
     (element.querySelector(".chat-session-rail__retry") as HTMLButtonElement).click();
     expect(onSubmit).toHaveBeenCalledWith("What changed?");
+  });
+
+  it("renders the exact stale-install recovery command", async () => {
+    const element = await mount({
+      companion: {
+        exchanges: [],
+        loading: false,
+        pendingQuestion: null,
+        failedQuestion: "What changed?",
+        hint: "stale-install",
+        retryable: false,
+        restartCommand: "openclaw --profile sd1 gateway restart",
+        draft: "",
+      },
+    });
+
+    expect(element.querySelector(".chat-session-rail__hint")?.textContent).toContain(
+      "openclaw --profile sd1 gateway restart",
+    );
+    expect(element.querySelector(".chat-session-rail__retry")).toBeNull();
   });
 
   it("freezes terminal relative time from digest.updatedAt", async () => {

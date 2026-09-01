@@ -491,7 +491,11 @@ export class ChatSessionRailElement extends OpenClawLightDomElement {
               <article class="chat-session-rail__exchange chat-session-rail__exchange--error">
                 <div class="chat-session-rail__question">${this.companion.failedQuestion}</div>
                 <div class="chat-session-rail__hint">
-                  ${t(companionHintKey(this.companion.hint))}
+                  ${this.companion.hint === "stale-install" && this.companion.restartCommand
+                    ? t(companionHintKey(this.companion.hint), {
+                        restartCommand: this.companion.restartCommand,
+                      })
+                    : t(companionHintKey(this.companion.hint))}
                 </div>
                 ${this.companion.retryable && this.connected && this.onSubmit
                   ? html`
