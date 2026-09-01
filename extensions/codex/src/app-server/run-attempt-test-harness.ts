@@ -303,6 +303,20 @@ export function createTestParams(): EmbeddedRunAttemptParams {
   return createParams(path.join(tempDir, "session.jsonl"), path.join(tempDir, "workspace"));
 }
 
+export function createNativeRunParams(
+  sessionFile: string,
+  workspaceDir: string,
+  sessionKey = "agent:main:session-1",
+): EmbeddedRunAttemptParams {
+  const params = createParams(sessionFile, workspaceDir, { sessionKey });
+  params.disableTools = true;
+  params.config = undefined;
+  delete params.contextTokenBudget;
+  delete params.contextWindowInfo;
+  delete params.observeToolTerminal;
+  return params;
+}
+
 /** Replaces the lightweight default with the admitted host boundary used in production. */
 export async function bindProductionHarnessHostCapabilitiesForTest(
   params: EmbeddedRunAttemptParams,
