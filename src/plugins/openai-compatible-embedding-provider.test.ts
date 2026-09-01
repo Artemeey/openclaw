@@ -8,20 +8,22 @@ import type { EmbeddingProviderCreateOptions } from "./embedding-providers.js";
 import { getRegisteredEmbeddingProvider } from "./embedding-providers.js";
 import { openAICompatibleEmbeddingProviderAdapter } from "./openai-compatible-embedding-provider.js";
 
-const fetchWithSsrFGuardMock = vi.hoisted(() => vi.fn());
-const originalFetchWithSsrFGuard = vi.hoisted(() => ({
+const withRemoteHttpResponseMock = vi.hoisted(() => vi.fn());
+const originalWithRemoteHttpResponse = vi.hoisted(() => ({
   implementation:
-    undefined as unknown as (typeof import("../infra/net/fetch-guard.js"))["fetchWithSsrFGuard"],
+    undefined as unknown as (typeof import("../../packages/memory-host-sdk/src/host/remote-http.js"))["withRemoteHttpResponse"],
 }));
 
-// Keep existing cases on the real transport unless the proxy-mode test overrides it.
-vi.mock("../infra/net/fetch-guard.js", async () => {
-  const actual = await vi.importActual<typeof import("../infra/net/fetch-guard.js")>(
-    "../infra/net/fetch-guard.js",
+// Keep existing cases on the real transport unless the wrapper test overrides it.
+vi.mock("../../packages/memory-host-sdk/src/host/remote-http.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../packages/memory-host-sdk/src/host/remote-http.js")
+  >(
+    "../../packages/memory-host-sdk/src/host/remote-http.js",
   );
-  originalFetchWithSsrFGuard.implementation = actual.fetchWithSsrFGuard;
-  fetchWithSsrFGuardMock.mockImplementation(actual.fetchWithSsrFGuard);
-  return { ...actual, fetchWithSsrFGuard: fetchWithSsrFGuardMock };
+  originalWithRemoteHttpResponse.implementation = actual.withRemoteHttpResponse;
+  withRemoteHttpResponseMock.mockImplementation(actual.withRemoteHttpResponse);
+  return { ...actual, withRemoteHttpResponse: withRemoteHttpResponseMock };
 });
 
 async function createOpenAICompatibleEmbeddingProvider(options: EmbeddingProviderCreateOptions) {
@@ -302,25 +304,20 @@ afterEach(async () => {
   const pending = servers.splice(0);
   await Promise.all(pending.map((server) => server.close()));
   vi.unstubAllEnvs();
-  fetchWithSsrFGuardMock.mockClear();
-  fetchWithSsrFGuardMock.mockImplementation(originalFetchWithSsrFGuard.implementation);
+  withRemoteHttpResponseMock.mockClear();
+  withRemoteHttpResponseMock.mockImplementation(originalWithRemoteHttpResponse.implementation);
 });
 
 describe("openai-compatible generic embedding provider", () => {
-  it("uses the trusted environment proxy mode when a proxy is configured", async () => {
-    vi.stubEnv("HTTP_PROXY", "http://proxy.example.test:8080");
-    vi.stubEnv("http_proxy", undefined);
-    vi.stubEnv("HTTPS_PROXY", undefined);
-    vi.stubEnv("https_proxy", undefined);
-    vi.stubEnv("NO_PROXY", undefined);
-    vi.stubEnv("no_proxy", undefined);
-    fetchWithSsrFGuardMock.mockResolvedValue({
-      response: new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-      release: vi.fn(),
-    });
+  it("delegates embedding requests to the canonical remote HTTP wrapper", async () => {
+    withRemoteHttpResponseMock.mockImplementation(async (params) =>
+      await params.onResponse(
+        new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
 
     const result = await openAICompatibleEmbeddingProviderAdapter.create(
       createOptions({
@@ -329,8 +326,11 @@ describe("openai-compatible generic embedding provider", () => {
     );
     await result.provider?.embed("hello");
 
-    expect(fetchWithSsrFGuardMock).toHaveBeenCalledWith(
-      expect.objectContaining({ mode: "trusted_env_proxy" }),
+    expect(withRemoteHttpResponseMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "https://embeddings.example.test/v1/embeddings",
+        auditContext: "embedding-provider:openai-compatible",
+      }),
     );
   });
 
