@@ -387,6 +387,20 @@ if [ "$update_status" -ne 0 ]; then
 fi
 
 if [ "$UPDATE_RESTART_MODE" = "auto-auth" ]; then
+  echo "Restarting gateway with restored authored configuration..."
+  if ! systemctl --user restart openclaw-gateway.service; then
+    echo "failed to restart gateway after restoring authored config" >&2
+    exit 1
+  fi
+  gateway_pid="$(cat "$OPENCLAW_UPGRADE_SURVIVOR_SYSTEMCTL_SHIM_PID_FILE")"
+  openclaw_e2e_wait_gateway_ready \
+    "$gateway_pid" \
+    "$OPENCLAW_UPGRADE_SURVIVOR_SYSTEMCTL_SHIM_DAEMON_LOG" \
+    360 \
+    "$PORT"
+fi
+
+if [ "$UPDATE_RESTART_MODE" = "auto-auth" ]; then
   echo "Skipping doctor repair until after restart proof."
 else
   echo "Running non-interactive doctor repair..."
@@ -409,7 +423,7 @@ node scripts/e2e/lib/upgrade-survivor/assertions.mjs assert-state
 
 startup_summary="n/a"
 if [ "$UPDATE_RESTART_MODE" = "auto-auth" ]; then
-  echo "Gateway restart was handled by openclaw update."
+  echo "Gateway restart and authored configuration reload were verified."
 else
   echo "Starting gateway from upgraded state..."
   start_epoch="$(node -e "process.stdout.write(String(Date.now()))")"

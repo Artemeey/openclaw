@@ -2332,10 +2332,15 @@ fi
       'config-parking.mjs restore "$OPENCLAW_CONFIG_PATH"',
       updateIndex,
     );
-    const assertIndex = runner.indexOf("assertions.mjs assert-config", restoreIndex);
+    const reloadIndex = runner.indexOf(
+      "systemctl --user restart openclaw-gateway.service",
+      restoreIndex,
+    );
+    const assertIndex = runner.indexOf("assertions.mjs assert-config", reloadIndex);
     expect(updateIndex).toBeGreaterThan(-1);
     expect(restoreIndex).toBeGreaterThan(updateIndex);
-    expect(assertIndex).toBeGreaterThan(restoreIndex);
+    expect(reloadIndex).toBeGreaterThan(restoreIndex);
+    expect(assertIndex).toBeGreaterThan(reloadIndex);
 
     expect(runner).toContain('source "$ROOT_DIR/scripts/lib/openclaw-e2e-instance.sh"');
     expect(runner).toContain(
