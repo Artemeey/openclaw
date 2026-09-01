@@ -6,7 +6,6 @@ import {
   listRuntimePluginIdsFromRegistry,
   registryContainsRuntimePluginIds,
 } from "../plugins/active-runtime-registry.js";
-import { normalizePluginsConfig } from "../plugins/config-state.js";
 import { extractPluginInstallRecordsFromInstalledPluginIndex } from "../plugins/installed-plugin-index-install-records.js";
 import { loadPluginRegistryHandle } from "../plugins/loader.js";
 import { adoptRuntimeMemoryRegistrations } from "../plugins/memory-state.js";
@@ -51,7 +50,7 @@ function resolveAgentRuntimePluginRegistryLoad(params: AgentRuntimePluginRegistr
     typeof params.workspaceDir === "string" && params.workspaceDir.trim()
       ? resolveUserPath(params.workspaceDir)
       : undefined;
-  if (params.config && !normalizePluginsConfig(params.config.plugins).enabled) {
+  if (params.config?.plugins?.enabled === false) {
     return {
       loadOptions: {
         config: params.config,
@@ -157,13 +156,14 @@ export async function withAgentPluginRegistry<T>(params: {
     return await params.run(requestPluginRegistry);
   }
   const env = params.env ?? process.env;
-  const metadataSnapshot = normalizePluginsConfig(params.config.plugins).enabled
-    ? loadPluginMetadataSnapshot({
-        config: params.config,
-        env,
-        workspaceDir: params.workspaceDir,
-      })
-    : undefined;
+  const metadataSnapshot =
+    params.config.plugins?.enabled !== false
+      ? loadPluginMetadataSnapshot({
+          config: params.config,
+          env,
+          workspaceDir: params.workspaceDir,
+        })
+      : undefined;
   const pluginRegistry = loadAgentRuntimePluginRegistryHandle({
     basePluginIds: [],
     config: params.config,
