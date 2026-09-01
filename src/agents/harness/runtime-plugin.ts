@@ -69,7 +69,7 @@ function describeMissingHarnessRegistration(
     if (!plugins.enabled) {
       return `(reason=owner-plugin-not-activatable). Plugins are disabled, so no plugin can register agent harness "${runtime}". Enable plugins and the plugin that provides this runtime, restart the Gateway, then retry or select a model that does not require this runtime.`;
     }
-    return "Enable or reinstall the plugin that provides this runtime, restart the Gateway, then retry.";
+    return `(reason=owner-plugin-not-activatable). Enable or reinstall the plugin that provides this runtime, restart the Gateway, then retry.`;
   }
 
   const failedOwner = ownerPluginIds
@@ -110,7 +110,10 @@ function describeMissingHarnessRegistration(
     }
   }
   const ownerField = ownerPluginIds.length === 1 ? "ownerPluginId" : "ownerPluginIds";
-  const reason = blockers.length > 0 ? "reason=owner-plugin-not-activatable, " : "";
+  const reason =
+    blockers.length > 0
+      ? "reason=owner-plugin-not-activatable, "
+      : "reason=owner-plugin-degraded, ";
   const detail = blockers.length > 0 ? blockers.join("; ") : "The owner plugin did not register";
   return `(${reason}${ownerField}=${ownerPluginIds.join(",")}). ${detail}. Run "openclaw doctor --fix" or select a model that does not require this runtime, restart the Gateway, then retry.`;
 }

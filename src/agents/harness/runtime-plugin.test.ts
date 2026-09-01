@@ -260,6 +260,50 @@ describe("harness runtime plugins", () => {
     expect((error as Error).message).not.toContain("not in allowlist");
   });
 
+  it("reports an activated owner missing from the prepared registry as degraded", async () => {
+    const pluginRegistry = createEmptyPluginRegistry();
+    attachPreparedPluginFacts(
+      pluginRegistry,
+      {},
+      makeRegistry([
+        {
+          id: "custom-owner",
+          channels: [],
+          activation: { onAgentHarnesses: ["custom-harness"] },
+        },
+      ]),
+    );
+
+    const error = await ensureSelectedAgentHarnessPlugin({
+      provider: "custom-provider",
+      modelId: "custom-model",
+      agentHarnessRuntimeOverride: "custom-harness",
+      workspaceDir: "/tmp/workspace",
+      pluginRegistry,
+    }).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "(reason=owner-plugin-degraded, ownerPluginId=custom-owner). The owner plugin did not register.",
+    );
+  });
+
+  it("gives an unknown harness without owner metadata a stable reason", async () => {
+    const error = await ensureSelectedAgentHarnessPlugin({
+      provider: "custom-provider",
+      modelId: "custom-model",
+      agentHarnessRuntimeOverride: "unknown-harness",
+      workspaceDir: "/tmp/workspace",
+      pluginRegistry: undefined,
+    }).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("(reason=owner-plugin-not-activatable)");
+    expect((error as Error).message).toContain(
+      "Enable or reinstall the plugin that provides this runtime",
+    );
+  });
+
   it("keeps the built-in OpenClaw harness independent from plugin registration", async () => {
     const pluginRegistry = createEmptyPluginRegistry();
     attachPreparedPluginFacts(pluginRegistry, { plugins: { enabled: false } }, makeRegistry([]));
