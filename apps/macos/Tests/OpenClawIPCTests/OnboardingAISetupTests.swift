@@ -1089,7 +1089,8 @@ struct OnboardingAISetupTests {
                     "The Gateway setup request failed. Show details to inspect or copy the error.")
                 #expect(failure.detail == (terminalError
                         ? failureDetail
-                        : "AI setup ended before its result was received. OpenClaw will verify the Gateway before trying again."))
+                        :
+                        "AI setup ended before its result was received. OpenClaw will verify the Gateway before trying again."))
             }
         }
         #expect(!model.exhaustedAutoCandidates)
