@@ -278,7 +278,7 @@ function splitTargetsByFileLimit(targets: string[], maxFilesPerChunk: number) {
   return chunks;
 }
 
-export function resolveExtensionTestJobFileLimit(config: string) {
+function resolveExtensionTestJobFileLimit(config: string) {
   return (
     EXTENSION_TEST_JOB_FILE_LIMITS.get(config) ?? EXTENSION_TEST_PROCESS_FILE_LIMITS.get(config)
   );
