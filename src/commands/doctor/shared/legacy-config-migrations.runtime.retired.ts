@@ -23,7 +23,7 @@ import {
 } from "./legacy-config-migrations.runtime.retired-media.js";
 import { LEGACY_CONFIG_MIGRATION_RUNTIME_MEMORY_QMD } from "./legacy-config-migrations.runtime.retired-memory-qmd.js";
 import { migrateTierEvalTranche } from "./legacy-config-migrations.runtime.tier-eval.js";
-import { visitChannelEntries } from "./legacy-config-record-shared.js";
+import { visitAgentConfigScopes, visitChannelEntries } from "./legacy-config-record-shared.js";
 
 const rule = (
   path: string[],
@@ -117,12 +117,7 @@ function migrateFinalLayoutRenames(raw: Record<string, unknown>, changes: string
       changes,
     );
   };
-  migrateAgentScope(defaults, "agents.defaults");
-  if (Array.isArray(agents?.list)) {
-    agents.list.forEach((entry, index) =>
-      migrateAgentScope(getRecord(entry), `agents.list[${index}]`),
-    );
-  }
+  visitAgentConfigScopes(raw, migrateAgentScope);
   moveKey(
     getRecord(getRecord(raw.tools)?.exec),
     "timeoutSec",
