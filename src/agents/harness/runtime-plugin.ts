@@ -71,6 +71,10 @@ function describeMissingHarnessRegistration(
   const plugins = normalizePluginsConfig(context?.activationSourceConfig.plugins);
   const blockers: string[] = [];
   for (const pluginId of ownerPluginIds) {
+    if (!plugins.enabled) {
+      blockers.push(`Owner plugin "${pluginId}" is not activatable (plugins disabled)`);
+      continue;
+    }
     const plugin = context?.metadataSnapshot?.byPluginId.get(pluginId);
     if (!plugin) {
       blockers.push(`Owner plugin "${pluginId}" is absent from this prepared plugin generation`);

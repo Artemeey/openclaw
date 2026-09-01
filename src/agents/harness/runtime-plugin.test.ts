@@ -165,6 +165,27 @@ describe("harness runtime plugins", () => {
     );
   });
 
+  it("reports global plugin disablement before a selected Codex owner's absence", async () => {
+    const pluginRegistry = createEmptyPluginRegistry();
+    const config = { plugins: { enabled: false } } satisfies OpenClawConfig;
+    attachPreparedPluginFacts(pluginRegistry, config, makeRegistry([]));
+
+    const error = await ensureSelectedAgentHarnessPlugin({
+      provider: "openai",
+      modelId: "gpt-5.5",
+      agentHarnessRuntimeOverride: "codex",
+      workspaceDir: "/tmp/workspace",
+      pluginRegistry,
+    }).catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("ownerPluginId=codex");
+    expect((error as Error).message).toContain(
+      'Owner plugin "codex" is not activatable (plugins disabled)',
+    );
+    expect((error as Error).message).not.toContain("absent from this prepared plugin generation");
+  });
+
   it("keeps the built-in OpenClaw harness independent from plugin registration", async () => {
     const pluginRegistry = createEmptyPluginRegistry();
     attachPreparedPluginFacts(pluginRegistry, { plugins: { enabled: false } }, makeRegistry([]));
