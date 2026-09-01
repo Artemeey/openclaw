@@ -204,6 +204,7 @@ export function createApplicationOverlays(
       updates.synchronizeGateway(next);
       return;
     }
+    const connectedClient = next.client;
     updates.synchronizeGateway(next);
     if (
       accessTransition.pairingChanged &&
@@ -218,12 +219,12 @@ export function createApplicationOverlays(
       connectedEpoch += 1;
       if (operatorAccess.canReviewApprovals) {
         void runConnectionBootstrap("approvals", () =>
-          refreshApprovals(next.client, connectedEpoch, approvalAccessGeneration),
+          refreshApprovals(connectedClient, connectedEpoch, approvalAccessGeneration),
         ).catch(() => undefined);
       }
     } else if (accessTransition.reviewChanged && operatorAccess.canReviewApprovals) {
       void runConnectionBootstrap("approvals", () =>
-        refreshApprovals(next.client, connectedEpoch, approvalAccessGeneration),
+        refreshApprovals(connectedClient, connectedEpoch, approvalAccessGeneration),
       ).catch(() => undefined);
     }
   };

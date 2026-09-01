@@ -267,6 +267,7 @@ export function createApplicationUpdateOverlays(
       publish();
       return;
     }
+    const connectedClient = next.client;
     if (
       pendingUpdate &&
       (!operatorAccess.canAdmin || pendingUpdateProfileId !== (next.selfUser?.id ?? null))
@@ -300,7 +301,7 @@ export function createApplicationUpdateOverlays(
       announceRecordedUpdateSuccess(operatorAccess.canAdmin ? noticeScope() : null);
       if (pendingUpdate && operatorAccess.canAdmin) {
         void runConnectionBootstrap("update-verification", () =>
-          updateVerification.verify(next.client, connectedEpoch),
+          updateVerification.verify(connectedClient, connectedEpoch),
         ).catch(() => undefined);
       } else if (operatorAccess.canAdmin && !snapshot.updateSchedule?.campaign) {
         // A new bundle has no in-memory campaign history. Hydrate the Gateway's
