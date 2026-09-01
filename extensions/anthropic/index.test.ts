@@ -704,7 +704,7 @@ describe("anthropic provider replay hooks", () => {
     {
       name: "resolves Claude Sonnet 5 with its exact API contract",
       modelId: "claude-sonnet-5",
-      cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+      cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
       thinkingLevelMap: { xhigh: "xhigh", max: "max" },
     },
   ];

@@ -766,7 +766,7 @@ describe("bedrock mantle discovery", () => {
       reasoning: true,
       params: { canonicalModelId: "claude-sonnet-5" },
       input: ["text", "image"],
-      cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+      cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
       contextWindow: 1_000_000,
       maxTokens: 128_000,
       thinkingLevelMap: { off: "low", minimal: "low", xhigh: "xhigh", max: "max" },
