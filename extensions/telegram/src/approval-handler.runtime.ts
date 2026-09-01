@@ -96,11 +96,12 @@ function buildPendingPayload(params: {
       throw new Error("system-agent approval request and view kinds do not match");
     }
     const origin = resolveGatewayPublicOrigin(params.cfg);
-    const reviewUrl = origin
-      ? `${origin}${normalizeTelegramControlUiBasePath(
-          params.cfg.gateway?.controlUi?.basePath,
-        )}/approve/${encodeURIComponent(params.request.id)}`
-      : undefined;
+    const reviewUrl =
+      origin && params.cfg.gateway?.controlUi?.enabled !== false
+        ? `${origin}${normalizeTelegramControlUiBasePath(
+            params.cfg.gateway?.controlUi?.basePath,
+          )}/approve/${encodeURIComponent(params.request.id)}`
+        : undefined;
     const lines = [
       "🔒 OpenClaw change requires approval",
       `Change: ${view.operationSummary}`,

@@ -84,7 +84,7 @@ export function buildTelegramCanonicalApprovalTerminalText(params: {
   const approval = params.result.approval;
   if (approval.presentation?.kind === "system-agent" && params.result.applied) {
     if (approval.status === "allowed") {
-      return `✅ OpenClaw change approved and applied: ${truncateDetail(approval.presentation.description)}`;
+      return `✅ OpenClaw change approved. Applying: ${truncateDetail(approval.presentation.description)}`;
     }
     if (approval.status === "denied" || approval.status === "cancelled") {
       return "❌ OpenClaw change denied. No change was made.";
@@ -152,7 +152,7 @@ export function buildTelegramNativeResolvedApprovalText(view: ResolvedApprovalVi
   if (view.approvalKind === "system-agent") {
     return view.decision === "deny"
       ? "❌ OpenClaw change denied. No change was made."
-      : `✅ OpenClaw change approved and applied: ${truncateDetail(view.operationSummary)}`;
+      : `✅ OpenClaw change approved. Applying: ${truncateDetail(view.operationSummary)}`;
   }
   const label = view.approvalKind === "exec" ? "Exec" : "Plugin";
   const lines = [

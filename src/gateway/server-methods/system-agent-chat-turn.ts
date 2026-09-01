@@ -141,9 +141,10 @@ export function buildDelegatedApprovalPendingReply(params: {
     throw new Error("system-agent approval snapshot unavailable after registration");
   }
   const origin = resolveGatewayPublicOrigin(params.cfg);
-  const reviewUrl = origin
-    ? `${origin}${normalizeControlUiBasePath(params.cfg.gateway?.controlUi?.basePath)}/approve/${encodeURIComponent(params.approvalId)}`
-    : undefined;
+  const reviewUrl =
+    origin && params.cfg.gateway?.controlUi?.enabled !== false
+      ? `${origin}${normalizeControlUiBasePath(params.cfg.gateway?.controlUi?.basePath)}/approve/${encodeURIComponent(params.approvalId)}`
+      : undefined;
   return [
     `OpenClaw change pending approval: ${snapshot.request.description}.`,
     ...(reviewUrl ? [`Review: ${reviewUrl}.`] : []),

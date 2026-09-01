@@ -270,6 +270,46 @@ describe("telegramApprovalNativeRuntime", () => {
     expect(payload.buttons).toEqual([]);
   });
 
+  it("omits the Control UI button when the Control UI is disabled", async () => {
+    const payload = await telegramApprovalNativeRuntime.presentation.buildPendingPayload({
+      cfg: {
+        gateway: {
+          publicOrigin: "https://control.example.com",
+          controlUi: { enabled: false },
+        },
+      } as never,
+      accountId: "default",
+      context: { token: "tg-token" },
+      request: {
+        id: "system-agent:change-disabled-ui",
+        request: {
+          title: "OpenClaw change",
+          description: "restart the Gateway",
+          command: "restart the Gateway",
+          proposalHash: "e".repeat(64),
+          allowedDecisions: ["allow-once", "deny"],
+          sessionId: "delegation-disabled-ui",
+        },
+        createdAtMs: 0,
+        expiresAtMs: 60_000,
+      },
+      approvalKind: "system-agent",
+      nowMs: 0,
+      view: {
+        approvalKind: "system-agent",
+        approvalId: "system-agent:change-disabled-ui",
+        phase: "pending",
+        title: "OpenClaw change requires approval",
+        metadata: [],
+        commandText: "restart the Gateway",
+        operationSummary: "restart the Gateway",
+        actions: [],
+        expiresAtMs: 60_000,
+      },
+    });
+    expect(payload.buttons).toEqual([]);
+  });
+
   it("renders resolved and expired events as visible terminal receipts", async () => {
     const request = {
       id: "req-1",
@@ -382,7 +422,7 @@ describe("telegramApprovalNativeRuntime", () => {
     ).resolves.toEqual({
       kind: "update",
       payload: {
-        text: "✅ OpenClaw change approved and applied: set config gateway.port to 19001",
+        text: "✅ OpenClaw change approved. Applying: set config gateway.port to 19001",
       },
     });
   });
@@ -449,13 +489,13 @@ describe("telegramApprovalNativeRuntime", () => {
       entry: { chatId: "5678", messageId: "m1" },
       request,
       approvalKind: "system-agent",
-      payload: { text: "✅ OpenClaw change approved and applied: restart the Gateway" },
+      payload: { text: "✅ OpenClaw change approved. Applying: restart the Gateway" },
       phase: "resolved",
     });
 
     expect(sendMessage).toHaveBeenCalledWith(
       "1234",
-      "✅ OpenClaw change approved and applied: restart the Gateway",
+      "✅ OpenClaw change approved. Applying: restart the Gateway",
       {
         cfg: {},
         token: "tg-token",
@@ -471,7 +511,7 @@ describe("telegramApprovalNativeRuntime", () => {
       entry: { chatId: "9012", messageId: "m2" },
       request,
       approvalKind: "system-agent",
-      payload: { text: "✅ OpenClaw change approved and applied: restart the Gateway" },
+      payload: { text: "✅ OpenClaw change approved. Applying: restart the Gateway" },
       phase: "resolved",
     });
     expect(sendMessage).toHaveBeenCalledOnce();
@@ -492,7 +532,7 @@ describe("telegramApprovalNativeRuntime", () => {
       entry: { chatId: "9013", messageId: "m3" },
       request,
       approvalKind: "system-agent",
-      payload: { text: "✅ OpenClaw change approved and applied: restart the Gateway" },
+      payload: { text: "✅ OpenClaw change approved. Applying: restart the Gateway" },
       phase: "resolved",
     });
     expect(sendMessage).toHaveBeenCalledTimes(2);
