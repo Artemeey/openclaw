@@ -14,6 +14,7 @@ const originalFetchWithSsrFGuard = vi.hoisted(() => ({
     undefined as unknown as (typeof import("../infra/net/fetch-guard.js"))["fetchWithSsrFGuard"],
 }));
 
+// Keep existing cases on the real transport unless the proxy-mode test overrides it.
 vi.mock("../infra/net/fetch-guard.js", async () => {
   const actual = await vi.importActual<typeof import("../infra/net/fetch-guard.js")>(
     "../infra/net/fetch-guard.js",
