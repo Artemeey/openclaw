@@ -15,28 +15,32 @@ import { runWithGatewayIndependentRootWorkContinuation } from "../../process/gat
 import { describeSystemAgentPersistentOperation } from "../../system-agent/operations.js";
 import type { AgentRuntimeDelegatedAuthority } from "../agent-runtime-identity-token.js";
 import { buildRequestedApprovalEvent, handlePendingApprovalRequest } from "./approval-shared.js";
+import type { GatewaySystemAgentSession } from "./shared-types.js";
 import { runSystemAgentGatewayTask } from "./system-agent-execution.js";
-import type { SystemAgentChatSession } from "./system-agent.js";
 import type { GatewayRequestContext } from "./types.js";
 
 function sameApprovalAuthority(
   left: AgentRuntimeDelegatedAuthority,
   right: AgentRuntimeDelegatedAuthority,
 ): boolean {
-  return (
-    left.kind === right.kind &&
-    left.claimId === right.claimId &&
-    left.lifecycleGeneration === right.lifecycleGeneration &&
-    left.operationalRunInstance.instanceId === right.operationalRunInstance.instanceId &&
-    left.operationalRunInstance.runId === right.operationalRunInstance.runId &&
-    (left.kind !== "worker" || left.turnClaim === right.turnClaim)
-  );
+  if (
+    left.kind !== right.kind ||
+    left.claimId !== right.claimId ||
+    left.lifecycleGeneration !== right.lifecycleGeneration ||
+    left.operationalRunInstance.instanceId !== right.operationalRunInstance.instanceId ||
+    left.operationalRunInstance.runId !== right.operationalRunInstance.runId
+  ) {
+    return false;
+  }
+  return left.kind === "worker" && right.kind === "worker"
+    ? left.turnClaim === right.turnClaim
+    : true;
 }
 
 export function queueDelegatedApproval(params: {
   context: GatewayRequestContext;
-  sessions: Map<string, SystemAgentChatSession>;
-  session: SystemAgentChatSession;
+  sessions: Map<string, GatewaySystemAgentSession>;
+  session: GatewaySystemAgentSession;
   sessionId: string;
   delegation: {
     agentId?: string;
@@ -68,13 +72,14 @@ export function queueDelegatedApproval(params: {
   if (pendingApproval?.proposalHash === params.proposal.hash) {
     const closed = manager.forceDenyIfDelegatedAuthorityClosed(pendingApproval.id);
     const existing = manager.getSnapshot(pendingApproval.id);
-    if (
-      !closed &&
-      existing?.resolvedAtMs === undefined &&
-      existing.agentRuntimeDelegatedAuthority &&
-      sameApprovalAuthority(existing.agentRuntimeDelegatedAuthority, runtimeApprovalAuthority)
-    ) {
-      return pendingApproval.id;
+    if (!closed && existing) {
+      if (
+        existing.resolvedAtMs === undefined &&
+        existing.agentRuntimeDelegatedAuthority &&
+        sameApprovalAuthority(existing.agentRuntimeDelegatedAuthority, runtimeApprovalAuthority)
+      ) {
+        return pendingApproval.id;
+      }
     }
     params.session.pendingApproval = undefined;
   }

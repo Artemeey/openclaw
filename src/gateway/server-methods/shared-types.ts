@@ -109,7 +109,7 @@ type SystemAgentHistoryTurn = {
   text: string;
 };
 
-type GatewaySystemAgentSession = {
+export type GatewaySystemAgentSession = {
   engine: {
     handle: (
       message: string,

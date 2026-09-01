@@ -263,6 +263,13 @@ async function updateSlackApprovalEntry(
     ...APPROVAL_CONTEXT,
     context,
     entry: { channelId: "C123", messageTs: "1712345678.999999" },
+    request: {
+      id: "approval-1",
+      request: { command: "echo hi" },
+      createdAtMs: 0,
+      expiresAtMs: 60_000,
+    },
+    approvalKind: "exec",
     payload,
     phase: "resolved",
   });

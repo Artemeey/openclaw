@@ -45,6 +45,7 @@ import {
   respondSetupAdmissionBusy,
   SetupAdmissionBusyError,
 } from "./setup-admission.js";
+import type { GatewaySystemAgentSession as SystemAgentChatSession } from "./shared-types.js";
 import { getSystemAgentSessionQueue, queueDelegatedApproval } from "./system-agent-approval.js";
 import { sanitizeSystemAgentChatParams } from "./system-agent-chat-params.js";
 import {
@@ -65,6 +66,8 @@ import {
   startSetupActivationWizard,
 } from "./system-agent-setup-wizard.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
+
+export type { SystemAgentChatSession };
 import { assertValidParams } from "./validation.js";
 
 /**
@@ -77,9 +80,6 @@ import { assertValidParams } from "./validation.js";
  * sanitized conversation is a durable machine-wide logbook; `reset: true`
  * replaces the in-memory session without deleting that transcript.
  */
-export type SystemAgentChatSession =
-  GatewayRequestContext["systemAgentSessions"] extends Map<string, infer Session> ? Session : never;
-
 const MAX_SYSTEM_AGENT_SESSIONS = 8;
 const SYSTEM_AGENT_SEED_HISTORY_LIMIT = 30;
 const DEFAULT_SYSTEM_AGENT_HISTORY_LIMIT = 100;

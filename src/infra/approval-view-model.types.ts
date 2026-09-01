@@ -120,21 +120,21 @@ export type SystemAgentApprovalViewBase = ApprovalViewBase & {
 };
 
 /** Pending system change approval view, including executable reply actions. */
-export type SystemAgentApprovalPendingView = SystemAgentApprovalViewBase & {
+type SystemAgentApprovalPendingView = SystemAgentApprovalViewBase & {
   phase: "pending";
   actions: ApprovalActionView[];
   expiresAtMs: number;
 };
 
 /** Resolved system change approval view with the recorded decision. */
-export type SystemAgentApprovalResolvedView = SystemAgentApprovalViewBase & {
+type SystemAgentApprovalResolvedView = SystemAgentApprovalViewBase & {
   phase: "resolved";
   decision: ExecApprovalDecision;
   resolvedBy?: string | null;
 };
 
 /** Expired system change approval view without reply actions. */
-export type SystemAgentApprovalExpiredView = SystemAgentApprovalViewBase & {
+type SystemAgentApprovalExpiredView = SystemAgentApprovalViewBase & {
   phase: "expired";
 };
 

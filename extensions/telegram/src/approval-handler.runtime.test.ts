@@ -177,6 +177,7 @@ describe("telegramApprovalNativeRuntime", () => {
         description: "set config gateway.port to 19001",
         metadata: [{ label: "Agent", value: "main" }],
         agentId: "main",
+        commandText: "set config gateway.port to 19001",
         operationSummary: "set config gateway.port to 19001",
         actions: [
           {
@@ -256,6 +257,7 @@ describe("telegramApprovalNativeRuntime", () => {
         phase: "pending",
         title: "OpenClaw change requires approval",
         metadata: [],
+        commandText: "restart the Gateway",
         operationSummary: "restart the Gateway",
         actions: [],
         expiresAtMs: 60_000,
@@ -367,6 +369,7 @@ describe("telegramApprovalNativeRuntime", () => {
           phase: "resolved",
           title: "OpenClaw change",
           metadata: [],
+          commandText: "set config gateway.port to 19001",
           operationSummary: "set config gateway.port to 19001",
           decision: "allow-once",
         },
@@ -395,6 +398,13 @@ describe("telegramApprovalNativeRuntime", () => {
         deps: { editMessage },
       },
       entry: { chatId: "9", messageId: "m1" },
+      request: {
+        id: "approval-1",
+        request: { command: "echo hi" },
+        createdAtMs: 0,
+        expiresAtMs: 60_000,
+      },
+      approvalKind: "exec",
       payload: { text: "Canonical result: <Denied>" },
       phase: "resolved",
     });

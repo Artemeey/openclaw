@@ -49,9 +49,6 @@ export type {
   PluginApprovalPendingView,
   PluginApprovalResolvedView,
   ResolvedApprovalView,
-  SystemAgentApprovalExpiredView,
-  SystemAgentApprovalPendingView,
-  SystemAgentApprovalResolvedView,
 } from "./approval-view-model.types.js";
 export {
   CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,

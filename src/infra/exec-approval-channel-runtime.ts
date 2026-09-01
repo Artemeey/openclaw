@@ -226,6 +226,7 @@ export function createExecApprovalChannelRuntime<
     if (evt.event === "openclaw.approval.requested" && eventKinds.has("system-agent")) {
       spawn(
         "error handling approval request",
+        // SAFETY: The event name and handled kind select the canonical approval request union.
         handleRequested(evt.payload as TRequest, { ignoreIfInactive: true }),
       );
       return;
@@ -239,6 +240,7 @@ export function createExecApprovalChannelRuntime<
       return;
     }
     if (evt.event === "openclaw.approval.resolved" && eventKinds.has("system-agent")) {
+      // SAFETY: The event name and handled kind select the canonical approval resolution union.
       spawn("error handling approval resolved", handleResolved(evt.payload as TResolved));
     }
   };
