@@ -49,6 +49,9 @@ export type {
   PluginApprovalPendingView,
   PluginApprovalResolvedView,
   ResolvedApprovalView,
+  SystemAgentApprovalExpiredView,
+  SystemAgentApprovalPendingView,
+  SystemAgentApprovalResolvedView,
 } from "./approval-view-model.types.js";
 export {
   CHANNEL_APPROVAL_NATIVE_RUNTIME_CONTEXT_CAPABILITY,
@@ -152,6 +155,8 @@ async function applyApprovalFinalAction(params: {
   nativeRuntime: ChannelApprovalNativeRuntimeAdapter;
   baseContext: ChannelApprovalCapabilityHandlerContext;
   wrapped: WrappedPendingEntry;
+  request: ApprovalRequest;
+  approvalKind: ChannelApprovalKind;
   result: ChannelApprovalNativeFinalAction<unknown>;
   phase: "resolved" | "expired";
 }): Promise<void> {
@@ -160,6 +165,8 @@ async function applyApprovalFinalAction(params: {
       await params.nativeRuntime.transport.updateEntry?.({
         ...params.baseContext,
         entry: params.wrapped.entry,
+        request: params.request,
+        approvalKind: params.approvalKind,
         payload: params.result.payload,
         phase: params.phase,
       });
@@ -234,6 +241,8 @@ export function createChannelApprovalNativeRuntimeAdapter<
             updateEntry: async (
               params: {
                 entry: unknown;
+                request: ApprovalRequest;
+                approvalKind: ChannelApprovalKind;
                 payload: unknown;
                 phase: "resolved" | "expired";
               } & ChannelApprovalCapabilityHandlerContext,
@@ -675,6 +684,8 @@ export async function createChannelApprovalHandlerFromCapability(params: {
               nativeRuntime,
               baseContext,
               wrapped,
+              request,
+              approvalKind,
               result,
               phase: "resolved",
             });
@@ -710,6 +721,8 @@ export async function createChannelApprovalHandlerFromCapability(params: {
               nativeRuntime,
               baseContext,
               wrapped,
+              request,
+              approvalKind,
               result,
               phase: "expired",
             });

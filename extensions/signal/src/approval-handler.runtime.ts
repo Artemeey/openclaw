@@ -15,6 +15,7 @@ import {
 import type {
   ExecApprovalRequest,
   PluginApprovalRequest,
+  SystemAgentApprovalRequest,
 } from "openclaw/plugin-sdk/approval-runtime";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
@@ -32,7 +33,7 @@ import { sendMessageSignal, sendTypingSignal } from "./send.js";
 
 const log = createSubsystemLogger("signal/approvals");
 
-type ApprovalRequest = ExecApprovalRequest | PluginApprovalRequest;
+type ApprovalRequest = ExecApprovalRequest | PluginApprovalRequest | SystemAgentApprovalRequest;
 type SignalPendingDelivery = ApprovalReactionPendingContent;
 type PreparedSignalApprovalTarget = {
   to: string;

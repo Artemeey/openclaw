@@ -10,13 +10,17 @@ import type {
 } from "./approval-view-model.types.js";
 import type { ExecApprovalResolved } from "./exec-approvals.js";
 import type { PluginApprovalResolved } from "./plugin-approvals.js";
+import type { SystemAgentApprovalResolved } from "./system-agent-approvals.js";
 
 export type { ChannelApprovalKind } from "./approval-types.js";
 
 /** Backward-compatible approval request accepted by public plugin callbacks. */
 export type ApprovalRequest = ApprovalRequestInput;
 /** Union of approval resolution events a native approval handler can finalize. */
-export type ApprovalResolved = ExecApprovalResolved | PluginApprovalResolved;
+export type ApprovalResolved =
+  | ExecApprovalResolved
+  | PluginApprovalResolved
+  | SystemAgentApprovalResolved;
 
 /** Shared context passed to channel-native approval hooks. */
 export type ChannelApprovalCapabilityHandlerContext = {
@@ -52,8 +56,8 @@ export type ChannelApprovalNativePresentationAdapter<
 > = {
   buildPendingPayload: (
     params: ChannelApprovalCapabilityHandlerContext & {
-      request: ApprovalRequest;
-      approvalKind: ChannelApprovalKind;
+      request?: ApprovalRequest;
+      approvalKind?: ChannelApprovalKind;
       nowMs: number;
       view: PendingApprovalView;
     },
@@ -111,6 +115,8 @@ type ChannelApprovalNativeTransportAdapterForView<
   updateEntry?: (
     params: ChannelApprovalCapabilityHandlerContext & {
       entry: TPendingEntry;
+      request: ApprovalRequest;
+      approvalKind: ChannelApprovalKind;
       payload: TFinalPayload;
       phase: "resolved" | "expired";
     },

@@ -143,6 +143,127 @@ describe("telegramApprovalNativeRuntime", () => {
     );
   });
 
+  it("renders a system-agent approval with an optional Control UI link", async () => {
+    const payload = (await telegramApprovalNativeRuntime.presentation.buildPendingPayload({
+      cfg: {
+        gateway: {
+          publicOrigin: "https://control.example.com",
+          controlUi: { basePath: "/openclaw/" },
+        },
+      } as never,
+      accountId: "default",
+      context: { token: "tg-token" },
+      request: {
+        id: "system-agent:change-1",
+        request: {
+          title: "OpenClaw change",
+          description: "set config gateway.port to 19001",
+          command: "set config gateway.port to 19001",
+          proposalHash: "a".repeat(64),
+          allowedDecisions: ["allow-once", "deny"],
+          agentId: "main",
+          sessionId: "delegation-1",
+        },
+        createdAtMs: 0,
+        expiresAtMs: 120_000,
+      },
+      approvalKind: "system-agent",
+      nowMs: 0,
+      view: {
+        approvalKind: "system-agent",
+        approvalId: "system-agent:change-1",
+        phase: "pending",
+        title: "OpenClaw change requires approval",
+        description: "set config gateway.port to 19001",
+        metadata: [{ label: "Agent", value: "main" }],
+        agentId: "main",
+        operationSummary: "set config gateway.port to 19001",
+        actions: [
+          {
+            decision: "allow-once",
+            label: "Allow Once",
+            action: {
+              type: "approval",
+              approvalId: "system-agent:change-1",
+              approvalKind: "system-agent",
+              decision: "allow-once",
+            },
+            command: "/approve system-agent:change-1 allow-once",
+            style: "success",
+          },
+          {
+            decision: "deny",
+            label: "Deny",
+            action: {
+              type: "approval",
+              approvalId: "system-agent:change-1",
+              approvalKind: "system-agent",
+              decision: "deny",
+            },
+            command: "/approve system-agent:change-1 deny",
+            style: "danger",
+          },
+        ],
+        expiresAtMs: 120_000,
+      },
+    })) as TelegramPayload;
+
+    expect(payload.text).toBe(
+      [
+        "🔒 OpenClaw change requires approval",
+        "Change: set config gateway.port to 19001",
+        "Agent: main",
+        "Expires in: 2m",
+      ].join("\n"),
+    );
+    expect(payload.buttons).toEqual([
+      [
+        {
+          text: "Review in Control UI",
+          url: "https://control.example.com/openclaw/approve/system-agent%3Achange-1",
+        },
+      ],
+      [
+        { text: "Allow Once", callback_data: "tga1:s:o:system-agent:change-1", style: "success" },
+        { text: "Deny", callback_data: "tga1:s:d:system-agent:change-1", style: "danger" },
+      ],
+    ]);
+  });
+
+  it("omits the Control UI button without a configured public origin", async () => {
+    const payload = await telegramApprovalNativeRuntime.presentation.buildPendingPayload({
+      cfg: {} as never,
+      accountId: "default",
+      context: { token: "tg-token" },
+      request: {
+        id: "system-agent:change-2",
+        request: {
+          title: "OpenClaw change",
+          description: "restart the Gateway",
+          command: "restart the Gateway",
+          proposalHash: "b".repeat(64),
+          allowedDecisions: ["allow-once", "deny"],
+          sessionId: "delegation-2",
+        },
+        createdAtMs: 0,
+        expiresAtMs: 60_000,
+      },
+      approvalKind: "system-agent",
+      nowMs: 0,
+      view: {
+        approvalKind: "system-agent",
+        approvalId: "system-agent:change-2",
+        phase: "pending",
+        title: "OpenClaw change requires approval",
+        metadata: [],
+        operationSummary: "restart the Gateway",
+        actions: [],
+        expiresAtMs: 60_000,
+      },
+    });
+    expect(payload.buttons).toEqual([]);
+  });
+
   it("renders resolved and expired events as visible terminal receipts", async () => {
     const request = {
       id: "req-1",
@@ -218,6 +339,47 @@ describe("telegramApprovalNativeRuntime", () => {
     });
   });
 
+  it("renders exact system-agent terminal receipts", async () => {
+    const request = {
+      approvalKind: "system-agent" as const,
+      id: "system-agent:change-3",
+      request: {
+        title: "OpenClaw change",
+        description: "set config gateway.port to 19001",
+        command: "set config gateway.port to 19001",
+        proposalHash: "c".repeat(64),
+        allowedDecisions: ["allow-once", "deny"] as const,
+        sessionId: "delegation-3",
+      },
+      createdAtMs: 0,
+      expiresAtMs: 60_000,
+    };
+    await expect(
+      telegramApprovalNativeRuntime.presentation.buildResolvedResult({
+        cfg: {} as never,
+        accountId: "default",
+        context: { token: "tg-token" },
+        request,
+        resolved: { id: request.id, decision: "allow-once", ts: 1 },
+        view: {
+          approvalKind: "system-agent",
+          approvalId: request.id,
+          phase: "resolved",
+          title: "OpenClaw change",
+          metadata: [],
+          operationSummary: "set config gateway.port to 19001",
+          decision: "allow-once",
+        },
+        entry: { chatId: "9", messageId: "m1" },
+      }),
+    ).resolves.toEqual({
+      kind: "update",
+      payload: {
+        text: "✅ OpenClaw change approved and applied: set config gateway.port to 19001",
+      },
+    });
+  });
+
   it("updates the pending message and removes actions for terminal events", async () => {
     const editMessage = vi.fn().mockResolvedValue({
       ok: true,
@@ -244,6 +406,49 @@ describe("telegramApprovalNativeRuntime", () => {
       textMode: "html",
       buttons: [],
     });
+  });
+
+  it("sends terminal system-agent results back to a Telegram origin when the card is elsewhere", async () => {
+    const editMessage = vi.fn().mockResolvedValue({ ok: true });
+    const sendMessage = vi.fn().mockResolvedValue({ ok: true });
+    const request = {
+      approvalKind: "system-agent" as const,
+      id: "system-agent:origin-followup",
+      request: {
+        title: "OpenClaw change",
+        description: "restart the Gateway",
+        command: "restart the Gateway",
+        proposalHash: "d".repeat(64),
+        allowedDecisions: ["allow-once", "deny"] as const,
+        sessionId: "delegation-origin-followup",
+        turnSourceChannel: "telegram",
+        turnSourceTo: "1234",
+      },
+      createdAtMs: 0,
+      expiresAtMs: 60_000,
+    };
+
+    await telegramApprovalNativeRuntime.transport.updateEntry?.({
+      cfg: {} as never,
+      accountId: "default",
+      context: { token: "tg-token", deps: { editMessage, sendMessage } },
+      entry: { chatId: "5678", messageId: "m1" },
+      request,
+      approvalKind: "system-agent",
+      payload: { text: "✅ OpenClaw change approved and applied: restart the Gateway" },
+      phase: "resolved",
+    });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      "1234",
+      "✅ OpenClaw change approved and applied: restart the Gateway",
+      {
+        cfg: {},
+        token: "tg-token",
+        accountId: "default",
+        textMode: "html",
+      },
+    );
   });
 
   it("passes topic thread ids to typing and message delivery", async () => {

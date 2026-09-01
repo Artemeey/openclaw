@@ -6,6 +6,8 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
+import { createOperationalRunInstanceRef } from "../../agents/admitted-run-context.js";
+import { withGatewayToolCallerIdentity } from "../../agents/tools/gateway-caller-context.js";
 import { readConfigFileSnapshot } from "../../config/config.js";
 import {
   getRuntimeConfigAppliedHash,
@@ -14,6 +16,11 @@ import {
 } from "../../config/runtime-snapshot.js";
 import { createRuntimeConfigWriteApplication } from "../../config/runtime-write-application.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import {
+  claimAgentRunDelegatedAuthority,
+  resetAgentRunRegistryForTest,
+  validateAgentRunDelegatedAuthority,
+} from "../../infra/agent-run-registry.js";
 import type { SystemAgentApprovalRequestPayload } from "../../infra/system-agent-approvals.js";
 import { resetPluginStateStoreForTests } from "../../plugin-state/plugin-state-store.js";
 import { getCommandLaneSnapshot } from "../../process/command-queue.js";
@@ -280,6 +287,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetAgentRunRegistryForTest();
   setRuntimeConfigAppliedHash(previousAppliedHash);
   vi.restoreAllMocks();
   vi.resetAllMocks();
@@ -915,7 +923,10 @@ describe("openclaw.chat", () => {
     const manager = new ExecApprovalManager<SystemAgentApprovalRequestPayload>({
       approvalKind: "system-agent",
       resolveAllowedDecisions: (request) => request.allowedDecisions,
+      validateAgentRuntimeDelegatedAuthority: validateAgentRunDelegatedAuthority,
     });
+    const operationalRunInstance = createOperationalRunInstanceRef("delegated-gateway-restart-run");
+    claimAgentRunDelegatedAuthority(operationalRunInstance);
     const broadcast = vi.fn();
     const context = {
       ...makeContext(sessions),
@@ -926,33 +937,42 @@ describe("openclaw.chat", () => {
     } as unknown as GatewayRequestContext;
 
     const requestResponses = makeRespond();
-    await handleGatewayRequest({
-      req: {
-        type: "req",
-        id: "delegated-gateway-restart",
-        method: "openclaw.chat",
-        params: {
-          sessionId: "delegate-1",
-          message: "Restart Gateway.",
-          context: { page: "channels" },
-          delegation: { agentId: "main", sessionKey: "agent:main:main" },
-        },
+    await withGatewayToolCallerIdentity(
+      {
+        agentId: "main",
+        sessionKey: "agent:main:main",
+        operationalRunInstance,
       },
-      respond: requestResponses.respond,
-      client: {
-        ...defaultClient,
-        connect: { ...defaultClient.connect, role: "operator", scopes: ["operator.admin"] },
-      } as GatewayClient,
-      isWebchatConnect: () => false,
-      context,
-      extraHandlers: { "openclaw.chat": systemAgentHandlers["openclaw.chat"]! },
-    });
+      () =>
+        handleGatewayRequest({
+          req: {
+            type: "req",
+            id: "delegated-gateway-restart",
+            method: "openclaw.chat",
+            params: {
+              sessionId: "delegate-1",
+              message: "Restart Gateway.",
+              context: { page: "channels" },
+              delegation: { agentId: "main", sessionKey: "agent:main:main" },
+            },
+          },
+          respond: requestResponses.respond,
+          client: {
+            ...defaultClient,
+            connect: { ...defaultClient.connect, role: "operator", scopes: ["operator.admin"] },
+          } as GatewayClient,
+          isWebchatConnect: () => false,
+          context,
+          extraHandlers: { "openclaw.chat": systemAgentHandlers["openclaw.chat"]! },
+        }),
+    );
     const first = expectDefined(requestResponses.calls[0], "delegated Gateway response invariant");
     expect(getActiveGatewayRootWorkCount()).toBe(0);
     const proposalId = (first.payload as { proposalId?: string }).proposalId;
 
     expect(first.payload).toMatchObject({
-      reply: "Approval pending.",
+      reply:
+        "OpenClaw change pending approval: restart the Gateway. No change has been made. Expires in 10m.",
       needsApproval: true,
       proposalId: expect.stringMatching(/^system-agent:/),
     });
