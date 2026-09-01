@@ -377,7 +377,12 @@ export async function refreshStalePreparedModelRuntimeCatalog(
   snapshot: PreparedModelRuntimeSnapshot,
 ): Promise<ModelCatalogSnapshot | undefined> {
   const owner = resolvePreparedModelRuntimeOwnerBySnapshot(snapshot);
-  if (!owner?.catalogStale || !snapshot.loadFullModelCatalog) {
+  if (
+    !owner ||
+    owners.get(ownerKey(owner.input)) !== owner ||
+    !owner.catalogStale ||
+    !snapshot.loadFullModelCatalog
+  ) {
     return undefined;
   }
   const generation = owner.generation;
