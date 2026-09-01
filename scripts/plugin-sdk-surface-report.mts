@@ -329,9 +329,9 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: strict session-agent resolution aliases preserve shipped Plugin SDK behavior.
       // +1: manifest-owned plugin capability secret availability guard.
       // +1: canonical diagnostic flag checker through its focused subpath.
-      // +4: public provider-entry scaffold contract and its focused types.
+      // +5: public provider-entry scaffold contract and its focused types.
       // +2: focused provider-auth routes for shipped auth ordering and provider-map lookup.
-      4359,
+      4360,
       env,
     ),
     publicFunctionExports: readPluginSdkSurfaceBudgetEnv(
@@ -437,9 +437,9 @@ export function readPluginSdkSurfaceBudgets(env: NodeJS.ProcessEnv = process.env
       // +2: strict session-agent resolution aliases preserve shipped Plugin SDK behavior.
       // +1: manifest-owned plugin capability secret availability guard.
       // +1: canonical diagnostic flag checker through its focused subpath.
-      // +1: public provider-entry scaffold builder.
+      // +2: public provider-entry scaffold builder and validator.
       // +2: focused provider-auth routes for shipped auth ordering and provider-map lookup.
-      2594,
+      2595,
       env,
     ),
     publicDeprecatedExports: readPluginSdkSurfaceBudgetEnv(
