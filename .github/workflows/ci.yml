@@ -2120,7 +2120,7 @@ jobs:
           fi
 
           # These canaries verify the built CLI's local roundtrip and Gateway connection.
-          # The full PTY descriptor currently has no separate CI matrix consumer.
+          # Pull-request fallback and manual/release plans also retain the full PTY descriptor.
           if [ "$RUN_TUI_PTY" = "true" ]; then
             start_check "tui-pty" env \
               NODE_OPTIONS=--max-old-space-size=8192 \
