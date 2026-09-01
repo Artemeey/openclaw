@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { expectDefined } from "@openclaw/normalization-core";
 import {
   loadCodexBundleMcpThreadConfig,
   type EmbeddedRunAttemptParamsV2,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
 import type { PluginRuntime } from "openclaw/plugin-sdk/plugin-runtime";
 import { createCapturedPluginRegistration } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { upsertSessionUpstreamLink } from "openclaw/plugin-sdk/session-catalog";

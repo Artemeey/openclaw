@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
-import { expectDefined } from "@openclaw/normalization-core";
+import { expectDefined } from "openclaw/plugin-sdk/expect-runtime";
 import { vi } from "vitest";
 import { codexAppInventoryResponse } from "./app-inventory.test-helpers.js";
 import { CodexAppServerClient } from "./client.js";
