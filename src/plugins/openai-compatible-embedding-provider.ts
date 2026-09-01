@@ -15,7 +15,7 @@ import {
   fetchWithSsrFGuard,
   withTrustedEnvProxyGuardedFetchMode,
 } from "../infra/net/fetch-guard.js";
-import { hasProxyEnvConfigured } from "../infra/net/proxy-env.js";
+import { hasEnvHttpProxyConfigured } from "../infra/net/proxy-env.js";
 import { ssrfPolicyFromHttpBaseUrlAllowedHostname, type SsrFPolicy } from "../infra/net/ssrf.js";
 import type {
   EmbeddingInput,
@@ -306,7 +306,7 @@ async function postEmbeddingRequest(params: {
       auditContext: "embedding-provider:openai-compatible",
     };
     const { response, release } = await fetchWithSsrFGuard(
-      hasProxyEnvConfigured() ? withTrustedEnvProxyGuardedFetchMode(request) : request,
+      hasEnvHttpProxyConfigured() ? withTrustedEnvProxyGuardedFetchMode(request) : request,
     );
     try {
       if (!response.ok) {

@@ -9,11 +9,17 @@ import { getRegisteredEmbeddingProvider } from "./embedding-providers.js";
 import { openAICompatibleEmbeddingProviderAdapter } from "./openai-compatible-embedding-provider.js";
 
 const fetchWithSsrFGuardMock = vi.hoisted(() => vi.fn());
+const originalFetchWithSsrFGuard = vi.hoisted(() => ({
+  implementation:
+    undefined as unknown as (typeof import("../infra/net/fetch-guard.js"))["fetchWithSsrFGuard"],
+}));
 
 vi.mock("../infra/net/fetch-guard.js", async () => {
   const actual = await vi.importActual<typeof import("../infra/net/fetch-guard.js")>(
     "../infra/net/fetch-guard.js",
   );
+  originalFetchWithSsrFGuard.implementation = actual.fetchWithSsrFGuard;
+  fetchWithSsrFGuardMock.mockImplementation(actual.fetchWithSsrFGuard);
   return { ...actual, fetchWithSsrFGuard: fetchWithSsrFGuardMock };
 });
 
@@ -294,7 +300,8 @@ async function startOversizedSuccessEmbeddingServer(): Promise<OversizedStreamSe
 afterEach(async () => {
   const pending = servers.splice(0);
   await Promise.all(pending.map((server) => server.close()));
-  fetchWithSsrFGuardMock.mockReset();
+  fetchWithSsrFGuardMock.mockClear();
+  fetchWithSsrFGuardMock.mockImplementation(originalFetchWithSsrFGuard.implementation);
 });
 
 describe("openai-compatible generic embedding provider", () => {
@@ -321,8 +328,11 @@ describe("openai-compatible generic embedding provider", () => {
         expect.objectContaining({ mode: "trusted_env_proxy" }),
       );
     } finally {
-      if (previousHttpProxy === undefined) delete process.env.HTTP_PROXY;
-      else process.env.HTTP_PROXY = previousHttpProxy;
+      if (previousHttpProxy === undefined) {
+        delete process.env.HTTP_PROXY;
+      } else {
+        process.env.HTTP_PROXY = previousHttpProxy;
+      }
     }
   });
 
