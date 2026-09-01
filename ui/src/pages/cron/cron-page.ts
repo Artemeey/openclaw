@@ -18,11 +18,9 @@ import {
   createInitialCronState,
   getVisibleCronJobs,
   hasCronFormErrors,
-  loadCronFailingCount,
   loadCronJobsPage,
   loadCronModelSuggestions,
   loadCronRuns,
-  loadCronScopeStats,
   loadCronStatus,
   loadMoreCronRuns,
   normalizeCronFormState,
@@ -221,8 +219,6 @@ class CronPage extends OpenClawLightDomElement {
     void this.context.channels.refresh(false);
     await Promise.all([
       this.runCronTask((current) => loadCronStatus(current)),
-      this.runCronTask((current) => loadCronFailingCount(current)),
-      this.runCronTask((current) => loadCronScopeStats(current)),
       this.runCronTask((current) =>
         loadCronJobsPage(current, { tableFilters: options.tableFilters }),
       ),
@@ -420,7 +416,8 @@ class CronPage extends OpenClawLightDomElement {
       modelSuggestions: this.cronModelSuggestions,
     });
     const canManage = this.canManageCron;
-    const showCreateAction = canManage && !this.cron.cronEditingJob && !this.cron.cronCreateOpen;
+    const showOverviewActions = !this.cron.cronEditingJob && !this.cron.cronCreateOpen;
+    const showCreateAction = canManage && showOverviewActions;
     return html`
       ${renderSettingsPageHeader({
         title: titleForRoute("cron"),
@@ -430,6 +427,25 @@ class CronPage extends OpenClawLightDomElement {
             agents: this.agentsList?.agents ?? [],
             selection: this.context.agentSelection,
           })}
+          ${showOverviewActions
+            ? html`
+                <button
+                  type="button"
+                  class="btn btn--sm btn--ghost cron-refresh ${this.cron.cronLoading
+                    ? "cron-refresh--loading"
+                    : ""}"
+                  data-test-id="cron-refresh"
+                  ?disabled=${this.cron.cronLoading}
+                  title=${this.cron.cronLoading
+                    ? t("cron.list.refreshing")
+                    : t("cron.list.refresh")}
+                  aria-label=${t("cron.list.refresh")}
+                  @click=${() => void this.refreshCron({ tableFilters: true })}
+                >
+                  ${icon("refresh")}
+                </button>
+              `
+            : nothing}
           ${showCreateAction
             ? html`
                 <button
@@ -453,10 +469,6 @@ class CronPage extends OpenClawLightDomElement {
           listError: this.cron.cronJobsError,
           canManage,
           status: this.cron.cronStatus,
-          failingCount: this.cron.cronFailingCount,
-          agentScoped: this.cron.cronAgentId !== null,
-          scopedTotal: this.cron.cronScopedTotal,
-          scopedNextWakeAtMs: this.cron.cronScopedNextWakeAtMs,
           jobs: getVisibleCronJobs(this.cron),
           jobsLoadingMore: this.cron.cronJobsLoadingMore,
           jobsTotal: this.cron.cronJobsTotal,
@@ -504,7 +516,6 @@ class CronPage extends OpenClawLightDomElement {
             this.detailTab = tab;
           },
           onFormChange: (patch) => this.patchForm(patch),
-          onRefresh: () => void this.refreshCron({ tableFilters: true }),
           onSubmit: () => this.submitForm(),
           onSubmitRunNow: () => this.submitForm({ runNow: true }),
           onSelectJob: (job) => this.selectJob(job),

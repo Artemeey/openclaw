@@ -193,8 +193,26 @@ describe("CronPage editor state sync", () => {
     expect(header?.querySelector(".page-subtitle")?.textContent).toContain(
       "Schedule tasks for OpenClaw to run automatically",
     );
+    expect(header?.querySelector('[data-test-id="cron-refresh"]')).not.toBeNull();
     expect(header?.querySelector('[data-test-id="cron-new-task"]')).not.toBeNull();
+    expect(page.querySelector(".cron-overview-summary")).toBeNull();
+    expect(page.querySelector('.cron-toolbar [data-test-id="cron-refresh"]')).toBeNull();
     expect(page.querySelector('.cron-toolbar [data-test-id="cron-new-task"]')).toBeNull();
+  });
+
+  it("refreshes the overview from the header action", async () => {
+    const request = createRequest();
+    const gateway = createGateway({ request } as unknown as GatewayBrowserClient, true);
+    const page = createPage(createContext(gateway), { render: true });
+
+    await waitForCronPage(() =>
+      expect(page.querySelector('[data-test-id="cron-refresh"]')).not.toBeNull(),
+    );
+    request.mockClear();
+    (page.querySelector('[data-test-id="cron-refresh"]') as HTMLButtonElement).click();
+
+    await waitForCronPage(() => expect(request).toHaveBeenCalledWith("cron.status", {}));
+    expect(page.querySelector('.cron-toolbar [data-test-id="cron-refresh"]')).toBeNull();
   });
 
   it("opens a linked job's history after its jobs load and highlights the linked run", async () => {
@@ -608,25 +626,6 @@ describe("CronPage editor state sync", () => {
     await waitForCronPage(() => expect(page.cron.cronCreateOpen).toBe(false));
     await waitForCronPage(() =>
       expect(page.textContent).toContain("Run queued. Run ID: run-fresh"),
-    );
-  });
-
-  it("drills from the failing stat into run history filtered to errors", async () => {
-    const request = createRequest();
-    const client = { request } as unknown as GatewayBrowserClient;
-    const gateway = createGateway(client, true);
-    const page = createPage(createContext(gateway), { render: true });
-
-    await waitForCronPage(() =>
-      expect(page.querySelector('[data-test-id="cron-stat-failing"]')).not.toBeNull(),
-    );
-    (page.querySelector('[data-test-id="cron-stat-failing"]') as HTMLButtonElement).click();
-
-    await waitForCronPage(() => expect(page.querySelector(".cron-activity")).not.toBeNull());
-    expect(page.cron.cronRunsStatuses).toEqual(["error"]);
-    expect(request).toHaveBeenCalledWith(
-      "cron.runs",
-      expect.objectContaining({ statuses: ["error"] }),
     );
   });
 

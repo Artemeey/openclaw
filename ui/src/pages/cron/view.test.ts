@@ -8,25 +8,6 @@ import {
 } from "./view.test-support.ts";
 
 describe("cron view list pane", () => {
-  it.each([
-    { name: "an enabled scheduler", status: { enabled: true }, hasNextWake: true },
-    { name: "a disabled scheduler", status: { enabled: false }, hasNextWake: false },
-    { name: "loading scheduler status", status: null, hasNextWake: true },
-  ])("uses agent-scoped summary values for $name", ({ status, hasNextWake }) => {
-    const container = renderView({
-      agentScoped: true,
-      scopedTotal: 3,
-      scopedNextWakeAtMs: Date.now() + 60_000,
-      status: status ? { ...status, triggersEnabled: true, jobs: 99, nextWakeAtMs: null } : null,
-    });
-    const values = [...container.querySelectorAll(".cron-stat__value")].map((entry) =>
-      entry.textContent?.trim(),
-    );
-
-    expect(values[0]).toBe("3");
-    expect(values[2] !== "n/a").toBe(hasNextWake);
-  });
-
   it("wires the enabled tabs and marks the active one", () => {
     const onJobsFiltersChange = vi.fn();
     const container = renderView({ jobsEnabledFilter: "enabled", onJobsFiltersChange });
@@ -357,7 +338,6 @@ describe("cron view list pane", () => {
     });
     const banner = getElement(off, '[data-test-id="cron-scheduler-banner"]', HTMLDivElement);
     expect(banner.textContent).toContain("Scheduler disabled");
-    expect(getElement(off, ".cron-stats", HTMLDivElement).textContent).not.toContain("Scheduler");
     const footer = getElement(off, ".cron-table__footer", HTMLDivElement);
     expect(footer.textContent).toContain("1 of 2");
 
@@ -365,33 +345,15 @@ describe("cron view list pane", () => {
     expect(on.querySelector('[data-test-id="cron-scheduler-banner"]')).toBeNull();
   });
 
-  it("shows the global failing count and drills into failing run history", () => {
-    const onListTabChange = vi.fn();
-    const onRunsFiltersChange = vi.fn();
-    const container = renderView({ failingCount: 3, onListTabChange, onRunsFiltersChange });
-    const value = getElement(container, ".cron-stat__value--danger", HTMLSpanElement);
-    expect(value.textContent?.trim()).toBe("3");
-    getElement(container, '[data-test-id="cron-stat-failing"]', HTMLButtonElement).click();
-    expect(onListTabChange).toHaveBeenCalledWith("activity");
-    expect(onRunsFiltersChange).toHaveBeenCalledWith({ cronRunsStatuses: ["error"] });
-
-    const unknown = renderView({ failingCount: null });
-    expect(unknown.querySelector(".cron-stat__value--danger")).toBeNull();
-    const stats = getElement(unknown, ".cron-stats", HTMLDivElement);
-    expect(stats.textContent).toContain("n/a");
-  });
-
-  it("orders list navigation, summary card, and task filters", () => {
+  it("orders list navigation directly above task filters without a summary row", () => {
     const container = renderView();
     const navigation = getElement(container, ".cron-toolbar__primary", HTMLDivElement);
-    const summary = getElement(container, ".cron-overview-summary", HTMLDivElement);
     const filters = getElement(container, ".cron-toolbar__filters", HTMLDivElement);
 
-    expect(summary.classList.contains("settings-group")).toBe(true);
-    expect(navigation.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(
+    expect(container.querySelector(".cron-overview-summary")).toBeNull();
+    expect(navigation.compareDocumentPosition(filters) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(
       0,
     );
-    expect(summary.compareDocumentPosition(filters) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 
   it("switches between tasks and run history via the list tabs", () => {

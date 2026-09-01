@@ -1,6 +1,6 @@
 /* ── Automations (cron) page ─────────────────────────────────────────────────
  * Structure comes from the settings design language (settings.css); this file
- * only keeps the cron-specific escape hatches: the jobs table grid, stat grid,
+ * only keeps the cron-specific escape hatches: the jobs table grid,
  * run-history entries, and the details-based popover menus.
  */
 
@@ -26,77 +26,6 @@
   flex-direction: column;
   gap: var(--space-3);
   min-width: 0;
-}
-
-.cron-overview-summary {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  padding: var(--space-3) var(--space-4);
-}
-
-.cron-stats {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  color: var(--muted);
-  font-size: var(--control-ui-text-sm);
-}
-
-.cron-stat {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-/* Failing is still a drill-down into run history, but reads as one fact in the
-   summary rather than a third competing card. */
-.cron-stat--action {
-  position: relative;
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-1);
-  font: inherit;
-  color: inherit;
-  cursor: var(--cursor-action);
-  border: 0;
-  background: transparent;
-  padding: 2px;
-  margin: -2px;
-  border-radius: var(--radius-sm);
-  transition: color var(--duration-fast) var(--ease-out);
-}
-
-.cron-stat--action:hover {
-  color: var(--text-strong);
-}
-
-.cron-stat__label {
-  color: inherit;
-}
-
-.cron-stat__value {
-  color: var(--text-strong);
-  font-size: inherit;
-  font-weight: 650;
-}
-
-.cron-stat__value--danger {
-  color: var(--danger);
-}
-
-.cron-stat__value--time {
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.cron-stat__separator {
-  color: var(--border-strong);
 }
 
 .cron-admin-note {
@@ -145,14 +74,6 @@
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 
-/* Toolbar buttons share the settings control height with the adjacent
-   segmented switches, search input, and filter selects. */
-.cron-toolbar .btn {
-  height: var(--settings-control-height);
-  padding-block: 0;
-  box-sizing: border-box;
-}
-
 .cron-search-box {
   position: relative;
   flex: 1 1 auto;
@@ -189,14 +110,6 @@
   outline: none;
   border-color: color-mix(in srgb, var(--accent) 46%, var(--border));
   background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
-}
-
-.cron-toolbar__end {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: 0 0 auto;
 }
 
 .cron-new-task {
@@ -1257,16 +1170,6 @@
 }
 
 @media (max-width: 560px) {
-  .cron-stats {
-    flex-wrap: wrap;
-  }
-
-  .cron-overview-summary {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-
   .cron-admin-note {
     margin-left: 0;
   }

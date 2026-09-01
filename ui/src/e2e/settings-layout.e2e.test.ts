@@ -176,22 +176,26 @@ suite.define(() => {
 
       const title = page.locator(".content-header .page-title");
       const subtitle = page.locator(".content-header .page-subtitle");
+      const refreshAction = page.locator('.content-header [data-test-id="cron-refresh"]');
       const createAction = page.locator('.content-header [data-test-id="cron-new-task"]');
       const tabs = page.locator(".cron-toolbar__primary");
-      const summary = page.locator(".cron-overview-summary");
       const filters = page.locator(".cron-toolbar__filters");
       await Promise.all([
         title.waitFor(),
         subtitle.waitFor(),
+        refreshAction.waitFor(),
         createAction.waitFor(),
         tabs.waitFor(),
-        summary.waitFor(),
         filters.waitFor(),
       ]);
 
       expect(await subtitle.textContent()).toContain(
         "Schedule tasks for OpenClaw to run automatically",
       );
+      expect(await page.locator(".cron-overview-summary").count()).toBe(0);
+      expect(await page.locator(".agent-scope-control__label").count()).toBe(0);
+      expect(await page.locator(".agent-select__menu-title").textContent()).toBe("Agent");
+      expect(await page.locator('.cron-toolbar [data-test-id="cron-refresh"]').count()).toBe(0);
       expect(await page.locator('.cron-toolbar [data-test-id="cron-new-task"]').count()).toBe(0);
       const geometry = await page.evaluate(() => {
         const box = (selector: string) => {
@@ -208,18 +212,18 @@ suite.define(() => {
           };
         };
         return {
+          create: box('.content-header [data-test-id="cron-new-task"]'),
           filters: box(".cron-toolbar__filters"),
-          summary: box(".cron-overview-summary"),
+          refresh: box('.content-header [data-test-id="cron-refresh"]'),
           tabs: box(".cron-toolbar__primary"),
           title: box(".content-header .page-title"),
         };
       });
       expect(geometry.title.left).toBe(geometry.tabs.left);
-      expect(geometry.summary.left).toBe(geometry.tabs.left);
-      expect(geometry.summary.right).toBe(geometry.tabs.right);
       expect(geometry.filters.left).toBe(geometry.tabs.left);
-      expect(geometry.tabs.bottom).toBeLessThanOrEqual(geometry.summary.top);
-      expect(geometry.summary.bottom).toBeLessThanOrEqual(geometry.filters.top);
+      expect(geometry.tabs.bottom).toBeLessThanOrEqual(geometry.filters.top);
+      expect(geometry.refresh.right).toBeLessThanOrEqual(geometry.create.left);
+      expect(Math.abs(geometry.refresh.top - geometry.create.top)).toBeLessThanOrEqual(8);
 
       if (proofEnabled) {
         const proofDir = path.join(suite.artifactDir, "settings-layout-audit");
@@ -265,9 +269,11 @@ suite.define(() => {
         }
         return {
           actions: box(".content-header .page-header-actions"),
+          create: box('.content-header [data-test-id="cron-new-task"]'),
           header: box(".content-header"),
           headerClientHeight: header.clientHeight,
           headerScrollHeight: header.scrollHeight,
+          refresh: box('.content-header [data-test-id="cron-refresh"]'),
           subtitle: box(".content-header .page-subtitle"),
           tabs: box(".cron-toolbar__primary"),
           title: box(".content-header .page-title"),
@@ -275,6 +281,10 @@ suite.define(() => {
       });
       expect(mobileGeometry.title.left).toBe(mobileGeometry.tabs.left);
       expect(mobileGeometry.actions.top).toBeGreaterThanOrEqual(mobileGeometry.subtitle.bottom);
+      expect(mobileGeometry.refresh.left).toBeLessThan(mobileGeometry.create.left);
+      expect(Math.abs(mobileGeometry.refresh.top - mobileGeometry.create.top)).toBeLessThanOrEqual(
+        8,
+      );
       expect(mobileGeometry.header.bottom).toBeGreaterThanOrEqual(mobileGeometry.actions.bottom);
       expect(mobileGeometry.headerScrollHeight).toBeLessThanOrEqual(
         mobileGeometry.headerClientHeight,
