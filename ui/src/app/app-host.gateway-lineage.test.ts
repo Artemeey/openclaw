@@ -33,6 +33,8 @@ import {
   type GatewayRequestMock,
 } from "../test-helpers/gateway-client.ts";
 import { createStorageMock } from "../test-helpers/storage.ts";
+// Detached lineage fixtures render synchronously; browser E2E owns chunk-loading coverage.
+import "../components/login-gate.ts";
 import "./app-host.ts";
 import type { ApplicationRuntime } from "./bootstrap.ts";
 import type { ApplicationContext, ApplicationGateway } from "./context.ts";

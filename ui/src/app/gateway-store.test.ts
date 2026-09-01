@@ -219,12 +219,15 @@ describe("createApplicationGateway connection phase", () => {
     expect(gateway.snapshot.canvasPluginSurfaceUrl).toBeNull();
   });
 
-  it("does not let a superseded canvas refresh publish into the current snapshot", async () => {
+  it("does not let a superseded canvas refresh publish into the current snapshot", async ({
+    onTestFinished,
+  }) => {
     let resolveRefresh: (value: unknown) => void = () => {};
     const firstRefresh = new Promise<unknown>((resolve) => {
       resolveRefresh = resolve;
     });
     const { gateway, current } = createStore();
+    onTestFinished(() => gateway.stop());
     gateway.start();
     const first = current();
     first.request.mockReturnValueOnce(firstRefresh);
@@ -232,7 +235,9 @@ describe("createApplicationGateway connection phase", () => {
       ...HELLO,
       pluginSurfaceUrls: { canvas: "https://canvas.test/__openclaw__/cap/first" },
     });
-    await vi.waitFor(() => expect(first.request).toHaveBeenCalledOnce());
+    // Import completion, not wall-clock speed, owns the first refresh.
+    await vi.dynamicImportSettled();
+    expect(first.request).toHaveBeenCalledOnce();
 
     gateway.connect();
     current().opts.onHello?.({
@@ -251,7 +256,6 @@ describe("createApplicationGateway connection phase", () => {
     expect(gateway.snapshot.canvasPluginSurfaceUrl).toBe(
       "https://canvas.test/__openclaw__/cap/current",
     );
-    gateway.stop();
   });
 
   it("stays on the gate when the first connect fails, even with auto-retry pending", () => {
