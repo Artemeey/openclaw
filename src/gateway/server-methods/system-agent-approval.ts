@@ -136,19 +136,26 @@ export function queueDelegatedApproval(params: {
       await runWithGatewayIndependentRootWorkContinuation(
         () =>
           runSystemAgentGatewayTask(async () => {
-            if (
-              decision !== "deny" &&
-              (!record.approvalAuthority || record.approvalAuthority() === false)
-            ) {
-              throw new Error("system-agent approval authority is no longer active");
-            }
+            const assertLiveApprovalAuthority = () => {
+              if (
+                decision !== "deny" &&
+                (!record.approvalAuthority || record.approvalAuthority() === false)
+              ) {
+                throw new Error("system-agent approval authority is no longer active");
+              }
+            };
+            assertLiveApprovalAuthority();
             if (params.sessions.get(params.sessionId) !== params.session) {
               return;
             }
             if (params.session.pendingApproval?.id === record.id) {
               params.session.pendingApproval = undefined;
             }
-            await params.session.engine.resolveOperatorApproval(decision, params.proposal.hash);
+            await params.session.engine.resolveOperatorApproval(
+              decision,
+              params.proposal.hash,
+              assertLiveApprovalAuthority,
+            );
           }),
         "system-agent:task",
       ),

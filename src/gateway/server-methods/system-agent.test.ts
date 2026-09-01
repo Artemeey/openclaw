@@ -1009,7 +1009,11 @@ describe("openclaw.chat", () => {
     } finally {
       releaseApproval.resolve();
     }
-    expect(resolveOperatorApproval).toHaveBeenCalledWith("allow-once", proposalHash);
+    expect(resolveOperatorApproval).toHaveBeenCalledWith(
+      "allow-once",
+      proposalHash,
+      expect.any(Function),
+    );
     expect(runGatewayRestart).toHaveBeenCalledOnce();
     await expect(resolveOperatorApproval.mock.results[0]?.value).resolves.toMatchObject({
       text: expect.stringContaining("[openclaw] done: gateway.restart"),
