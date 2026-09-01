@@ -134,6 +134,8 @@ jobs:
       strict_native_i18n: ${{ github.event_name == 'workflow_dispatch' && !inputs.release_gate && 'true' || steps.changed_scope.outputs.strict_native_i18n }}
       run_checks_windows: ${{ steps.manifest.outputs.run_checks_windows }}
       checks_windows_matrix: ${{ steps.manifest.outputs.checks_windows_matrix }}
+      # Carry the existing overlap eligibility with the route, including hybrid hosted jobs.
+      windows_project_parallelism: ${{ vars.OPENCLAW_CI_RUNNER_BACKEND != 'github' && !(vars.OPENCLAW_CI_RUNNER_BACKEND == 'hybrid' && github.run_attempt > 1) && github.event_name != 'workflow_dispatch' && github.repository == 'openclaw/openclaw' && (github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association)) && '2' || '1' }}
       run_macos_node: ${{ steps.manifest.outputs.run_macos_node }}
       macos_node_matrix: ${{ steps.manifest.outputs.macos_node_matrix }}
       run_macos_swift: ${{ steps.manifest.outputs.run_macos_swift }}
@@ -3921,7 +3923,7 @@ jobs:
     name: ${{ matrix.check_name || 'checks-windows' }}
     needs: [preflight]
     if: needs.preflight.outputs.run_checks_windows == 'true'
-    runs-on: ${{ vars.OPENCLAW_CI_RUNNER_BACKEND == 'github' && 'windows-2025' || (vars.OPENCLAW_CI_RUNNER_BACKEND == 'hybrid' && github.run_attempt > 1) && 'windows-2025' || github.event_name == 'workflow_dispatch' && 'windows-2025' || (github.repository == 'openclaw/openclaw' && (github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association)) && 'blacksmith-8vcpu-windows-2025' || 'windows-2025') }}
+    runs-on: ${{ needs.preflight.outputs.windows_project_parallelism == '2' && vars.OPENCLAW_CI_RUNNER_BACKEND != 'hybrid' && 'blacksmith-8vcpu-windows-2025' || 'windows-2025' }}
     timeout-minutes: 60
     env:
       NODE_OPTIONS: --max-old-space-size=8192
@@ -4011,15 +4013,10 @@ jobs:
       - name: Run ${{ matrix.task }} (${{ matrix.runtime }})
         env:
           TASK: ${{ matrix.task }}
+          OPENCLAW_TEST_PROJECTS_PARALLEL: ${{ needs.preflight.outputs.windows_project_parallelism }}
         shell: bash
         run: |
           set -euo pipefail
-          # Jobs requesting the Blacksmith Windows class admit at most two project
-          # processes with one Vitest worker each; hosted fallbacks remain serial.
-          export OPENCLAW_TEST_PROJECTS_PARALLEL=1
-          if [[ "${RUNNER_ENVIRONMENT:-}" == "self-hosted" ]]; then
-            export OPENCLAW_TEST_PROJECTS_PARALLEL=2
-          fi
           case "$TASK" in
             # Linux owns the full repo test suite. Keep the Windows runner focused on
             # Windows-native process/path wrappers so platform regressions fail fast.

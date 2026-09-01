@@ -197,6 +197,22 @@ function evaluateWorkflowExpression(
   });
 }
 
+function withWindowsProjectBudget(
+  workflow: ReturnType<typeof readCiWorkflow>,
+  context: Parameters<typeof evaluateWorkflowExpression>[1],
+) {
+  return {
+    ...context,
+    preflightOutputs: {
+      ...context.preflightOutputs,
+      windows_project_parallelism: evaluateWorkflowExpression(
+        workflow.jobs.preflight.outputs.windows_project_parallelism,
+        context,
+      ),
+    },
+  };
+}
+
 function runCiGateFixture(requiredResults: string, selectedResults: string) {
   const gateStep = readCiWorkflow().jobs["ci-gate"].steps.find(
     (step: WorkflowStep) => step.name === "Verify selected CI lanes",
@@ -3106,7 +3122,7 @@ NODE
   });
 
   it.skipIf(process.platform === "win32")(
-    "bounds Windows project overlap to existing self-hosted capacity",
+    "preserves Windows project budgets across runner routes and historical targets",
     () => {
       const workflow = readCiWorkflow();
       const job = workflow.jobs["checks-windows"];
@@ -3116,33 +3132,105 @@ NODE
       const cwd = tempDirs.make("windows-project-budget-");
       const bin = path.join(cwd, "bin");
       mkdirSync(bin);
-      writeFileSync(
-        path.join(cwd, "package.json"),
-        JSON.stringify({
-          scripts: { "test:windows:ci:1": "fixture", "test:windows:ci:2": "fixture" },
-        }),
-      );
       const pnpm = path.join(bin, "pnpm");
       writeFileSync(
         pnpm,
-        '#!/bin/sh\nprintf "project_parallelism=%s\\n" "${OPENCLAW_TEST_PROJECTS_PARALLEL:-1}"\n',
+        '#!/bin/sh\nprintf "selected=%s project_parallelism=%s\\n" "$*" "$OPENCLAW_TEST_PROJECTS_PARALLEL"\n',
       );
       chmodSync(pnpm, 0o755);
-      for (const task of ["test-1", "test-2"]) {
-        for (const runner of ["github-hosted", "self-hosted"]) {
-          const result = runWorkflowShellScript(runStep.run, {
-            cwd,
-            env: {
-              ...process.env,
-              PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-              TASK: task,
-              RUNNER_ENVIRONMENT: runner,
-              OPENCLAW_TEST_PROJECTS_PARALLEL: undefined,
-            },
+      const normalBudgets = {
+        "": [2, 2],
+        blacksmith: [2, 2],
+        github: [1, 1],
+        hybrid: [2, 1],
+      } as const;
+      const authorAssociations = {
+        OWNER: true,
+        MEMBER: true,
+        COLLABORATOR: true,
+        CONTRIBUTOR: true,
+        FIRST_TIME_CONTRIBUTOR: false,
+        FIRST_TIMER: false,
+        MANNEQUIN: false,
+        NONE: false,
+      };
+      const commandRoutes = new Map<string, { runner: string; projectParallelism: string }>();
+      for (const [runnerBackend, budgets] of Object.entries(normalBudgets)) {
+        for (const eventName of ["push", "pull_request", "workflow_dispatch"] as const) {
+          for (const runAttempt of [1, 2]) {
+            for (const repository of ["openclaw/openclaw", "fork/openclaw"]) {
+              for (const [authorAssociation, trusted] of Object.entries(authorAssociations)) {
+                for (const headRepository of [repository, "contributor/openclaw"]) {
+                  const context = withWindowsProjectBudget(workflow, {
+                    runnerBackend: runnerBackend as keyof typeof normalBudgets,
+                    eventName,
+                    runAttempt,
+                    repository,
+                    authorAssociation,
+                    headRepository,
+                  });
+                  const expectedBudget =
+                    eventName === "workflow_dispatch" ||
+                    repository !== "openclaw/openclaw" ||
+                    (eventName === "pull_request" && !trusted)
+                      ? 1
+                      : budgets[runAttempt - 1];
+                  const expectedRunner =
+                    expectedBudget === 2 && runnerBackend !== "hybrid"
+                      ? "blacksmith-8vcpu-windows-2025"
+                      : "windows-2025";
+                  const label = JSON.stringify(context);
+                  const runner = evaluateWorkflowExpression(job["runs-on"], context);
+                  const projectParallelism = evaluateWorkflowExpression(
+                    runStep.env.OPENCLAW_TEST_PROJECTS_PARALLEL,
+                    context,
+                  );
+                  expect(runner, label).toBe(expectedRunner);
+                  expect(projectParallelism, label).toBe(String(expectedBudget));
+                  const route = `${runner}/${projectParallelism}`;
+                  commandRoutes.set(route, { runner, projectParallelism });
+                }
+              }
+            }
+          }
+        }
+      }
+      expect([...commandRoutes.keys()]).toEqual([
+        "blacksmith-8vcpu-windows-2025/2",
+        "windows-2025/1",
+        "windows-2025/2",
+      ]);
+      for (const [route, { runner, projectParallelism }] of commandRoutes) {
+        for (const partsSupported of [true, false]) {
+          writeFileSync(
+            path.join(cwd, "package.json"),
+            JSON.stringify({
+              scripts: partsSupported
+                ? { "test:windows:ci:1": "fixture", "test:windows:ci:2": "fixture" }
+                : { "test:windows:ci": "fixture" },
+            }),
+          );
+          const commands = ["test-1", "test-2"].map((task) => {
+            const result = runWorkflowShellScript(runStep.run, {
+              cwd,
+              env: {
+                ...process.env,
+                PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+                TASK: task,
+                RUNNER_ENVIRONMENT: runner === "windows-2025" ? "github-hosted" : "self-hosted",
+                OPENCLAW_TEST_PROJECTS_PARALLEL: projectParallelism,
+              },
+            });
+            expect(result.status, result.stdout + result.stderr).toBe(0);
+            return result.stdout.match(/^selected=(.*)$/m)?.[1];
           });
-          expect(result.status, result.stdout + result.stderr).toBe(0);
-          expect(result.stdout).toContain(
-            `project_parallelism=${runner === "self-hosted" ? 2 : 1}`,
+          expect(commands, route).toEqual(
+            (partsSupported
+              ? ["test:windows:ci:1", "test:windows:ci:2"]
+              : ["test:windows:ci", undefined]
+            ).map((command) =>
+              command ? `${command} project_parallelism=${projectParallelism}` : undefined,
+            ),
           );
         }
       }
@@ -3719,6 +3807,10 @@ NODE
   it("encodes GitHub, Blacksmith, and hybrid runner-backend shapes", () => {
     const workflow = readCiWorkflow();
     const jobs = workflow.jobs as Record<string, { "runs-on": unknown }>;
+    const evaluateRunner = (
+      expression: unknown,
+      context: Parameters<typeof evaluateWorkflowExpression>[1],
+    ) => evaluateWorkflowExpression(expression, withWindowsProjectBudget(workflow, context));
     const expectedHostedRunners = {
       android: "ubuntu-24.04",
       "build-artifacts": "ubuntu-24.04",
@@ -3768,7 +3860,6 @@ NODE
       "ios-screenshot-shard": "blacksmith-12vcpu-macos-26",
       "check-test-types-hosted-core-shard": "blacksmith-8vcpu-ubuntu-2404",
       "checks-ui": "blacksmith-8vcpu-ubuntu-2404",
-      "checks-windows": "blacksmith-8vcpu-windows-2025",
     } as const;
     const expectedHybridForkRunners = {
       ...expectedHybridFirstAttemptRunners,
@@ -3790,21 +3881,21 @@ NODE
     for (const [jobName, hostedRunner] of Object.entries(expectedHostedRunners)) {
       const expression = jobs[jobName]?.["runs-on"];
       expect(
-        evaluateWorkflowExpression(expression, {
+        evaluateRunner(expression, {
           ...canonicalPullRequest,
           runnerBackend: "github",
         }),
         jobName,
       ).toBe(hostedRunner);
       expect(
-        evaluateWorkflowExpression(expression, {
+        evaluateRunner(expression, {
           ...canonicalPullRequest,
           runnerBackend: "hybrid",
         }),
         jobName,
       ).toBe(expectedHybridFirstAttemptRunners[jobName as keyof typeof expectedHostedRunners]);
       expect(
-        evaluateWorkflowExpression(expression, {
+        evaluateRunner(expression, {
           ...canonicalPullRequest,
           runnerBackend: "hybrid",
           runAttempt: 2,
@@ -3812,16 +3903,16 @@ NODE
         jobName,
       ).toBe(hostedRunner);
       expect(
-        evaluateWorkflowExpression(expression, {
+        evaluateRunner(expression, {
           ...canonicalPullRequest,
           runnerBackend: "blacksmith",
         }),
         jobName,
-      ).toBe(evaluateWorkflowExpression(expression, canonicalPullRequest));
+      ).toBe(evaluateRunner(expression, canonicalPullRequest));
       // Authors with no landed commit stay on free hosted infrastructure, so an
       // unreviewed PR cannot spend Blacksmith capacity.
       expect(
-        evaluateWorkflowExpression(expression, {
+        evaluateRunner(expression, {
           ...canonicalPullRequest,
           authorAssociation: "NONE",
           headRepository: "contributor/openclaw",
@@ -3833,7 +3924,7 @@ NODE
       // maintainer PR. Maintainers report CONTRIBUTOR here too (org membership is
       // concealed), so this case also protects their own routing.
       expect(
-        evaluateWorkflowExpression(expression, {
+        evaluateRunner(expression, {
           ...canonicalPullRequest,
           authorAssociation: "CONTRIBUTOR",
           headRepository: "contributor/openclaw",
@@ -3897,7 +3988,7 @@ NODE
     for (const { jobName, matrix, runner } of widenedHybridMatrixRows) {
       const expression = jobs[jobName]?.["runs-on"];
       expect(
-        evaluateWorkflowExpression(expression, {
+        evaluateRunner(expression, {
           ...canonicalPullRequest,
           matrix,
           runnerBackend: "hybrid",
@@ -3905,7 +3996,7 @@ NODE
         `${jobName}: hybrid attempt 1`,
       ).toBe(runner);
       expect(
-        evaluateWorkflowExpression(expression, {
+        evaluateRunner(expression, {
           ...canonicalPullRequest,
           matrix,
           runnerBackend: "hybrid",
@@ -3914,7 +4005,7 @@ NODE
         `${jobName}: hybrid retry`,
       ).toBe("ubuntu-24.04");
       expect(
-        evaluateWorkflowExpression(expression, {
+        evaluateRunner(expression, {
           ...canonicalPullRequest,
           matrix,
           runnerBackend: "github",
@@ -3922,7 +4013,7 @@ NODE
         `${jobName}: github backend`,
       ).toBe("ubuntu-24.04");
       expect(
-        evaluateWorkflowExpression(expression, {
+        evaluateRunner(expression, {
           ...canonicalPullRequest,
           authorAssociation: "NONE",
           headRepository: "contributor/openclaw",
@@ -3932,7 +4023,7 @@ NODE
         `${jobName}: untrusted fork pull request`,
       ).toBe("ubuntu-24.04");
       expect(
-        evaluateWorkflowExpression(expression, {
+        evaluateRunner(expression, {
           ...canonicalPullRequest,
           eventName: "workflow_dispatch",
           matrix,
