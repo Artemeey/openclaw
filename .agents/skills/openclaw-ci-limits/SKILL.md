@@ -31,6 +31,13 @@ availability, Blacksmith control-plane health, and downstream queue drains.
 
 ## Rejected Experiments
 
+- **Hosted Mac exact dependencies (2026-09-01):** The same-head publisher and
+  consumer in [run 33458856298](https://github.com/openclaw/openclaw/actions/runs/33458856298)
+  successfully saved and restored a 1.66-GB dependency archive, but setup took
+  142s versus 86s with the ordinary store cache. Extraction took 82s versus 27s;
+  install improved only from 43s to 35s. Keep hosted Mac jobs on the ordinary
+  store cache. Reconsider only with measured total setup savings, including
+  transfer, extraction and frozen reconciliation, not a successful cache hit.
 - **Actions-artifact checkout (2026-08-16):** Do not recommend replacing the
   shared Blacksmith Git fetch with a preflight-produced workspace or `.git`
   artifact. [PR #124818](https://github.com/openclaw/openclaw/pull/124818)
@@ -177,10 +184,8 @@ These are intentionally guarded by `test/scripts/ci-workflow-guards.test.ts`:
   or standalone admission job. The protected `vitest-cache-warm` workflow
   publishes the immutable semantic dependency archive after setup succeeds,
   before build and transform warming. Preflight and downstream Node jobs are
-  restore-only consumers on eligible self-hosted runners. Hosted Mac Node jobs
-  also consume exact archives on canonical attempt-1 pushes and same-repo PRs;
-  fork/manual/retry Mac jobs retain the ordinary pnpm-store cache. Exact misses
-  and other hosted paths use the ordinary pnpm-store cache.
+  restore-only consumers on eligible self-hosted runners. Exact misses and
+  hosted paths, including Mac Node jobs, use the ordinary pnpm-store cache.
 - Hybrid first attempts route `preflight`, `security-fast`, and `ci-gate` to
   the existing 4-vCPU Blacksmith runner after measured hosted queue delays.
   Contributor trust, manual/non-canonical fallbacks, hosted retries, and the

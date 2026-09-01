@@ -2119,8 +2119,8 @@ jobs:
             wait_checks
           fi
 
-          # The dedicated Node shard owns the full built-CLI PTY suite. Keep
-          # only the local roundtrip and Gateway-connect artifact canaries here.
+          # These canaries verify the built CLI's local roundtrip and Gateway connection.
+          # The full PTY descriptor currently has no separate CI matrix consumer.
           if [ "$RUN_TUI_PTY" = "true" ]; then
             start_check "tui-pty" env \
               NODE_OPTIONS=--max-old-space-size=8192 \
