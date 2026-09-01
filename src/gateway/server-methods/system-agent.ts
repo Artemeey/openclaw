@@ -66,9 +66,9 @@ import {
   startSetupActivationWizard,
 } from "./system-agent-setup-wizard.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
+import { assertValidParams } from "./validation.js";
 
 export type { SystemAgentChatSession };
-import { assertValidParams } from "./validation.js";
 
 /**
  * `openclaw.chat` lets clients (macOS app onboarding, future UIs) run the

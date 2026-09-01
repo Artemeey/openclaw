@@ -60,15 +60,18 @@ describe("openclaw.chat concurrency", () => {
         params: { sessionId, message: "yes" },
         client: defaultClient,
         context,
-        respond: () =>
-          activeAtResponse.push(getCommandLaneSnapshot(CommandLane.SystemAgent).activeCount),
+        respond: () => {
+          activeAtResponse.push(getCommandLaneSnapshot(CommandLane.SystemAgent).activeCount);
+        },
       } as never);
 
     const first = handleChat("s1");
     const second = handleChat("s2");
 
     await firstStarted.promise;
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
     expect(getCommandLaneSnapshot(CommandLane.SystemAgent)).toMatchObject({
       activeCount: 2,
       queuedCount: 0,
