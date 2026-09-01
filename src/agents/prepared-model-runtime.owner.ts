@@ -40,6 +40,25 @@ import type {
   PreparedModelRuntimeSnapshot,
 } from "./prepared-model-runtime.types.js";
 
+const ownersBySnapshot = new WeakMap<PreparedModelRuntimeSnapshot, PreparedModelRuntimeOwner>();
+
+export function resolvePreparedModelRuntimeOwnerBySnapshot(
+  snapshot: PreparedModelRuntimeSnapshot,
+): PreparedModelRuntimeOwner | undefined {
+  return ownersBySnapshot.get(snapshot);
+}
+
+function publishPreparedModelRuntimeOwnerSnapshot(
+  owner: PreparedModelRuntimeOwner,
+  snapshot: PreparedModelRuntimeSnapshot,
+): void {
+  if (owner.snapshot) {
+    ownersBySnapshot.delete(owner.snapshot);
+  }
+  owner.snapshot = snapshot;
+  ownersBySnapshot.set(snapshot, owner);
+}
+
 export type {
   PreparedModelRuntimeInput,
   PreparedModelRuntimeLease,
@@ -593,7 +612,7 @@ export async function publishPreparedModelRuntimeOwnerBatch(params: {
           result.snapshot,
           candidate.owner.input.config,
         );
-        candidate.owner.snapshot = snapshot;
+        publishPreparedModelRuntimeOwnerSnapshot(candidate.owner, snapshot);
         results.set(candidate.owner, { ...result, snapshot });
         candidate.owner.pluginGeneration = result.pluginGeneration;
         candidate.owner.needsRefresh = false;
@@ -664,7 +683,7 @@ export async function publishModelRuntimeSnapshot(
         );
       }
       const snapshot = stampPreparedModelRuntimeSnapshotConfig(result.snapshot, owner.input.config);
-      owner.snapshot = snapshot;
+      publishPreparedModelRuntimeOwnerSnapshot(owner, snapshot);
       owner.pluginGeneration = result.pluginGeneration;
       owner.pendingPluginGeneration = undefined;
       owner.pending = undefined;

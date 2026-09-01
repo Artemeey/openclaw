@@ -47,6 +47,19 @@ const preparedModelRuntimeMocks = vi.hoisted(() => ({
     entries: [],
     routeVariants: [],
   })),
+  createPreparedModelCatalogWorkerInput: vi.fn(
+    ({
+      agentFacts,
+    }: {
+      agentFacts: { input: unknown; authStore: unknown; providerIds: unknown };
+    }) => ({
+      kind: "catalog",
+      generationFingerprint: "test-generation",
+      input: agentFacts.input,
+      authStore: agentFacts.authStore,
+      providerIds: agentFacts.providerIds,
+    }),
+  ),
   configuredAgentIds: [] as string[],
   configuredAgentIdsError: undefined as Error | undefined,
   configuredAgentDirs: new Map<string, string>(),
@@ -102,21 +115,9 @@ vi.mock("../plugins/plugin-metadata-snapshot.js", () => ({
 }));
 
 vi.mock("./prepared-model-catalog-worker.js", () => ({
-  createPreparedModelCatalogWorkerInput: ({
-    agentFacts,
-  }: {
-    agentFacts: {
-      input: unknown;
-      authStore: unknown;
-      providerIds: unknown;
-    };
-  }) => ({
-    kind: "catalog",
-    generationFingerprint: "test-generation",
-    input: agentFacts.input,
-    authStore: agentFacts.authStore,
-    providerIds: agentFacts.providerIds,
-  }),
+  createPreparedModelCatalogWorkerInput: (
+    ...args: Parameters<typeof preparedModelRuntimeMocks.createPreparedModelCatalogWorkerInput>
+  ) => preparedModelRuntimeMocks.createPreparedModelCatalogWorkerInput(...args),
   createPreparedModelCatalogWorker: () => ({
     loadCatalog: (...args: unknown[]) =>
       preparedModelRuntimeMocks.runPreparedModelCatalogWorker(...args),
@@ -397,6 +398,7 @@ export function resetPreparedModelRuntimeHarness(state: OpenClawTestState): void
   preparedModelRuntimeMocks.buildPreparedModelCatalogSnapshot
     .mockReset()
     .mockResolvedValue({ entries: [], routeVariants: [] });
+  preparedModelRuntimeMocks.createPreparedModelCatalogWorkerInput.mockClear();
   preparedModelRuntimeMocks.discoverAuthStorage
     .mockReset()
     .mockImplementation(() => preparedModelRuntimeMocks.authStorage);
