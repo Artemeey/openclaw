@@ -352,6 +352,10 @@ close and the inactivity backstop remain independent of it.
 | `substantive` | Answer simple conversational glue directly and consult before facts, memory, tools, or context. |
 | `always`      | Consult before every substantive answer.                                                        |
 
+When a host tool run reports cancellation, the realtime model receives a
+cancelled result and the phone call stays open. Timeouts and other tool failures
+remain errors; ending the phone session suppresses pending consult results.
+
 ### Agent voice context
 
 Enable `realtime.agentContext` when the voice bridge should sound like the
@@ -847,8 +851,9 @@ delegate to the Gateway-owned voice-call runtime so the CLI does not bind a
 second webhook server. If no Gateway is reachable, the commands fall back to
 a standalone CLI runtime.
 
-`latency` reads `calls.jsonl` from the default voice-call storage path. Use
-`--file <path>` to point at a different log and `--last <n>` to limit
+`latency` reads persisted call records from SQLite by default. Use
+`--file <path>` to read an existing custom JSONL log (with a basename other than
+`calls.jsonl`) and `--last <n>` to limit
 analysis to the last N records (default 200). Output includes min/max/avg,
 p50, and p95 for turn latency and listen-wait times.
 
