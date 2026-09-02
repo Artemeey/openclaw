@@ -1,30 +1,12 @@
 // Covers OpenAI-compatible embedding provider plugin behavior.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { AddressInfo, Socket } from "node:net";
+import { connect, type AddressInfo, type Socket } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withTestTimeout } from "../../test/helpers/promise.js";
 import { UnresolvedSecretInputError } from "../config/types.secrets.js";
 import type { EmbeddingProviderCreateOptions } from "./embedding-providers.js";
 import { getRegisteredEmbeddingProvider } from "./embedding-providers.js";
 import { openAICompatibleEmbeddingProviderAdapter } from "./openai-compatible-embedding-provider.js";
-
-const withRemoteHttpResponseMock = vi.hoisted(() => vi.fn());
-const originalWithRemoteHttpResponse = vi.hoisted(() => ({
-  implementation:
-    undefined as unknown as (typeof import("../../packages/memory-host-sdk/src/host/remote-http.js"))["withRemoteHttpResponse"],
-}));
-
-// Keep existing cases on the real transport unless the wrapper test overrides it.
-vi.mock("../../packages/memory-host-sdk/src/host/remote-http.js", async () => {
-  const actual = await vi.importActual<
-    typeof import("../../packages/memory-host-sdk/src/host/remote-http.js")
-  >(
-    "../../packages/memory-host-sdk/src/host/remote-http.js",
-  );
-  originalWithRemoteHttpResponse.implementation = actual.withRemoteHttpResponse;
-  withRemoteHttpResponseMock.mockImplementation(actual.withRemoteHttpResponse);
-  return { ...actual, withRemoteHttpResponse: withRemoteHttpResponseMock };
-});
 
 async function createOpenAICompatibleEmbeddingProvider(options: EmbeddingProviderCreateOptions) {
   const result = await openAICompatibleEmbeddingProviderAdapter.create(options);
@@ -156,6 +138,48 @@ async function startEmbeddingServer(params?: {
     baseUrl: `http://127.0.0.1:${address.port}/v1`,
     requests,
   };
+}
+
+async function startEmbeddingConnectProxy(targetPort: number): Promise<{
+  proxyUrl: string;
+  authorities: string[];
+}> {
+  const authorities: string[] = [];
+  const sockets = new Set<Socket>();
+  const server = createServer();
+  server.on("connect", (request, clientSocket, head) => {
+    authorities.push(request.url ?? "");
+    const targetSocket = connect(targetPort, "127.0.0.1", () => {
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (head.length > 0) {
+        targetSocket.write(head);
+      }
+      clientSocket.pipe(targetSocket);
+      targetSocket.pipe(clientSocket);
+    });
+    for (const socket of [clientSocket, targetSocket]) {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+    }
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  servers.push({
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        for (const socket of sockets) {
+          socket.destroy();
+        }
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+  });
+  const address = server.address() as AddressInfo;
+  return { proxyUrl: `http://127.0.0.1:${address.port}`, authorities };
 }
 
 const EMBEDDING_ERROR_BOUNDARY_PREFIX = "x".repeat(999);
@@ -304,34 +328,34 @@ afterEach(async () => {
   const pending = servers.splice(0);
   await Promise.all(pending.map((server) => server.close()));
   vi.unstubAllEnvs();
-  withRemoteHttpResponseMock.mockClear();
-  withRemoteHttpResponseMock.mockImplementation(originalWithRemoteHttpResponse.implementation);
 });
 
 describe("openai-compatible generic embedding provider", () => {
-  it("delegates embedding requests to the canonical remote HTTP wrapper", async () => {
-    withRemoteHttpResponseMock.mockImplementation(async (params) =>
-      await params.onResponse(
-        new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      ),
-    );
+  it("routes eligible embedding requests through the environment HTTP proxy", async () => {
+    const endpoint = await startEmbeddingServer();
+    const endpointUrl = new URL(endpoint.baseUrl);
+    const proxy = await startEmbeddingConnectProxy(Number(endpointUrl.port));
+    vi.stubEnv("HTTP_PROXY", proxy.proxyUrl);
+    vi.stubEnv("http_proxy", proxy.proxyUrl);
+    vi.stubEnv("NO_PROXY", "");
+    vi.stubEnv("no_proxy", "");
 
-    const result = await openAICompatibleEmbeddingProviderAdapter.create(
+    const { provider } = await createOpenAICompatibleEmbeddingProvider(
       createOptions({
-        remote: { baseUrl: "https://embeddings.example.test/v1" },
+        remote: {
+          baseUrl: `http://embeddings.example.test:${endpointUrl.port}/v1`,
+        },
       }),
     );
-    await result.provider?.embed("hello");
+    await expect(provider.embed("proxy-only")).resolves.toEqual([0.1, 0.2, 0.3]);
 
-    expect(withRemoteHttpResponseMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: "https://embeddings.example.test/v1/embeddings",
-        auditContext: "embedding-provider:openai-compatible",
-      }),
-    );
+    expect(proxy.authorities).toEqual([`embeddings.example.test:${endpointUrl.port}`]);
+    expect(endpoint.requests).toHaveLength(1);
+    expect(endpoint.requests[0]).toMatchObject({
+      method: "POST",
+      url: "/v1/embeddings",
+      body: { input: ["proxy-only"] },
+    });
   });
 
   it("is registered as a core generic embedding provider", () => {
