@@ -1,6 +1,7 @@
 // Covers OpenAI-compatible embedding provider plugin behavior.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { connect, type AddressInfo, type Socket } from "node:net";
+import { connect, type AddressInfo } from "node:net";
+import type { Duplex } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withTestTimeout } from "../../test/helpers/promise.js";
 import { UnresolvedSecretInputError } from "../config/types.secrets.js";
@@ -145,7 +146,7 @@ async function startEmbeddingConnectProxy(targetPort: number): Promise<{
   authorities: string[];
 }> {
   const authorities: string[] = [];
-  const sockets = new Set<Socket>();
+  const sockets = new Set<Duplex>();
   const server = createServer();
   server.on("connect", (request, clientSocket, head) => {
     authorities.push(request.url ?? "");
