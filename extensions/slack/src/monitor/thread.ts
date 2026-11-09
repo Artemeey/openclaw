@@ -18,6 +18,8 @@ import { resolveSlackTimestampMs } from "./message-handler/timestamp.js";
 
 export type SlackThreadStarter = {
   text: string;
+  /** Slack's original text, excluding fallback attachment or quoted content. */
+  nativeText?: string;
   userId?: string;
   botId?: string;
   ts?: string;
@@ -136,6 +138,7 @@ export async function resolveSlackThreadStarter(params: {
         }
         return {
           text: text || formatSlackFilePlaceholder(files),
+          nativeText: message.text,
           userId: message.user,
           botId: message.bot_id,
           ts: message.ts,

@@ -2036,6 +2036,123 @@ describe("slack implicit mention policy", () => {
     expect(await prepareThreadMessage(eventScope)).toBeNull();
   });
 });
+
+describe("slack root-mention-only activation", () => {
+  const storeFixture = createSlackSessionStoreFixture("openclaw-slack-root-mention-");
+  let nextThread = 0;
+
+  function createThread(params: {
+    rootText?: string;
+    rootAuthor?: string;
+    rootMentionOnly?: boolean;
+    channelsConfig?: Record<string, { requireMention: boolean; rootMentionOnly?: boolean }>;
+    lookupFails?: boolean;
+  } = {}) {
+    const threadTs = `1780000000.${String(++nextThread).padStart(6, "0")}`;
+    let rootText = params.rootText ?? "<@B1> please help";
+    const replies = vi.fn().mockImplementation(async () => {
+      if (params.lookupFails) {
+        throw new Error("Slack root lookup failed");
+      }
+      return slackReply([{ text: rootText, user: params.rootAuthor ?? "U2", ts: threadTs }]);
+    });
+    const channelsConfig = params.channelsConfig ?? {
+      C123: { requireMention: true, rootMentionOnly: true },
+    };
+    const rootMentionOnly = params.rootMentionOnly ?? true;
+    const cfg = slackConfig(
+      { groupPolicy: "open", rootMentionOnly, channels: channelsConfig },
+      { session: { store: storeFixture.makeTmpStorePath().storePath } },
+    );
+    const ctx = createInboundSlackTestContext({
+      cfg,
+      channelsConfig,
+      appClient: { conversations: { replies } } as unknown as App["client"],
+    });
+    ctx.resolveUserName = async () => ({ name: "Alice" });
+    ctx.resolveChannelName = async () => ({ name: "project", type: "channel" });
+    const account = createSlackAccount({ groupPolicy: "open", rootMentionOnly });
+    const send = (text: string, parentUserId = "U2") =>
+      prepareInbound(
+        ctx,
+        {
+          channel: "C123",
+          channel_type: "channel",
+          user: "U1",
+          text,
+          ts: `${threadTs}.reply`,
+          thread_ts: threadTs,
+          parent_user_id: parentUserId,
+        },
+        account,
+      );
+    return {
+      send,
+      replies,
+      threadTs,
+      setRootText: (value: string) => {
+        rootText = value;
+      },
+    };
+  }
+
+  it("accepts unmentioned replies when the original root natively mentions this bot", async () => {
+    const thread = createThread();
+    const prepared = await thread.send("Please continue");
+
+    expect(prepared?.ctxPayload.MentionSource).toBe("implicit_thread");
+    expect(prepared?.ctxPayload.ImplicitMentionKinds).toEqual(["root_bot_mentioned_thread"]);
+    expect(thread.replies).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "C123", ts: thread.threadTs, limit: 1 }),
+    );
+  });
+
+  it("does not arm a thread from a mid-thread mention, prior participation, or reply to bot", async () => {
+    const thread = createThread({ rootText: "Original question" });
+    const explicitlyMentioned = await thread.send("<@B1> please answer");
+
+    expect(explicitlyMentioned).not.toBeNull();
+    recordSlackThreadParticipation("default", "C123", thread.threadTs);
+    expect(await thread.send("now continue", "B1")).toBeNull();
+  });
+
+  it("ignores other-bot mentions and bot-authored roots", async () => {
+    expect(await createThread({ rootText: "<@B2> question" }).send("follow-up")).toBeNull();
+    expect(
+      await createThread({ rootText: "<@B1> question", rootAuthor: "B1" }).send("follow-up"),
+    ).toBeNull();
+  });
+
+  it("fails closed when the root cannot be loaded", async () => {
+    const thread = createThread({ lookupFails: true });
+
+    expect(await thread.send("follow-up")).toBeNull();
+  });
+
+  it("rechecks root edits instead of trusting stale mention state", async () => {
+    const thread = createThread();
+
+    expect(await thread.send("first")).not.toBeNull();
+    thread.setRootText("No bot mention anymore");
+    expect(await thread.send("second")).toBeNull();
+    expect(thread.replies).toHaveBeenCalled();
+  });
+
+  it("honors a channel opt-out without changing legacy participation behavior", async () => {
+    const thread = createThread({
+      channelsConfig: { C123: { requireMention: true, rootMentionOnly: false } },
+    });
+    recordSlackThreadParticipation("default", "C123", thread.threadTs);
+
+    expect(await thread.send("follow-up")).not.toBeNull();
+  });
+
+  it("does not treat configured text mentions as native Slack mentions", async () => {
+    const thread = createThread({ rootText: "Коди, ответь" });
+    expect(await thread.send("follow-up")).toBeNull();
+  });
+});
+
 it("partitions enterprise main DM sessions by account and workspace", async () => {
   const ctx = {
     cfg: slackConfig({ replyToMode: "all" }, { session: { dmScope: "main" } }),

@@ -10,6 +10,9 @@ import type { SlackChannelConfigResolved } from "../channel-config.js";
 import type { SlackMonitorContext } from "../context.js";
 import type { SlackThreadStarter } from "../thread.js";
 import { isSlackThreadAuthorCurrentBot } from "./prepare-thread-context-root.js";
+import { collectSlackMentionIds, normalizeSlackId } from "./subteam-mentions.js";
+
+const SLACK_NATIVE_USER_MENTION_RE = /<@([^>|]+)(?:\|[^>]+)?>/g;
 
 export async function resolveSlackThreadMentionPolicy(params: {
   ctx: Pick<SlackMonitorContext, "botUserId" | "botId" | "defaultRequireMention">;
@@ -27,6 +30,26 @@ export async function resolveSlackThreadMentionPolicy(params: {
 }): Promise<ReturnType<typeof resolveBotThreadMentionPolicy>> {
   const { ctx, account, message, conversation, thread } = params;
   const { isRoom, isDirectMessage, channelConfig } = conversation;
+  const rootMentionOnly = channelConfig?.rootMentionOnly ?? account.config.rootMentionOnly;
+  if (isRoom && rootMentionOnly) {
+    const starter =
+      thread.isThreadReply && message.thread_ts && !params.wasMentioned
+        ? await params.getThreadStarter()
+        : null;
+    const botUserId = normalizeSlackId(ctx.botUserId);
+    const rootMentioned = Boolean(
+      starter &&
+        starter.ts === thread.threadTs &&
+        !isSlackThreadAuthorCurrentBot({ identity: ctx, author: starter }) &&
+        botUserId &&
+        collectSlackMentionIds(starter.nativeText, SLACK_NATIVE_USER_MENTION_RE).includes(botUserId),
+    );
+    // Neither a later mention nor a previous bot reply arms a root-unmentioned thread.
+    return {
+      requireMention: true,
+      implicitMentionKinds: implicitMentionKindWhen("root_bot_mentioned_thread", rootMentioned),
+    };
+  }
   let implicitMentionKinds: ReturnType<typeof implicitMentionKindWhen> = [];
   if (!isDirectMessage && message.thread_ts && !params.wasMentioned) {
     const replyToBotKinds = implicitMentionKindWhen(

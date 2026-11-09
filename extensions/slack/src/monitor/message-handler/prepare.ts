@@ -289,6 +289,8 @@ export async function prepareSlackMessage(params: {
   const explicitBotMention =
     opts.source === "app_mention" ||
     Boolean(normalizedBotUserId && mentionMetadata.mentionedUserIds.includes(normalizedBotUserId));
+  const rootMentionOnly =
+    isRoom && (channelConfig?.rootMentionOnly ?? account.config.rootMentionOnly) === true;
   const authorizationEventScope = opts.eventScope;
   const onVisibleDrop = opts.onVisibleDrop;
   if (isBotMessage) {
@@ -620,7 +622,8 @@ export async function prepareSlackMessage(params: {
             threadTs: routing.threadTs,
             client: slackClient,
             workspaceScope: threadStarterWorkspaceScope,
-            refresh: isRoomish && ctx.historyLimit > 0,
+            // Root mentions grant admission, so do not reuse a root cached before an edit.
+            refresh: isRoomish && (ctx.historyLimit > 0 || rootMentionOnly),
           })
         : Promise.resolve(null);
     return threadStarterPromise;
@@ -656,7 +659,7 @@ export async function prepareSlackMessage(params: {
       message,
       conversation: { isRoom, isDirectMessage, channelConfig },
       thread: routing,
-      wasMentioned,
+      wasMentioned: rootMentionOnly ? explicitBotMention : wasMentioned,
       teamId: opts.eventScope?.teamId,
       getThreadStarter,
     });
@@ -698,7 +701,7 @@ export async function prepareSlackMessage(params: {
       hasControlCommand: hasControlCommandInMessage,
       mentionFacts: {
         canDetectMention,
-        wasMentioned,
+        wasMentioned: rootMentionOnly ? explicitBotMention : wasMentioned,
         hasAnyMention,
         implicitMentionKinds,
       },
@@ -875,7 +878,7 @@ export async function prepareSlackMessage(params: {
   const mentionDecision = resolveInboundMentionDecision({
     facts: {
       canDetectMention,
-      wasMentioned,
+      wasMentioned: rootMentionOnly ? explicitBotMention : wasMentioned,
       hasAnyMention,
       implicitMentionKinds,
     },
@@ -898,7 +901,7 @@ export async function prepareSlackMessage(params: {
         ? "subteam"
         : shouldBypassMention
           ? "command_bypass"
-          : wasMentioned
+          : !rootMentionOnly && wasMentioned
             ? "mention_pattern"
             : matchedImplicitMentionKinds.length > 0
               ? "implicit_thread"
