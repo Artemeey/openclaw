@@ -4,6 +4,7 @@ export type InboundImplicitMentionKind =
   | "reply_to_bot"
   | "quoted_bot"
   | "bot_thread_participant"
+  | "root_bot_mentioned_thread"
   | "native";
 
 export type InboundMentionFacts = {
@@ -81,6 +82,7 @@ export function allowedImplicitMentionKindsFromConfig(
     ...implicitMentionKindWhen("reply_to_bot", config.replyToBot !== false),
     ...implicitMentionKindWhen("quoted_bot", config.quotedBot !== false),
     ...implicitMentionKindWhen("bot_thread_participant", config.threadParticipation !== false),
+    "root_bot_mentioned_thread",
     "native",
   ];
 }
