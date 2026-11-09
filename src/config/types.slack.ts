@@ -22,6 +22,8 @@ export type SlackDmConfig = ChannelGroupDmConfig;
 export type SlackChannelConfig = Omit<CommonChannelGroupConfig, "allowFrom"> & {
   /** Override mention gating in threads started by this bot; omitted preserves implicit mention policy. */
   requireMentionInBotThreads?: boolean;
+  /** Only follow a human-authored Slack thread automatically when its root mentions this bot. */
+  rootMentionOnly?: boolean;
   /**
    * Ignore room messages that mention another user or user group but not this bot.
    * Requires a resolved bot user ID. Default: false.
@@ -144,6 +146,8 @@ export type SlackAccountConfig = Omit<
     requireMention?: boolean;
     /** Override mention gating in threads started by this bot; omitted preserves implicit mention policy. */
     requireMentionInBotThreads?: boolean;
+    /** Opt in to root-mention-only thread activation for Slack rooms. */
+    rootMentionOnly?: boolean;
     /** Implicit mention policy for replies, quotes, and participated threads. */
     implicitMentions?: ChannelImplicitMentionsConfig;
     /** Pass through Slack chat.postMessage link unfurl control. Default: false. */
